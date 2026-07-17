@@ -887,6 +887,24 @@ entry 설계 검토로 전환**을 확정했다. 별도 문서
   shadow/validation 범위. 상세: `plans/[DESIGN] regime_conditional_
   entry_signal_v1.md` §34.
 
+- 작성자: Claude
+- 수정일자: 2026-07-17 (44차, SPPV-2.44 산출물 파일명/실행 경로
+  불일치 정정)
+- 수정내용: §2.44가 §3 게이트 재확인 산출물을 `..._2026-07-17.
+  json`으로 표기한 것이 실제 스크립트 동작과 불일치해 정정했다
+  (SPPV-2.45). **확인된 사실: `monitor_regime_switch_v1_gate.py`
+  는 실행 시점과 무관하게 항상 하드코딩된 `..._2026-07-14.json`에
+  저장한다** — §2.44가 인용한 `..._2026-07-17.json`은 컨테이너
+  산출을 호스트로 복사하며 수동 재명명한 사본이다. 내용은 실제
+  이번 재실행 결과가 맞고(as_of 일치), 결론에 영향을 주는 차이는
+  없다. **판정: 정정 후에도 SPPV-3 관련 결론은 전혀 바뀌지 않는다
+  — R3b Conditional Go 유지, SPPV-3 진입은 §3 게이트 미충족으로
+  아직 이르다는 §2.44의 판정을 그대로 유지한다.** 새 실측/새
+  스크립트 없이 기존 코드·로그 재확인만 수행(신규 KIS 호출 해당
+  없음). 운영 코드 변경 없음, broker submit 미호출 — 이번 턴은
+  기록 정정 범위. 상세: `plans/[DESIGN] regime_conditional_entry_
+  signal_v1.md` §35.
+
 ---
 
 ## 진행 체크리스트
@@ -2117,14 +2135,52 @@ canonical),
     로그로 실측 확인). 운영 코드 변경 없음, broker submit 미호출 —
     이번 턴도 shadow/validation 범위. 상세: `plans/[DESIGN]
     regime_conditional_entry_signal_v1.md` §34.
-  - 산출물: `logs/regime_switch_v1_gate_monitor_2026-07-17.json`,
-    `logs/regime_switch_v1_gate_monitor_run_2026-07-17.log`(신규
-    스크립트 없음, 기존 SPPV-2.13 모니터링 스크립트 재실행).
+  - 산출물: `logs/regime_switch_v1_gate_monitor_2026-07-17.json`
+    (스크립트의 실제 하드코딩 출력 경로는 `..._2026-07-14.json` —
+    컨테이너 산출을 호스트로 복사하며 수동 재명명한 사본, §2.45에서
+    정정), `logs/regime_switch_v1_gate_monitor_run_2026-07-17.log`
+    (신규 스크립트 없음, 기존 SPPV-2.13 모니터링 스크립트 재실행).
   - 다음 과제: §3 게이트는 시장 상황 의존적이므로 3년 캐시 갱신
     시마다 재모니터링, `risk_off_penalty` 중복 해소 ablation 착수
     여부 사용자 판단, T+5 horizon 강건성 확보, out-of-sample
     데이터 축적 시 혼합 국면 구간 재확인, `portfolio_allocation`
     gap은 실거래 누적 이후 재검증.
+- [x] **SPPV-2.45(신설)** SPPV-2.44 산출물 파일명/실행 경로 불일치
+  정정 (완료, 2026-07-17)
+  - 작업 범위: §2.44가 §3 게이트 재확인 산출물을 `logs/regime_
+    switch_v1_gate_monitor_2026-07-17.json`으로 표기한 것이 실제
+    스크립트 동작과 불일치해 정정. **새 실측/새 스크립트 없이**
+    `scripts/monitor_regime_switch_v1_gate.py` 코드와 §2.44의 실행
+    로그를 재확인하는 read-only 재검증만 수행(신규 KIS 호출 해당
+    없음 — 신규 실행 자체가 없었음).
+  - **확인된 사실**: `monitor_regime_switch_v1_gate.py:122`는 실행
+    시점과 무관하게 항상 하드코딩된 `logs/regime_switch_v1_gate_
+    monitor_2026-07-14.json`에 저장한다(파일명의 "2026-07-14"는
+    SPPV-2.13 최초 작성일 그대로, 실행 날짜 미반영). §2.44가 인용한
+    `..._2026-07-17.json`은 컨테이너 산출을 호스트로 복사하며
+    파일명을 **수동 재명명**한 사본이지, 스크립트가 그 이름으로
+    직접 저장한 것이 아니다. **내용은 실제 이번 재실행 결과가
+    맞다**(as_of=2026-07-17T21:12:43, 실행 로그의 "산출 저장:"
+    문자열과도 일치) — 호스트에 기존부터 있던 `..._2026-07-14.json`
+    (as_of=2026-07-15, 이전 턴 산출물)은 이번 턴에 덮어써지지
+    않았으며, 두 파일의 `trigger_status`/국면 분포는 동일하고
+    `as_of`만 다르다.
+  - **판정: 정정 후에도 SPPV-3 관련 결론은 전혀 바뀌지 않는다.**
+    §2.44의 실측 내용(`NOT_TRIGGERED`, 최근 12개월 bearish_trend
+    0/30일) 자체는 정확했고, 이번 정정은 "결과를 어느 파일명으로
+    인용해야 하는가"에 관한 기록 정합성 문제였다. **§2.44의 판정
+    (R3b Conditional Go 유지, SPPV-3 진입은 §3 게이트 미충족으로
+    아직 이름)은 그대로 유지한다.** 향후 이 스크립트 재실행 시
+    "스크립트 자체 출력 경로(하드코딩)"와 "호스트 보관용 재명명
+    사본"을 명시적으로 구분 표기하는 것을 표준 관례로 삼는다. 운영
+    코드 변경 없음, broker submit 미호출 — 이번 턴은 기록 정정
+    범위. 상세: `plans/[DESIGN] regime_conditional_entry_signal_
+    v1.md` §35.
+  - 산출물: 신규 산출물 없음(기존 코드/로그 재확인만 수행).
+  - 다음 과제: §2.44의 5개 다음 과제(§3 게이트 정기 재모니터링,
+    `risk_off_penalty` 중복 해소 ablation, T+5 horizon 강건성
+    확보, out-of-sample 혼합 국면 구간 재확인, `portfolio_
+    allocation` gap 재검증)는 이번 정정과 무관하게 그대로 유효.
 - [~] **SPPV-3** `entry_score` point-in-time 재현 및 중복 penalty ablation
   - **보류 유지, 형태 재정의 — 우선순위 재조정**: §12(1년, 자기참조
     포함) 당시 "알파 근거 강화"로 낙관했던 것이 §14(3년, 자기참조

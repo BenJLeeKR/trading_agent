@@ -1053,6 +1053,21 @@ value/compliance/broker가 아니라 `entry_score < 0.65`다.
   인위적으로 앞당길 수 없다. 운영 코드 변경 없음, broker submit
   미호출. 상세: `plans/[DESIGN] regime_conditional_entry_signal_
   v1.md` §34.
+
+- 작성자: Claude
+- 수정일자: 2026-07-17 (2.46순위, SPPV-2.44 산출물 파일명/실행
+  경로 불일치 정정)
+- 수정내용: §2.45가 §3 게이트 재확인 산출물을 `..._2026-07-17.
+  json`으로 표기한 것이 실제 스크립트 동작과 불일치해 정정했다
+  (§2.46). `monitor_regime_switch_v1_gate.py`는 실행 시점과 무관
+  하게 항상 하드코딩된 `..._2026-07-14.json`에 저장하며, §2.45가
+  인용한 `..._2026-07-17.json`은 컨테이너 산출을 호스트로 복사
+  하며 수동 재명명한 사본이다(내용은 실제 재실행 결과, 결론 영향
+  없음). **판정: 정정 후에도 SPPV-3 관련 결론은 전혀 바뀌지 않는다
+  — R3b Conditional Go 유지, SPPV-3 진입은 §3 게이트 미충족으로
+  아직 이르다는 판정을 그대로 유지한다.** 운영 코드 변경 없음,
+  broker submit 미호출. 상세: `plans/[DESIGN] regime_conditional_
+  entry_signal_v1.md` §35.
 - **3순위(보류 유지, 형태 재정의 — 우선순위 재조정)**: **`entry_
   score`와 BUY funnel 재현** — §2.7 확장 검증에서 하락장 안정성이
   확인되지 않아 단순 재현으로는 착수하지 않는다. §2.16~§2.21에서
