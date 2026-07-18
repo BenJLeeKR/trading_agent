@@ -1182,6 +1182,27 @@ value/compliance/broker가 아니라 `entry_score < 0.65`다.
   신규 실행 없음, 신규 KIS 호출 0건, 운영 코드 변경 없음, broker
   submit 미호출. 상세: `plans/[DESIGN]
   regime_conditional_entry_signal_v1.md` §40.6.
+
+- 수정일자: 2026-07-18 (2.53순위, T+5 horizon 구조적 리스크 추가
+  정량화 — 실제 exit_score 기반 signal-driven 청산 타이밍 시뮬레이션)
+- 수정내용: §2.48이 정리한 보조 잔여 조건 3개 중 신규 설계 없이
+  기존 3년 캐시만으로 실측 가능한 "T+5 구조적 리스크"를 전진시켰다
+  (SPPV-2.52). 실제 운영 함수 `_build_exit_score`(순수 함수, DB/
+  실시간 상태 불필요)를 R3b+entry_score risk_off_penalty 제거(B
+  시나리오) would_buy candidate 1151건에 point-in-time으로 재호출해
+  매도 신호(`sell_candidate_threshold=0.75`)를 처음 넘는 날을
+  20거래일 관찰 창으로 시뮬레이션했다. **결과: 91.1%(1049건)가
+  20거래일 안에 매도 신호를 넘지 않고 censored, 평균 보유일수=
+  19.35일. signal-driven 청산 수익률(평균 6.14%, t=4.73)은 T+5
+  (2.02%, t=4.18)보다 T+20(6.49%, t=3.87)에 훨씬 가깝다.** 해석:
+  실제 청산 로직 기준으로는 T+5가 아니라 T+20 근방에서 청산되므로
+  "T+5 평균이 약하다"는 우려가 실제 운영 리스크로 그대로 전이되지
+  않는다 — "T+5 구조적 리스크"는 부분적으로 완화됐다. 다만 20일
+  초과 구간의 청산 분포·경로 리스크(MAE)는 미검증이라 "완전 해소"
+  라고 부르는 것은 과장이다. 판정: **R3b는 Conditional Go를
+  유지한다.** 신규 KIS 호출 0건, 운영 코드 변경 없음, broker
+  submit 미호출. 상세: `plans/[DESIGN]
+  regime_conditional_entry_signal_v1.md` §41.
 - **3순위(보류 유지, 형태 재정의 — 우선순위 재조정)**: **`entry_
   score`와 BUY funnel 재현** — §2.7 확장 검증에서 하락장 안정성이
   확인되지 않아 단순 재현으로는 착수하지 않는다. §2.16~§2.21에서
@@ -1289,7 +1310,15 @@ value/compliance/broker가 아니라 `entry_score < 0.65`다.
   차단 요인은 §21 게이트 하나뿐"은 "SPPV-3 착수 검토를 시작할 수
   있는 유일한 외생적 조건"이라는 뜻이지 "진입 전체의 유일한 남은
   조건"이 아니다(§38의 ①②③ 분류 불변) — 두 정정 모두 R3b 방향성·
-  Conditional Go는 바꾸지 않는다.** 한편
+  Conditional Go는 바꾸지 않는다. §2.53에서 §2.48의 보조 잔여
+  조건 중 "T+5 구조적 리스크"를 실제 운영 함수 `_build_exit_score`
+  (순수 함수)로 point-in-time 재호출해 would_buy candidate 1151건의
+  signal-driven 청산 타이밍을 시뮬레이션한 결과, 91.1%가 20거래일
+  안에 매도 신호를 넘지 않고 평균 보유일수=19.35일 — 실제 청산은
+  T+5가 아니라 T+20 근방(6.14%, t=4.73)에서 발생해 "T+5 평균이
+  약하다"는 우려가 실제 운영 리스크로 그대로 전이되지 않음을
+  확인했다. 20일 초과 구간·경로 리스크(MAE)는 미검증이라 "부분
+  완화"이지 "완전 해소"는 아니다.** 한편
   **§2.23~§2.27에서
   결합 사용 시 가장 빈번하게 걸리는 축이 regime 관련 축이 아니라
   활동성 필터(`eligibility_low_relative_activity`)임이 확인됐고,

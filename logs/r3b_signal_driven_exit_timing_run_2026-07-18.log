@@ -1,0 +1,17 @@
+INFO:validate_r3b_signal_driven_exit_timing:[20/87] 누적 표본 13060건
+INFO:validate_r3b_signal_driven_exit_timing:[40/87] 누적 표본 26120건
+INFO:validate_r3b_signal_driven_exit_timing:[60/87] 누적 표본 39180건
+INFO:validate_r3b_signal_driven_exit_timing:[80/87] 누적 표본 52240건
+INFO:validate_r3b_signal_driven_exit_timing:[87/87] 누적 표본 56753건
+INFO:validate_r3b_signal_driven_exit_timing:전체 3년 표본 56753건, 실패 0종목
+INFO:validate_r3b_signal_driven_exit_timing:would_buy 표본 1151건
+
+=== signal-driven 청산 타이밍 시뮬레이션 (B 시나리오, would_buy 후보) ===
+표본 수: 1151
+청산 시점 분포: {'11~15일': 45, 'censored(T+20 도달, 미청산)': 1049, '1~5일': 10, '6~10일': 18, '16~20일': 29}
+T+5(고정): {'n': 1151, 'mean_pct': 2.0221, 't_newey_west': 4.18, 'pct_positive': 0.55, 'total_return_proxy': 2327.4}
+T+20(고정): {'n': 1151, 'mean_pct': 6.491, 't_newey_west': 3.87, 'pct_positive': 0.5334, 'total_return_proxy': 7471.2}
+signal-driven 청산(실제 exit_score 기반): {'n': 1151, 'mean_pct': 6.1405, 't_newey_west': 4.73, 'pct_positive': 0.5248, 'total_return_proxy': 7067.7}
+평균 보유일수: 19.35, censored(20일 내 미청산) 비율: 0.9114
+
+산출 저장: logs/signal_ic_r3b_signal_driven_exit_timing_2026-07-18.json

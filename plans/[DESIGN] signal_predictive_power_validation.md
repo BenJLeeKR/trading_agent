@@ -1020,6 +1020,28 @@ entry 설계 검토로 전환**을 확정했다. 별도 문서
   회복. 신규 실행 없음, 신규 KIS 호출 0건. 상세: `plans/[DESIGN]
   regime_conditional_entry_signal_v1.md` §40.6.
 
+- 작성자: Claude
+- 수정일자: 2026-07-18 (51차, T+5 horizon 구조적 리스크 추가 정량화 —
+  실제 exit_score 기반 signal-driven 청산 타이밍 시뮬레이션)
+- 수정내용: §2.48이 정리한 보조 잔여 조건 3개 중 지금 당장 신규
+  설계 없이 기존 3년 캐시만으로 실측 가능한 "T+5 구조적 리스크"를
+  전진시켰다(SPPV-2.52). 실제 운영 함수 `_build_exit_score`(순수
+  함수, DB/실시간 상태 불필요)를 R3b+entry_score risk_off_penalty
+  제거(B 시나리오) would_buy candidate 1151건에 대해 point-in-time
+  으로 재호출해 "언제 처음 sell_candidate_threshold(0.75)를
+  넘는가"를 20거래일 관찰 창으로 시뮬레이션했다. **결과: 91.1%
+  (1049건)가 20거래일 안에 매도 신호를 넘지 않고 censored, 평균
+  보유일수=19.35일. signal-driven 청산 수익률(평균 6.14%, t=4.73)
+  은 T+5(2.02%, t=4.18)보다 T+20(6.49%, t=3.87)에 훨씬 가깝다.**
+  해석: 실제 청산 로직 기준으로는 T+5가 아니라 T+20 근방에서
+  청산되므로 "T+5 평균이 약하다"는 우려가 실제 운영 리스크로 그대로
+  전이되지 않는다 — **"T+5 구조적 리스크"는 부분적으로 완화됐다.**
+  다만 20일 초과 구간의 청산 분포와 경로 리스크(MAE)는 이번 턴도
+  다루지 않아 "완전 해소"는 과장이다. 판정: **R3b는 Conditional
+  Go를 유지한다.** 신규 KIS 호출 0건, 운영 코드 변경 없음, broker
+  submit 미호출. 상세: `plans/[DESIGN]
+  regime_conditional_entry_signal_v1.md` §41.
+
 ---
 
 ## 진행 체크리스트
@@ -2517,6 +2539,37 @@ canonical),
     않는다** — 서술 정밀도만 회복. 신규 실행 없음, 신규 KIS 호출
     0건, 운영 코드 변경 없음, broker submit 미호출. 상세: `plans/
     [DESIGN] regime_conditional_entry_signal_v1.md` §40.6.
+- [x] **SPPV-2.52(신설)** T+5 horizon 구조적 리스크 추가 정량화 —
+  실제 exit_score 기반 signal-driven 청산 타이밍 시뮬레이션 (완료,
+  2026-07-18)
+  - 작업 범위: §2.48의 보조 잔여 조건 3개 중 신규 설계 없이 기존
+    3년 캐시만으로 실측 가능한 "T+5 구조적 리스크"를 선택. 실제
+    운영 함수 `_build_exit_score`(순수 함수, DB/실시간 상태 불필요)
+    를 R3b+entry_score risk_off_penalty 제거(B 시나리오) would_buy
+    candidate 1151건에 point-in-time으로 재호출해 매도 신호
+    (`sell_candidate_threshold=0.75`)를 처음 넘는 날을 20거래일
+    관찰 창으로 시뮬레이션.
+  - **결과: 91.1%(1049건)가 20거래일 안에 매도 신호를 넘지 않고
+    censored, 평균 보유일수=19.35일. signal-driven 청산 수익률
+    (평균 6.14%, t=4.73)은 T+5(2.02%, t=4.18)보다 T+20(6.49%,
+    t=3.87)에 훨씬 가깝다.**
+  - **판정: 실제 청산 로직 기준으로는 T+5가 아니라 T+20 근방에서
+    청산되므로 "T+5 평균이 약하다"는 우려가 실제 운영 리스크로
+    그대로 전이되지 않는다 — "T+5 구조적 리스크"는 부분적으로
+    완화됐다.** 다만 20일 초과 구간의 청산 분포·경로 리스크(MAE)는
+    미검증이라 "완전 해소"는 과장. R3b는 Conditional Go를 유지한다.
+    신규 KIS 호출 0건, 운영 코드 변경 없음, broker submit 미호출.
+    상세: `plans/[DESIGN] regime_conditional_entry_signal_v1.md`
+    §41.
+  - 산출물: `scripts/validate_r3b_signal_driven_exit_timing.py`
+    (read-only, 신규 KIS 호출 0건), `logs/signal_ic_r3b_signal_
+    driven_exit_timing_2026-07-18.json`, `logs/r3b_signal_driven_
+    exit_timing_run_2026-07-18.log`.
+  - 다음 과제: 관찰 창을 20거래일보다 늘려 censored 비율 감소 및
+    경로 리스크(MAE) 분포 확인, §21 게이트 정기 재모니터링,
+    entry_score 코드 반영 절차 설계 착수 여부, 국면 혼합도 모니터링
+    설계 검토, `portfolio_allocation` gap·실제 청산 시점 분포는
+    실거래 누적 이후 재검증.
 - [~] **SPPV-3** `entry_score` point-in-time 재현 및 중복 penalty ablation
   - **보류 유지, 형태 재정의 — 우선순위 재조정**: §12(1년, 자기참조
     포함) 당시 "알파 근거 강화"로 낙관했던 것이 §14(3년, 자기참조

@@ -1,0 +1,39 @@
+{
+  "as_of": "2026-07-18T00:00:00+09:00",
+  "symbol_count_used": 87,
+  "fetch_failures": [],
+  "sell_candidate_threshold": 0.75,
+  "max_exit_observation_days": 20,
+  "would_buy_n": 1151,
+  "exit_offset_distribution": {
+    "11~15일": 45,
+    "censored(T+20 도달, 미청산)": 1049,
+    "1~5일": 10,
+    "6~10일": 18,
+    "16~20일": 29
+  },
+  "mean_holding_days": 19.35,
+  "censored_rate": 0.9114,
+  "fixed_T5": {
+    "n": 1151,
+    "mean_pct": 2.0221,
+    "t_newey_west": 4.18,
+    "pct_positive": 0.55,
+    "total_return_proxy": 2327.4
+  },
+  "fixed_T20": {
+    "n": 1151,
+    "mean_pct": 6.491,
+    "t_newey_west": 3.87,
+    "pct_positive": 0.5334,
+    "total_return_proxy": 7471.2
+  },
+  "signal_driven_exit": {
+    "n": 1151,
+    "mean_pct": 6.1405,
+    "t_newey_west": 4.73,
+    "pct_positive": 0.5248,
+    "total_return_proxy": 7067.7
+  },
+  "note": "산출 JSON은 컨테이너 정리 시 원본 파일이 조기 삭제되어, 동일 실행의 stdout 로그(logs/r3b_signal_driven_exit_timing_run_2026-07-18.log)에 남은 수치를 그대로 재구성한 것이다 — 신규 재계산 없음, 수치 변경 없음."
+}
