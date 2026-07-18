@@ -1378,6 +1378,61 @@ value/compliance/broker가 아니라 `entry_score < 0.65`다.
   유지한다. compliance/VaR/broker submit 경계 미변경. 신규 KIS
   호출 0건. 상세: `plans/[DESIGN] regime_conditional_entry_
   signal_v1.md` §48.
+
+- 작성자: Codex
+- 수정일자: 2026-07-18 (2.62순위, `§21 gate` 상위 호출부(`decision_
+  orchestrator.py`) 배선 완료)
+- 수정내용: **[정정] 2.61순위(§48)의 "실제 판단 경로 연결 완료"는
+  과장 — `assess_deterministic_triggers` 함수 내부는 연결됐으나
+  그 유일한 실제 상위 호출부 `DecisionOrchestratorService`(`decision_
+  orchestrator.py`)는 신규 파라미터를 전혀 넘기지 않고 있었다.**
+  이번 턴이 그 gap을 메웠다(SPPV-2.60). `DecisionOrchestratorService.
+  __init__`에 `regime_switch_v1_trigger_status`(기본값 None),
+  `regime_switch_v1_gate_override_enabled`(기본값 False) 생성자
+  인자를 추가하고 실제 호출에 전달, `scripts/run_decision_loop.py`
+  의 두 생성 지점 전부에서 `resolve_cached_trigger_status()`(신규
+  read-only 헬퍼, `logs/regime_switch_v1_gate_monitor_*.json` 캐시
+  조회)와 config 값을 실제로 전달하도록 배선했다. `scripts/
+  validate_r3b_orchestrator_gate_wiring.py`로 `DecisionOrchestrator
+  Service`를 실제로 구성해 검증한 결과, 게이트가 실제로 buy_
+  candidate를 차단하고 override가 실제로 그 차단을 해제함을 확인
+  (`gate_blocks_via_orchestrator=True`, `override_restores_via_
+  orchestrator=True`). 기존 단위 테스트 83건 전부 통과. **중요
+  리스크**: 이 배선 완료로 `run_decision_loop.py`가 이제 실제 §21
+  게이트 상태(NOT_TRIGGERED)를 읽어 전달하므로, override가 기본값
+  False인 한 core BUY_CANDIDATE 판정이 실제로 영향받기 시작한다 —
+  사용자 확인이 필요한 새로운 실제 동작 변화다. 판정: **"§21 게이트
+  → 실제 판단 경로" 연결이 함수 내부뿐 아니라 상위 호출부까지
+  완료됐다.** R3b는 Conditional Go를 유지한다. compliance/VaR/
+  broker submit 경계 미변경. 신규 KIS 호출 0건. 상세: `plans/
+  [DESIGN] regime_conditional_entry_signal_v1.md` §49.
+
+- 작성자: Codex
+- 수정일자: 2026-07-18 (2.63순위, SPPV-2.60 보고 정정 — `resolve_
+  cached_trigger_status()` None 원인 규명 + 테스트 증빙 재확인)
+- 수정내용: **[정정] §49(2.62순위)의 검증 산출물에서 `resolve_
+  cached_trigger_status_current_value=None`이었으나, 실제로는
+  캐시 파일 2개(2026-07-14/2026-07-17) 모두 `trigger_status=
+  "NOT_TRIGGERED"`를 담고 있었다.** 원인 규명(SPPV-2.61) 결과 코드
+  결함이 아니라 기본 `glob_pattern`이 상대경로라 cwd에 의존했기
+  때문이었다 — §49 검증이 실행된 Docker 컨테이너에 캐시 JSON 파일이
+  복사돼 있지 않아 `glob`이 빈 결과를 반환한 것. `regime_switch_
+  gate.py`에 프로젝트 루트 기준 절대경로 앵커링을 추가해 수정(환경
+  분기 없음). 재검증 결과 cwd와 무관하게 `NOT_TRIGGERED`를 정확히
+  반환함을 확인. "83건 테스트 통과"는 사실이었으나 실행 로그가
+  남아있지 않았던 문제도 `python3 -m pytest`를 실제로 재실행하고
+  `logs/r3b_pytest_run_2026-07-18.log`(83 passed)로 증빙을 보강해
+  정정했다. 판정: **"배선은 완료됐으나 캐시 상태 전달에는 추가
+  수정이 필요"했던 상태에서 "캐시 상태까지 정상 전달됨"으로
+  확정.** §49.6의 리스크는 이번 수정으로 더 급해졌다. R3b는
+  Conditional Go를 유지한다. compliance/VaR/broker submit 경계
+  미변경. 신규 KIS 호출 0건. 상세: `plans/[DESIGN] regime_
+  conditional_entry_signal_v1.md` §50.
+  **[운영 결정 추가]** 게이트 배선은 유지하고, paper/shadow 관측
+  단계에서는 `REGIME_SWITCH_V1_GATE_OVERRIDE_ENABLED=true` 상태로
+  커밋/운영한다. 이는 environment 분기 코드가 아니라 명시적 config
+  override 운영 절차다. `trigger_status` 공급원 자동화는 후속 과제로
+  남긴다.
 - **3순위(보류 유지, 형태 재정의 — 우선순위 재조정)**: **`entry_
   score`와 BUY funnel 재현** — §2.7 확장 검증에서 하락장 안정성이
   확인되지 않아 단순 재현으로는 착수하지 않는다. §2.16~§2.21에서

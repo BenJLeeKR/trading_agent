@@ -1,0 +1,15 @@
+
+=== 1. DecisionOrchestratorService 실제 구성 — 게이트 파라미터 없음(기존 방식) ===
+[A] buy_candidate=True, entry_score=0.7275, regime_switch_v1_gate_open=None
+
+=== 2. 동일 시나리오, DecisionOrchestratorService에 §21 게이트 config 전달 ===
+[B] override=False(기본값): buy_candidate=False, regime_switch_v1_gate_open=False, reason_codes=('trigger_source_core', 'trigger_bullish_regime', 'trigger_risk_off_penalty', 'trigger_allocation_budget_available', 'trigger_high_volatility', 'trigger_exit_risk_off', 'trigger_no_position_exit_penalty', 'trigger_core_watch_path', 'gate_closed_regime_switch_v1_not_triggered', 'trigger_watch_candidate')
+[C] override=True: buy_candidate=True, regime_switch_v1_gate_open=True, reason_codes=('trigger_source_core', 'trigger_bullish_regime', 'trigger_risk_off_penalty', 'trigger_allocation_budget_available', 'trigger_high_volatility', 'trigger_exit_risk_off', 'trigger_no_position_exit_penalty', 'trigger_core_watch_path', 'gate_open_config_override_bypass', 'trigger_buy_candidate', 'trigger_watch_candidate')
+
+DecisionOrchestratorService를 거쳐 게이트가 실제로 buy_candidate를 차단: True
+DecisionOrchestratorService를 거쳐 override가 실제로 그 차단을 해제: True
+
+=== 3. resolve_cached_trigger_status() — run_decision_loop.py가 실제로 쓰는 배선 확인 ===
+현재 캐시된 §21 게이트 상태(logs/regime_switch_v1_gate_monitor_*.json에서 읽음): NOT_TRIGGERED
+
+산출 저장: logs/signal_ic_r3b_orchestrator_gate_wiring_2026-07-18.json

@@ -21,19 +21,32 @@ production)이 아니라 config 스위치 하나만으로** 판정하는 순수 
 - override가 켜지면 실제 국면 상태와 무관하게 게이트가 열린다(강제
   통과) — 그 이유는 ``reason_code``로 항상 추적 가능하게 남긴다.
 
-**이 모듈의 현재 위치**: 아직 실제 운영 파이프라인
-(`deterministic_trigger_engine.py`의 `assess_deterministic_triggers`)
-에는 연결돼 있지 않다 — 그 함수는 이 세션 내내 "절대 수정하지 않는다,
-shadow/read-only만" 원칙이 적용된 대상이기 때문이다. 이 모듈은 향후
-그 파이프라인에 실제로 연결하기 위한 **격리된, 검증 가능한 준비
-단계**다. 지금 당장은 shadow 스크립트에서만 소비된다.
+**이 모듈의 현재 위치(SPPV-2.60에서 갱신)**: `deterministic_trigger_
+engine.py`의 `assess_deterministic_triggers`(§48/SPPV-2.59)와
+`services/decision_orchestrator.py`(§49/SPPV-2.60, 실제 상위 호출부)
+양쪽에 실제로 연결됐다. `resolve_cached_trigger_status()`는 그 상위
+호출부가 매 결정마다 새로운 KIS 호출 없이 최신 `regime_switch_v1`
+게이트 상태를 읽기 위한 read-only 파일 접근 헬퍼다.
 
 DB write / 주문 경로 / 실시간 구독 / broker submit 없음.
 """
 
 from __future__ import annotations
 
+import glob
+import json
+import os
+
 from dataclasses import dataclass
+from pathlib import Path
+
+# 프로젝트 루트를 이 파일 위치 기준으로 고정한다(SPPV-2.61) —
+# resolve_cached_trigger_status()의 기본 glob 패턴이 호출자의 현재
+# 작업 디렉터리(cwd)에 의존하지 않도록 하기 위함이다. 이 파일은
+# <root>/src/agent_trading/services/regime_switch_gate.py에 위치하므로
+# parents[3]이 <root>다(db/migrations/run.py의 기존 관례와 동일한
+# 패턴).
+_PROJECT_ROOT = Path(__file__).resolve().parents[3]
 
 TRIGGERED = "TRIGGERED"
 PARTIAL = "PARTIAL"
@@ -122,3 +135,47 @@ def assess_regime_switch_v1_gate(
         override_applied=False,
         reason_code=REASON_GATE_OPEN_TRIGGERED if gate_open else REASON_GATE_CLOSED_DEFAULT,
     )
+
+
+def resolve_cached_trigger_status(
+    glob_pattern: str | None = None,
+) -> str | None:
+    """가장 최근에 저장된 `regime_switch_v1` 게이트 모니터링 JSON
+    (`scripts/monitor_regime_switch_v1_gate.py`가 read-only로 계산해
+    저장하는 산출물)에서 `trigger_status`를 읽어온다.
+
+    **[SPPV-2.61에서 수정]** 기본 `glob_pattern`을 `_PROJECT_ROOT`
+    (이 파일 위치 기준으로 고정된 절대경로) 기준으로 앵커링한다 —
+    이전 버전은 상대경로("logs/regime_switch_v1_gate_monitor_*.json")
+    를 그대로 써서 **호출자의 현재 작업 디렉터리(cwd)에 의존**했다.
+    이 때문에 cwd가 프로젝트 루트가 아닌 환경(예: 검증 스크립트를
+    다른 cwd에서 실행한 경우)에서는 실제로 파일이 있어도 찾지 못해
+    `None`을 반환하는 문제가 있었다 — glob 자체나 JSON 파싱, status
+    검증 로직에는 결함이 없었고, 오직 **경로가 cwd 의존적이었다는
+    것**이 원인이었다. `glob_pattern`을 명시적으로 넘기면 그 값을
+    그대로 쓰고(하위 호환), 넘기지 않으면(기본값) 항상 프로젝트
+    루트 기준 절대경로를 사용한다.
+
+    실제 상위 호출부(`decision_orchestrator.py`)가 매 결정마다 새로운
+    KIS 호출 없이 최신 게이트 상태를 저렴하게 읽기 위한 헬퍼다 — 순수
+    파일 read-only 접근이며 DB write/주문 경로/실시간 구독/broker
+    submit과 무관하다. 파일이 없거나(모니터링이 아직 한 번도 실행되지
+    않았거나) 파싱에 실패하면 ``None``을 반환한다 — 호출자는 이 경우
+    게이트 체크를 건너뛰도록(=기존 동작 유지) 설계돼 있다(§48 참고,
+    `assess_deterministic_triggers`의 `regime_switch_v1_trigger_
+    status=None` 기본값과 동일한 안전 기본값).
+    """
+    pattern = glob_pattern or str(_PROJECT_ROOT / "logs" / "regime_switch_v1_gate_monitor_*.json")
+    matches = glob.glob(pattern)
+    if not matches:
+        return None
+    latest_path = max(matches, key=os.path.getmtime)
+    try:
+        with open(latest_path, encoding="utf-8") as f:
+            data = json.load(f)
+    except (OSError, json.JSONDecodeError):
+        return None
+    status = data.get("trigger_status")
+    if status not in _VALID_TRIGGER_STATUSES:
+        return None
+    return status

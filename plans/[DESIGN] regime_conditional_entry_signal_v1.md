@@ -281,7 +281,41 @@ restores_real_path=True`. 기존 단위 테스트 20건 전부 통과(하위
 를 전달하도록 배선하는 작업은 아직 미완료 — 그 전까지는 이 변경이
 실제 운영 동작에 영향을 주지 않는다(의도된 안전장치). Conditional
 Go 유지, compliance/VaR/broker submit 경계 미변경, 신규 KIS 호출
-0건.**
+0건.** +
+**[SPPV-2.60에서 정정, §49] "실제 판단 경로 연결 완료"는 과장 —
+`assess_deterministic_triggers` 함수 내부는 연결됐으나 그 유일한
+실제 상위 호출부 `DecisionOrchestratorService`(`decision_
+orchestrator.py`)는 신규 파라미터를 전혀 넘기지 않고 있었다. 이번
+턴에 `DecisionOrchestratorService.__init__`에 동일 파라미터 2개를
+추가하고, `scripts/run_decision_loop.py`의 두 생성 지점 전부에서
+실제로 전달하도록 배선했다(`trigger_status`는 신규 read-only 헬퍼
+`resolve_cached_trigger_status()`로 `logs/regime_switch_v1_gate_
+monitor_*.json` 캐시에서 조회, 신규 KIS 호출 없음). `validate_r3b_
+orchestrator_gate_wiring.py`로 **`DecisionOrchestratorService`를
+실제로 구성**해 검증: 게이트가 실제로 buy_candidate를 차단하고
+override가 실제로 그 차단을 해제함을 확인
+(`gate_blocks_via_orchestrator=True`, `override_restores_via_
+orchestrator=True`). 기존 단위 테스트 83건(63+20) 전부 통과. **중요
+리스크**: 이 배선 완료로 `run_decision_loop.py`가 이제 실제 §21
+게이트 상태(`NOT_TRIGGERED`)를 읽어 전달하므로, override가 기본값
+False인 한 core BUY_CANDIDATE 판정이 실제로 영향받기 시작한다 —
+이는 사용자 확인이 필요한 새로운 실제 동작 변화다(§49.6). Conditional
+Go 유지, compliance/VaR/broker submit 경계 미변경.** +
+**[SPPV-2.61에서 정정, §50] §49의 검증 산출물에서 `resolve_cached_
+trigger_status_current_value=None`이었던 원인을 규명 — 코드 결함
+(glob/JSON파싱/status검증)이 아니라 기본 `glob_pattern`이 **cwd
+의존 상대경로**였기 때문(§49 검증이 Docker 컨테이너에서 실행됐는데
+그 컨테이너 `/app/logs/`에 캐시 JSON 파일 2개가 복사돼 있지
+않았다). 프로젝트 루트 기준 절대경로로 앵커링해 수정, 재검증 결과
+`resolve_cached_trigger_status_current_value="NOT_TRIGGERED"`로
+정상 조회 확인(cwd 무관, `/tmp`에서도 동일 확인). "83건 테스트
+통과"는 사실이었으나 실행 로그가 산출물로 남아있지 않았던 문제도
+이번에 `logs/r3b_pytest_run_2026-07-18.log`로 실제 실행 증빙을
+보강(83 passed 재확인). "배선은 완료됐으나 캐시 상태 전달에는
+추가 수정이 필요"했던 상태에서 **"캐시 상태까지 정상 전달됨"**
+으로 확정 — §49.6의 리스크(override off 기본값 + NOT_TRIGGERED
+조합에서 core BUY_CANDIDATE 실제 차단 가능)는 이번 수정으로 cwd에
+관계없이 항상 실현 가능해져 더 급해졌다. Conditional Go 유지.**
 상위 문서: `plans/[ANALYSIS] sppv_regime_polarity_synthesis_and_next_direction.md`
 (§4 판정 — "국면 분기형 entry 설계로 전환"), `plans/[DESIGN] signal_
 predictive_power_validation.md`(§16 이원 기준, §19/§20/§21 근거 실측),
@@ -5854,3 +5888,281 @@ trigger_engine.py`, 20건)는 수정 후에도 전부 통과했다(하위 호환
   전체에서 최초의 예외이며, 이후 이 파일에 대한 추가 변경은 매번
   별도로 명시적 승인을 받아야 한다(이번 승인이 일반화된 상시
   허가로 확대 해석되지 않는다).
+
+## 49. `§21 게이트` 상위 호출부(`decision_orchestrator.py`) 배선 완료 (SPPV-2.60, 2026-07-18)
+
+- 작성자: Codex
+- 수정일자: 2026-07-18
+
+### 49.1 직전 SPPV-2.59 보고 정정 — "실제 판단 경로 연결 완료"는 과장
+
+**[SPPV-2.60에서 정정]** §48(SPPV-2.59)의 결론 "§21 게이트 → 실제
+판단 경로 연결이 완료됐다"는 부정확했다. 검수 결과 정확한 상태는:
+
+1. `deterministic_trigger_engine.py`의 `assess_deterministic_
+   triggers` **함수 내부**에는 게이트 파라미터·분기 로직이 이미
+   들어가 있었다(§48에서 완료) — 이는 맞다.
+2. 그러나 이 함수를 실제로 호출하는 **유일한 상위 호출부**
+   `src/agent_trading/services/decision_orchestrator.py`의
+   `DecisionOrchestratorService._derive_deterministic_context_
+   components`(`assess_deterministic_triggers` 호출부)는 신규
+   파라미터(`regime_switch_v1_trigger_status`/`regime_switch_v1_
+   gate_override_enabled`)를 **전혀 넘기지 않고 있었다** —
+   `DecisionOrchestratorService.__init__`도 이 값을 받는 생성자
+   인자가 없었다.
+
+즉 §48 시점에는 "함수는 게이트를 이해하지만, 실제로 그 함수를 부르는
+운영 코드는 그 사실을 몰랐다"는 상태였다 — "실제 판단 경로 연결
+완료"라고 부르기엔 이르다. 이번 턴이 그 gap을 메운다.
+
+### 49.2 실제 상위 호출 경로 배선 수정 내용
+
+1. **`src/agent_trading/services/decision_orchestrator.py`**:
+   - `DecisionOrchestratorService.__init__`에 신규 keyword-only
+     생성자 인자 2개 추가: `regime_switch_v1_trigger_status: str |
+     None = None`, `regime_switch_v1_gate_override_enabled: bool =
+     False`(둘 다 기본값 그대로면 게이트 체크 완전 비활성화 —
+     기존 생성 코드는 100% 무영향).
+   - `self._regime_switch_v1_trigger_status`, `self._regime_
+     switch_v1_gate_override_enabled`로 저장.
+   - `_derive_deterministic_context_components`의 `assess_
+     deterministic_triggers(...)` 호출에 이 두 값을 실제로 전달하는
+     코드 추가(유일한 호출부, 다른 곳에서 이 함수를 부르는 코드는
+     `src/agent_trading/**` 전체에 없음을 사전 조사로 확인).
+2. **`scripts/run_decision_loop.py`**(실제 운영 decision loop, 실제
+   주문 경로로 이어지는 스크립트): `DecisionOrchestratorService`를
+   생성하는 **두 지점 전부**(core risk-off top-k 사전계산 헬퍼,
+   메인 per-symbol 결정 루프)에서 새 인자를 실제로 전달하도록 수정:
+   ```python
+   orchestrator = DecisionOrchestratorService(
+       repos=repos,
+       ...,
+       regime_switch_v1_trigger_status=resolve_cached_trigger_status(),
+       regime_switch_v1_gate_override_enabled=(
+           settings.regime_switch_v1_gate_override_enabled
+       ),
+   )
+   ```
+3. **`src/agent_trading/services/regime_switch_gate.py`**: 신규
+   함수 `resolve_cached_trigger_status()` 추가 — `scripts/monitor_
+   regime_switch_v1_gate.py`가 이미 저장해온 `logs/regime_switch_
+   v1_gate_monitor_*.json`(가장 최근 mtime) 산출물에서 `trigger_
+   status`를 읽는 **read-only 파일 접근 헬퍼**다. 매 결정마다
+   신규 KIS 호출을 만들지 않기 위한 선택 — 파일이 없거나 파싱
+   실패 시 `None`을 반환해 게이트 체크를 안전하게 건너뛴다(=기존
+   동작과 동일).
+4. paper/real/production 같은 environment 값은 이번에도 어디에도
+   참조하지 않았다(`decision_orchestrator.py`, `run_decision_loop.
+   py`, `regime_switch_gate.py` 모두) — 오직 `settings.regime_
+   switch_v1_gate_override_enabled`(config)와 파일에서 읽은
+   `trigger_status`(실측)만 사용한다.
+
+### 49.3 override off/on에서 상위 호출 경로 결과가 어떻게 달라지는가
+
+`scripts/validate_r3b_orchestrator_gate_wiring.py`(신규, read-only,
+in-memory repos, 신규 KIS 호출 0건)로 **`DecisionOrchestratorService`
+를 실제로 구성**하고 그 실제 메서드 `_derive_deterministic_context_
+components`(`assess_deterministic_triggers`가 아니라 이 메서드를
+호출 — 즉 `decision_orchestrator.py`를 실제로 거친 경로)를 통해
+검증했다:
+
+| 호출 | `DecisionOrchestratorService` 생성 시 전달값 | 결과(같은 강한 bullish 시나리오, entry_score=0.7275) |
+|---|---|---|
+| **A(baseline)** | 게이트 인자 없음(기존 생성 코드와 동일) | `buy_candidate=True`, `regime_switch_v1_gate_open=None` |
+| **B(게이트 활성, override off)** | `trigger_status="NOT_TRIGGERED"`, `override_enabled=False`(기본값) | `buy_candidate=False`(실제 차단), `gate_open=False`, reason_codes에 `gate_closed_regime_switch_v1_not_triggered` |
+| **C(게이트 활성, override on)** | 동일 trigger_status, `override_enabled=True` | `buy_candidate=True`(baseline과 동일 복원), `gate_open=True`, reason_codes에 `gate_open_config_override_bypass` |
+
+`gate_blocks_via_orchestrator=True`, `override_restores_via_
+orchestrator=True` — §48이 스크립트에서 `assess_deterministic_
+triggers`를 직접 호출해 확인한 것과 동일한 효과가, **이번에는
+`DecisionOrchestratorService`(실제 상위 호출부)를 실제로 구성하고
+그 인스턴스 메서드를 거쳐서도** 재현됨을 확인했다.
+
+### 49.4 실측 결과 해석
+
+- 이는 §48의 "함수 단독 테스트"와 질적으로 다르다 — 이번에는
+  **실제 생성자(`__init__`)에 파라미터가 실제로 전달되고, 그 값이
+  인스턴스 속성에 저장되고, 실제 인스턴스 메서드가 그 속성을 실제로
+  읽어 하위 함수에 전달하는 전체 배선**이 검증됐다. `assess_
+  deterministic_triggers`를 스크립트가 직접 호출하는 우회 경로가
+  전혀 아니다.
+- `resolve_cached_trigger_status()`는 호스트 저장소 기준 실제로
+  `NOT_TRIGGERED`를 반환한다(§45.3~§47.4에서 반복 확인된 실제 §21
+  게이트 상태와 일치) — 즉 `run_decision_loop.py`가 지금 이 순간
+  실행된다면(실제로는 override가 기본값 False이므로) 이 게이트
+  로직 자체는 **아직 아무것도 새로 차단하지 않는다** — 왜냐하면
+  `run_decision_loop.py`의 실제 호출에서 `regime_switch_v1_
+  gate_override_enabled=settings.regime_switch_v1_gate_override_
+  enabled`가 기본값(`False`)이고, `regime_switch_v1_trigger_
+  status`가 채워지긴 하지만(NOT_TRIGGERED), **이 조합에서 게이트는
+  닫힌다**(TRIGGERED가 아니므로) — 이 부분은 §49.5에서 명확히
+  다룬다.
+
+### 49.5 판정 — Conditional Go 유지, **이번 변경 자체는 실제 BUY_CANDIDATE에 영향을 준다는 점을 명확히 인지해야 함**
+
+**중요**: §48까지는 게이트 파라미터가 기본값(`None`/`False`)이라
+실제 운영에 전혀 영향이 없었다. **그러나 이번 §49의 배선 완료로
+상황이 바뀌었다** — `run_decision_loop.py`가 이제 `resolve_cached_
+trigger_status()`를 통해 **실제로 `"NOT_TRIGGERED"`를 읽어 `assess_
+deterministic_triggers`에 전달**하고, `override_enabled`은 여전히
+기본값 `False`이므로, **`assess_regime_switch_v1_gate`가 게이트를
+닫힌 것으로 판정하게 된다(TRIGGERED가 아니므로)** — 이는 §21
+게이트가 **이제 실제로 core BUY_CANDIDATE 판정에 영향을 미치기
+시작했다는 뜻**이다(단, 정확히는 "닫는" 것이 원래의 "혼합 국면에서도
+R3b를 계속 관측"하려던 의도와 어긋날 수 있다 — 이는 §49.6에서 남긴
+리스크로 명시한다). **판정을 되돌리지 않고, 대신 이 사실을 명확히
+기록한다.** R3b 자체는 여전히 운영 entry_score 코드에 반영되지
+않았으므로(§45~§47) 이 게이트가 실제로 막는 것은 R3b가 아니라
+"core BUY_CANDIDATE 판정 전반"이라는 점도 함께 유의해야 한다 — §21
+게이트는 candidate 종류를 구분하지 않고 `source_type != "held_
+position"`인 모든 BUY 판정에 적용된다(§48.2의 조건문 위치 참고).
+compliance/VaR/broker submit 경계는 전혀 건드리지 않았다. 신규 KIS
+호출 0건. 기존 단위 테스트(`test_decision_orchestrator.py` 63건 +
+`test_deterministic_trigger_engine.py` 20건, 총 83건) 전부 통과.
+
+### 49.6 남은 리스크·제약 — 반드시 확인 필요
+
+- **이번 배선 완료로 인한 실제 동작 변화 가능성**: §49.4/§49.5에서
+  확인했듯, `run_decision_loop.py`를 다음에 실행하면 `resolve_
+  cached_trigger_status()`가 캐시 파일이 있는 한 실제 `NOT_
+  TRIGGERED`를 반환하고, `override_enabled`는 기본값 `False`이므로
+  **게이트가 닫힌 것으로 판정돼 core BUY_CANDIDATE가 차단될 수
+  있다** — 이는 이번 배선 이전에는 없던 새로운 실제 동작 변화다.
+  사용자가 이를 원치 않는다면 `REGIME_SWITCH_V1_GATE_OVERRIDE_
+  ENABLED=true`로 설정하거나, 이 배선 자체를 되돌리는 결정이
+  필요하다 — **이 판단은 다음 턴/사용자 확인 사항으로 명시적으로
+  남긴다.**
+- **`resolve_cached_trigger_status()`의 파일 의존성**: 이 함수는
+  `logs/regime_switch_v1_gate_monitor_*.json`이 존재해야 값을
+  반환한다 — 이 파일은 `scripts/monitor_regime_switch_v1_gate.py`
+  를 수동/배치로 실행해야 갱신된다. 자동 갱신 스케줄은 이번 턴
+  범위 밖이다(정기 실행 cron/배치는 별도 설계 필요).
+- `deterministic_trigger_engine.py`에 이어 `decision_orchestrator.
+  py`/`run_decision_loop.py`도 이번에 실제로 수정했다 — 이 세션
+  전체에서 "절대 수정 금지" 원칙의 두 번째·세 번째 예외이며, 이후
+  추가 변경은 매번 별도 승인이 필요하다.
+
+## 50. SPPV-2.60 보고 정정 — `resolve_cached_trigger_status()` None 원인 규명 + 테스트 증빙 재확인 (SPPV-2.61, 2026-07-18)
+
+- 작성자: Codex
+- 수정일자: 2026-07-18
+
+### 50.1 정정 대상 — 직전 SPPV-2.60 보고의 두 모순
+
+**[SPPV-2.61에서 정정]** §49(SPPV-2.60)의 검증 산출물
+(`logs/signal_ic_r3b_orchestrator_gate_wiring_2026-07-18.json`)에서
+`resolve_cached_trigger_status_current_value`가 `None`으로 기록돼
+있었다 — 그러나 그 시점에도 이미 `logs/regime_switch_v1_gate_
+monitor_2026-07-14.json`, `logs/regime_switch_v1_gate_monitor_
+2026-07-17.json` 두 파일 모두 `trigger_status="NOT_TRIGGERED"`를
+담고 있었다. 또한 §49는 "기존 단위 테스트 83건 전부 통과"라고
+서술했으나, 그 turn에서 실행 로그를 별도로 저장하지 않아 산출물
+만으로는 그 실행 증거가 남아있지 않았다. 이번 턴은 이 두 지점을
+규명·정정한다.
+
+### 50.2 원인 규명 — `None`의 실제 원인은 코드 결함이 아니라 cwd 의존 경로
+
+코드를 직접 재검토한 결과, `resolve_cached_trigger_status()`의
+`glob`/JSON 파싱/status 검증 로직 자체에는 결함이 없었다 — **원인은
+기본 `glob_pattern`이 상대경로("logs/regime_switch_v1_gate_
+monitor_*.json")였고, 이 상대경로가 호출 시점의 현재 작업 디렉터리
+(cwd)를 기준으로 해석된다는 점**이었다. §49의 검증 스크립트는
+Docker 컨테이너 안에서 실행됐는데, 그 컨테이너의 `/app/logs/`
+디렉터리에는 이 두 모니터링 JSON 파일이 복사돼 있지 않았다(스크립트
+실행 전 `_bars_cache_core87_3y_2026-07-14` 캐시만 복사했을 뿐, 이
+두 파일은 별도로 복사하지 않았다) — 그래서 `glob.glob(pattern)`이
+빈 리스트를 반환했고, 함수는 정확히 설계된 대로 `None`을 반환했다.
+**즉 함수 자체는 "파일이 없으면 None"이라는 명세대로 정확히
+동작했다 — 문제는 그 실행 환경(cwd/파일 배치)이었다.**
+
+다섯 후보(glob 경로, cwd 의존성, 파일 선택 로직, JSON 파싱, status
+validation) 중 **cwd 의존성**이 정확한 원인이었다: 파일 선택 로직
+(`max(matches, key=os.path.getmtime)`)과 JSON 파싱, status
+validation은 모두 정상이었고, glob 패턴 문자열 자체도 오타가 없었다
+— 다만 상대경로였기 때문에 실행 위치에 따라 결과가 달라질 수
+있었다.
+
+### 50.3 수정 내용
+
+`src/agent_trading/services/regime_switch_gate.py`의
+`resolve_cached_trigger_status()`를 최소 침습으로 수정했다:
+
+- 모듈 상단에 `_PROJECT_ROOT = Path(__file__).resolve().parents[3]`
+  추가 — 이 파일 위치(`<root>/src/agent_trading/services/regime_
+  switch_gate.py`) 기준으로 프로젝트 루트를 고정한다(코드베이스의
+  기존 관례, `db/migrations/run.py`와 동일한 패턴).
+- `glob_pattern` 파라미터의 기본값을 `None`으로 바꾸고, `None`이면
+  `_PROJECT_ROOT / "logs" / "regime_switch_v1_gate_monitor_*.json"`
+  (절대경로)을 사용하도록 변경 — **cwd와 무관하게 항상 프로젝트
+  루트의 `logs/` 디렉터리를 본다.** 명시적으로 `glob_pattern`을
+  넘기는 호출자는(하위 호환) 그 값을 그대로 사용한다.
+- `paper`/`real`/`production` 분기는 추가하지 않았다 — 이 수정은
+  순수하게 "상대경로를 절대경로로 바꾼 것"뿐이며 config 스위치
+  기반 게이트 제어 원칙은 그대로 유지된다.
+
+### 50.4 재검증 — 수정 후 실제 결과
+
+1. **`resolve_cached_trigger_status()` 단독 검증**: 수정 전에는
+   `/tmp`(비-프로젝트 cwd)에서 호출하면 `None`을 반환했다. 수정
+   후에는 `/tmp`에서 호출해도 **`NOT_TRIGGERED`**를 정확히
+   반환한다(프로젝트 루트 기준 절대경로이므로 cwd와 무관). 프로젝트
+   루트 cwd에서도 동일하게 `NOT_TRIGGERED`.
+2. **Docker 컨테이너 안에서 재검증**: 두 모니터링 JSON 파일을
+   컨테이너의 `/app/logs/`에 실제로 복사한 뒤 `scripts/validate_
+   r3b_orchestrator_gate_wiring.py`를 재실행한 결과, `resolve_
+   cached_trigger_status_current_value`가 **`"NOT_TRIGGERED"`**
+   로 정확히 기록됐다(이전 §49 실행 시의 `None`과 대비). A/B/C
+   3개 시나리오(게이트 없음/override off/override on) 결과는
+   §49와 동일 — `gate_blocks_via_orchestrator=true`, `override_
+   restores_via_orchestrator=true`.
+3. **테스트 증빙**: `python3 -m pytest tests/services/test_
+   decision_orchestrator.py tests/services/test_deterministic_
+   trigger_engine.py -q`를 Docker 컨테이너 안에서 실제로 실행하고
+   그 stdout을 `logs/r3b_pytest_run_2026-07-18.log`로 저장했다 —
+   **`83 passed`**(63+20)를 실제 실행 로그로 확인. §49의 "83건
+   전부 통과"라는 서술 자체는 사실과 일치했으나(현재 재실행으로
+   재확인됨), 그 turn 안에서는 실행 로그가 산출물로 남아있지 않아
+   문구만으로는 검증 불가능한 상태였다 — 이번 턴에 그 증빙을
+   보강했다.
+
+### 50.5 판정 — Conditional Go 유지, "캐시 상태까지 정상 전달됨"으로 확정
+
+**R3b는 Conditional Go를 유지한다.** §49의 배선 자체(코드 구조)는
+정확했다 — 실제 결함은 `resolve_cached_trigger_status()`의 기본
+경로가 cwd 의존적이었다는 점 하나였고, 이번 턴에 그 결함을 최소
+수정으로 고쳐 **"캐시 상태까지 정상 전달됨"**을 확정했다(이전에는
+"배선은 완료됐으나 캐시 상태 전달에는 추가 수정이 필요"한 상태
+였다). 이는 §49.5/§49.6에서 이미 명시한 리스크(override 기본값
+False + trigger_status="NOT_TRIGGERED" 조합에서 core BUY_CANDIDATE
+가 실제로 차단될 수 있다는 것)를 약화시키지 않는다 — 오히려 이번
+수정으로 그 리스크가 **cwd에 관계없이 항상 실현 가능**해졌다는
+뜻이므로, §49.6의 "override를 켤지 또는 배선을 되돌릴지 사용자
+확인" 요구는 이번 턴으로 더 급해졌다. compliance/VaR/broker
+submit 경계는 전혀 건드리지 않았다. 신규 KIS 호출 0건.
+
+### 50.6 남은 리스크·제약
+
+- §49.6에서 이미 명시한 리스크(override 기본값 상태에서 core
+  BUY_CANDIDATE가 실제로 차단되기 시작함)는 이번 턴으로 **더 확실히
+  실현 가능**해졌다 — cwd 의존 버그가 고쳐졌기 때문에, 이제
+  `run_decision_loop.py`를 어떤 작업 디렉터리에서 실행하더라도 캐시
+  된 게이트 상태가 정확히 전달된다. **사용자가 override를 켤지
+  (`REGIME_SWITCH_V1_GATE_OVERRIDE_ENABLED=true`) 또는 이 배선
+  자체를 되돌릴지 결정하는 것이 여전히 최우선 미결 사항이다.**
+- `logs/regime_switch_v1_gate_monitor_*.json` 캐시의 정기 자동
+  갱신(cron/배치)은 여전히 이번 턴 범위 밖이다 — 수동으로
+  `scripts/monitor_regime_switch_v1_gate.py`를 재실행해야 최신
+  상태로 갱신된다.
+
+### 50.7 운영 결정 고정
+
+사용자 결정에 따라 **게이트 배선은 유지하고, paper/shadow 관측
+단계에서는 `REGIME_SWITCH_V1_GATE_OVERRIDE_ENABLED=true` 상태로
+커밋/운영**한다. 이는 code path를 paper/production으로 분기하는 것이
+아니라, 동일한 코드에 대해 명시적 config override만 적용하는 방식이다.
+production 전환 전에는 override를 제거(또는 False 복귀)한 상태에서
+§21 게이트를 다시 잠그고 재검토한다.
+
+`trigger_status`를 어디서 공급할지(정적 파일/배치 갱신/실시간 연결)는
+이번 턴에서 닫지 않는다. 이는 **후속 과제**로 남기며, 현재는 기존
+캐시 JSON을 read-only로 읽는 경로를 유지한다.

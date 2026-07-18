@@ -1,0 +1,44 @@
+{
+  "as_of": "2026-07-19T07:19:15.651888+09:00",
+  "A_no_gate_param_via_orchestrator": {
+    "buy_candidate": true,
+    "entry_score": 0.7275
+  },
+  "B_gate_override_off_via_orchestrator": {
+    "buy_candidate": false,
+    "regime_switch_v1_gate_open": false,
+    "reason_codes": [
+      "trigger_source_core",
+      "trigger_bullish_regime",
+      "trigger_risk_off_penalty",
+      "trigger_allocation_budget_available",
+      "trigger_high_volatility",
+      "trigger_exit_risk_off",
+      "trigger_no_position_exit_penalty",
+      "trigger_core_watch_path",
+      "gate_closed_regime_switch_v1_not_triggered",
+      "trigger_watch_candidate"
+    ]
+  },
+  "C_gate_override_on_via_orchestrator": {
+    "buy_candidate": true,
+    "regime_switch_v1_gate_open": true,
+    "reason_codes": [
+      "trigger_source_core",
+      "trigger_bullish_regime",
+      "trigger_risk_off_penalty",
+      "trigger_allocation_budget_available",
+      "trigger_high_volatility",
+      "trigger_exit_risk_off",
+      "trigger_no_position_exit_penalty",
+      "trigger_core_watch_path",
+      "gate_open_config_override_bypass",
+      "trigger_buy_candidate",
+      "trigger_watch_candidate"
+    ]
+  },
+  "gate_blocks_via_orchestrator": true,
+  "override_restores_via_orchestrator": true,
+  "resolve_cached_trigger_status_current_value": "NOT_TRIGGERED",
+  "note": "이번 검증은 assess_deterministic_triggers를 스크립트가 직접 호출한 것이 아니라, 실제 DecisionOrchestratorService를 구성하고 그 인스턴스 메서드 _derive_deterministic_context_components(내부에서 assess_deterministic_triggers를 호출)를 통해 검증했다 — decision_orchestrator.py를 실제로 거친 경로다. repos는 build_in_memory_repositories()(기존 테스트 스위트 표준 패턴)를 사용해 실제 Postgres/KIS 호출 없이 read-only로 수행됨."
+}

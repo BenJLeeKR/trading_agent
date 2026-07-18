@@ -252,6 +252,9 @@ class DecisionOrchestratorService:
         provider_base_url: str = "",
         provider_model_id: str = "",
         provider_timeout_seconds: int = 60,
+        # --- `§21 게이트`(regime_switch_v1) config 기반 gate (SPPV-2.60) ---
+        regime_switch_v1_trigger_status: str | None = None,
+        regime_switch_v1_gate_override_enabled: bool = False,
     ) -> None:
         self._repos = repos
         self._decision_context_service = DecisionContextService(repos)
@@ -279,6 +282,15 @@ class DecisionOrchestratorService:
         self._provider_base_url = provider_base_url
         self._provider_model_id = provider_model_id
         self._provider_timeout_seconds = provider_timeout_seconds
+        # --- `§21 게이트`(regime_switch_v1) config 기반 gate (SPPV-2.60) ---
+        # 둘 다 기본값이면 assess_deterministic_triggers()의 게이트 체크가
+        # 완전히 비활성화되어 기존 동작과 100% 동일하다(하위 호환).
+        # paper/real/production 같은 environment 값은 여기서도 참조하지
+        # 않는다 — 오직 호출자가 넘긴 config 값만 그대로 보존한다.
+        self._regime_switch_v1_trigger_status = regime_switch_v1_trigger_status
+        self._regime_switch_v1_gate_override_enabled = (
+            regime_switch_v1_gate_override_enabled
+        )
         # --- Execution Service (execution pipeline state: sell guard, quote CB, fresh check) ---
         self._execution_service = ExecutionService(
             repos=repos,
@@ -1120,6 +1132,10 @@ class DecisionOrchestratorService:
             portfolio_allocation=portfolio_allocation,
             position_snapshot=position_snapshot,
             deterministic_trigger_override=deterministic_trigger_override,
+            regime_switch_v1_trigger_status=self._regime_switch_v1_trigger_status,
+            regime_switch_v1_gate_override_enabled=(
+                self._regime_switch_v1_gate_override_enabled
+            ),
         )
         return DeterministicDerivationBundle(
             source_type=source_type,

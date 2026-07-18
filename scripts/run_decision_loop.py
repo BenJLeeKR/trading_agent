@@ -1185,6 +1185,7 @@ async def _build_core_risk_off_apply_overrides_for_cycle(
     from agent_trading.db.transaction import transaction as _db_transaction
     from agent_trading.repositories.postgres.bootstrap import build_postgres_repositories
     from agent_trading.services.decision_orchestrator import DecisionOrchestratorService
+    from agent_trading.services.regime_switch_gate import resolve_cached_trigger_status
 
     overrides: dict[str, dict[str, object]] = {}
     assessments_by_symbol: dict[str, DeterministicTriggerAssessment] = {}
@@ -1199,6 +1200,10 @@ async def _build_core_risk_off_apply_overrides_for_cycle(
             provider_base_url=settings.provider_base_url or "",
             provider_model_id=settings.provider_model_id or "",
             provider_timeout_seconds=settings.provider_timeout_seconds or 120,
+            regime_switch_v1_trigger_status=resolve_cached_trigger_status(),
+            regime_switch_v1_gate_override_enabled=(
+                settings.regime_switch_v1_gate_override_enabled
+            ),
         )
         for item in universe:
             if item.source_type != "core":
@@ -1519,6 +1524,7 @@ async def _run_one_cycle(
         from agent_trading.services.decision_orchestrator import DecisionOrchestratorService
         from agent_trading.services.order_manager import OrderManager
         from agent_trading.services.reconciliation_service import ReconciliationService
+        from agent_trading.services.regime_switch_gate import resolve_cached_trigger_status
 
         async with _db_transaction() as tx:
             repos: RepositoryContainer = build_postgres_repositories(tx)
@@ -1530,6 +1536,10 @@ async def _run_one_cycle(
                 provider_base_url=settings.provider_base_url or "",
                 provider_model_id=settings.provider_model_id or "",
                 provider_timeout_seconds=settings.provider_timeout_seconds or 120,
+                regime_switch_v1_trigger_status=resolve_cached_trigger_status(),
+                regime_switch_v1_gate_override_enabled=(
+                    settings.regime_switch_v1_gate_override_enabled
+                ),
             )
             reconciliation_service = ReconciliationService(repos=repos)
             order_manager = OrderManager(
