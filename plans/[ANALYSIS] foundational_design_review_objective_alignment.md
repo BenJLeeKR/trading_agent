@@ -1100,8 +1100,27 @@ value/compliance/broker가 아니라 `entry_score < 0.65`다.
   entry_score risk_off_penalty 제거 조합은 Conditional Go를
   보강한다.** SPPV-3 진입 관점에서 남은 조건은 사실상 §21 게이트
   하나로 좁혀졌다(entry_score 코드 반영은 게이트 충족 후 별도
-  절차). 운영 코드 변경 없음, broker submit 미호출. 상세: `plans/
-  [DESIGN] regime_conditional_entry_signal_v1.md` §37.
+  절차). **[§2.49에서 정정] "게이트 하나"는 §3 전제조건 범위로만
+  정확하고 SPPV-3 진입 전체로는 과장 — 아래 §2.49 참고.** 운영
+  코드 변경 없음, broker submit 미호출. 상세: `plans/[DESIGN]
+  regime_conditional_entry_signal_v1.md` §37.
+
+- 작성자: Claude
+- 수정일자: 2026-07-18 (2.49순위, SPPV-2.47 "게이트 하나만
+  남았다" 표현 정밀화 — 주된 차단 요인 vs 보조 잔여 조건 분리)
+- 수정내용: §2.48의 "SPPV-3 진입 관점에서 남은 조건은 사실상 §21
+  게이트 하나로 좁혀졌다"는 서술이 §3 전제조건 범위로는 정확하나
+  SPPV-3 진입 전체로는 과장이었음을 바로잡았다(§2.49). 새 실측·새
+  설계 제안 없이 기존 문서(§2.41 T+5 구조적 리스크, §2.43 혼합
+  국면 재확인, §2.40 portfolio_allocation gap)만 재해석했다.
+  **재분류: ①주된 차단 요인(§21 게이트, 외생적) ②보조 잔여
+  조건(entry_score 코드 반영 절차, T+5 구조적 리스크, 혼합 국면
+  재확인) ③실거래 누적 없이는 못 푸는 조건(portfolio_allocation
+  gap, 실제 청산 시점 분포).** 판정: **R3b는 Conditional Go를
+  유지한다** — 방향 후퇴가 아니라 "남은 조건" 서술의 정밀도만
+  회복하는 정정. 운영 코드 변경 없음, broker submit 미호출.
+  상세: `plans/[DESIGN] regime_conditional_entry_signal_v1.md`
+  §38.
 - **3순위(보류 유지, 형태 재정의 — 우선순위 재조정)**: **`entry_
   score`와 BUY funnel 재현** — §2.7 확장 검증에서 하락장 안정성이
   확인되지 않아 단순 재현으로는 착수하지 않는다. §2.16~§2.21에서
@@ -1181,7 +1200,13 @@ value/compliance/broker가 아니라 `entry_score < 0.65`다.
   7.8% 상대)는 개선폭보다 항상 작아 정당화 가능함을 확인 — R3b +
   entry_score risk_off_penalty 제거 조합은 Conditional Go를
   보강하며, SPPV-3 진입 관점에서 남은 조건은 사실상 §21 게이트
-  하나로 좁혀졌다.** 한편
+  하나로 좁혀졌다. §2.49에서 이 "게이트 하나" 서술이 §3 전제조건
+  범위로는 정확하나 SPPV-3 진입 전체로는 과장이었음을 바로잡고,
+  잔여 조건을 ①주된 차단 요인(§21 게이트) ②보조 잔여 조건
+  (entry_score 코드 반영 절차, T+5 구조적 리스크, 혼합 국면
+  재확인) ③실거래 누적 없이는 못 푸는 조건(portfolio_allocation
+  gap, 실제 청산 시점 분포)으로 재분류했다 — R3b는 Conditional
+  Go를 유지한다(방향 후퇴 아님, 서술 정밀도만 회복).** 한편
   **§2.23~§2.27에서
   결합 사용 시 가장 빈번하게 걸리는 축이 regime 관련 축이 아니라
   활동성 필터(`eligibility_low_relative_activity`)임이 확인됐고,
