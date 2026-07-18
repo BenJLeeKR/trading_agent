@@ -1,0 +1,124 @@
+{
+  "as_of": "2026-07-18T13:39:20.227555+09:00",
+  "symbol_count_used": 87,
+  "fetch_failures": [],
+  "mix_window_trading_days": 60,
+  "tercile_cut1": 0.15,
+  "tercile_cut2": 0.3833,
+  "buckets": {
+    "저혼합(단일 국면 지배)": {
+      "n_trading_days": 217,
+      "n_rows": 18878,
+      "avg_mixed_score": 0.037,
+      "regime_distribution": {
+        "event_driven_unstable": 86,
+        "bearish_trend": 870,
+        "range_bound": 609,
+        "bullish_trend": 17313
+      },
+      "funnel": {
+        "candidate_n": 3672,
+        "eligible_n": 1431,
+        "selected_n": 616,
+        "would_buy_n": 441,
+        "n_active_days": 189,
+        "by_horizon": {
+          "T+5": {
+            "n": 441,
+            "mean_pct": 3.8556,
+            "t_newey_west": 3.89,
+            "pct_positive": 0.6168,
+            "mfe_mean_pct": 10.3873,
+            "mae_mean_pct": -5.3873,
+            "total_return_proxy": 1700.3
+          },
+          "T+20": {
+            "n": 441,
+            "mean_pct": 12.2468,
+            "t_newey_west": 3.64,
+            "pct_positive": 0.6327,
+            "mfe_mean_pct": 28.5583,
+            "mae_mean_pct": -9.2145,
+            "total_return_proxy": 5400.8
+          }
+        }
+      }
+    },
+    "중혼합": {
+      "n_trading_days": 215,
+      "n_rows": 18698,
+      "avg_mixed_score": 0.3051,
+      "regime_distribution": {
+        "event_driven_unstable": 346,
+        "range_bound": 8869,
+        "bullish_trend": 6090,
+        "bearish_trend": 3393
+      },
+      "funnel": {
+        "candidate_n": 3587,
+        "eligible_n": 1003,
+        "selected_n": 435,
+        "would_buy_n": 345,
+        "n_active_days": 153,
+        "by_horizon": {
+          "T+5": {
+            "n": 345,
+            "mean_pct": 1.7089,
+            "t_newey_west": 2.33,
+            "pct_positive": 0.5507,
+            "mfe_mean_pct": 7.2457,
+            "mae_mean_pct": -5.1857,
+            "total_return_proxy": 589.6
+          },
+          "T+20": {
+            "n": 345,
+            "mean_pct": 5.4427,
+            "t_newey_west": 2.51,
+            "pct_positive": 0.5681,
+            "mfe_mean_pct": 16.4578,
+            "mae_mean_pct": -9.7158,
+            "total_return_proxy": 1877.7
+          }
+        }
+      }
+    },
+    "고혼합": {
+      "n_trading_days": 202,
+      "n_rows": 17543,
+      "avg_mixed_score": 0.4525,
+      "regime_distribution": {
+        "range_bound": 7719,
+        "event_driven_unstable": 86,
+        "bullish_trend": 7128,
+        "bearish_trend": 2610
+      },
+      "funnel": {
+        "candidate_n": 3417,
+        "eligible_n": 1037,
+        "selected_n": 446,
+        "would_buy_n": 357,
+        "n_active_days": 149,
+        "by_horizon": {
+          "T+5": {
+            "n": 357,
+            "mean_pct": 0.1889,
+            "t_newey_west": 0.34,
+            "pct_positive": 0.4734,
+            "mfe_mean_pct": 5.9585,
+            "mae_mean_pct": -5.0164,
+            "total_return_proxy": 67.4
+          },
+          "T+20": {
+            "n": 357,
+            "mean_pct": 0.6056,
+            "t_newey_west": 0.37,
+            "pct_positive": 0.3866,
+            "mfe_mean_pct": 11.8795,
+            "mae_mean_pct": -9.6198,
+            "total_return_proxy": 216.2
+          }
+        }
+      }
+    }
+  }
+}

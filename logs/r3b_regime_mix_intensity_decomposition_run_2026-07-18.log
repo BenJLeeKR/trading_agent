@@ -1,0 +1,30 @@
+INFO:validate_r3b_regime_mix_intensity_decomposition:혼합도 3분위 경계: cut1=0.1500, cut2=0.3833 (전체 634거래일)
+INFO:validate_r3b_regime_mix_intensity_decomposition:[20/87] 누적 표본 13060건
+INFO:validate_r3b_regime_mix_intensity_decomposition:[40/87] 누적 표본 26120건
+INFO:validate_r3b_regime_mix_intensity_decomposition:[60/87] 누적 표본 39180건
+INFO:validate_r3b_regime_mix_intensity_decomposition:[80/87] 누적 표본 52240건
+INFO:validate_r3b_regime_mix_intensity_decomposition:[87/87] 누적 표본 56753건
+INFO:validate_r3b_regime_mix_intensity_decomposition:전체 3년 표본 56753건, 실패 0종목
+
+=== 거래일 단위 시장 공통 국면 혼합도 버킷화 (B 시나리오: R3b + entry_score risk_off_penalty 제거) ===
+혼합도 3분위 경계: cut1=0.1500, cut2=0.3833
+
+--- 저혼합(단일 국면 지배) (평균 혼합도=0.037, 거래일수=217, 표본=18878) ---
+  국면 분포: {'event_driven_unstable': 86, 'bearish_trend': 870, 'range_bound': 609, 'bullish_trend': 17313}
+  candidate=3672, eligible=1431, selected=616, would_buy=441
+    T+5: {'n': 441, 'mean_pct': 3.8556, 't_newey_west': 3.89, 'pct_positive': 0.6168, 'mfe_mean_pct': 10.3873, 'mae_mean_pct': -5.3873, 'total_return_proxy': 1700.3}
+    T+20: {'n': 441, 'mean_pct': 12.2468, 't_newey_west': 3.64, 'pct_positive': 0.6327, 'mfe_mean_pct': 28.5583, 'mae_mean_pct': -9.2145, 'total_return_proxy': 5400.8}
+
+--- 중혼합 (평균 혼합도=0.3051, 거래일수=215, 표본=18698) ---
+  국면 분포: {'event_driven_unstable': 346, 'range_bound': 8869, 'bullish_trend': 6090, 'bearish_trend': 3393}
+  candidate=3587, eligible=1003, selected=435, would_buy=345
+    T+5: {'n': 345, 'mean_pct': 1.7089, 't_newey_west': 2.33, 'pct_positive': 0.5507, 'mfe_mean_pct': 7.2457, 'mae_mean_pct': -5.1857, 'total_return_proxy': 589.6}
+    T+20: {'n': 345, 'mean_pct': 5.4427, 't_newey_west': 2.51, 'pct_positive': 0.5681, 'mfe_mean_pct': 16.4578, 'mae_mean_pct': -9.7158, 'total_return_proxy': 1877.7}
+
+--- 고혼합 (평균 혼합도=0.4525, 거래일수=202, 표본=17543) ---
+  국면 분포: {'range_bound': 7719, 'event_driven_unstable': 86, 'bullish_trend': 7128, 'bearish_trend': 2610}
+  candidate=3417, eligible=1037, selected=446, would_buy=357
+    T+5: {'n': 357, 'mean_pct': 0.1889, 't_newey_west': 0.34, 'pct_positive': 0.4734, 'mfe_mean_pct': 5.9585, 'mae_mean_pct': -5.0164, 'total_return_proxy': 67.4}
+    T+20: {'n': 357, 'mean_pct': 0.6056, 't_newey_west': 0.37, 'pct_positive': 0.3866, 'mfe_mean_pct': 11.8795, 'mae_mean_pct': -9.6198, 'total_return_proxy': 216.2}
+
+산출 저장: logs/signal_ic_r3b_regime_mix_intensity_decomposition_2026-07-18.json
