@@ -1,0 +1,91 @@
+{
+  "as_of": "2026-07-18T11:46:22.658245+09:00",
+  "symbol_count_used": 87,
+  "fetch_failures": [],
+  "quarters": {
+    "분기1": {
+      "label": "분기1",
+      "n_rows": 14040,
+      "market_common_regime_distribution": {
+        "bearish_trend": 1204,
+        "range_bound": 6756,
+        "event_driven_unstable": 344,
+        "bullish_trend": 5736
+      },
+      "per_symbol_regime_distribution": {
+        "bullish_trend": 4500,
+        "range_bound": 5140,
+        "bearish_trend": 4093,
+        "event_driven_unstable": 307
+      },
+      "funnel": {
+        "candidate_n": 2686,
+        "eligible_n": 797,
+        "selected_n": 339,
+        "would_buy_n": 273,
+        "selected_rate_of_eligible": 42.53,
+        "by_horizon": {
+          "T+5": {
+            "n": 273,
+            "mean_pct": 0.5849,
+            "t_newey_west": 0.87,
+            "pct_positive": 0.4945,
+            "mfe_mean_pct": 6.1482,
+            "mae_mean_pct": -5.093,
+            "total_return_proxy": 159.7
+          },
+          "T+20": {
+            "n": 273,
+            "mean_pct": 2.4239,
+            "t_newey_west": 1.27,
+            "pct_positive": 0.4615,
+            "mfe_mean_pct": 12.5818,
+            "mae_mean_pct": -9.3051,
+            "total_return_proxy": 661.7
+          }
+        }
+      }
+    },
+    "분기4": {
+      "label": "분기4",
+      "n_rows": 14181,
+      "market_common_regime_distribution": {
+        "bullish_trend": 13920,
+        "range_bound": 261
+      },
+      "per_symbol_regime_distribution": {
+        "range_bound": 4095,
+        "bearish_trend": 2636,
+        "bullish_trend": 7272,
+        "event_driven_unstable": 178
+      },
+      "funnel": {
+        "candidate_n": 2771,
+        "eligible_n": 1166,
+        "selected_n": 489,
+        "would_buy_n": 345,
+        "selected_rate_of_eligible": 41.94,
+        "by_horizon": {
+          "T+5": {
+            "n": 345,
+            "mean_pct": 4.3232,
+            "t_newey_west": 3.48,
+            "pct_positive": 0.5971,
+            "mfe_mean_pct": 12.0076,
+            "mae_mean_pct": -6.1008,
+            "total_return_proxy": 1491.5
+          },
+          "T+20": {
+            "n": 345,
+            "mean_pct": 12.8579,
+            "t_newey_west": 3.0,
+            "pct_positive": 0.6029,
+            "mfe_mean_pct": 31.8732,
+            "mae_mean_pct": -10.5512,
+            "total_return_proxy": 4436.0
+          }
+        }
+      }
+    }
+  }
+}

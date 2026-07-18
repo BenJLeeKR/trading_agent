@@ -1,0 +1,22 @@
+INFO:validate_r3b_mixed_regime_quarter4_check:[20/87] 누적 표본 13020건
+INFO:validate_r3b_mixed_regime_quarter4_check:[40/87] 누적 표본 26040건
+INFO:validate_r3b_mixed_regime_quarter4_check:[60/87] 누적 표본 39060건
+INFO:validate_r3b_mixed_regime_quarter4_check:[80/87] 누적 표본 52080건
+INFO:validate_r3b_mixed_regime_quarter4_check:[87/87] 누적 표본 56583건
+INFO:validate_r3b_mixed_regime_quarter4_check:전체 3년 표본 56583건, 실패 0종목
+
+=== 분기1 혼합 국면 재확인 (표본 14040건, B 시나리오: entry_score risk_off_penalty 제거) ===
+  시장 공통 국면 분포: {'bearish_trend': 1204, 'range_bound': 6756, 'event_driven_unstable': 344, 'bullish_trend': 5736}
+  종목별 개별 국면 분포: {'bullish_trend': 4500, 'range_bound': 5140, 'bearish_trend': 4093, 'event_driven_unstable': 307}
+  candidate=2686, eligible=797, selected=339(rate=42.53%), would_buy=273
+    T+5: {'n': 273, 'mean_pct': 0.5849, 't_newey_west': 0.87, 'pct_positive': 0.4945, 'mfe_mean_pct': 6.1482, 'mae_mean_pct': -5.093, 'total_return_proxy': 159.7}
+    T+20: {'n': 273, 'mean_pct': 2.4239, 't_newey_west': 1.27, 'pct_positive': 0.4615, 'mfe_mean_pct': 12.5818, 'mae_mean_pct': -9.3051, 'total_return_proxy': 661.7}
+
+=== 분기4 혼합 국면 재확인 (표본 14181건, B 시나리오: entry_score risk_off_penalty 제거) ===
+  시장 공통 국면 분포: {'bullish_trend': 13920, 'range_bound': 261}
+  종목별 개별 국면 분포: {'range_bound': 4095, 'bearish_trend': 2636, 'bullish_trend': 7272, 'event_driven_unstable': 178}
+  candidate=2771, eligible=1166, selected=489(rate=41.94%), would_buy=345
+    T+5: {'n': 345, 'mean_pct': 4.3232, 't_newey_west': 3.48, 'pct_positive': 0.5971, 'mfe_mean_pct': 12.0076, 'mae_mean_pct': -6.1008, 'total_return_proxy': 1491.5}
+    T+20: {'n': 345, 'mean_pct': 12.8579, 't_newey_west': 3.0, 'pct_positive': 0.6029, 'mfe_mean_pct': 31.8732, 'mae_mean_pct': -10.5512, 'total_return_proxy': 4436.0}
+
+산출 저장: logs/signal_ic_r3b_mixed_regime_quarter4_check_2026-07-18.json
