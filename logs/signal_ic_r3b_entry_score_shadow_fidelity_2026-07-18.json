@@ -1,0 +1,11 @@
+{
+  "as_of": "2026-07-18T21:43:24.475745+09:00",
+  "symbol_count_used": 87,
+  "fetch_failures": [],
+  "n_checked": 58493,
+  "n_exact_match": 58493,
+  "n_mismatch": 0,
+  "match_rate": 1.0,
+  "max_abs_diff": 0.0,
+  "mismatch_samples": []
+}

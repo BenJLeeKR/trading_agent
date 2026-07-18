@@ -1267,6 +1267,28 @@ value/compliance/broker가 아니라 `entry_score < 0.65`다.
   방향성 반전 아님. 신규 KIS 호출 0건, 운영 코드 변경 없음, broker
   submit 미호출. 상세: `plans/[DESIGN]
   regime_conditional_entry_signal_v1.md` §44.
+
+- 수정일자: 2026-07-18 (2.57순위, entry_score 코드 반영 절차 구체화
+  — shadow 재구현 정합성 검증)
+- 수정내용: §21 게이트는 외생 조건이라 반복 관측만 가능한 반면,
+  "entry_score 코드 반영 절차" 착수 전 확인해야 할 선행 질문 —
+  SPPV-2.46부터 이 세션 내내 B 시나리오 non-alpha 조정을 수작업
+  재구현 `_non_alpha`로 계산해왔을 뿐, 실제 운영 함수 `_build_
+  entry_score`를 한 번도 직접 호출한 적이 없었다는 점을 검증했다
+  (SPPV-2.56). 코드 대조 결과 `_build_entry_score`에는 `_non_alpha`
+  가 담아내지 못하는 portfolio_allocation·source_type 조정 항·
+  최종 clamp가 있었으나, 이 세션에서는 항상 `source_type="core"`,
+  `portfolio_allocation=None`으로 써서 이론상 no-op이었다. 3년
+  전체 후보 표본(58,493건)에서 실제 함수와 재구현을 전수 대조했다.
+  **결과: 100.0% 완전 일치, 불일치 0건, 최대 절대 오차 0.0.** 해석:
+  이 세션의 모든 B 시나리오 결과가 실제 운영 코드 동작을 정확히
+  대표한다는 것이 처음으로 전수 검증됐다. 판정: **"entry_score
+  코드 반영 절차"는 "설계 논의 단계"에서 "shadow 계산 정합성
+  확보, 실제 코드 변경 PR 작성 가능 단계"로 격상**됐다 — 다만
+  §21 게이트는 불변이라 SPPV-3 확정 Go는 아니다. R3b는 Conditional
+  Go를 유지한다. 신규 KIS 호출 0건, 운영 코드 변경 없음, broker
+  submit 미호출. 상세: `plans/[DESIGN]
+  regime_conditional_entry_signal_v1.md` §45.
 - **3순위(보류 유지, 형태 재정의 — 우선순위 재조정)**: **`entry_
   score`와 BUY funnel 재현** — §2.7 확장 검증에서 하락장 안정성이
   확인되지 않아 단순 재현으로는 착수하지 않는다. §2.16~§2.21에서
@@ -1404,7 +1426,15 @@ value/compliance/broker가 아니라 `entry_score < 0.65`다.
   이후 회복분을 취하는 구조이기 때문이다. "손절 정책 부재"는
   "미검증 공백"에서 "시험한 범위 내에서는 손절 미도입이 총 기대
   수익 관점에서 근거 있는 선택"으로 재분류했다. R3b 방향성·
-  Conditional Go는 바꾸지 않는다(§44).** 한편
+  Conditional Go는 바꾸지 않는다(§44). §2.57에서 이 세션 내내
+  B 시나리오 계산에 써온 수작업 재구현 `_non_alpha`가 실제 운영
+  함수 `_build_entry_score`와 정확히 일치하는지 3년 전체 후보
+  표본(58,493건)에서 전수 검증한 결과, 100.0% 완전 일치(불일치
+  0건)를 확인 — 이 세션의 모든 B 시나리오 결과가 실제 운영 코드
+  동작을 정확히 대표한다는 것이 처음으로 검증됐다. "entry_score
+  코드 반영 절차"는 "설계 논의 단계"에서 "shadow 계산 정합성
+  확보, 실제 코드 변경 PR 작성 가능 단계"로 격상됐으나 §21 게이트는
+  불변이라 SPPV-3 확정 Go는 아니다(§45).** 한편
   **§2.23~§2.27에서
   결합 사용 시 가장 빈번하게 걸리는 축이 regime 관련 축이 아니라
   활동성 필터(`eligibility_low_relative_activity`)임이 확인됐고,

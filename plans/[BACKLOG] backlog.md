@@ -771,6 +771,28 @@
   방향성 반전 아님. 신규 KIS 호출 0건, 운영 코드 변경 없음, broker
   submit 미호출.
 
+- 작성자: Claude
+- 수정일자: 2026-07-18 (54차, entry_score 코드 반영 절차 구체화 —
+  shadow 재구현 정합성 검증)
+- 수정내용: §21 게이트는 외생 조건이라 반복 관측만 가능한 반면,
+  "entry_score 코드 반영 절차" 착수 전 확인해야 할 선행 질문 —
+  SPPV-2.46부터 이 세션 내내 B 시나리오 non-alpha 조정을 수작업
+  재구현 `_non_alpha`로 계산해왔을 뿐, 실제 운영 함수 `_build_
+  entry_score`를 한 번도 직접 호출한 적이 없었다는 점을 검증했다
+  (SPPV-2.56). 코드 대조 결과 `_build_entry_score`에는 `_non_alpha`
+  가 담아내지 못하는 portfolio_allocation·source_type 조정 항·
+  최종 clamp가 있었으나, 이 세션에서는 항상 `source_type="core"`,
+  `portfolio_allocation=None`으로 써서 이론상 no-op이었다. 3년
+  전체 후보 표본(58,493건)에서 실제 함수와 재구현을 전수 대조했다.
+  **결과: 100.0% 완전 일치, 불일치 0건, 최대 절대 오차 0.0.** 해석:
+  이 세션의 모든 B 시나리오 결과가 실제 운영 코드 동작을 정확히
+  대표한다는 것이 처음으로 전수 검증됐다. 판정: **"entry_score
+  코드 반영 절차"는 "설계 논의 단계"에서 "shadow 계산 정합성
+  확보, 실제 코드 변경 PR 작성 가능 단계"로 격상**됐다 — 다만
+  §21 게이트는 불변이라 SPPV-3 확정 Go는 아니다. R3b는 Conditional
+  Go를 유지한다. 신규 KIS 호출 0건, 운영 코드 변경 없음, broker
+  submit 미호출.
+
 ---
 
 ## 관리 원칙
@@ -1928,14 +1950,40 @@
     stop_loss_ablation.py`(read-only), `logs/signal_ic_r3b_stop_
     loss_ablation_2026-07-18.json`. 상세: `plans/[DESIGN]
     regime_conditional_entry_signal_v1.md` §44.
+  - **SPPV-2.56(완료, 2026-07-18, entry_score 코드 반영 절차
+    구체화 — shadow 재구현 정합성 검증 — Conditional Go 유지,
+    "entry_score 코드 반영 절차" 착수 준비도 격상)**: §21 게이트는
+    외생 조건이라 반복 관측만 가능한 반면, "entry_score 코드 반영
+    절차"는 실제 코드 변경 PR 작성 전 확인해야 할 선행 질문이
+    있었다 — SPPV-2.46부터 이 세션 내내 B 시나리오 non-alpha 조정
+    을 수작업 재구현 `_non_alpha`로 계산해왔을 뿐, 실제 운영 함수
+    `_build_entry_score`를 한 번도 직접 호출한 적이 없었다. 코드
+    대조 결과 `_build_entry_score`에는 `_non_alpha`가 담아내지
+    못하는 portfolio_allocation·source_type 조정 항·최종 clamp가
+    있었으나, 이 세션에서는 항상 `source_type="core"`, `portfolio_
+    allocation=None`으로 써서 이론상 no-op이었다. 3년 전체 후보
+    표본(58,493건)에서 실제 함수와 재구현을 전수 대조했다(신규
+    KIS 호출 0건). **결과: 100.0%(58,493/58,493) 완전 일치, 불일치
+    0건, 최대 절대 오차 0.0.** **판정: 이 세션의 모든 B 시나리오
+    결과가 실제 운영 코드 동작을 정확히 대표한다는 것이 처음으로
+    전수 검증됐다 — "entry_score 코드 반영 절차"는 "설계 논의
+    단계"에서 "shadow 계산 정합성 확보, 실제 코드 변경 PR 작성
+    가능 단계"로 격상됐다.** 다만 §21 게이트는 불변이라 SPPV-3
+    확정 Go는 아니다. R3b는 Conditional Go를 유지한다. 신규 KIS
+    호출 0건, 운영 코드 변경 없음, broker submit 미호출. 산출:
+    `scripts/validate_r3b_entry_score_shadow_fidelity.py`
+    (read-only), `logs/signal_ic_r3b_entry_score_shadow_fidelity_
+    2026-07-18.json`. 상세: `plans/[DESIGN]
+    regime_conditional_entry_signal_v1.md` §45.
   - **SPPV-3(다음 착수: §21 게이트 정기 재모니터링 + 게이트 충족
-    (또는 별도 승인) 시 entry_score 코드 반영 절차 설계 + 포지션
-    사이징 등 exit 외 리스크 관리 수단 검토(신규, 낮은 우선순위,
-    실거래 계좌 상태 필요) + T+5 리스크 20일판·60일판 진짜 페어드
-    비교(선택 사항, 20일판을 1048건 부분집합으로 제한 재계산) +
-    국면 혼합도 감지·대응 설계 검토 여부(선택 사항) +
-    `portfolio_allocation` gap 실거래 누적 후 재검증 + "국면 조건부
-    활동성 threshold" 설계 검토 여부 사용자 확인)**:
+    (또는 별도 승인) 시 entry_score 코드 변경 PR 초안 작성 착수
+    여부 사용자 확인(shadow 정합성 확보 완료) + 포지션 사이징 등
+    exit 외 리스크 관리 수단 검토(신규, 낮은 우선순위, 실거래 계좌
+    상태 필요) + T+5 리스크 20일판·60일판 진짜 페어드 비교(선택
+    사항, 20일판을 1048건 부분집합으로 제한 재계산) + 국면 혼합도
+    감지·대응 설계 검토 여부(선택 사항) + `portfolio_allocation`
+    gap 실거래 누적 후 재검증 + "국면 조건부 활동성 threshold"
+    설계 검토 여부 사용자 확인)**:
     §2.16~§2.21에서 국면 정의 통일(차단 축)은 Watch/No-Go에
     근접함이 확인됐고, §2.22에서 alpha layer 교체(선별 축)는
     Conditional Go를 확보했으며, **§2.27~§2.28에서 그 Conditional

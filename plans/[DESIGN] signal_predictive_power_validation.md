@@ -1110,6 +1110,32 @@ entry 설계 검토로 전환**을 확정했다. 별도 문서
   호출 0건, 운영 코드 변경 없음, broker submit 미호출. 상세:
   `plans/[DESIGN] regime_conditional_entry_signal_v1.md` §44.
 
+- 작성자: Claude
+- 수정일자: 2026-07-18 (55차, entry_score 코드 반영 절차 구체화 —
+  shadow 재구현 정합성 검증)
+- 수정내용: §21 게이트는 외생 조건이라 반복 관측만 가능한 반면,
+  "entry_score 코드 반영 절차"는 실제 코드 변경 PR 작성 전 반드시
+  확인해야 할 선행 질문이 있었다 — SPPV-2.46부터 이 세션 내내 B
+  시나리오 non-alpha 조정을 수작업 재구현 `_non_alpha`로 계산해왔을
+  뿐, 실제 운영 함수 `_build_entry_score`를 한 번도 직접 호출한
+  적이 없었다(SPPV-2.56). 코드 대조 결과 `_build_entry_score`에는
+  `_non_alpha`가 담아내지 못하는 `portfolio_allocation`·
+  `source_type` 조정 항·최종 clamp가 있었다 — 이 세션에서는 항상
+  `source_type="core"`, `portfolio_allocation=None`으로 써서
+  이론상 no-op이었지만 실증된 적은 없었다. 3년 전체 후보 표본
+  (58,493건)에서 실제 `_build_entry_score`(alpha 항을 0으로 고정
+  해 조정 항만 분리)와 `_non_alpha`를 전수 대조했다. **결과:
+  100.0%(58,493/58,493) 완전 일치, 불일치 0건, 최대 절대 오차
+  0.0.** 해석: 이 세션의 모든 B 시나리오 funnel·수익률 결과가
+  실제 운영 코드 동작을 정확히 대표한다는 것이 처음으로 전수
+  검증됐다. 판정: **"entry_score 코드 반영 절차"는 "설계 논의
+  단계"에서 "shadow 계산 정합성 확보, 실제 코드 변경 PR 작성 가능
+  단계"로 격상됐다** — 다만 이것이 코드 변경 PR 자체의 승인·실행을
+  뜻하지는 않으며, §21 게이트(주된 차단 요인)는 불변이라 SPPV-3
+  확정 Go 선언은 아니다. R3b는 Conditional Go를 유지한다. 신규 KIS
+  호출 0건, 운영 코드 변경 없음, broker submit 미호출. 상세:
+  `plans/[DESIGN] regime_conditional_entry_signal_v1.md` §45.
+
 ---
 
 ## 진행 체크리스트
@@ -2741,6 +2767,49 @@ canonical),
     줄이는 방안 검토(실거래 계좌 상태 필요, 낮은 우선순위), §21
     게이트 정기 재모니터링, entry_score 코드 반영 절차 설계 착수
     여부, 국면 혼합도 모니터링 설계 검토, `portfolio_allocation`
+    gap·실제 청산 시점 분포는 실거래 누적 이후 재검증.
+- [x] **SPPV-2.56(신설)** entry_score 코드 반영 절차 구체화 —
+  shadow 재구현 정합성 검증 (완료, 2026-07-18)
+  - 작업 범위: §21 게이트는 외생 조건이라 반복 관측만 가능한 반면,
+    "entry_score 코드 반영 절차"(실제 운영 코드 변경 PR 작성) 전에
+    확인해야 할 선행 질문 — SPPV-2.46부터 이 세션 내내 B 시나리오
+    non-alpha 조정을 수작업 재구현 `_non_alpha`로 계산해왔을 뿐,
+    실제 운영 함수 `_build_entry_score`(`deterministic_trigger_
+    engine.py:1115-1170`)를 한 번도 직접 호출한 적이 없었다는
+    점을 선택. 코드 대조 결과 `_build_entry_score`에는 `_non_alpha`
+    가 담아내지 못하는 `portfolio_allocation` 조정(+0.10/-0.20)·
+    `source_type` 조정(+0.05/-0.35)·최종 `_clamp()`가 있었다 —
+    이 세션에서는 항상 `source_type="core"`, `portfolio_
+    allocation=None`으로 써서 이론상 no-op이었지만 실증된 적은
+    없었다. 3년 전체 후보 표본(58,493건, 87개 core 종목 전량)에서
+    실제 `_build_entry_score`(overall=fast=slow=0.0으로 호출해
+    alpha 항을 상수 0.40으로 고정, 그 결과에서 조정 항만 분리)와
+    `_non_alpha`를 전수 대조.
+  - **결과: 100.0%(58,493/58,493) 완전 일치, 불일치 0건, 최대
+    절대 오차 0.0.**
+  - **해석**: 이 세션 내내 사용해온 수작업 재구현이 실제 운영
+    함수와 이 세션이 다룬 조건(source_type="core", portfolio_
+    allocation=None) 안에서 소수점 오차 없이 완전히 일치한다 —
+    SPPV-2.46~2.55에서 계산된 모든 B 시나리오 funnel·수익률
+    결과가 실제 운영 코드가 그대로 반영됐을 때의 결과와 수치적으로
+    동일함이 처음으로 전수 검증됐다.
+  - **판정**: **"entry_score 코드 반영 절차"는 "설계 논의 단계"
+    에서 "shadow 계산 정합성 확보, 실제 코드 변경 PR 작성 가능
+    단계"로 격상됐다.** 다만 이것이 코드 변경 PR 자체의 승인·실행을
+    뜻하지는 않으며(운영 코드 변경은 여전히 사용자 승인·리스크/
+    컴플라이언스 검토 필요), §21 게이트(주된 차단 요인)는 불변이라
+    이 결과 하나로 SPPV-3 확정 Go를 선언하지 않는다. R3b는
+    Conditional Go를 유지한다. 신규 KIS 호출 0건, 운영 코드 변경
+    없음, broker submit 미호출. 상세: `plans/[DESIGN]
+    regime_conditional_entry_signal_v1.md` §45.
+  - 산출물: `scripts/validate_r3b_entry_score_shadow_fidelity.py`
+    (read-only, 신규 KIS 호출 0건), `logs/signal_ic_r3b_entry_
+    score_shadow_fidelity_2026-07-18.json`, `logs/r3b_entry_score_
+    shadow_fidelity_run_2026-07-18.log`.
+  - 다음 과제: entry_score risk_off_penalty 완화의 실제 코드 변경
+    PR 초안 작성 착수 여부 사용자 확인(shadow 정합성 확보 완료),
+    §21 게이트 정기 재모니터링, exit 외 리스크 관리(포지션 사이징)
+    검토, 국면 혼합도 모니터링 설계 검토, `portfolio_allocation`
     gap·실제 청산 시점 분포는 실거래 누적 이후 재검증.
 - [~] **SPPV-3** `entry_score` point-in-time 재현 및 중복 penalty ablation
   - **보류 유지, 형태 재정의 — 우선순위 재조정**: §12(1년, 자기참조

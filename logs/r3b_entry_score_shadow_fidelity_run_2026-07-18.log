@@ -1,0 +1,12 @@
+INFO:validate_r3b_entry_score_shadow_fidelity:[20/87] 누적 검사 13460건, 불일치 0건
+INFO:validate_r3b_entry_score_shadow_fidelity:[40/87] 누적 검사 26920건, 불일치 0건
+INFO:validate_r3b_entry_score_shadow_fidelity:[60/87] 누적 검사 40380건, 불일치 0건
+INFO:validate_r3b_entry_score_shadow_fidelity:[80/87] 누적 검사 53840건, 불일치 0건
+INFO:validate_r3b_entry_score_shadow_fidelity:[87/87] 누적 검사 58493건, 불일치 0건
+
+=== entry_score shadow 재구현 정합성 검증 (3년 전체 후보 표본) ===
+검사 표본 수: 58493
+완전 일치: 58493건 (100.0%)
+불일치: 0건, 최대 절대 오차: 0.0
+
+산출 저장: logs/signal_ic_r3b_entry_score_shadow_fidelity_2026-07-18.json
