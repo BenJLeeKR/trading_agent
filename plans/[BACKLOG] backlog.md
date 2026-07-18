@@ -793,6 +793,27 @@
   Go를 유지한다. 신규 KIS 호출 0건, 운영 코드 변경 없음, broker
   submit 미호출.
 
+- 작성자: Claude
+- 수정일자: 2026-07-18 (55차, SPPV-2.56 결론 문구 정밀화 — "직접
+  호출" 서술 범위·표본 서술 정정)
+- 수정내용: 신규 실행 없이 54차(§45)의 두 표현을 기존 코드 재검토
+  로 정정했다(SPPV-2.57). **정정 1**: "실제 함수를 한 번도 직접
+  호출한 적이 없었다"는 과장 — `_build_entry_score`는 시나리오
+  A(현행 regime)로는 `validate_alpha_layer_buy_funnel_comparison.py`
+  와 `validate_r3b_point_in_time_pipeline_shadow.py`에서 이미
+  직접 호출돼왔다. 정확한 표현: "B 시나리오(`risk_tone="neutral"`
+  치환) 입력으로는 §45 이전까지 직접 호출한 적이 없었다". **정정
+  2**: 이번 검증은 non-alpha 조정 항(core/None/neutral 조건)만
+  증명했을 뿐 — R3b alpha 교체 전체 경로의 실제 코드 반영 후
+  재현성과 held_position/실제 portfolio_allocation 케이스는
+  미검증이다. **정정 3**: "candidate 전량"은 부정확 — quintile
+  선별·eligibility 필터링 없이 전체 거래일 스냅샷(58,493건)을
+  순회했으므로 정확한 표현은 "전체 시점 스냅샷(모집단 전체)".
+  판정: **세 정정 모두 R3b 방향성·Conditional Go를 바꾸지
+  않는다** — §45의 핵심 결론은 그대로 유효하며 필요 이상으로
+  보수적으로 낮추지 않는다. 신규 실행 없음, 신규 KIS 호출 0건,
+  운영 코드 변경 없음, broker submit 미호출.
+
 ---
 
 ## 관리 원칙
@@ -1974,11 +1995,35 @@
     `scripts/validate_r3b_entry_score_shadow_fidelity.py`
     (read-only), `logs/signal_ic_r3b_entry_score_shadow_fidelity_
     2026-07-18.json`. 상세: `plans/[DESIGN]
-    regime_conditional_entry_signal_v1.md` §45.
+    regime_conditional_entry_signal_v1.md` §45. **[SPPV-2.57에서
+    정정] "한 번도 직접 호출한 적이 없었다"·"candidate 전량"은
+    과장/부정확 — 아래 SPPV-2.57 참고.**
+  - **SPPV-2.57(완료, 2026-07-18, SPPV-2.56 결론 문구 정밀화 —
+    "직접 호출" 서술 범위·표본 서술 정정 — Conditional Go 유지,
+    방향 변경 없음)**: 신규 실행 없이 §45의 두 표현을 기존 코드
+    재검토로 정정했다. **정정 1**: "실제 함수를 한 번도 직접 호출한
+    적이 없었다"는 과장 — `_build_entry_score`는 시나리오 A(현행
+    regime)로는 `validate_alpha_layer_buy_funnel_comparison.py:211`
+    와 `validate_r3b_point_in_time_pipeline_shadow.py:178`에서
+    이미 직접 호출돼왔다. 정확한 표현: "B 시나리오(`risk_tone=
+    "neutral"` 치환) 입력으로는 §45 이전까지 직접 호출한 적이
+    없었다". **정정 2**: 이번 검증은 non-alpha 조정 항(core/None/
+    neutral 조건)만 증명했을 뿐 — R3b alpha 교체 전체 경로의 실제
+    코드 반영 후 재현성과 held_position/실제 portfolio_allocation
+    케이스는 미검증이다. **정정 3**: "candidate 전량"은 부정확 —
+    quintile 선별·eligibility 필터링 없이 전체 거래일 스냅샷
+    (58,493건)을 순회했으므로 정확한 표현은 "전체 시점 스냅샷
+    (모집단 전체)". **판정: 세 정정 모두 R3b 방향성·Conditional
+    Go를 바꾸지 않는다** — §45의 핵심 결론은 그대로 유효하며 필요
+    이상으로 보수적으로 낮추지 않는다. 신규 실행 없음, 신규 KIS
+    호출 0건, 운영 코드 변경 없음, broker submit 미호출. 상세:
+    `plans/[DESIGN] regime_conditional_entry_signal_v1.md` §46.
   - **SPPV-3(다음 착수: §21 게이트 정기 재모니터링 + 게이트 충족
     (또는 별도 승인) 시 entry_score 코드 변경 PR 초안 작성 착수
-    여부 사용자 확인(shadow 정합성 확보 완료) + 포지션 사이징 등
-    exit 외 리스크 관리 수단 검토(신규, 낮은 우선순위, 실거래 계좌
+    여부 사용자 확인(shadow 정합성 확보 완료, B 시나리오 non-alpha
+    조정 항 범위) + R3b alpha 교체 전체 경로를 전체 파이프라인
+    수준에서 재현 검증(신규, 선택 사항) + 포지션 사이징 등 exit
+    외 리스크 관리 수단 검토(신규, 낮은 우선순위, 실거래 계좌
     상태 필요) + T+5 리스크 20일판·60일판 진짜 페어드 비교(선택
     사항, 20일판을 1048건 부분집합으로 제한 재계산) + 국면 혼합도
     감지·대응 설계 검토 여부(선택 사항) + `portfolio_allocation`

@@ -1289,6 +1289,28 @@ value/compliance/broker가 아니라 `entry_score < 0.65`다.
   Go를 유지한다. 신규 KIS 호출 0건, 운영 코드 변경 없음, broker
   submit 미호출. 상세: `plans/[DESIGN]
   regime_conditional_entry_signal_v1.md` §45.
+
+- 수정일자: 2026-07-18 (2.58순위, SPPV-2.56 결론 문구 정밀화 —
+  "직접 호출" 서술 범위·표본 서술 정정)
+- 수정내용: 신규 실행 없이 §2.57(§45)의 두 표현을 기존 코드 재검토
+  로 정정했다(SPPV-2.57). **정정 1**: "실제 함수를 한 번도 직접
+  호출한 적이 없었다"는 과장 — `_build_entry_score`는 시나리오
+  A(현행 regime)로는 `validate_alpha_layer_buy_funnel_comparison.py`
+  와 `validate_r3b_point_in_time_pipeline_shadow.py`에서 이미
+  직접 호출돼왔다. 정확한 표현: "B 시나리오(`risk_tone="neutral"`
+  치환) 입력으로는 §45 이전까지 직접 호출한 적이 없었다". **정정
+  2**: 이번 검증은 non-alpha 조정 항(core/None/neutral 조건)만
+  증명했을 뿐, R3b alpha 교체 전체 경로의 실제 코드 반영 후 재현성과
+  held_position/실제 portfolio_allocation 케이스는 미검증 — "B
+  시나리오 전체가 실제 운영 코드와 동일"은 범위를 넘는다. **정정
+  3**: "candidate 전량"은 부정확 — quintile 선별·eligibility
+  필터링 없이 전체 거래일 스냅샷(58,493건)을 순회했으므로 정확한
+  표현은 "전체 시점 스냅샷(모집단 전체)". 판정: **세 정정 모두
+  R3b 방향성·Conditional Go를 바꾸지 않는다** — §45의 핵심 결론은
+  그대로 유효하며 필요 이상으로 보수적으로 낮추지 않는다. 신규
+  실행 없음, 신규 KIS 호출 0건, 운영 코드 변경 없음, broker submit
+  미호출. 상세: `plans/[DESIGN] regime_conditional_entry_signal_
+  v1.md` §46.
 - **3순위(보류 유지, 형태 재정의 — 우선순위 재조정)**: **`entry_
   score`와 BUY funnel 재현** — §2.7 확장 검증에서 하락장 안정성이
   확인되지 않아 단순 재현으로는 착수하지 않는다. §2.16~§2.21에서
@@ -1434,7 +1456,16 @@ value/compliance/broker가 아니라 `entry_score < 0.65`다.
   동작을 정확히 대표한다는 것이 처음으로 검증됐다. "entry_score
   코드 반영 절차"는 "설계 논의 단계"에서 "shadow 계산 정합성
   확보, 실제 코드 변경 PR 작성 가능 단계"로 격상됐으나 §21 게이트는
-  불변이라 SPPV-3 확정 Go는 아니다(§45).** 한편
+  불변이라 SPPV-3 확정 Go는 아니다(§45). §2.58에서 §2.57(§45)의
+  두 표현을 정정했다 — "한 번도 직접 호출한 적이 없었다"는 과장이며
+  `_build_entry_score`는 시나리오 A(현행 regime)로는 이미 이전
+  스크립트에서 직접 호출돼왔고, §45가 새로 확인한 것은 "B 시나리오
+  (neutral 치환) 입력으로 직접 호출한 적이 없었다"는 좁은 간극이다.
+  또한 이번 검증은 non-alpha 조정 항만 증명했을 뿐 R3b alpha 교체
+  전체 경로의 실제 코드 반영 후 재현성·held_position 케이스는
+  미검증이며, "candidate 전량"이라는 표본 서술도 부정확해 "전체
+  시점 스냅샷(모집단 전체)"으로 바로잡았다. R3b 방향성·Conditional
+  Go는 바꾸지 않는다(§46).** 한편
   **§2.23~§2.27에서
   결합 사용 시 가장 빈번하게 걸리는 축이 regime 관련 축이 아니라
   활동성 필터(`eligibility_low_relative_activity`)임이 확인됐고,

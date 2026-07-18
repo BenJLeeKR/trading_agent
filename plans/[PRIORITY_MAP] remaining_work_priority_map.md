@@ -768,10 +768,69 @@
   Go를 유지한다. 신규 KIS 호출 0건, 운영 코드 변경 없음, broker
   submit 미호출.
 
+- 작성자: Claude
+- 수정일자: 2026-07-18 (55차, SPPV-2.56 결론 문구 정밀화 — "직접
+  호출" 서술 범위·표본 서술 정정)
+- 수정내용: 신규 실행 없이 54차(§45)의 두 표현을 기존 코드 재검토
+  로 정정했다(SPPV-2.57). **정정 1**: "실제 함수를 한 번도 직접
+  호출한 적이 없었다"는 과장 — `_build_entry_score`는 시나리오
+  A(현행 regime)로는 `validate_alpha_layer_buy_funnel_comparison.py`
+  와 `validate_r3b_point_in_time_pipeline_shadow.py`에서 이미
+  직접 호출돼왔다. 정확한 표현: "B 시나리오(`risk_tone="neutral"`
+  치환) 입력으로는 §45 이전까지 직접 호출한 적이 없었다" — §45가
+  새로 확인한 것은 이 B 시나리오 재구현이 실제 함수의 neutral-
+  regime 호출 결과와 정합하는지였다. **정정 2**: 이번 검증은
+  non-alpha 조정 항(core/None/neutral 조건)만 증명했을 뿐 — R3b
+  alpha 교체 전체 경로의 실제 코드 반영 후 재현성과 held_position/
+  실제 portfolio_allocation 케이스는 미검증이다. "B 시나리오 전체가
+  실제 운영 코드와 동일"이라는 표현은 범위를 넘는다. **정정 3**:
+  "candidate 전량"은 부정확 — quintile 선별·eligibility 필터링
+  없이 전체 거래일 스냅샷(58,493건)을 순회했으므로 정확한 표현은
+  "전체 시점 스냅샷(모집단 전체)". 판정: **세 정정 모두 R3b
+  방향성·Conditional Go를 바꾸지 않는다** — §45의 핵심 결론은
+  그대로 유효하며 필요 이상으로 보수적으로 낮추지 않는다. 신규
+  실행 없음, 신규 KIS 호출 0건, 운영 코드 변경 없음, broker submit
+  미호출.
+
 ## 최근 메모
 
+> **📌 2026-07-18 SPPV-2.56 결론 문구 정밀화 — "직접 호출" 서술
+> 범위·표본 서술 정정 (최신)**: 직전 턴(SPPV-2.56, §45)의 두 표현을
+> 신규 실행 없이 기존 코드 재검토로 정정했다 — 판정을 뒤집는 게
+> 아니라 "무엇이 실제로 검증됐고 무엇은 아직 아닌지"를 정확한
+> 범위로 다시 고정하는 턴이다. **정정 1(직접 호출 여부)**: "실제
+> 함수를 한 번도 직접 호출한 적이 없었다"는 과장이다 — 코드 확인
+> 결과 `_build_entry_score`는 시나리오 A(현행 regime)로는
+> `scripts/validate_alpha_layer_buy_funnel_comparison.py:211`와
+> `scripts/validate_r3b_point_in_time_pipeline_shadow.py:178`에서
+> 이미 직접 호출돼왔다. **정확한 표현**: "B 시나리오(`risk_tone=
+> "neutral"`로 치환한 market_regime) 입력으로 직접 호출한 적은
+> §45 이전까지 없었다" — §45가 새로 채운 것은 바로 이 좁은 간극
+> (B 시나리오 재구현이 실제 함수의 neutral-regime 호출 결과와
+> 정합하는지)이다. **정정 2(증명 범위)**: 이번 fidelity 검증이
+> 실제로 증명한 것은 `source_type="core"`, `portfolio_allocation=
+> None`, `risk_tone` neutral 치환 조건에서 non-alpha 조정 항이
+> 정합한다는 것뿐이다. **아직 증명하지 않은 것**: (a) R3b alpha
+> 교체 전체 경로가 실제 운영 코드에 반영된 뒤에도
+> `assess_deterministic_triggers` 전체 파이프라인 수준에서 동일하게
+> 재현되는지, (b) `source_type="held_position"`이거나 실제
+> `portfolio_allocation` 값이 있는 경우의 동작 — "B 시나리오
+> 전체가 실제 운영 코드와 동일하다"는 표현은 범위를 넘는다.
+> **정정 3(표본 서술)**: "3년 전체 core 87종목 candidate 전량"은
+> 부정확하다 — 스크립트 루프를 확인한 결과 quintile 상위 20%
+> 선별이나 eligibility 필터링을 전혀 거치지 않고 `_MIN_LOOKBACK`
+> 부터 각 종목의 마지막 거래일까지 **모든 거래일**을 순회했다.
+> 정확한 표현: "3년 전체 core 87종목의 전체 시점 스냅샷(모집단
+> 전체, candidate로 좁히지 않음) 58,493건". **판정: 세 정정 모두
+> R3b 방향성·Conditional Go를 바꾸지 않는다** — §45의 핵심 결론
+> (B 시나리오 non-alpha 조정 항이 검증된 조건 안에서 완전히 일치)
+> 은 그대로 유효하며, 필요 이상으로 보수적으로 낮추지 않는다.
+> 신규 실행 없음(기존 코드·산출물 재검토만 수행), 신규 KIS 호출
+> 0건, 운영 코드 변경 없음, broker submit 미호출. 상세: `plans/
+> [DESIGN] regime_conditional_entry_signal_v1.md` §46(SPPV-2.57).
+>
 > **📌 2026-07-18 entry_score 코드 반영 절차 구체화 — shadow
-> 재구현 정합성 검증 (최신)**: `§21` 게이트는 시장 상황에 좌우되는
+> 재구현 정합성 검증**: `§21` 게이트는 시장 상황에 좌우되는
 > 순수 외생 조건이라 반복 관측 외에는 전진시킬 수 없다 — 이번 턴은
 > 그 대신 **지금 당장 전진 가능한 비외생 조건 1개**를 골랐다.
 > "entry_score 코드 반영 절차"는 §38 이래 보조 잔여 조건으로 남아
@@ -7074,10 +7133,35 @@ agent 설계 문서 기준으로도 순서는 다음이 맞다.
      submit 미호출. 산출: `scripts/validate_r3b_entry_score_
      shadow_fidelity.py`(read-only), `logs/signal_ic_r3b_entry_
      score_shadow_fidelity_2026-07-18.json`. 상세: `plans/[DESIGN]
-     regime_conditional_entry_signal_v1.md` §45.
+     regime_conditional_entry_signal_v1.md` §45. **[SPPV-2.57에서
+     정정] "한 번도 직접 호출한 적이 없었다"·"candidate 전량"은
+     과장/부정확 — 아래 SPPV-2.57 참고.**
+   - **SPPV-2.57(완료, 2026-07-18, SPPV-2.56 결론 문구 정밀화 —
+     "직접 호출" 서술 범위·표본 서술 정정 — Conditional Go 유지,
+     방향 변경 없음)**: 신규 실행 없이 §45의 두 표현을 기존 코드
+     재검토로 정정했다. **정정 1**: "실제 함수를 한 번도 직접
+     호출한 적이 없었다"는 과장 — `_build_entry_score`는 시나리오
+     A(현행 regime)로는 `validate_alpha_layer_buy_funnel_
+     comparison.py:211`와 `validate_r3b_point_in_time_pipeline_
+     shadow.py:178`에서 이미 직접 호출돼왔다. 정확한 표현: "B
+     시나리오(`risk_tone="neutral"` 치환) 입력으로는 §45 이전까지
+     직접 호출한 적이 없었다". **정정 2**: 이번 검증은 non-alpha
+     조정 항(core/None/neutral 조건)만 증명했을 뿐 — R3b alpha
+     교체 전체 경로의 실제 코드 반영 후 재현성과 held_position/
+     실제 portfolio_allocation 케이스는 미검증이다. **정정 3**:
+     "candidate 전량"은 부정확 — quintile 선별·eligibility 필터링
+     없이 전체 거래일 스냅샷(58,493건)을 순회했으므로 정확한
+     표현은 "전체 시점 스냅샷(모집단 전체)". **판정: 세 정정 모두
+     R3b 방향성·Conditional Go를 바꾸지 않는다** — §45의 핵심
+     결론은 그대로 유효하며 필요 이상으로 보수적으로 낮추지 않는다.
+     신규 실행 없음, 신규 KIS 호출 0건, 운영 코드 변경 없음, broker
+     submit 미호출. 상세: `plans/[DESIGN] regime_conditional_
+     entry_signal_v1.md` §46.
    - **SPPV-3(다음 착수: §21 게이트 정기 재모니터링 + 게이트 충족
      (또는 별도 승인) 시 entry_score 코드 변경 PR 초안 작성 착수
-     여부 사용자 확인(shadow 정합성 확보 완료) + 포지션 사이징 등
+     여부 사용자 확인(shadow 정합성 확보 완료, B 시나리오 non-alpha
+     조정 항 범위) + R3b alpha 교체 전체 경로를 전체 파이프라인
+     수준에서 재현 검증(신규, 선택 사항) + 포지션 사이징 등
      exit 외 리스크 관리 수단 검토(신규, 낮은 우선순위, 실거래
      계좌 상태 필요) + T+5 리스크 20일판·60일판 진짜 페어드 비교
      (선택 사항, 20일판을 1048건 부분집합으로 제한 재계산) + 국면
@@ -7235,7 +7319,16 @@ agent 설계 문서 기준으로도 순서는 다음이 맞다.
      대표한다는 것이 처음으로 검증됐다. "entry_score 코드 반영
      절차"는 "설계 논의 단계"에서 "shadow 계산 정합성 확보, 실제
      코드 변경 PR 작성 가능 단계"로 격상됐으나 §21 게이트는 불변
-     이라 SPPV-3 확정 Go는 아니다(§45).** 한편 **§2.23~
+     이라 SPPV-3 확정 Go는 아니다(§45). §2.57에서 §45의 두 표현을
+     정정했다 — "한 번도 직접 호출한 적이 없었다"는 과장이며
+     `_build_entry_score`는 시나리오 A(현행 regime)로는 이미 이전
+     스크립트에서 직접 호출돼왔고, §45가 새로 확인한 것은 "B
+     시나리오(neutral 치환) 입력으로 직접 호출한 적이 없었다"는
+     좁은 간극이다. 이번 검증은 non-alpha 조정 항만 증명했을 뿐
+     R3b alpha 교체 전체 경로의 실제 코드 반영 후 재현성·held_
+     position 케이스는 미검증이며, "candidate 전량"이라는 표본
+     서술도 부정확해 "전체 시점 스냅샷(모집단 전체)"으로 바로잡았다.
+     R3b 방향성·Conditional Go는 바꾸지 않는다(§46).** 한편 **§2.23~
      §2.26에서 결합 사용
      시 가장 빈번하게 걸리는 축이 활동성 필터(`eligibility_low_
      relative_activity`)임이 확인됐고, 완화 효과의 반전이 국면·

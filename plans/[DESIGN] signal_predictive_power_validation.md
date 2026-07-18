@@ -1136,6 +1136,33 @@ entry 설계 검토로 전환**을 확정했다. 별도 문서
   호출 0건, 운영 코드 변경 없음, broker submit 미호출. 상세:
   `plans/[DESIGN] regime_conditional_entry_signal_v1.md` §45.
 
+- 작성자: Claude
+- 수정일자: 2026-07-18 (56차, SPPV-2.56 결론 문구 정밀화 — "직접
+  호출" 서술 범위·표본 서술 정정)
+- 수정내용: 신규 실행 없이 §45(SPPV-2.56)의 두 표현을 기존 코드
+  재검토로 정정했다(SPPV-2.57). **정정 1**: "실제 함수를 한 번도
+  직접 호출한 적이 없었다"는 과장 — `_build_entry_score`는 시나리오
+  A(현행 regime)로는 `validate_alpha_layer_buy_funnel_comparison.py`
+  `validate_r3b_point_in_time_pipeline_shadow.py`에서 이미 직접
+  호출돼왔다. 정확한 표현: "B 시나리오(`risk_tone="neutral"`로
+  치환한 market_regime) 입력으로 직접 호출한 적은 §45 이전까지
+  없었다"이며, §45가 새로 확인한 것은 이 B 시나리오 재구현이 실제
+  함수의 neutral-regime 호출 결과와 정합하는지였다. **정정 2**:
+  이번 검증은 non-alpha 조정 항(source_type="core", portfolio_
+  allocation=None, risk_tone neutral 조건)만 증명했을 뿐 — R3b
+  alpha 교체 전체 경로가 실제 운영 코드 반영 후에도 동일하게
+  재현되는지, held_position/실제 portfolio_allocation 케이스는
+  검증 범위 밖이다. **정정 3**: "candidate 전량"이라는 표본 서술은
+  부정확 — 이 스크립트는 quintile 선별·eligibility 필터링 없이
+  전체 거래일 스냅샷(58,493건)을 순회했다. 정확한 표현은 "전체
+  시점 스냅샷(모집단 전체)". 판정: **세 정정 모두 R3b 방향성·
+  Conditional Go를 바꾸지 않는다** — §45의 핵심 결론(B 시나리오
+  non-alpha 조정 항이 검증된 조건 안에서 완전히 일치)은 그대로
+  유효하며, 필요 이상으로 보수적으로 낮추지 않는다. 신규 실행 없음,
+  신규 KIS 호출 0건, 운영 코드 변경 없음, broker submit 미호출.
+  상세: `plans/[DESIGN] regime_conditional_entry_signal_v1.md`
+  §46.
+
 ---
 
 ## 진행 체크리스트
@@ -2801,7 +2828,9 @@ canonical),
     이 결과 하나로 SPPV-3 확정 Go를 선언하지 않는다. R3b는
     Conditional Go를 유지한다. 신규 KIS 호출 0건, 운영 코드 변경
     없음, broker submit 미호출. 상세: `plans/[DESIGN]
-    regime_conditional_entry_signal_v1.md` §45.
+    regime_conditional_entry_signal_v1.md` §45. **[SPPV-2.57에서
+    정정] "한 번도 직접 호출한 적이 없었다"·"candidate 전량"은
+    과장/부정확 — 아래 SPPV-2.57 참고.**
   - 산출물: `scripts/validate_r3b_entry_score_shadow_fidelity.py`
     (read-only, 신규 KIS 호출 0건), `logs/signal_ic_r3b_entry_
     score_shadow_fidelity_2026-07-18.json`, `logs/r3b_entry_score_
@@ -2811,6 +2840,45 @@ canonical),
     §21 게이트 정기 재모니터링, exit 외 리스크 관리(포지션 사이징)
     검토, 국면 혼합도 모니터링 설계 검토, `portfolio_allocation`
     gap·실제 청산 시점 분포는 실거래 누적 이후 재검증.
+- [x] **SPPV-2.57(신설)** SPPV-2.56 결론 문구 정밀화 — "직접 호출"
+  서술 범위·표본 서술 정정 (완료, 2026-07-18)
+  - 작업 범위: 신규 실행 없이 §45(SPPV-2.56)의 두 표현을 기존
+    코드(`validate_alpha_layer_buy_funnel_comparison.py`,
+    `validate_r3b_point_in_time_pipeline_shadow.py`,
+    `validate_r3b_entry_score_shadow_fidelity.py`) 재검토로 정정.
+  - **정정 1(직접 호출 여부)**: "실제 함수를 한 번도 직접 호출한
+    적이 없었다"는 과장 — `_build_entry_score`는 시나리오 A(현행
+    regime)로는 `validate_alpha_layer_buy_funnel_comparison.py:211`
+    와 `validate_r3b_point_in_time_pipeline_shadow.py:178`에서 이미
+    직접 호출돼왔다. **정확한 표현**: "B 시나리오(`risk_tone=
+    "neutral"`로 치환한 market_regime) 입력으로는 §45 이전까지
+    직접 호출한 적이 없었다" — §45가 새로 확인한 것은 이 B
+    시나리오 재구현이 실제 함수의 neutral-regime 호출 결과와
+    정합하는지였다.
+  - **정정 2(증명 범위)**: 이번 검증이 실제로 증명한 것은
+    non-alpha 조정 항(source_type="core", portfolio_allocation=
+    None, risk_tone neutral 조건)의 정합성뿐이다. **아직 증명하지
+    않은 것**: (a) R3b alpha 교체 전체 경로가 실제 운영 코드
+    반영 후 `assess_deterministic_triggers` 전체 파이프라인
+    수준에서도 동일하게 재현되는지, (b) `source_type=
+    "held_position"` 또는 실제 `portfolio_allocation` 값이 있는
+    경우의 동작 — "B 시나리오 전체가 실제 운영 코드와 동일"이라는
+    표현은 범위를 넘는다.
+  - **정정 3(표본 서술)**: "candidate 전량"은 부정확 — 스크립트는
+    quintile 상위 20% 선별·eligibility 필터링을 전혀 거치지 않고
+    전체 거래일 point-in-time 스냅샷(58,493건)을 순회했다. 정확한
+    표현: "3년 전체 core 87종목의 전체 시점 스냅샷(모집단 전체,
+    candidate로 좁히지 않음) 58,493건".
+  - **판정**: 세 정정 모두 **R3b 방향성·Conditional Go를 바꾸지
+    않는다** — §45의 핵심 결론(B 시나리오 non-alpha 조정 항이
+    검증된 조건 안에서 완전히 일치)은 그대로 유효하며, 필요 이상
+    으로 보수적으로 낮추지 않는다. 신규 실행 없음, 신규 KIS 호출
+    0건, 운영 코드 변경 없음, broker submit 미호출. 상세: `plans/
+    [DESIGN] regime_conditional_entry_signal_v1.md` §46.
+  - 다음 과제(변경 없음): R3b alpha 교체 전체 경로를 전체 파이프라인
+    수준에서 재현 검증(신규, 선택 사항), entry_score 코드 변경 PR
+    초안 작성 착수 여부, §21 게이트 정기 재모니터링, exit 외 리스크
+    관리 검토, 국면 혼합도 모니터링 설계 검토.
 - [~] **SPPV-3** `entry_score` point-in-time 재현 및 중복 penalty ablation
   - **보류 유지, 형태 재정의 — 우선순위 재조정**: §12(1년, 자기참조
     포함) 당시 "알파 근거 강화"로 낙관했던 것이 §14(3년, 자기참조

@@ -6,19 +6,24 @@
 ``plans/[DESIGN] regime_conditional_entry_signal_v1.md`` §38의 보조
 잔여 조건 "entry_score 코드 반영 절차"를 이번 턴에 전진시킨다.
 
-**배경**: SPPV-2.46부터 이번 세션 내내, R3b+entry_score
-risk_off_penalty 제거(B 시나리오)의 non-alpha(regime/strategy/
+**배경**: `_build_entry_score`(`deterministic_trigger_engine.py:
+1115-1170`)는 시나리오 A(현행 regime)로는 이미 이전 스크립트
+(`validate_alpha_layer_buy_funnel_comparison.py`,
+`validate_r3b_point_in_time_pipeline_shadow.py`)에서 직접 호출돼
+왔다. **[SPPV-2.57에서 정정]** 다만 SPPV-2.46부터 이번 세션 내내,
+R3b+entry_score risk_off_penalty 제거(B 시나리오, `risk_tone=
+"neutral"`로 치환한 market_regime)의 non-alpha(regime/strategy/
 activity 조정) 부분은 검증 스크립트마다 `_non_alpha`라는 이름의
-**수작업 재구현 함수**로 계산해왔다 — 실제 운영 함수
-`_build_entry_score`(`deterministic_trigger_engine.py:1115-1170`)를
-직접 호출한 적은 한 번도 없었다. 코드 대조 결과 `_build_entry_score`
-에는 `_non_alpha`가 누락한 항목이 있다: portfolio_allocation 예산
-보너스/차단 패널티(+0.10/-0.20, 1143-1149행), source_type 조정
-(market_overlay +0.05 / held_position -0.35, 1158-1163행), 그리고
-최종 `_clamp()`(1170행). 이 세션에서는 항상 `source_type="core"`,
-`portfolio_allocation=None`으로 호출해 앞의 두 항목은 이론상
-no-op이었지만, **실제로 no-op인지, 그리고 clamp를 포함해도
-결과가 완전히 같은지는 지금까지 한 번도 직접 검증되지 않았다.**
+**수작업 재구현 함수**로만 계산해왔다 — **B 시나리오(neutral 치환)
+입력으로 `_build_entry_score`를 직접 호출한 적은 이 검증 이전까지
+없었다.** 코드 대조 결과 `_build_entry_score`에는 `_non_alpha`가
+누락한 항목이 있다: portfolio_allocation 예산 보너스/차단 패널티
+(+0.10/-0.20, 1143-1149행), source_type 조정(market_overlay +0.05
+/ held_position -0.35, 1158-1163행), 그리고 최종 `_clamp()`(1170행).
+이 세션에서는 항상 `source_type="core"`, `portfolio_allocation=
+None`으로 호출해 앞의 두 항목은 이론상 no-op이었지만, **실제로
+no-op인지, 그리고 clamp를 포함해도 결과가 완전히 같은지는 지금까지
+한 번도 직접 검증되지 않았다.**
 
 이는 단순한 문구 정리가 아니라, **entry_score 코드 반영 절차(실제
 운영 코드 변경 PR 작성)의 전제조건**이다 — 지금까지 이 세션에서
@@ -28,7 +33,9 @@ no-op이었지만, **실제로 no-op인지, 그리고 clamp를 포함해도
 일치가 확인되면 코드 반영 절차를 실제로 착수해도 좋다는 근거가
 되고, 불일치가 발견되면 지금까지의 결과를 재검토해야 한다는 뜻이다.
 
-**방법**: 3년 전체 후보 표본(약 5.3만 행)에 대해 각 행마다 실제
+**방법**: 3년 전체 core 87종목의 모든 거래일 point-in-time
+스냅샷(candidate 선별·eligibility 필터링 없이 모집단 전체, 약
+5.8만 행)에 대해 각 행마다 실제
 `_build_entry_score`를 `overall=fast=slow=0.0`으로 호출해(이러면
 alpha 항은 `_normalize_signed_score(0)=0.5` 기준의 상수
 `0.45*0.5+0.20*0.5+0.15*0.5=0.40`이 되어 조정 항만 분리해낼 수
@@ -177,7 +184,7 @@ async def main() -> None:
         if idx % 20 == 0 or idx == len(symbols):
             logger.info("[%d/%d] 누적 검사 %d건, 불일치 %d건", idx, len(symbols), n_checked, n_checked - n_exact_match)
 
-    print("\n=== entry_score shadow 재구현 정합성 검증 (3년 전체 후보 표본) ===")
+    print("\n=== entry_score shadow 재구현 정합성 검증 (3년 전체 시점 스냅샷, 모집단 전체) ===")
     print(f"검사 표본 수: {n_checked}")
     print(f"완전 일치: {n_exact_match}건 ({round(n_exact_match / n_checked * 100, 4) if n_checked else None}%)")
     print(f"불일치: {n_checked - n_exact_match}건, 최대 절대 오차: {max_abs_diff}")
