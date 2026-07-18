@@ -1,0 +1,24 @@
+INFO:validate_r3b_signal_driven_exit_timing_extended:[1단계 entry scan 20/87] 누적 표본 12260건
+INFO:validate_r3b_signal_driven_exit_timing_extended:[1단계 entry scan 40/87] 누적 표본 24520건
+INFO:validate_r3b_signal_driven_exit_timing_extended:[1단계 entry scan 60/87] 누적 표본 36780건
+INFO:validate_r3b_signal_driven_exit_timing_extended:[1단계 entry scan 80/87] 누적 표본 49040건
+INFO:validate_r3b_signal_driven_exit_timing_extended:[1단계 entry scan 87/87] 누적 표본 53273건
+INFO:validate_r3b_signal_driven_exit_timing_extended:1단계 완료 — 전체 표본 53273건, 실패 0종목
+INFO:validate_r3b_signal_driven_exit_timing_extended:would_buy 표본 1048건 — 2단계(60일 exit+MAE 시뮬레이션) 시작
+INFO:validate_r3b_signal_driven_exit_timing_extended:[2단계 200/1048] 완료
+INFO:validate_r3b_signal_driven_exit_timing_extended:[2단계 400/1048] 완료
+INFO:validate_r3b_signal_driven_exit_timing_extended:[2단계 600/1048] 완료
+INFO:validate_r3b_signal_driven_exit_timing_extended:[2단계 800/1048] 완료
+INFO:validate_r3b_signal_driven_exit_timing_extended:[2단계 1000/1048] 완료
+INFO:validate_r3b_signal_driven_exit_timing_extended:[2단계 1048/1048] 완료
+
+=== signal-driven 청산 타이밍 확장 시뮬레이션(60거래일 관찰 창) — B 시나리오, would_buy 후보 ===
+표본 수: 1048
+청산 시점 분포: {'11~20일': 65, '41~60일': 201, '1~5일': 10, 'censored(60일 도달, 미청산)': 538, '21~40일': 216, '6~10일': 18}
+T+5(고정): {'n': 1048, 'mean_pct': 1.2102, 't_newey_west': 3.07, 'pct_positive': 0.5334, 'total_return_proxy': 1268.3}
+T+20(고정): {'n': 1048, 'mean_pct': 4.4637, 't_newey_west': 3.41, 'pct_positive': 0.5162, 'total_return_proxy': 4677.9}
+signal-driven 청산(60일 관찰, 실제 exit_score 기반): {'n': 1048, 'mean_pct': 9.2888, 't_newey_west': 5.38, 'pct_positive': 0.5277, 'total_return_proxy': 9734.7}
+평균 보유일수: 48.0, censored(60일 내 미청산) 비율: 0.5134
+MAE 평균: -11.0835%, 중앙값: -10.4225%, 하위 10%: -21.7687%, 최악값: -45.0959%, -20% 이하 심각 손실 비율: 0.1279
+
+산출 저장: logs/signal_ic_r3b_signal_driven_exit_timing_extended60d_2026-07-18.json

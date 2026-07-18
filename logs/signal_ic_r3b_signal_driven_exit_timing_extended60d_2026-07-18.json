@@ -1,0 +1,52 @@
+{
+  "as_of": "2026-07-18T19:39:24.194094+09:00",
+  "symbol_count_used": 87,
+  "fetch_failures": [],
+  "sell_candidate_threshold": 0.75,
+  "max_exit_observation_days": 60,
+  "would_buy_n": 1048,
+  "exit_offset_distribution": {
+    "11~20일": 65,
+    "41~60일": 201,
+    "1~5일": 10,
+    "censored(60일 도달, 미청산)": 538,
+    "21~40일": 216,
+    "6~10일": 18
+  },
+  "mean_holding_days": 48.0,
+  "censored_rate": 0.5134,
+  "fixed_T5": {
+    "n": 1048,
+    "mean_pct": 1.2102,
+    "t_newey_west": 3.07,
+    "pct_positive": 0.5334,
+    "total_return_proxy": 1268.3
+  },
+  "fixed_T20": {
+    "n": 1048,
+    "mean_pct": 4.4637,
+    "t_newey_west": 3.41,
+    "pct_positive": 0.5162,
+    "total_return_proxy": 4677.9
+  },
+  "signal_driven_exit": {
+    "n": 1048,
+    "mean_pct": 9.2888,
+    "t_newey_west": 5.38,
+    "pct_positive": 0.5277,
+    "total_return_proxy": 9734.7
+  },
+  "mae": {
+    "mean_pct": -11.0835,
+    "median_pct": -10.4225,
+    "p10_pct": -21.7687,
+    "worst_pct": -45.0959,
+    "severe_loss_rate_below_neg20pct": 0.1279
+  },
+  "comparison_to_sppv_2_52_20day_window": {
+    "censored_rate_20day": 0.9114,
+    "mean_holding_days_20day": 19.35,
+    "signal_driven_exit_mean_pct_20day": 6.1405,
+    "signal_driven_exit_t_nw_20day": 4.73
+  }
+}
