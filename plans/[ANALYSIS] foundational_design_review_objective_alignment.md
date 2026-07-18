@@ -1433,6 +1433,29 @@ value/compliance/broker가 아니라 `entry_score < 0.65`다.
   커밋/운영한다. 이는 environment 분기 코드가 아니라 명시적 config
   override 운영 절차다. `trigger_status` 공급원 자동화는 후속 과제로
   남긴다.
+
+- 작성자: Codex
+- 수정일자: 2026-07-18 (2.64순위, 국면 혼합도 모니터링 모듈 구현 및
+  §40 재현성 검증)
+- 수정내용: 최신 truth(commit `aa10caee`로 §21 게이트 배선 완료,
+  `.env`에 `REGIME_SWITCH_V1_GATE_OVERRIDE_ENABLED=true` 설정,
+  paper 관측 단계에서 게이트는 BUY를 막지 않음)를 확정한 뒤, 후속
+  과제 후보(trigger_status 자동화/혼합도 모니터링 설계/T+5 후속
+  검증/SPPV-3 착수 준비) 중 **혼합도 모니터링 설계**를 이번 턴
+  최우선으로 선택했다(SPPV-2.62) — trigger_status 자동화는
+  override=true인 동안 급하지 않고, T+5/경로 리스크는 §41~§44에서
+  이미 충분히 답변됨. §40이 확정한 혼합도 3분위 경계값(cut1=0.15,
+  cut2=0.3833)을 신규 모듈 `services/regime_mixedness_monitor.py`
+  (BUY/SELL 미연결 순수 관측용)로 재구현하고, 벤치마크 3년 캐시
+  bars만 재사용해(신규 KIS 호출 0건) 634거래일 전체를 재분류했다.
+  **결과: 버킷별 거래일 수(저혼합 217일/중혼합 215일/고혼합 202일)
+  가 §40 실측치와 정확히 일치.** 해석: 가설을 다시 검증한 것이
+  아니라 그 검증 결과를 실제로 소비 가능한 재사용 가능 코드 모듈로
+  정확히 이식했다는 것을 100% 재현성으로 확인 — "혼합도 모니터링
+  설계" 다음 단계가 설계 스케치에서 검증된 모듈로 전진했다. 판정:
+  **R3b는 Conditional Go를 유지한다.** 신규 KIS 호출 0건, 운영
+  코드 미변경, compliance/VaR/broker submit 경계 미변경. 상세:
+  `plans/[DESIGN] regime_conditional_entry_signal_v1.md` §51.
 - **3순위(보류 유지, 형태 재정의 — 우선순위 재조정)**: **`entry_
   score`와 BUY funnel 재현** — §2.7 확장 검증에서 하락장 안정성이
   확인되지 않아 단순 재현으로는 착수하지 않는다. §2.16~§2.21에서

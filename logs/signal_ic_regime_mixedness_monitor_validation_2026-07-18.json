@@ -1,0 +1,25 @@
+{
+  "as_of": "2026-07-19T08:50:47.007100+09:00",
+  "benchmark_symbol": "069500",
+  "mixedness_window_trading_days": 60,
+  "total_trading_days": 653,
+  "n_classified": 634,
+  "n_skipped_insufficient_history": 19,
+  "bucket_day_counts": {
+    "저혼합(단일 국면 지배)": 217,
+    "중혼합": 215,
+    "고혼합": 202
+  },
+  "reason_code_counts": {
+    "mixedness_low_bucket_high_confidence": 217,
+    "mixedness_mid_bucket_moderate_confidence": 215,
+    "mixedness_high_bucket_low_confidence_caveat": 202
+  },
+  "sppv_2_50_expected_bucket_day_counts": {
+    "저혼합(단일 국면 지배)": 217,
+    "중혼합": 215,
+    "고혼합": 202
+  },
+  "matches_sppv_2_50": true,
+  "note": "신규 KIS 호출 없음 — 기존 3년 bars 캐시(logs/_bars_cache_core87_3y_2026-07-14/069500.json)만 재사용. classify_mixedness_bucket()은 BUY/SELL 판정에 연결되지 않은 순수 관측/로깅용 분류기다(§40.5 원칙 유지)."
+}

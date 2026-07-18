@@ -897,10 +897,88 @@
   Go를 유지한다. compliance/VaR/broker submit 경계 미변경. 신규
   KIS 호출 0건.
 
+- 작성자: Codex
+- 수정일자: 2026-07-18 (61차, 국면 혼합도 모니터링 모듈 구현 및
+  §40 재현성 검증)
+- 수정내용: **최신 truth 갱신**: commit `aa10caee`로 §21 게이트
+  배선 완료·푸시 확정, 현재 `.env`에 `REGIME_SWITCH_V1_GATE_
+  OVERRIDE_ENABLED=true` 설정 — paper 관측 단계에서 게이트는 BUY를
+  막지 않는다(paper/production 코드 분기·배선 원복은 더 이상 검토
+  대상 아님). 후속 과제 후보(trigger_status 자동화/혼합도 모니터링
+  설계/T+5 후속 검증/SPPV-3 착수 준비) 중 **혼합도 모니터링 설계**
+  를 이번 턴 최우선으로 선택했다(SPPV-2.62) — trigger_status 자동화
+  는 override=true인 동안 급하지 않고, T+5/경로 리스크는 §41~§44
+  에서 이미 답변됨. §40이 확정한 혼합도 3분위 경계값(cut1=0.15,
+  cut2=0.3833)을 신규 모듈 `services/regime_mixedness_monitor.py`
+  (BUY/SELL 미연결 순수 관측용)로 재구현하고, 벤치마크 3년 캐시
+  bars만 재사용해(신규 KIS 호출 0건) 634거래일 전체를 재분류했다.
+  **결과: 버킷별 거래일 수(저혼합 217일/중혼합 215일/고혼합 202일)
+  가 §40 실측치와 정확히 일치(`matches_sppv_2_50=True`).** 해석:
+  가설을 다시 검증한 것이 아니라 그 검증 결과를 실제로 소비 가능한
+  재사용 가능 코드 모듈로 정확히 이식했다는 것을 100% 재현성으로
+  확인 — "혼합도 모니터링 설계" 다음 단계가 설계 스케치에서 검증된
+  모듈로 전진했다. 판정: **R3b는 Conditional Go를 유지한다.** 신규
+  KIS 호출 0건, 운영 코드 미변경, compliance/VaR/broker submit
+  경계 미변경.
+
 ## 최근 메모
 
+> **📌 2026-07-18 국면 혼합도 모니터링 모듈 구현 및 §40 재현성
+> 검증 (최신, 작성자: Codex)**: **최신 truth 확정**: commit
+> `aa10caee`("SPPV-2.61: wire §21 gate and lock paper ops to config
+> override")로 §21 게이트가 실제 판단 경로에 완전히 배선돼 커밋·
+> 푸시됐고, 현재 `.env`에는 `REGIME_SWITCH_V1_GATE_OVERRIDE_
+> ENABLED=true`가 설정돼 있다 — **paper 관측 단계에서는 §21 게이트
+> 가 BUY를 막지 않는다.** paper/production 코드 분기 추가, 게이트
+> 배선 원복, "paper에서도 게이트 때문에 BUY가 기본적으로 막힌다"는
+> 전제는 이제 더 이상 유효한 우려가 아니다. 이 상태를 기준으로,
+> 후속 과제 후보 4개(trigger_status 공급원 자동화/혼합도 모니터링
+> 설계/T+5 경로 리스크 후속 검증/SPPV-3 착수 준비) 중 **혼합도
+> 모니터링 설계**를 이번 턴 최우선으로 선택했다 — trigger_status
+> 자동화는 override=true인 동안 실질적 영향이 없어 급하지 않고,
+> T+5/경로 리스크는 §41~§44에서 이미 충분히 답이 나온 반복 질문
+> 이었기 때문이다. **구현**: §40(SPPV-2.50)이 3년 634거래일 전체
+> 표본에서 확정한 혼합도 3분위 경계값(`cut1=0.1500`, `cut2=
+> 0.3833`)을 그대로 상수화해 신규 모듈 `services/regime_
+> mixedness_monitor.py`(BUY/SELL 판정에 연결되지 않은 순수 관측/
+> 로깅용 — §40.5의 "차단 사유 아닌 모니터링 지표" 원칙을 그대로
+> 지킴)로 재구현했다 — `compute_mixed_score()`(60거래일 trailing
+> 국면 분포에서 mixed_score 계산), `classify_mixedness_bucket()`
+> (3분위 분류 + §40 실측 신뢰도를 반영한 reason_code:
+> 저혼합=`mixedness_low_bucket_high_confidence`, 중혼합=
+> `mixedness_mid_bucket_moderate_confidence`, 고혼합=
+> `mixedness_high_bucket_low_confidence_caveat`). **검증**
+> (`scripts/validate_regime_mixedness_monitor.py`, read-only,
+> 신규 KIS 호출 0건 — 벤치마크 3년 캐시 bars만 재사용, `_fetch_
+> extended_bars(None, ...)`로 KIS client조차 필요 없이 완전히
+> 로컬에서 수행): 벤치마크 634거래일 전체를 신규 모듈로 재분류한
+> 결과 **저혼합 217일/중혼합 215일/고혼합 202일 — §40 실측치와
+> 정확히 일치(`matches_sppv_2_50=True`).** **해석**: 이는 "혼합
+> 국면 약세" 가설을 다시 검증한 것이 아니다(§40에서 이미 확정) —
+> 대신 그 검증 결과를 **실제로 소비 가능한 재사용 가능 코드
+> 모듈로 정확히 이식했다**는 것을 100% 재현성으로 확인한 것이다.
+> 이전에는 이 분석이 일회성 검증 스크립트에만 존재했고 재사용
+> 가능한 서비스 모듈이 없었다 — 이번 구현으로 향후 실거래
+> 파이프라인 어디서든(일일 모니터링 로그, 관측 대시보드 등)
+> `classify_mixedness_bucket()`을 호출해 그날의 신뢰도 caveat을
+> 즉시 얻을 수 있는 상태가 됐다. 이는 "창 교체(R3b) 검증"에서
+> "창 교체 이후 실제 운영 관측 도구"로의 전진이다 — 방패 보강이
+> 아니라, 이미 확인된 리스크(고혼합 구간에서 신호 신뢰도 저하)를
+> 실제로 인지 가능하게 만드는 관측 인프라다. **판정: R3b는
+> Conditional Go를 유지한다.** §21 게이트(주된 차단 요인)나
+> override 설정은 이번 턴과 무관하게 불변. 이 모듈은 아직 실제
+> 파이프라인(decision loop, 대시보드 등)에 연결되지 않았다 — 순수
+> 함수로 존재할 뿐이며 연결 여부는 별도 결정 사항. 신규 KIS 호출
+> 0건, 운영 코드(`deterministic_trigger_engine.py`, `decision_
+> orchestrator.py`) 미변경, compliance/VaR/broker submit 경계
+> 미변경. 산출: `src/agent_trading/services/regime_mixedness_
+> monitor.py`(신규), `scripts/validate_regime_mixedness_
+> monitor.py`(신규), `logs/signal_ic_regime_mixedness_monitor_
+> validation_2026-07-18.json`. 상세: `plans/[DESIGN] regime_
+> conditional_entry_signal_v1.md` §51(SPPV-2.62).
+>
 > **📌 2026-07-18 SPPV-2.60 보고 정정 — `resolve_cached_trigger_
-> status()` None 원인 규명 + 테스트 증빙 재확인 (최신, 작성자:
+> status()` None 원인 규명 + 테스트 증빙 재확인 (작성자:
 > Codex)**: 직전 턴(§49, SPPV-2.60)의 검증 산출물에서 `resolve_
 > cached_trigger_status_current_value`가 `None`으로 나왔으나,
 > 실제로는 `logs/regime_switch_v1_gate_monitor_2026-07-14.json`·
@@ -7603,20 +7681,44 @@ agent 설계 문서 기준으로도 순서는 다음이 맞다.
      r3b_orchestrator_gate_wiring_run_2026-07-18b.log`(신규).
      상세: `plans/[DESIGN] regime_conditional_entry_signal_v1.md`
      §50.
-   - **SPPV-3(다음 착수: §21 게이트 정기 재모니터링(캐시 자동 갱신
-     cron/배치 설계 포함) + override를 켤지(`REGIME_SWITCH_V1_GATE_
-     OVERRIDE_ENABLED=true`) 또는 이번 배선을 되돌릴지 사용자 확인
-     (최우선, §49.6) + 게이트 충족(또는 override 명시적 승인) 시
-     entry_score 코드 변경 PR 초안 작성 착수 여부 사용자 확인
-     (shadow 정합성 확보 완료, B 시나리오 non-alpha 조정 항 범위) +
-     R3b alpha 교체 전체 경로를 전체 파이프라인 수준에서 재현 검증
-     (신규, 선택 사항) + 포지션 사이징 등 exit 외 리스크 관리 수단
-     검토(신규, 낮은 우선순위, 실거래 계좌 상태 필요) + T+5 리스크
-     20일판·60일판 진짜 페어드 비교(선택 사항, 20일판을 1048건
-     부분집합으로 제한 재계산) + 국면 혼합도 감지·대응 설계 검토
-     (강한 구조적 정합 증거 확인됨, 선택 사항이나 우선순위 상향
-     권장) + `portfolio_allocation` gap 실거래 누적 후 재검증 +
-     "국면 조건부 활동성 threshold" 설계 검토 여부 사용자 확인)**:
+   - **[최신 truth 확정, 2026-07-18]** commit `aa10caee`로 §21
+     게이트 배선이 실제 판단 경로에 완전히 연결·커밋·푸시됐고,
+     `.env`에는 `REGIME_SWITCH_V1_GATE_OVERRIDE_ENABLED=true`가
+     설정돼 있다 — **paper 관측 단계에서 §21 게이트는 BUY를 막지
+     않는다.** paper/production 코드 분기, 배선 원복은 더 이상
+     검토 대상이 아니다.
+   - **SPPV-2.62(완료, 2026-07-18, 국면 혼합도 모니터링 모듈 구현
+     및 §40 재현성 검증, 작성자: Codex — Conditional Go 유지)**:
+     위 최신 truth를 기준으로 후속 과제 후보(trigger_status 자동화/
+     혼합도 모니터링 설계/T+5 후속 검증/SPPV-3 착수 준비) 중
+     **혼합도 모니터링 설계**를 최우선으로 선택했다 — trigger_
+     status 자동화는 override=true인 동안 급하지 않고, T+5/경로
+     리스크는 §41~§44에서 이미 답변됨. §40이 확정한 혼합도 3분위
+     경계값(cut1=0.15, cut2=0.3833)을 신규 모듈 `services/regime_
+     mixedness_monitor.py`(BUY/SELL 미연결 순수 관측용)로 재구현
+     하고, 벤치마크 3년 캐시 bars만 재사용해(신규 KIS 호출 0건)
+     634거래일 전체를 재분류했다. **결과: 저혼합 217일/중혼합
+     215일/고혼합 202일 — §40 실측치와 정확히 일치(`matches_
+     sppv_2_50=True`).** 판정: **R3b는 Conditional Go를 유지한다.**
+     신규 KIS 호출 0건, 운영 코드 미변경, compliance/VaR/broker
+     submit 경계 미변경. 산출: `src/agent_trading/services/regime_
+     mixedness_monitor.py`(신규), `scripts/validate_regime_
+     mixedness_monitor.py`(신규), `logs/signal_ic_regime_
+     mixedness_monitor_validation_2026-07-18.json`. 상세: `plans/
+     [DESIGN] regime_conditional_entry_signal_v1.md` §51.
+   - **SPPV-3(다음 착수: `trigger_status` 공급원 자동화/배치화
+     (cron/배치 설계, override=true인 동안 낮은 우선순위) + 혼합도
+     모니터링 모듈을 실제 소비 위치(decision loop 로그, 대시보드)에
+     연결할지 여부(선택 사항, 별도 승인 필요) + 게이트 충족(또는
+     override 유지) 시 entry_score 코드 변경 PR 초안 작성 착수 여부
+     사용자 확인(shadow 정합성 확보 완료, B 시나리오 non-alpha
+     조정 항 범위) + R3b alpha 교체 전체 경로를 전체 파이프라인
+     수준에서 재현 검증(신규, 선택 사항) + 포지션 사이징 등 exit
+     외 리스크 관리 수단 검토(신규, 낮은 우선순위, 실거래 계좌 상태
+     필요) + T+5 리스크 20일판·60일판 진짜 페어드 비교(선택 사항,
+     20일판을 1048건 부분집합으로 제한 재계산) + `portfolio_
+     allocation` gap 실거래 누적 후 재검증 + "국면 조건부 활동성
+     threshold" 설계 검토 여부 사용자 확인)**:
      §2.16~§2.21에서 국면 정의 통일(차단 축)은 Watch/No-Go에
      근접한다는 것이 확인됐고, §2.22에서 alpha layer 교체(선별 축)는
      Conditional Go를 확보했으며, **§2.27~§2.28에서 그 Conditional

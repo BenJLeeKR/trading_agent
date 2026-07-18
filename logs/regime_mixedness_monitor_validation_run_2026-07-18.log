@@ -1,0 +1,11 @@
+
+=== 국면 혼합도 모니터링 모듈 검증 — §40 재현성 확인 ===
+전체 거래일: 653, 분류된 거래일: 634, 이력 부족으로 skip: 19
+버킷별 거래일 수: {'저혼합(단일 국면 지배)': 217, '중혼합': 215, '고혼합': 202}
+reason_code 분포: {'mixedness_low_bucket_high_confidence': 217, 'mixedness_mid_bucket_moderate_confidence': 215, 'mixedness_high_bucket_low_confidence_caveat': 202}
+
+§40(SPPV-2.50) 실측치와 일치 여부: True
+  §40 기대값: {'저혼합(단일 국면 지배)': 217, '중혼합': 215, '고혼합': 202}
+  이번 재구현: {'저혼합(단일 국면 지배)': 217, '중혼합': 215, '고혼합': 202}
+
+산출 저장: logs/signal_ic_regime_mixedness_monitor_validation_2026-07-18.json

@@ -1317,6 +1317,35 @@ entry 설계 검토로 전환**을 확정했다. 별도 문서
   상세: `plans/[DESIGN] regime_conditional_entry_signal_v1.md`
   §50.
 
+- 작성자: Codex
+- 수정일자: 2026-07-18 (62차, 국면 혼합도 모니터링 모듈 구현 및
+  §40 재현성 검증)
+- 수정내용: **최신 truth 갱신**: commit `aa10caee`로 §21 게이트
+  배선 완료·푸시 확정, 현재 `.env`에 `REGIME_SWITCH_V1_GATE_
+  OVERRIDE_ENABLED=true` 설정 — paper 관측 단계에서 게이트는 BUY를
+  막지 않는다(paper/production 코드 분기·배선 원복은 더 이상 검토
+  대상 아님). 이 상태를 기준으로, 후속 과제 후보(trigger_status
+  자동화/혼합도 모니터링 설계/T+5 후속 검증/SPPV-3 착수 준비) 중
+  **혼합도 모니터링 설계**를 이번 턴 최우선으로 선택했다(SPPV-2.62)
+  — trigger_status 자동화는 override=true인 동안 급하지 않고,
+  T+5/경로 리스크는 §41~§44에서 이미 충분히 답이 나왔기 때문. §40
+  이 확정한 혼합도 3분위 경계값(cut1=0.15, cut2=0.3833)을 신규
+  모듈 `services/regime_mixedness_monitor.py`(BUY/SELL 미연결
+  순수 관측용, `compute_mixed_score`/`classify_mixedness_bucket`)
+  로 재구현하고, `scripts/validate_regime_mixedness_monitor.py`로
+  벤치마크 3년 캐시 bars만 재사용해(신규 KIS 호출 0건) 634거래일
+  전체를 재분류했다. **결과: 버킷별 거래일 수(저혼합 217일/중혼합
+  215일/고혼합 202일)가 §40 실측치와 정확히 일치
+  (`matches_sppv_2_50=True`).** 해석: 이는 가설을 다시 검증한 것이
+  아니라, 그 검증 결과를 실제로 소비 가능한 재사용 가능 코드
+  모듈로 정확히 이식했다는 것을 100% 재현성으로 확인한 것 — "혼합도
+  모니터링 설계" 다음 단계가 설계 스케치에서 검증된 모듈로
+  전진했다. 판정: **R3b는 Conditional Go를 유지한다.** 신규 KIS
+  호출 0건, 운영 코드(`deterministic_trigger_engine.py`,
+  `decision_orchestrator.py`) 미변경, compliance/VaR/broker
+  submit 경계 미변경. 상세: `plans/[DESIGN] regime_conditional_
+  entry_signal_v1.md` §51.
+
 ---
 
 ## 진행 체크리스트
@@ -3245,6 +3274,43 @@ canonical),
   - 다음 과제(갱신): `trigger_status` 캐시 공급원 자동 갱신 설계
     (수동 모니터 스크립트/배치 연결 포함), entry_score 코드 변경 PR
     초안, 포지션 사이징 검토.
+- [x] **SPPV-2.62(신설)** 국면 혼합도 모니터링 모듈 구현 및 §40
+  재현성 검증 (완료, 2026-07-18, 작성자: Codex)
+  - 작업 범위: 최신 truth(commit `aa10caee`로 §21 게이트 배선 완료,
+    `.env`에 `REGIME_SWITCH_V1_GATE_OVERRIDE_ENABLED=true` 설정,
+    paper 관측 단계에서 게이트는 BUY를 막지 않음)를 확정한 뒤, 후속
+    과제 후보 4개 중 **혼합도 모니터링 설계**를 최우선으로 선택 —
+    `trigger_status` 자동화는 override=true인 동안 급하지 않고,
+    T+5/경로 리스크는 §41~§44에서 이미 충분히 답변됨.
+  - **구현**: §40이 확정한 혼합도 3분위 경계값(cut1=0.15, cut2=
+    0.3833)을 신규 모듈 `services/regime_mixedness_monitor.py`
+    (BUY/SELL 미연결, 순수 관측/로깅용)로 재구현 —
+    `compute_mixed_score()`(60거래일 trailing 국면 분포에서 mixed_
+    score 계산), `classify_mixedness_bucket()`(3분위 분류 +
+    §40 실측 신뢰도를 반영한 reason_code).
+  - **검증**(`scripts/validate_regime_mixedness_monitor.py`,
+    read-only, 신규 KIS 호출 0건 — 3년 캐시 bars만 재사용):
+    벤치마크 634거래일 전체를 신규 모듈로 재분류한 결과 **저혼합
+    217일/중혼합 215일/고혼합 202일 — §40 실측치와 정확히 일치
+    (`matches_sppv_2_50=True`)**.
+  - **해석**: 가설을 다시 검증한 것이 아니라, 그 검증 결과를 실제로
+    소비 가능한 재사용 가능 코드 모듈로 정확히 이식했다는 것을
+    100% 재현성으로 확인한 것 — "혼합도 모니터링 설계" 다음 단계가
+    설계 스케치에서 검증된 모듈로 전진했다.
+  - **판정**: R3b는 Conditional Go를 유지한다. 신규 KIS 호출 0건,
+    운영 코드(`deterministic_trigger_engine.py`, `decision_
+    orchestrator.py`) 미변경, compliance/VaR/broker submit 경계
+    미변경. 상세: `plans/[DESIGN] regime_conditional_entry_
+    signal_v1.md` §51.
+  - 산출물: `src/agent_trading/services/regime_mixedness_
+    monitor.py`(신규), `scripts/validate_regime_mixedness_
+    monitor.py`(신규, read-only), `logs/signal_ic_regime_
+    mixedness_monitor_validation_2026-07-18.json`, `logs/regime_
+    mixedness_monitor_validation_run_2026-07-18.log`.
+  - 다음 과제: 이 모듈을 실제 소비 위치(decision loop 로그, 대시
+    보드 등)에 연결할지 여부(선택 사항, 별도 승인 필요), `trigger_
+    status` 공급원 자동화(override=true인 동안 낮은 우선순위),
+    entry_score 코드 변경 PR 초안, SPPV-3 착수 준비.
 - [~] **SPPV-3** `entry_score` point-in-time 재현 및 중복 penalty ablation
   - **보류 유지, 형태 재정의 — 우선순위 재조정**: §12(1년, 자기참조
     포함) 당시 "알파 근거 강화"로 낙관했던 것이 §14(3년, 자기참조
