@@ -792,10 +792,102 @@
   실행 없음, 신규 KIS 호출 0건, 운영 코드 변경 없음, broker submit
   미호출.
 
+- 작성자: Codex
+- 수정일자: 2026-07-18 (56차, §21 gate 환경별 적용 범위 정밀화 —
+  production 잠금과 paper/shadow 관측 분리)
+- 수정내용: §21 게이트를 **실운영 잠금 규칙**과 **paper/shadow 관측
+  단계 규칙**으로 분리해 기록했다(SPPV-2.58). 현재 canonical 해석은
+  다음과 같다. **production**에서는 §21 게이트를 계속 엄격 유지하며
+  R3b의 실주문 반영 전제조건으로 둔다. 반면 **paper/shadow**에서는
+  향후 환경 인지형 우회(config 스위치) 구현 시, 이 게이트를 shadow·
+  paper 실측 자체를 막는 전역 Hold가 아니라 **실운영 승격 잠금선**으로
+  해석한다. 즉 우선순위 관점에서도 다음 실무 초점은 "게이트를 이유로
+  paper 관측을 멈추는 것"이 아니라 "환경별 gate 분리 구현과 그 후속
+  실측 누적"이다. 이번 턴은 문서 정정만 수행했고 판정은 유지한다.
+
+- 작성자: Codex
+- 수정일자: 2026-07-18 (57차, `§21 gate` config 기반 gate 제어 —
+  mode-agnostic 신규 모듈 구현)
+- 수정내용: **[정정] 바로 위 56차 항목의 "environment 인지형 우회
+  (paper/production 분기)" 프레이밍은 부정확하다 — 실제 구현은
+  environment 분기가 아니라 config 스위치 하나만으로 판정하는
+  mode-agnostic 방식이다.** 코드베이스 전수 조사 결과 `§21 게이트`
+  (regime_switch_v1)는 실제 운영 코드(`assess_deterministic_
+  triggers`) 어디에도 연결되지 않은 순수 모니터링 산출물이었다 —
+  R3b shadow/paper 관측은 이 게이트에 의해 코드 레벨에서 전혀 막힌
+  적이 없었다. `deterministic_trigger_engine.py`는 "절대 수정하지
+  않는다"는 원칙에 따라 이번에도 수정하지 않고 신규 격리 모듈로만
+  구현했다: `AppSettings.regime_switch_v1_gate_override_enabled`
+  (env: `REGIME_SWITCH_V1_GATE_OVERRIDE_ENABLED`, 기본값 False) +
+  `services/regime_switch_gate.py`(신규)의 `assess_regime_switch_
+  v1_gate()` 순수 함수 — paper/real/production 값은 전혀 참조하지
+  않는다. override off면 기존 §21 해석과 동일(TRIGGERED일 때만
+  열림), override on이면 국면 상태와 무관하게 항상 열림, reason_
+  code로 항상 추적 가능. `scripts/validate_regime_switch_gate_
+  config_override.py`로 검증: 운영 코드 미수정 확인(소스 검사),
+  실제 게이트 상태 여전히 NOT_TRIGGERED, override off/on 및 3개
+  trigger_status 시나리오 전부 예상대로 동작. 판정: R3b는
+  Conditional Go를 유지한다 — 게이트 상태 불변, `deterministic_
+  trigger_engine.py` 미수정, compliance/VaR/broker submit 경계
+  미변경, 아직 실제 파이프라인 미연결(별도 승인 필요). 신규 KIS
+  호출 0건.
+
 ## 최근 메모
 
+> **📌 2026-07-18 `§21 gate` config 기반 gate 제어 — mode-agnostic
+> 신규 모듈 구현 (최신, 작성자: Codex)**: `§21 게이트`(regime_
+> switch_v1)를 문서 해석이 아니라 실제 코드 레벨에서 제어 가능하게
+> 만드는 것이 이번 턴 목표였다 — 단, **runtime이 paper인지 real인지
+> 코드에서 분기하지 않고, 사용자가 config로만 게이트를 켜고 끌 수
+> 있게** 만드는 것이 핵심 전제였다. 착수 전 코드베이스를 전수
+> 조사한 결과 **이 게이트는 지금까지 실제 운영 코드
+> (`assess_deterministic_triggers`) 어디에도 연결되지 않은 순수
+> 모니터링 산출물**이었음을 확인했다 — R3b shadow/paper 관측은 이
+> 게이트에 의해 코드 레벨에서 전혀 막힌 적이 없다(이 세션 내내
+> 실행된 모든 검증 스크립트가 그 증거). 이 세션 전체에서
+> `deterministic_trigger_engine.py`는 "절대 수정하지 않는다 —
+> shadow/read-only만"이라는 원칙이 반복 확립돼 있었으므로, 이번
+> 요청도 그 파일은 건드리지 않고 **신규 격리 모듈**로만 구현했다.
+> **구현**: `AppSettings.regime_switch_v1_gate_override_enabled`
+> (env: `REGIME_SWITCH_V1_GATE_OVERRIDE_ENABLED`, 기본값 False,
+> `.env` 파일 자체는 수정하지 않음) 신규 필드 + `services/regime_
+> switch_gate.py`(신규)의 `assess_regime_switch_v1_gate(*, trigger_
+> status, override_enabled)` 순수 함수 — **paper/real/production
+> 같은 environment 값은 함수 인자로도 로직으로도 전혀 등장하지
+> 않는다.** override off(기본값)면 기존 §21 해석과 100% 동일
+> (TRIGGERED일 때만 열림, 기존 동작 완전 보존), override on이면
+> 실제 국면 상태와 무관하게 항상 열림(강제 통과) — 어느 경로든
+> reason_code(`gate_open_regime_switch_v1_triggered`/`gate_closed_
+> regime_switch_v1_not_triggered`/`gate_open_config_override_
+> bypass`)로 추적 가능. **검증**(`scripts/validate_regime_switch_
+> gate_config_override.py`, read-only, 신규 KIS 호출 0건): (a)
+> `inspect.getsource`로 `deterministic_trigger_engine.py` 소스를
+> 직접 검사해 신규 모듈이 그 파일에서 import되지 않음을 확인
+> (`isolation_confirmed=True`) — 파일 미수정의 코드 레벨 증거.
+> (b) 실제 §21 게이트 상태 재조회 결과 여전히 `NOT_TRIGGERED`(불변,
+> 벤치마크 1종목 캐시 재사용). (c) override off/on 및 TRIGGERED/
+> PARTIAL/NOT_TRIGGERED 3개 상태 전부에 대한 시나리오 검증 —
+> override on 시 3개 상태 모두 `gate_open=True`, override off 시
+> `TRIGGERED`만 `gate_open=True`(기존 해석과 완전히 일치). **해석**:
+> 단순 통과율 상승이 아니라 "게이트를 어떻게 다룰지"를 코드로
+> 명시적으로 통제 가능하게 만든 것이 이번 변경의 의미다 — R3b
+> shadow/paper 관측 자체는 이번 변경 전후로 바뀌지 않는다(원래도
+> 가능했다), 대신 향후 게이트를 실제 파이프라인에 연결하기로
+> 결정했을 때 environment 분기 없이 config 하나로 안전하게 켜고
+> 끌 수 있는 준비된 인프라가 생겼다는 것이 새로운 진전이다. **판정:
+> R3b는 Conditional Go를 유지한다.** §21 게이트 상태 자체는 불변,
+> `deterministic_trigger_engine.py` 미수정, compliance/VaR/broker
+> submit 경계 미변경. 아직 실제 파이프라인에는 연결하지 않았다 —
+> 연결은 별도 승인·PR 절차 필요. 신규 KIS 호출 0건. 산출:
+> `src/agent_trading/services/regime_switch_gate.py`(신규),
+> `src/agent_trading/config/settings.py`(필드 추가), `scripts/
+> validate_regime_switch_gate_config_override.py`(read-only),
+> `logs/signal_ic_r3b_regime_switch_gate_config_override_2026-07-
+> 18.json`. 상세: `plans/[DESIGN]
+> regime_conditional_entry_signal_v1.md` §47(SPPV-2.58).
+>
 > **📌 2026-07-18 SPPV-2.56 결론 문구 정밀화 — "직접 호출" 서술
-> 범위·표본 서술 정정 (최신)**: 직전 턴(SPPV-2.56, §45)의 두 표현을
+> 범위·표본 서술 정정**: 직전 턴(SPPV-2.56, §45)의 두 표현을
 > 신규 실행 없이 기존 코드 재검토로 정정했다 — 판정을 뒤집는 게
 > 아니라 "무엇이 실제로 검증됐고 무엇은 아직 아닌지"를 정확한
 > 범위로 다시 고정하는 턴이다. **정정 1(직접 호출 여부)**: "실제
@@ -7157,18 +7249,50 @@ agent 설계 문서 기준으로도 순서는 다음이 맞다.
      신규 실행 없음, 신규 KIS 호출 0건, 운영 코드 변경 없음, broker
      submit 미호출. 상세: `plans/[DESIGN] regime_conditional_
      entry_signal_v1.md` §46.
-   - **SPPV-3(다음 착수: §21 게이트 정기 재모니터링 + 게이트 충족
-     (또는 별도 승인) 시 entry_score 코드 변경 PR 초안 작성 착수
-     여부 사용자 확인(shadow 정합성 확보 완료, B 시나리오 non-alpha
-     조정 항 범위) + R3b alpha 교체 전체 경로를 전체 파이프라인
-     수준에서 재현 검증(신규, 선택 사항) + 포지션 사이징 등
-     exit 외 리스크 관리 수단 검토(신규, 낮은 우선순위, 실거래
-     계좌 상태 필요) + T+5 리스크 20일판·60일판 진짜 페어드 비교
-     (선택 사항, 20일판을 1048건 부분집합으로 제한 재계산) + 국면
-     혼합도 감지·대응 설계 검토(강한 구조적 정합 증거 확인됨, 선택
-     사항이나 우선순위 상향 권장) + `portfolio_allocation` gap
-     실거래 누적 후 재검증 + "국면 조건부 활동성 threshold" 설계
-     검토 여부 사용자 확인)**:
+   - **SPPV-2.58(완료, 2026-07-18, `§21 gate` config 기반 gate 제어
+     — mode-agnostic 신규 모듈 구현, 작성자: Codex — Conditional
+     Go 유지, §21 게이트 상태 불변)**: `§21 게이트`를 문서 해석이
+     아니라 코드 레벨에서 config 스위치로 제어 가능하게 만들었다 —
+     단, environment(paper/real) 분기가 아니라 config 하나만 보는
+     mode-agnostic 방식으로. 사전 조사 결과 이 게이트는 지금까지
+     실제 운영 코드(`assess_deterministic_triggers`) 어디에도 연결
+     되지 않은 순수 모니터링 산출물이었다 — R3b shadow/paper 관측은
+     이 게이트에 의해 코드 레벨에서 전혀 막힌 적이 없었다.
+     `deterministic_trigger_engine.py`는 "절대 수정하지 않는다"는
+     이 세션의 원칙에 따라 이번에도 수정하지 않고, 신규 격리 모듈로
+     구현했다: `AppSettings.regime_switch_v1_gate_override_enabled`
+     (env: `REGIME_SWITCH_V1_GATE_OVERRIDE_ENABLED`, 기본값 False)
+     + `services/regime_switch_gate.py`(신규)의 `assess_regime_
+     switch_v1_gate()` 순수 함수. override off면 기존 §21 해석과
+     동일(TRIGGERED일 때만 열림), override on이면 국면 상태와 무관
+     하게 항상 열림, reason_code로 항상 추적 가능. `scripts/
+     validate_regime_switch_gate_config_override.py`(read-only,
+     신규 KIS 호출 0건)로 검증: 운영 코드 미수정을 소스 검사로
+     확인(`isolation_confirmed=True`), 실제 게이트 상태 여전히
+     `NOT_TRIGGERED`, override off/on 및 3개 trigger_status
+     시나리오 전부 예상대로 동작. 판정: R3b는 Conditional Go를
+     유지한다 — 게이트 상태 불변, `deterministic_trigger_engine.py`
+     미수정, compliance/VaR/broker submit 경계 미변경, 아직 실제
+     파이프라인 미연결(별도 승인 필요). 신규 KIS 호출 0건. 산출:
+     `src/agent_trading/services/regime_switch_gate.py`(신규),
+     `src/agent_trading/config/settings.py`(필드 추가), `scripts/
+     validate_regime_switch_gate_config_override.py`(read-only),
+     `logs/signal_ic_r3b_regime_switch_gate_config_override_2026-
+     07-18.json`. 상세: `plans/[DESIGN]
+     regime_conditional_entry_signal_v1.md` §47.
+   - **SPPV-3(다음 착수: §21 게이트 정기 재모니터링 + 신규 게이트
+     모듈의 실제 파이프라인 연결 여부 사용자 확인(별도 승인·리스크
+     검토 필요) + 게이트 충족(또는 override 명시적 승인) 시
+     entry_score 코드 변경 PR 초안 작성 착수 여부 사용자 확인
+     (shadow 정합성 확보 완료, B 시나리오 non-alpha 조정 항 범위) +
+     R3b alpha 교체 전체 경로를 전체 파이프라인 수준에서 재현 검증
+     (신규, 선택 사항) + 포지션 사이징 등 exit 외 리스크 관리 수단
+     검토(신규, 낮은 우선순위, 실거래 계좌 상태 필요) + T+5 리스크
+     20일판·60일판 진짜 페어드 비교(선택 사항, 20일판을 1048건
+     부분집합으로 제한 재계산) + 국면 혼합도 감지·대응 설계 검토
+     (강한 구조적 정합 증거 확인됨, 선택 사항이나 우선순위 상향
+     권장) + `portfolio_allocation` gap 실거래 누적 후 재검증 +
+     "국면 조건부 활동성 threshold" 설계 검토 여부 사용자 확인)**:
      §2.16~§2.21에서 국면 정의 통일(차단 축)은 Watch/No-Go에
      근접한다는 것이 확인됐고, §2.22에서 alpha layer 교체(선별 축)는
      Conditional Go를 확보했으며, **§2.27~§2.28에서 그 Conditional

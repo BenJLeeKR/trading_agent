@@ -1311,6 +1311,49 @@ value/compliance/broker가 아니라 `entry_score < 0.65`다.
   실행 없음, 신규 KIS 호출 0건, 운영 코드 변경 없음, broker submit
   미호출. 상세: `plans/[DESIGN] regime_conditional_entry_signal_
   v1.md` §46.
+
+- 작성자: Codex
+- 수정일자: 2026-07-18 (2.59순위, §21 gate 환경별 적용 범위 정밀화 —
+  production 잠금과 paper/shadow 관측 분리)
+- 수정내용: `§21 gate`의 목적과 적용 범위를 문서상 분리해 정정했다
+  (SPPV-2.58). 기존 서술은 §21 게이트를 "SPPV-3 착수 검토를 시작할
+  수 있는 유일한 외생적 차단 요인"으로 유지해 왔는데, 현재 단계가
+  **Paper Probe / shadow 관측**이라는 점을 함께 읽지 않으면 paper
+  실측 데이터 수집까지 일괄 보류해야 하는 것으로 오해될 여지가
+  있었다. 이번 정정의 canonical 해석은 다음과 같다. **production**:
+  §21 게이트는 실제 자본 파산 방지를 위한 엄격 잠금선으로 유지.
+  **paper/shadow**: 향후 환경 인지형 우회(config 스위치) 구현 시
+  §21 게이트는 실운영 승격 잠금선으로만 해석하고, compliance / VaR /
+  broker submit 경계를 유지한 채 R3b 신호의 실측 수집은 허용 가능.
+  이번 턴은 문서 정정만 수행했으며 운영 코드 변경·판정 변경은 없다.
+
+- 작성자: Codex
+- 수정일자: 2026-07-18 (2.60순위, `§21 gate` config 기반 gate 제어 —
+  mode-agnostic 신규 모듈 구현)
+- 수정내용: **[정정] 바로 위 2.59순위 항목의 "환경 인지형 우회
+  (paper/production 분기)" 프레이밍은 부정확하다 — 실제 구현은
+  environment 분기가 아니라 config 스위치 하나만으로 판정하는
+  mode-agnostic 방식이다.** 코드베이스 전수 조사 결과 `§21 게이트`
+  (regime_switch_v1)는 지금까지 실제 운영 코드(`assess_
+  deterministic_triggers`) 어디에도 연결되지 않은 순수 모니터링
+  산출물이었다 — R3b shadow/paper 관측은 이 게이트에 의해 코드
+  레벨에서 전혀 막힌 적이 없다. `deterministic_trigger_engine.py`
+  는 이 세션의 "절대 수정하지 않는다" 원칙에 따라 이번에도 수정
+  하지 않고, 신규 격리 모듈로만 구현했다. `AppSettings.regime_
+  switch_v1_gate_override_enabled`(env: `REGIME_SWITCH_V1_GATE_
+  OVERRIDE_ENABLED`, 기본값 False) + `services/regime_switch_
+  gate.py`(신규)의 `assess_regime_switch_v1_gate()` 순수 함수 —
+  paper/real/production 값은 전혀 참조하지 않는다. override off면
+  기존 §21 해석과 동일(TRIGGERED일 때만 열림), override on이면
+  국면 상태와 무관하게 항상 열림, reason_code로 항상 추적 가능.
+  `scripts/validate_regime_switch_gate_config_override.py`로 검증:
+  운영 코드 미수정 확인(소스 검사), 실제 게이트 상태 여전히 NOT_
+  TRIGGERED, override off/on 및 3개 trigger_status 시나리오 전부
+  예상대로 동작. 판정: R3b는 Conditional Go를 유지한다 — 게이트
+  상태 불변, `deterministic_trigger_engine.py` 미수정, compliance/
+  VaR/broker submit 경계 미변경, 아직 실제 파이프라인 미연결(별도
+  승인 필요). 신규 KIS 호출 0건. 상세: `plans/[DESIGN] regime_
+  conditional_entry_signal_v1.md` §47.
 - **3순위(보류 유지, 형태 재정의 — 우선순위 재조정)**: **`entry_
   score`와 BUY funnel 재현** — §2.7 확장 검증에서 하락장 안정성이
   확인되지 않아 단순 재현으로는 착수하지 않는다. §2.16~§2.21에서

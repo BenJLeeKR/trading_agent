@@ -1,0 +1,80 @@
+{
+  "as_of": "2026-07-18T22:39:53.054450+09:00",
+  "isolation_check": {
+    "deterministic_trigger_engine_imports_regime_switch_gate": false,
+    "expected": false,
+    "isolation_confirmed": true
+  },
+  "actual_monitor_report": {
+    "trigger_status": "NOT_TRIGGERED",
+    "recent_common_market_regime_distribution": {
+      "bullish_trend": 239,
+      "range_bound": 6
+    }
+  },
+  "scenario_actual_trigger_status": {
+    "trigger_status": "NOT_TRIGGERED",
+    "override_off": {
+      "config_value": false,
+      "gate_open": false,
+      "override_applied": false,
+      "reason_code": "gate_closed_regime_switch_v1_not_triggered"
+    },
+    "override_on": {
+      "config_value": true,
+      "gate_open": true,
+      "override_applied": true,
+      "reason_code": "gate_open_config_override_bypass"
+    }
+  },
+  "scenario_synthetic_all_statuses": {
+    "TRIGGERED": {
+      "trigger_status": "TRIGGERED",
+      "override_off": {
+        "config_value": false,
+        "gate_open": true,
+        "override_applied": false,
+        "reason_code": "gate_open_regime_switch_v1_triggered"
+      },
+      "override_on": {
+        "config_value": true,
+        "gate_open": true,
+        "override_applied": true,
+        "reason_code": "gate_open_config_override_bypass"
+      }
+    },
+    "PARTIAL": {
+      "trigger_status": "PARTIAL",
+      "override_off": {
+        "config_value": false,
+        "gate_open": false,
+        "override_applied": false,
+        "reason_code": "gate_closed_regime_switch_v1_not_triggered"
+      },
+      "override_on": {
+        "config_value": true,
+        "gate_open": true,
+        "override_applied": true,
+        "reason_code": "gate_open_config_override_bypass"
+      }
+    },
+    "NOT_TRIGGERED": {
+      "trigger_status": "NOT_TRIGGERED",
+      "override_off": {
+        "config_value": false,
+        "gate_open": false,
+        "override_applied": false,
+        "reason_code": "gate_closed_regime_switch_v1_not_triggered"
+      },
+      "override_on": {
+        "config_value": true,
+        "gate_open": true,
+        "override_applied": true,
+        "reason_code": "gate_open_config_override_bypass"
+      }
+    }
+  },
+  "all_override_on_open": true,
+  "only_triggered_open_when_off": true,
+  "note": "이 신규 게이트 모듈은 deterministic_trigger_engine.py에 연결돼 있지 않다. 이 세션 내내 R3b shadow 검증(§45 기준 58,493건 전체 시점 스냅샷 포함)은 이 게이트를 전혀 참조하지 않고도 정상 실행됐다 — 즉 R3b shadow/paper 관측은 이 게이트에 의해 지금까지도, 이번 변경 이후에도 막혀 있지 않다."
+}

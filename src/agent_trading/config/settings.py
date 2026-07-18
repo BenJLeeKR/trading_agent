@@ -480,6 +480,25 @@ def _resolve_kis_snapshot_startup_grace_seconds() -> int:
     return max(0, int(raw))
 
 
+def _resolve_regime_switch_v1_gate_override_enabled() -> bool:
+    """Resolve `§21 게이트`(regime_switch_v1) config override 스위치를
+    ``REGIME_SWITCH_V1_GATE_OVERRIDE_ENABLED`` env에서 읽는다.
+
+    SPPV-2.58 신규 항목 — `services/regime_switch_gate.py`의
+    ``assess_regime_switch_v1_gate()``가 참조하는 mode-agnostic config
+    스위치다. **paper/real/production 같은 environment 값은 절대 보지
+    않는다** — 오직 이 boolean 하나만 본다.
+
+    기본값 ``False``(비활성) — 명시적으로 ``"true"``로 설정해야만
+    게이트 override(강제 통과)가 발동한다. 이 스위치는 아직 실제 운영
+    파이프라인(`deterministic_trigger_engine.py`)에 연결되지 않은
+    격리된 신규 모듈에서만 소비된다 — 기존 동작에는 어떤 영향도 주지
+    않는다.
+    """
+    raw = os.getenv("REGIME_SWITCH_V1_GATE_OVERRIDE_ENABLED", "false")
+    return raw.strip().lower() == "true"
+
+
 # ---------------------------------------------------------------------------
 # Application settings
 # ---------------------------------------------------------------------------
@@ -677,4 +696,17 @@ class AppSettings:
     """When ``True``, :class:`ExecutionAttemptEntity` is the authoritative
     source for execution status.  The ``trade_decisions`` bridge write is
     conditional with try/except warning-only on failure (P1).
+    """
+
+    # ---- `§21 게이트`(regime_switch_v1) config override (SPPV-2.58) --------
+    regime_switch_v1_gate_override_enabled: bool = field(
+        default_factory=_resolve_regime_switch_v1_gate_override_enabled
+    )
+    """`REGIME_SWITCH_V1_GATE_OVERRIDE_ENABLED` env로 제어하는 mode-
+    agnostic config 스위치. 기본값 ``False`` — 명시적으로 ``"true"``로
+    설정해야만 `services/regime_switch_gate.py`의 게이트 판정이 강제
+    통과(override)로 동작한다. paper/real/production 등 environment
+    값을 참조하지 않는다. 아직 실제 운영 파이프라인
+    (`deterministic_trigger_engine.py`)에는 연결돼 있지 않다 — 신규
+    격리 모듈에서만 소비되는 config 값이다.
     """

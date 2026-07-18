@@ -1,0 +1,24 @@
+
+=== 1. 운영 코드 격리 확인 ===
+{'deterministic_trigger_engine_imports_regime_switch_gate': False, 'expected': False, 'isolation_confirmed': True}
+
+=== 2. 실제 §21 게이트 상태 조회(벤치마크 1종목, read-only) ===
+
+=== regime_switch_v1 1차 게이트 모니터링(규칙 A) ===
+기준일: 2026-06-16, 최근 365일 cutoff=2025-06-16
+국면 분포: {'bullish_trend': 239, 'range_bound': 6}
+판정: NOT_TRIGGERED — 최근 12개월 창에 bearish_trend 0일 — 규칙 A(관찰 유예) 유지
+실제 관측된 trigger_status: NOT_TRIGGERED
+
+=== 3. config override 시나리오 검증(실제 관측치 기준) ===
+{'trigger_status': 'NOT_TRIGGERED', 'override_off': {'config_value': False, 'gate_open': False, 'override_applied': False, 'reason_code': 'gate_closed_regime_switch_v1_not_triggered'}, 'override_on': {'config_value': True, 'gate_open': True, 'override_applied': True, 'reason_code': 'gate_open_config_override_bypass'}}
+
+=== 4. 세 가지 trigger_status 전부에 대한 override 동작 확인(합성 시나리오) ===
+TRIGGERED: override_off.gate_open=True, override_on.gate_open=True
+PARTIAL: override_off.gate_open=False, override_on.gate_open=True
+NOT_TRIGGERED: override_off.gate_open=False, override_on.gate_open=True
+
+override=on일 때 3개 상태 모두 gate_open=True: True
+override=off일 때 TRIGGERED만 gate_open=True(기존 해석과 동일): True
+
+산출 저장: logs/signal_ic_r3b_regime_switch_gate_config_override_2026-07-18.json

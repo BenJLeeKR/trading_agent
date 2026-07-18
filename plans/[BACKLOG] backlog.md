@@ -814,6 +814,47 @@
   보수적으로 낮추지 않는다. 신규 실행 없음, 신규 KIS 호출 0건,
   운영 코드 변경 없음, broker submit 미호출.
 
+- 작성자: Codex
+- 수정일자: 2026-07-18 (56차, §21 gate 환경별 적용 범위 정밀화 —
+  production 잠금과 paper/shadow 관측 분리)
+- 수정내용: 백로그 상의 `§21 gate` 해석을 **production 자본 보호용
+  잠금선**과 **paper/shadow 실측 관측선**으로 분리해 정정했다
+  (SPPV-2.58). 기존 표현은 `§21 gate`를 SPPV-3의 주된 차단 요인으로
+  유지했지만, 현재 단계가 모의 투자/Shadow 관측이라는 점까지 함께
+  읽지 않으면 paper 단계의 데이터 수집 자체를 멈춰야 하는 것으로
+  오해될 수 있었다. canonical 해석은 다음과 같다. **production**:
+  gate 엄격 유지. **paper/shadow**: 환경 인지형 우회(config 스위치)
+  구현 시 gate는 실운영 승격 잠금선으로만 적용하며, 실측 데이터 수집과
+  shadow 관측은 별도 허용 가능. 이번 턴은 문서 정정만 수행했고 신규
+  실행·코드 변경·판정 변경은 없다.
+
+- 작성자: Codex
+- 수정일자: 2026-07-18 (57차, `§21 gate` config 기반 gate 제어 —
+  mode-agnostic 신규 모듈 구현)
+- 수정내용: **[정정] 바로 위 56차 항목의 "environment 인지형 우회
+  (paper/production 분기)" 프레이밍은 부정확하다 — 실제 구현은
+  environment 분기가 아니라 config 스위치 하나만으로 판정하는
+  mode-agnostic 방식이다.** 코드베이스 전수 조사 결과 `§21 게이트`
+  (regime_switch_v1)는 실제 운영 코드(`assess_deterministic_
+  triggers`) 어디에도 연결되지 않은 순수 모니터링 산출물이었다 —
+  R3b shadow/paper 관측은 이 게이트에 의해 코드 레벨에서 전혀 막힌
+  적이 없었다. `deterministic_trigger_engine.py`는 "절대 수정하지
+  않는다"는 원칙에 따라 이번에도 수정하지 않고 신규 격리 모듈로만
+  구현했다: `AppSettings.regime_switch_v1_gate_override_enabled`
+  (env: `REGIME_SWITCH_V1_GATE_OVERRIDE_ENABLED`, 기본값 False) +
+  `services/regime_switch_gate.py`(신규)의 `assess_regime_switch_
+  v1_gate()` 순수 함수 — paper/real/production 값은 전혀 참조하지
+  않는다. override off면 기존 §21 해석과 동일(TRIGGERED일 때만
+  열림), override on이면 국면 상태와 무관하게 항상 열림, reason_
+  code로 항상 추적 가능. `scripts/validate_regime_switch_gate_
+  config_override.py`로 검증: 운영 코드 미수정 확인(소스 검사),
+  실제 게이트 상태 여전히 NOT_TRIGGERED, override off/on 및 3개
+  trigger_status 시나리오 전부 예상대로 동작. 판정: R3b는
+  Conditional Go를 유지한다 — 게이트 상태 불변, `deterministic_
+  trigger_engine.py` 미수정, compliance/VaR/broker submit 경계
+  미변경, 아직 실제 파이프라인 미연결(별도 승인 필요). 신규 KIS
+  호출 0건.
+
 ---
 
 ## 관리 원칙
@@ -2018,17 +2059,49 @@
     이상으로 보수적으로 낮추지 않는다. 신규 실행 없음, 신규 KIS
     호출 0건, 운영 코드 변경 없음, broker submit 미호출. 상세:
     `plans/[DESIGN] regime_conditional_entry_signal_v1.md` §46.
-  - **SPPV-3(다음 착수: §21 게이트 정기 재모니터링 + 게이트 충족
-    (또는 별도 승인) 시 entry_score 코드 변경 PR 초안 작성 착수
-    여부 사용자 확인(shadow 정합성 확보 완료, B 시나리오 non-alpha
-    조정 항 범위) + R3b alpha 교체 전체 경로를 전체 파이프라인
-    수준에서 재현 검증(신규, 선택 사항) + 포지션 사이징 등 exit
-    외 리스크 관리 수단 검토(신규, 낮은 우선순위, 실거래 계좌
-    상태 필요) + T+5 리스크 20일판·60일판 진짜 페어드 비교(선택
-    사항, 20일판을 1048건 부분집합으로 제한 재계산) + 국면 혼합도
-    감지·대응 설계 검토 여부(선택 사항) + `portfolio_allocation`
-    gap 실거래 누적 후 재검증 + "국면 조건부 활동성 threshold"
-    설계 검토 여부 사용자 확인)**:
+  - **SPPV-2.58(완료, 2026-07-18, `§21 gate` config 기반 gate 제어
+    — mode-agnostic 신규 모듈 구현, 작성자: Codex — Conditional Go
+    유지, §21 게이트 상태 불변)**: `§21 게이트`를 문서 해석이 아니라
+    코드 레벨에서 config 스위치로 제어 가능하게 만들었다 — 단,
+    environment(paper/real) 분기가 아니라 config 하나만 보는
+    mode-agnostic 방식으로. 사전 조사 결과 이 게이트는 지금까지
+    실제 운영 코드(`assess_deterministic_triggers`) 어디에도 연결
+    되지 않은 순수 모니터링 산출물이었다 — R3b shadow/paper 관측은
+    이 게이트에 의해 코드 레벨에서 전혀 막힌 적이 없었다.
+    `deterministic_trigger_engine.py`는 "절대 수정하지 않는다"는
+    원칙에 따라 이번에도 수정하지 않고, 신규 격리 모듈로 구현했다:
+    `AppSettings.regime_switch_v1_gate_override_enabled`(env:
+    `REGIME_SWITCH_V1_GATE_OVERRIDE_ENABLED`, 기본값 False) +
+    `services/regime_switch_gate.py`(신규)의 `assess_regime_
+    switch_v1_gate()` 순수 함수. override off면 기존 §21 해석과
+    동일(TRIGGERED일 때만 열림), override on이면 국면 상태와 무관
+    하게 항상 열림, reason_code로 항상 추적 가능. `scripts/
+    validate_regime_switch_gate_config_override.py`(read-only,
+    신규 KIS 호출 0건)로 검증: 운영 코드 미수정을 소스 검사로 확인
+    (`isolation_confirmed=True`), 실제 게이트 상태 여전히 NOT_
+    TRIGGERED, override off/on 및 3개 trigger_status 시나리오 전부
+    예상대로 동작. 판정: R3b는 Conditional Go를 유지한다 — 게이트
+    상태 불변, `deterministic_trigger_engine.py` 미수정, compliance/
+    VaR/broker submit 경계 미변경, 아직 실제 파이프라인 미연결(별도
+    승인 필요). 신규 KIS 호출 0건. 산출: `src/agent_trading/
+    services/regime_switch_gate.py`(신규), `src/agent_trading/
+    config/settings.py`(필드 추가), `scripts/validate_regime_
+    switch_gate_config_override.py`(read-only), `logs/signal_ic_
+    r3b_regime_switch_gate_config_override_2026-07-18.json`. 상세:
+    `plans/[DESIGN] regime_conditional_entry_signal_v1.md` §47.
+  - **SPPV-3(다음 착수: §21 게이트 정기 재모니터링 + 신규 게이트
+    모듈의 실제 파이프라인 연결 여부 사용자 확인(별도 승인·리스크
+    검토 필요) + 게이트 충족(또는 override 명시적 승인) 시 entry_
+    score 코드 변경 PR 초안 작성 착수 여부 사용자 확인(shadow
+    정합성 확보 완료, B 시나리오 non-alpha 조정 항 범위) + R3b
+    alpha 교체 전체 경로를 전체 파이프라인 수준에서 재현 검증(신규,
+    선택 사항) + 포지션 사이징 등 exit 외 리스크 관리 수단 검토
+    (신규, 낮은 우선순위, 실거래 계좌 상태 필요) + T+5 리스크
+    20일판·60일판 진짜 페어드 비교(선택 사항, 20일판을 1048건
+    부분집합으로 제한 재계산) + 국면 혼합도 감지·대응 설계 검토
+    여부(선택 사항) + `portfolio_allocation` gap 실거래 누적 후
+    재검증 + "국면 조건부 활동성 threshold" 설계 검토 여부 사용자
+    확인)**:
     §2.16~§2.21에서 국면 정의 통일(차단 축)은 Watch/No-Go에
     근접함이 확인됐고, §2.22에서 alpha layer 교체(선별 축)는
     Conditional Go를 확보했으며, **§2.27~§2.28에서 그 Conditional
