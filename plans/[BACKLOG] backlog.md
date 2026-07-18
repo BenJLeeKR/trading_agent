@@ -855,6 +855,26 @@
   미변경, 아직 실제 파이프라인 미연결(별도 승인 필요). 신규 KIS
   호출 0건.
 
+- 작성자: Codex
+- 수정일자: 2026-07-18 (58차, `§21 gate` 실제 판단 경로 연결 완료 —
+  `deterministic_trigger_engine.py` 실제 수정)
+- 수정내용: **[정정] 57차(§47)의 "구현 완료"는 부정확 — 정확히는
+  "준비 모듈 + 런타임 미연결" 상태였다.** 이번 턴은 그 미완 지점을
+  메웠다(SPPV-2.59). 사용자의 명시적 승인 아래 이 세션 최초로
+  `deterministic_trigger_engine.py`를 실제로 수정 — `assess_
+  deterministic_triggers`(실제 BUY_CANDIDATE 판정 함수)에 신규
+  optional 파라미터(`regime_switch_v1_trigger_status`, 기본값 None;
+  `regime_switch_v1_gate_override_enabled`, 기본값 False)를 추가하고
+  BUY_CANDIDATE 조건문에 실제로 연결했다. 기존 호출부는 100%
+  무영향. `scripts/validate_r3b_gate_integration_path.py`로 동일한
+  실제 함수를 3가지(게이트 없음/override off/override on)로 직접
+  호출한 결과, 게이트가 실제로 `buy_candidate`를 차단하고 override
+  가 실제로 그 차단을 해제함을 확인. 기존 단위 테스트 20건 전부
+  통과. 판정: **"§21 게이트 → 실제 판단 경로" 연결 완료** — 다만
+  실제 운영 호출부 배선은 별도 미완료(그 전까지 실제 운영 동작
+  무영향). R3b는 Conditional Go를 유지한다. compliance/VaR/broker
+  submit 경계 미변경. 신규 KIS 호출 0건.
+
 ---
 
 ## 관리 원칙
@@ -2089,19 +2109,50 @@
     switch_gate_config_override.py`(read-only), `logs/signal_ic_
     r3b_regime_switch_gate_config_override_2026-07-18.json`. 상세:
     `plans/[DESIGN] regime_conditional_entry_signal_v1.md` §47.
-  - **SPPV-3(다음 착수: §21 게이트 정기 재모니터링 + 신규 게이트
-    모듈의 실제 파이프라인 연결 여부 사용자 확인(별도 승인·리스크
-    검토 필요) + 게이트 충족(또는 override 명시적 승인) 시 entry_
-    score 코드 변경 PR 초안 작성 착수 여부 사용자 확인(shadow
-    정합성 확보 완료, B 시나리오 non-alpha 조정 항 범위) + R3b
-    alpha 교체 전체 경로를 전체 파이프라인 수준에서 재현 검증(신규,
-    선택 사항) + 포지션 사이징 등 exit 외 리스크 관리 수단 검토
-    (신규, 낮은 우선순위, 실거래 계좌 상태 필요) + T+5 리스크
-    20일판·60일판 진짜 페어드 비교(선택 사항, 20일판을 1048건
-    부분집합으로 제한 재계산) + 국면 혼합도 감지·대응 설계 검토
-    여부(선택 사항) + `portfolio_allocation` gap 실거래 누적 후
-    재검증 + "국면 조건부 활동성 threshold" 설계 검토 여부 사용자
-    확인)**:
+    **[SPPV-2.59에서 정정] "구현 완료"는 부정확 — "준비 모듈 +
+    런타임 미연결" 상태였음. 아래 SPPV-2.59 참고.**
+  - **SPPV-2.59(완료, 2026-07-18, `§21 gate` 실제 판단 경로 연결
+    완료 — `deterministic_trigger_engine.py` 실제 수정, 작성자:
+    Codex — Conditional Go 유지)**: §47의 미완 지점(준비 모듈만
+    추가, 실제 소비 경로 미연결)을 메웠다. 사용자의 명시적 승인
+    아래 이 세션 최초로 `deterministic_trigger_engine.py`를 실제로
+    수정 — `assess_deterministic_triggers`(실제 BUY_CANDIDATE 판정
+    함수)에 신규 optional 파라미터(`regime_switch_v1_trigger_
+    status`, 기본값 None; `regime_switch_v1_gate_override_
+    enabled`, 기본값 False)를 추가하고 BUY_CANDIDATE 조건문에 실제
+    연결(`gate_assessment is None or gate_assessment.gate_open`).
+    기본값(파라미터 미제공)이면 항상 True로 평가돼 기존 호출부는
+    100% 무영향. `scripts/validate_r3b_gate_integration_path.py`
+    (read-only, 신규 KIS 호출 0건)로 동일한 실제 함수를 3가지로
+    직접 호출(종목 000100/2023-10-11, entry_score=0.6895): (A)
+    게이트 없음 — `buy_candidate=True`. (B) trigger_status=NOT_
+    TRIGGERED, override=False — `buy_candidate=False`로 실제
+    차단. (C) 동일 trigger_status, override=True — `buy_candidate=
+    True`로 복원. **결과: `gate_actually_blocks_real_path=True`,
+    `override_actually_restores_real_path=True`.** 기존 단위
+    테스트 20건 전부 통과. 판정: **"§21 게이트 → 실제 판단 경로"
+    연결 완료** — 다만 실제 운영 호출부 배선은 별도 미완료(그
+    전까지 실제 운영 동작 무영향). R3b는 Conditional Go를
+    유지한다. compliance/VaR/broker submit 경계 미변경. 신규 KIS
+    호출 0건. 산출: `src/agent_trading/services/deterministic_
+    trigger_engine.py`(수정), `scripts/validate_r3b_gate_
+    integration_path.py`(신규), `logs/signal_ic_r3b_gate_
+    integration_path_2026-07-18.json`. 상세: `plans/[DESIGN]
+    regime_conditional_entry_signal_v1.md` §48.
+  - **SPPV-3(다음 착수: §21 게이트 정기 재모니터링 + 실제 운영
+    호출부(orchestrator/decision loop)에서 `regime_switch_v1_
+    trigger_status` 전달 배선 설계(트리거 소스 결정 포함, 배선
+    완료 시 별도 리스크/컴플라이언스 재검토 필수) + 게이트 충족
+    (또는 override 명시적 승인) 시 entry_score 코드 변경 PR 초안
+    작성 착수 여부 사용자 확인(shadow 정합성 확보 완료, B 시나리오
+    non-alpha 조정 항 범위) + R3b alpha 교체 전체 경로를 전체
+    파이프라인 수준에서 재현 검증(신규, 선택 사항) + 포지션 사이징
+    등 exit 외 리스크 관리 수단 검토(신규, 낮은 우선순위, 실거래
+    계좌 상태 필요) + T+5 리스크 20일판·60일판 진짜 페어드 비교
+    (선택 사항, 20일판을 1048건 부분집합으로 제한 재계산) + 국면
+    혼합도 감지·대응 설계 검토 여부(선택 사항) + `portfolio_
+    allocation` gap 실거래 누적 후 재검증 + "국면 조건부 활동성
+    threshold" 설계 검토 여부 사용자 확인)**:
     §2.16~§2.21에서 국면 정의 통일(차단 축)은 Watch/No-Go에
     근접함이 확인됐고, §2.22에서 alpha layer 교체(선별 축)는
     Conditional Go를 확보했으며, **§2.27~§2.28에서 그 Conditional

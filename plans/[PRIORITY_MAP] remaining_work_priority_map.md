@@ -832,10 +832,77 @@
   미변경, 아직 실제 파이프라인 미연결(별도 승인 필요). 신규 KIS
   호출 0건.
 
+- 작성자: Codex
+- 수정일자: 2026-07-18 (58차, `§21 gate` 실제 판단 경로 연결 완료 —
+  `deterministic_trigger_engine.py` 실제 수정)
+- 수정내용: **[정정] 57차(§47)의 "구현 완료"는 부정확 — 정확히는
+  "준비 모듈 + 런타임 미연결" 상태였다.** 이번 턴은 그 미완 지점을
+  메웠다(SPPV-2.59). 사용자의 명시적 승인 아래 이 세션 최초로
+  `deterministic_trigger_engine.py`를 실제로 수정 — `assess_
+  deterministic_triggers`(실제 BUY_CANDIDATE 판정 함수)에 신규
+  optional 파라미터(`regime_switch_v1_trigger_status`, 기본값 None;
+  `regime_switch_v1_gate_override_enabled`, 기본값 False)를 추가하고
+  BUY_CANDIDATE 조건문에 실제로 연결했다. 기존 호출부는 100%
+  무영향. `scripts/validate_r3b_gate_integration_path.py`로 동일한
+  실제 함수를 3가지(게이트 없음/override off/override on)로 직접
+  호출한 결과, 게이트가 실제로 `buy_candidate`를 차단하고 override
+  가 실제로 그 차단을 해제함을 확인. 기존 단위 테스트 20건 전부
+  통과. 판정: **"§21 게이트 → 실제 판단 경로" 연결 완료** — 다만
+  실제 운영 호출부 배선은 별도 미완료(그 전까지 실제 운영 동작
+  무영향). R3b는 Conditional Go를 유지한다. compliance/VaR/broker
+  submit 경계 미변경. 신규 KIS 호출 0건.
+
 ## 최근 메모
 
+> **📌 2026-07-18 `§21 gate` 실제 판단 경로 연결 완료 —
+> `deterministic_trigger_engine.py` 실제 수정 (최신, 작성자:
+> Codex)**: 직전 턴(§47, SPPV-2.58)은 "구현 완료"로 보고됐으나
+> 실제로는 **"config 스위치와 순수 판정 함수를 준비했을 뿐, 실제
+> 소비 경로에는 연결하지 않은 상태"**였다 — 검증도 고립된 함수
+> 호출만 확인했을 뿐 실제 BUY 판정 경로에서 override가 소비되는지는
+> 증명하지 못했다. 이번 턴은 그 미완 지점을 메우는 것이 핵심 —
+> "새 모듈 추가"가 아니라 **실제 사용 경로 연결**이었다. 사용자의
+> 명시적 승인 아래(코드 확인 결과 R3b는 이 세션 내내 실제 운영
+> 코드에 반영된 적이 없어 "§21 게이트가 실제로 막는 R3b 경로" 자체가
+> 지금까지 존재하지 않았다는 사실을 재확인한 뒤) 이 세션 최초로
+> **`deterministic_trigger_engine.py`를 실제로 수정**했다 —
+> `assess_deterministic_triggers`(실제 BUY_CANDIDATE 판정 함수,
+> 실제 주문 결정과 직결)에 신규 optional 파라미터
+> `regime_switch_v1_trigger_status: str | None = None`,
+> `regime_switch_v1_gate_override_enabled: bool = False`를 추가하고,
+> BUY_CANDIDATE 판정 조건문에 `(gate_assessment is None or
+> gate_assessment.gate_open)`을 실제로 삽입했다 — **기본값(파라미터
+> 미제공)이면 이 조건은 항상 True로 평가돼 기존 호출부는 100%
+> 무영향(하위 호환)**, paper/real/production 값은 이 함수 어디에도
+> 참조되지 않는다(mode-agnostic). `scripts/validate_r3b_gate_
+> integration_path.py`(신규, read-only, 신규 KIS 호출 0건)로
+> **동일한 실제 함수**를 3가지로 직접 호출: (A) 게이트 파라미터
+> 없음 — `buy_candidate=True`(종목 000100/2023-10-11, entry_score=
+> 0.6895). (B) `trigger_status=NOT_TRIGGERED`, override=False
+> (기본값) — `buy_candidate=False`로 실제 차단됨. (C) 동일 trigger_
+> status, override=True — `buy_candidate=True`로 baseline과 동일
+> 하게 복원됨. **결과: `gate_actually_blocks_real_path=True`,
+> `override_actually_restores_real_path=True`** — entry_score/
+> eligibility는 A/B/C 전부 동일하게 유지되면서 오직 게이트 조건
+> 하나로 buy_candidate가 뒤집힘. 기존 단위 테스트(`tests/services/
+> test_deterministic_trigger_engine.py`, 20건) 전부 통과(하위 호환
+> 확인). **해석(operational 의미)**: 단순 통과율 상승이 아니라
+> "§21 게이트를 실제로 켰을 때 R3b(또는 다른 candidate)의 진입
+> 판단이 게이트에 의해 실제로 살아나거나 죽는 스위치가 실제 코드에
+> 생겼다"는 뜻이다. 다만 실제 운영에서 이 함수를 호출하는 상위
+> 계층(orchestrator/decision loop)이 이 신규 파라미터를 전달하도록
+> 배선하는 것은 **별도 미완료 과제**로 남는다 — 그 배선이 없으면
+> 지금 당장 실제 운영 동작은 전혀 바뀌지 않는다(의도된 안전장치).
+> **판정: "§21 게이트 → 실제 판단 경로" 연결이 완료됐다.** R3b는
+> Conditional Go를 유지한다. compliance/VaR/broker submit 경계
+> 미변경. 신규 KIS 호출 0건. 산출: `src/agent_trading/services/
+> deterministic_trigger_engine.py`(수정), `scripts/validate_r3b_
+> gate_integration_path.py`(신규), `logs/signal_ic_r3b_gate_
+> integration_path_2026-07-18.json`. 상세: `plans/[DESIGN]
+> regime_conditional_entry_signal_v1.md` §48(SPPV-2.59).
+>
 > **📌 2026-07-18 `§21 gate` config 기반 gate 제어 — mode-agnostic
-> 신규 모듈 구현 (최신, 작성자: Codex)**: `§21 게이트`(regime_
+> 신규 모듈 구현 (작성자: Codex)**: `§21 게이트`(regime_
 > switch_v1)를 문서 해석이 아니라 실제 코드 레벨에서 제어 가능하게
 > 만드는 것이 이번 턴 목표였다 — 단, **runtime이 paper인지 real인지
 > 코드에서 분기하지 않고, 사용자가 config로만 게이트를 켜고 끌 수
@@ -7279,20 +7346,52 @@ agent 설계 문서 기준으로도 순서는 다음이 맞다.
      validate_regime_switch_gate_config_override.py`(read-only),
      `logs/signal_ic_r3b_regime_switch_gate_config_override_2026-
      07-18.json`. 상세: `plans/[DESIGN]
-     regime_conditional_entry_signal_v1.md` §47.
-   - **SPPV-3(다음 착수: §21 게이트 정기 재모니터링 + 신규 게이트
-     모듈의 실제 파이프라인 연결 여부 사용자 확인(별도 승인·리스크
-     검토 필요) + 게이트 충족(또는 override 명시적 승인) 시
-     entry_score 코드 변경 PR 초안 작성 착수 여부 사용자 확인
-     (shadow 정합성 확보 완료, B 시나리오 non-alpha 조정 항 범위) +
-     R3b alpha 교체 전체 경로를 전체 파이프라인 수준에서 재현 검증
-     (신규, 선택 사항) + 포지션 사이징 등 exit 외 리스크 관리 수단
-     검토(신규, 낮은 우선순위, 실거래 계좌 상태 필요) + T+5 리스크
-     20일판·60일판 진짜 페어드 비교(선택 사항, 20일판을 1048건
-     부분집합으로 제한 재계산) + 국면 혼합도 감지·대응 설계 검토
-     (강한 구조적 정합 증거 확인됨, 선택 사항이나 우선순위 상향
-     권장) + `portfolio_allocation` gap 실거래 누적 후 재검증 +
-     "국면 조건부 활동성 threshold" 설계 검토 여부 사용자 확인)**:
+     regime_conditional_entry_signal_v1.md` §47. **[SPPV-2.59에서
+     정정] "구현 완료"는 부정확 — "준비 모듈 + 런타임 미연결" 상태
+     였음. 아래 SPPV-2.59 참고.**
+   - **SPPV-2.59(완료, 2026-07-18, `§21 gate` 실제 판단 경로 연결
+     완료 — `deterministic_trigger_engine.py` 실제 수정, 작성자:
+     Codex — Conditional Go 유지)**: §47의 미완 지점(준비 모듈만
+     추가, 실제 소비 경로 미연결)을 메웠다. 사용자의 명시적 승인
+     아래 이 세션 최초로 `deterministic_trigger_engine.py`를 실제로
+     수정 — `assess_deterministic_triggers`(실제 BUY_CANDIDATE
+     판정 함수)에 신규 optional 파라미터(`regime_switch_v1_trigger_
+     status`, 기본값 None; `regime_switch_v1_gate_override_
+     enabled`, 기본값 False)를 추가하고 BUY_CANDIDATE 조건문에 실제
+     연결(`gate_assessment is None or gate_assessment.gate_open`).
+     기본값(파라미터 미제공)이면 항상 True로 평가돼 기존 호출부는
+     100% 무영향. `scripts/validate_r3b_gate_integration_path.py`
+     (read-only, 신규 KIS 호출 0건)로 동일한 실제 함수를 3가지로
+     직접 호출(종목 000100/2023-10-11, entry_score=0.6895): (A)
+     게이트 없음 — `buy_candidate=True`. (B) trigger_status=NOT_
+     TRIGGERED, override=False — `buy_candidate=False`로 실제
+     차단. (C) 동일 trigger_status, override=True — `buy_candidate=
+     True`로 복원. **결과: `gate_actually_blocks_real_path=True`,
+     `override_actually_restores_real_path=True`.** 기존 단위
+     테스트 20건 전부 통과. 판정: **"§21 게이트 → 실제 판단 경로"
+     연결 완료** — 다만 실제 운영 호출부 배선은 별도 미완료(그
+     전까지 실제 운영 동작 무영향). R3b는 Conditional Go를
+     유지한다. compliance/VaR/broker submit 경계 미변경. 신규 KIS
+     호출 0건. 산출: `src/agent_trading/services/deterministic_
+     trigger_engine.py`(수정), `scripts/validate_r3b_gate_
+     integration_path.py`(신규), `logs/signal_ic_r3b_gate_
+     integration_path_2026-07-18.json`. 상세: `plans/[DESIGN]
+     regime_conditional_entry_signal_v1.md` §48.
+   - **SPPV-3(다음 착수: §21 게이트 정기 재모니터링 + 실제 운영
+     호출부(orchestrator/decision loop)에서 `regime_switch_v1_
+     trigger_status` 전달 배선 설계(트리거 소스 결정 포함, 배선
+     완료 시 별도 리스크/컴플라이언스 재검토 필수) + 게이트 충족
+     (또는 override 명시적 승인) 시 entry_score 코드 변경 PR 초안
+     작성 착수 여부 사용자 확인(shadow 정합성 확보 완료, B 시나리오
+     non-alpha 조정 항 범위) + R3b alpha 교체 전체 경로를 전체
+     파이프라인 수준에서 재현 검증(신규, 선택 사항) + 포지션
+     사이징 등 exit 외 리스크 관리 수단 검토(신규, 낮은 우선순위,
+     실거래 계좌 상태 필요) + T+5 리스크 20일판·60일판 진짜 페어드
+     비교(선택 사항, 20일판을 1048건 부분집합으로 제한 재계산) +
+     국면 혼합도 감지·대응 설계 검토(강한 구조적 정합 증거 확인됨,
+     선택 사항이나 우선순위 상향 권장) + `portfolio_allocation`
+     gap 실거래 누적 후 재검증 + "국면 조건부 활동성 threshold"
+     설계 검토 여부 사용자 확인)**:
      §2.16~§2.21에서 국면 정의 통일(차단 축)은 Watch/No-Go에
      근접한다는 것이 확인됐고, §2.22에서 alpha layer 교체(선별 축)는
      Conditional Go를 확보했으며, **§2.27~§2.28에서 그 Conditional

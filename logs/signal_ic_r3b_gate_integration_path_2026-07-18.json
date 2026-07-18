@@ -1,0 +1,55 @@
+{
+  "as_of": "2026-07-18T23:06:05.815192+09:00",
+  "candidate": {
+    "symbol": "000100",
+    "trade_date": "2023-10-11"
+  },
+  "A_baseline_no_gate_param": {
+    "buy_candidate": true,
+    "entry_score": 0.6895,
+    "reason_codes": [
+      "trigger_source_core",
+      "trigger_bullish_regime",
+      "trigger_relative_activity_bonus",
+      "trigger_high_volatility",
+      "trigger_no_position_exit_penalty",
+      "trigger_core_watch_path",
+      "trigger_buy_candidate",
+      "trigger_watch_candidate"
+    ]
+  },
+  "B_gate_override_off_not_triggered": {
+    "buy_candidate": false,
+    "regime_switch_v1_gate_open": false,
+    "regime_switch_v1_gate_override_applied": false,
+    "reason_codes": [
+      "trigger_source_core",
+      "trigger_bullish_regime",
+      "trigger_relative_activity_bonus",
+      "trigger_high_volatility",
+      "trigger_no_position_exit_penalty",
+      "trigger_core_watch_path",
+      "gate_closed_regime_switch_v1_not_triggered",
+      "trigger_watch_candidate"
+    ]
+  },
+  "C_gate_override_on": {
+    "buy_candidate": true,
+    "regime_switch_v1_gate_open": true,
+    "regime_switch_v1_gate_override_applied": true,
+    "reason_codes": [
+      "trigger_source_core",
+      "trigger_bullish_regime",
+      "trigger_relative_activity_bonus",
+      "trigger_high_volatility",
+      "trigger_no_position_exit_penalty",
+      "trigger_core_watch_path",
+      "gate_open_config_override_bypass",
+      "trigger_buy_candidate",
+      "trigger_watch_candidate"
+    ]
+  },
+  "gate_actually_blocks_real_path": true,
+  "override_actually_restores_real_path": true,
+  "note": "assess_deterministic_triggers는 deterministic_trigger_engine.py의 실제 운영 함수이며 이번 검증에서 신규 optional 파라미터(regime_switch_v1_trigger_status/regime_switch_v1_gate_override_enabled)를 통해 실제로 호출됐다. 기존 호출부(이 파라미터를 모르는 모든 호출)는 기본값 None으로 게이트 체크가 완전히 비활성화되어 동작이 전혀 바뀌지 않는다."
+}

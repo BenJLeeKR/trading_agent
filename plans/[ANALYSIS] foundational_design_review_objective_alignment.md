@@ -1354,6 +1354,30 @@ value/compliance/broker가 아니라 `entry_score < 0.65`다.
   VaR/broker submit 경계 미변경, 아직 실제 파이프라인 미연결(별도
   승인 필요). 신규 KIS 호출 0건. 상세: `plans/[DESIGN] regime_
   conditional_entry_signal_v1.md` §47.
+
+- 작성자: Codex
+- 수정일자: 2026-07-18 (2.61순위, `§21 gate` 실제 판단 경로 연결
+  완료 — `deterministic_trigger_engine.py` 실제 수정)
+- 수정내용: **[정정] 2.60순위(§47)의 "구현 완료"는 부정확 — 정확히
+  는 "준비 모듈 + 런타임 미연결" 상태였다.** 이번 턴은 그 미완
+  지점을 메웠다(SPPV-2.59). 사용자의 명시적 승인 아래 이 세션
+  최초로 `deterministic_trigger_engine.py`를 실제로 수정 — `assess_
+  deterministic_triggers`(실제 BUY_CANDIDATE 판정 함수)에 신규
+  optional 파라미터(`regime_switch_v1_trigger_status`, 기본값 None
+  = 게이트 체크 완전 비활성화; `regime_switch_v1_gate_override_
+  enabled`, 기본값 False)를 추가하고 BUY_CANDIDATE 조건문에 실제로
+  연결했다. 기존 호출부는 100% 무영향(하위 호환). `scripts/
+  validate_r3b_gate_integration_path.py`로 동일한 실제 함수를 3가지
+  (게이트 없음/override off/override on)로 직접 호출한 결과, 게이트
+  가 실제로 `buy_candidate`를 차단하고 override가 실제로 그 차단을
+  해제함을 확인(`gate_actually_blocks_real_path=True`, `override_
+  actually_restores_real_path=True`). 기존 단위 테스트 20건 전부
+  통과. 판정: **"§21 게이트 → 실제 판단 경로" 연결이 완료됐다** —
+  다만 실제 운영 호출부(orchestrator)의 배선은 별도 미완료(그 전까지
+  실제 운영 동작 무영향, 의도된 안전장치). R3b는 Conditional Go를
+  유지한다. compliance/VaR/broker submit 경계 미변경. 신규 KIS
+  호출 0건. 상세: `plans/[DESIGN] regime_conditional_entry_
+  signal_v1.md` §48.
 - **3순위(보류 유지, 형태 재정의 — 우선순위 재조정)**: **`entry_
   score`와 BUY funnel 재현** — §2.7 확장 검증에서 하락장 안정성이
   확인되지 않아 단순 재현으로는 착수하지 않는다. §2.16~§2.21에서

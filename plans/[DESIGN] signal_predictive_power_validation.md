@@ -1214,6 +1214,38 @@ entry 설계 검토로 전환**을 확정했다. 별도 문서
   연결하지 않음(별도 승인 필요). 신규 KIS 호출 0건. 상세: `plans/
   [DESIGN] regime_conditional_entry_signal_v1.md` §47.
 
+- 작성자: Codex
+- 수정일자: 2026-07-18 (59차, `§21 gate` 실제 판단 경로 연결 완료 —
+  `deterministic_trigger_engine.py` 실제 수정)
+- 수정내용: **[정정] 58차(§47)의 "구현 완료"는 부정확 — 정확히는
+  "준비 모듈 + 런타임 미연결" 상태였다.** 이번 턴은 그 미완 지점을
+  메웠다(SPPV-2.59). 사용자의 명시적 승인 아래 이 세션 최초로
+  `deterministic_trigger_engine.py`를 실제로 수정 — `assess_
+  deterministic_triggers`(실제 BUY_CANDIDATE 판정 함수)에 신규
+  optional 파라미터 `regime_switch_v1_trigger_status`(기본값
+  None)·`regime_switch_v1_gate_override_enabled`(기본값 False)를
+  추가하고, BUY_CANDIDATE 조건문에 `(regime_switch_v1_gate_
+  assessment is None or ...gate_open)`을 실제로 삽입했다 — 기본값
+  둘 다 "게이트 체크 완전 비활성화"에 해당해 기존 호출부는 100%
+  하위 호환. `scripts/validate_r3b_gate_integration_path.py`(신규,
+  read-only)로 **동일한 실제 함수**를 3가지로 직접 호출: (A)
+  게이트 파라미터 없음 — `buy_candidate=True`(entry_score=0.6895,
+  종목 000100/2023-10-11). (B) `trigger_status=NOT_TRIGGERED`,
+  override=False(기본값) — `buy_candidate=False`로 실제 차단됨.
+  (C) 동일 trigger_status, override=True — `buy_candidate=True`로
+  baseline과 동일하게 복원됨. **결과: `gate_actually_blocks_real_
+  path=True`, `override_actually_restores_real_path=True`** —
+  entry_score/eligibility는 A/B/C 전부 동일하게 유지되면서 오직
+  게이트 조건 하나로 buy_candidate가 뒤집힘. 기존 단위 테스트
+  (`tests/services/test_deterministic_trigger_engine.py`, 20건)
+  전부 통과. 판정: **"§21 게이트 → 실제 판단 경로" 연결이
+  완료됐다** — 다만 실제 운영 호출부(orchestrator)가 이 신규
+  파라미터를 전달하도록 배선하는 것은 별도 미완료 과제로 남는다
+  (그 전까지 실제 운영 동작 영향 없음, 의도된 안전장치). R3b는
+  Conditional Go를 유지한다. 신규 KIS 호출 0건, compliance/VaR/
+  broker submit 경계 미변경. 상세: `plans/[DESIGN]
+  regime_conditional_entry_signal_v1.md` §48.
+
 ---
 
 ## 진행 체크리스트
@@ -2973,7 +3005,59 @@ canonical),
   - 다음 과제: 신규 게이트 모듈을 실제 파이프라인에 연결할지 여부는
     별도 승인 필요(연결 시 compliance/리스크 재검토 필수), `trigger_
     status`를 최신으로 유지하는 배선 작업(모니터 스크립트 정기 실행
-    → 이 모듈에 전달) 별도 필요.
+    → 이 모듈에 전달) 별도 필요. **[SPPV-2.59에서 정정] "구현
+    완료"는 부정확 — "준비 모듈 + 런타임 미연결" 상태였음. 아래
+    SPPV-2.59 참고.**
+- [x] **SPPV-2.59(신설)** `§21 gate` 실제 판단 경로 연결 완료 —
+  `deterministic_trigger_engine.py` 실제 수정 (완료, 2026-07-18,
+  작성자: Codex)
+  - 작업 범위: §47(SPPV-2.58)이 "준비 모듈만 추가하고 런타임
+    미연결" 상태로 남긴 것을 사용자가 지적, 이번 턴에 실제 소비
+    경로 연결을 완료. 사용자의 명시적 승인 아래 이 세션 최초로
+    `deterministic_trigger_engine.py`를 실제로 수정했다(이전까지
+    "절대 수정 금지" 원칙 적용 대상).
+  - **연결 내용**: `assess_deterministic_triggers`(실제 BUY_
+    CANDIDATE 판정 함수, 실제 주문 결정과 직결)에 신규 optional
+    파라미터 `regime_switch_v1_trigger_status: str | None = None`,
+    `regime_switch_v1_gate_override_enabled: bool = False` 추가.
+    파라미터가 제공되면 `assess_regime_switch_v1_gate()`(§47, 그대로
+    재사용)를 호출해 결과를 BUY_CANDIDATE 조건문에 실제로 연결:
+    `eligibility_passed and entry_score >= threshold and allocation_
+    budget_ok and (gate_assessment is None or gate_assessment.
+    gate_open)`. 기본값(파라미터 미제공)이면 이 조건은 항상 True로
+    평가돼 기존 호출부는 100% 무영향(하위 호환). `metadata`에
+    `regime_switch_v1_gate_open`/`regime_switch_v1_gate_override_
+    applied` 진단 필드도 추가. paper/real/production 값은 이 함수
+    어디에도 참조되지 않는다.
+  - **검증**(`scripts/validate_r3b_gate_integration_path.py`,
+    read-only, 신규 KIS 호출 0건): 동일한 실제 함수 `assess_
+    deterministic_triggers`를 3가지로 직접 호출(종목 000100/
+    2023-10-11, entry_score=0.6895). (A) 게이트 파라미터 없음 —
+    `buy_candidate=True`. (B) `trigger_status=NOT_TRIGGERED`,
+    override=False(기본값) — `buy_candidate=False`로 실제 차단.
+    (C) 동일 trigger_status, override=True — `buy_candidate=True`
+    로 baseline과 동일 복원. **결과: `gate_actually_blocks_real_
+    path=True`, `override_actually_restores_real_path=True`.**
+    기존 단위 테스트(`tests/services/test_deterministic_trigger_
+    engine.py`, 20건) 전부 통과.
+  - **판정**: "§21 게이트 → 실제 판단 경로" 연결이 **완료**됐다 —
+    다만 실제 운영 호출부(orchestrator)가 이 신규 파라미터를
+    전달하도록 배선하는 것은 별도 미완료 과제(그 전까지 실제 운영
+    동작 영향 없음, 의도된 안전장치). R3b는 Conditional Go를
+    유지한다. compliance/VaR/broker submit 경계 미변경. 신규 KIS
+    호출 0건. 상세: `plans/[DESIGN] regime_conditional_entry_
+    signal_v1.md` §48.
+  - 산출물: `src/agent_trading/services/deterministic_trigger_
+    engine.py`(수정, 신규 optional 파라미터 2개 + BUY_CANDIDATE
+    조건 연결 + metadata 필드 2개), `scripts/validate_r3b_gate_
+    integration_path.py`(신규, read-only), `logs/signal_ic_r3b_
+    gate_integration_path_2026-07-18.json`, `logs/r3b_gate_
+    integration_path_run_2026-07-18.log`.
+  - 다음 과제: 실제 운영 호출부(orchestrator/decision loop)에서
+    `regime_switch_v1_trigger_status`를 실제로 전달하도록 배선하는
+    설계(트리거 소스 결정 포함), 배선 완료 시 별도 리스크/
+    컴플라이언스 재검토, §21 게이트 정기 재모니터링, entry_score
+    코드 변경 PR 초안, 포지션 사이징 검토.
 - [~] **SPPV-3** `entry_score` point-in-time 재현 및 중복 penalty ablation
   - **보류 유지, 형태 재정의 — 우선순위 재조정**: §12(1년, 자기참조
     포함) 당시 "알파 근거 강화"로 낙관했던 것이 §14(3년, 자기참조

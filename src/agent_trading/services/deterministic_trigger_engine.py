@@ -5,6 +5,7 @@ from dataclasses import dataclass, field
 from agent_trading.domain.entities import PositionSnapshotEntity, SignalFeatureSnapshotEntity
 from agent_trading.services.market_regime import MarketRegimeAssessment
 from agent_trading.services.portfolio_allocation import PortfolioAllocationAssessment
+from agent_trading.services.regime_switch_gate import assess_regime_switch_v1_gate
 from agent_trading.services.strategy_selection import StrategySelectionAssessment
 
 _CORE_RISK_OFF_RANKING_MODE = "hard_block_v1"
@@ -71,8 +72,27 @@ def assess_deterministic_triggers(
     portfolio_allocation: PortfolioAllocationAssessment | None,
     position_snapshot: PositionSnapshotEntity | None,
     deterministic_trigger_override: dict[str, object] | None = None,
+    regime_switch_v1_trigger_status: str | None = None,
+    regime_switch_v1_gate_override_enabled: bool = False,
 ) -> DeterministicTriggerAssessment | None:
-    """기존 deterministic 파생값을 이용해 후보를 생성한다."""
+    """기존 deterministic 파생값을 이용해 후보를 생성한다.
+
+    ``regime_switch_v1_trigger_status``: `§21 게이트`(regime_switch_v1)
+    실측 상태(TRIGGERED/PARTIAL/NOT_TRIGGERED)를 호출자가 전달하면
+    BUY_CANDIDATE 판정에 게이트가 적용된다(SPPV-2.59). **기본값 None
+    이면 게이트 체크 자체가 완전히 비활성화**되어 기존 호출부(이
+    파라미터를 모르는 모든 기존 호출 지점)의 동작은 100% 그대로
+    유지된다 — 이 파라미터를 명시적으로 전달하는 신규 호출자에게만
+    영향을 준다.
+
+    ``regime_switch_v1_gate_override_enabled``: `AppSettings.regime_
+    switch_v1_gate_override_enabled`(env: `REGIME_SWITCH_V1_GATE_
+    OVERRIDE_ENABLED`, 기본값 False)를 그대로 전달받는 mode-agnostic
+    config 스위치 — paper/real/production 같은 environment 값은
+    이 함수 어디에서도 참조하지 않는다. `regime_switch_v1_trigger_
+    status`가 제공된 상태에서 이 값이 True이면 게이트가 실제 국면
+    상태와 무관하게 열린 것으로 처리된다(강제 통과).
+    """
     if (
         signal_feature_snapshot is None
         and market_regime is None
@@ -219,6 +239,14 @@ def assess_deterministic_triggers(
             core_risk_off_guard_reasons=core_risk_off_guard_reasons,
         )
 
+    regime_switch_v1_gate_assessment = None
+    if regime_switch_v1_trigger_status is not None:
+        regime_switch_v1_gate_assessment = assess_regime_switch_v1_gate(
+            trigger_status=regime_switch_v1_trigger_status,
+            override_enabled=regime_switch_v1_gate_override_enabled,
+        )
+        reason_codes.append(regime_switch_v1_gate_assessment.reason_code)
+
     if normalized_source_type == "held_position":
         if exit_score >= thresholds["sell_candidate_threshold"]:
             sell_candidate = True
@@ -237,6 +265,10 @@ def assess_deterministic_triggers(
             eligibility_passed
             and entry_score >= thresholds["buy_candidate_threshold"]
             and allocation_budget_ok
+            and (
+                regime_switch_v1_gate_assessment is None
+                or regime_switch_v1_gate_assessment.gate_open
+            )
         ):
             buy_candidate = True
             candidate_set.append("BUY_CANDIDATE")
@@ -265,6 +297,16 @@ def assess_deterministic_triggers(
         "source_type": normalized_source_type,
         "has_position": has_position,
         "allocation_budget_ok": allocation_budget_ok,
+        "regime_switch_v1_gate_open": (
+            regime_switch_v1_gate_assessment.gate_open
+            if regime_switch_v1_gate_assessment is not None
+            else None
+        ),
+        "regime_switch_v1_gate_override_applied": (
+            regime_switch_v1_gate_assessment.override_applied
+            if regime_switch_v1_gate_assessment is not None
+            else None
+        ),
         "regime_label": market_regime.regime_label if market_regime else None,
         "risk_tone": market_regime.risk_tone if market_regime else None,
         "preferred_strategy": (

@@ -1,0 +1,13 @@
+
+=== 1. 실제 R3b-스타일 BUY_CANDIDATE 후보 탐색(실제 assess_deterministic_triggers 호출) ===
+후보 발견: 000100 / 2023-10-11
+[A] 게이트 파라미터 없음(기존 호출부와 동일): buy_candidate=True, entry_score=0.6895, reason_codes=('trigger_source_core', 'trigger_bullish_regime', 'trigger_relative_activity_bonus', 'trigger_high_volatility', 'trigger_no_position_exit_penalty', 'trigger_core_watch_path', 'trigger_buy_candidate', 'trigger_watch_candidate')
+
+=== 2. 동일 입력을 실제 함수에 §21 게이트 파라미터와 함께 재호출 ===
+[B] trigger_status=NOT_TRIGGERED, override=False(기본값): buy_candidate=False, regime_switch_v1_gate_open=False, reason_codes=('trigger_source_core', 'trigger_bullish_regime', 'trigger_relative_activity_bonus', 'trigger_high_volatility', 'trigger_no_position_exit_penalty', 'trigger_core_watch_path', 'gate_closed_regime_switch_v1_not_triggered', 'trigger_watch_candidate')
+[C] trigger_status=NOT_TRIGGERED, override=True: buy_candidate=True, regime_switch_v1_gate_open=True, reason_codes=('trigger_source_core', 'trigger_bullish_regime', 'trigger_relative_activity_bonus', 'trigger_high_volatility', 'trigger_no_position_exit_penalty', 'trigger_core_watch_path', 'gate_open_config_override_bypass', 'trigger_buy_candidate', 'trigger_watch_candidate')
+
+게이트가 실제 판정 경로에서 BUY_CANDIDATE를 실제로 차단함: True
+override가 실제 판정 경로에서 그 차단을 실제로 해제해 baseline과 동일해짐: True
+
+산출 저장: logs/signal_ic_r3b_gate_integration_path_2026-07-18.json
