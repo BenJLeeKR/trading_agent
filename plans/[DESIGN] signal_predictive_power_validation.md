@@ -1381,6 +1381,33 @@ entry 설계 검토로 전환**을 확정했다. 별도 문서
   미변경. 상세: `plans/[DESIGN] regime_conditional_entry_
   signal_v1.md` §52.
 
+- 작성자: Codex
+- 수정일자: 2026-07-19 (64차, SPPV-2.63 미확정 항목 확정 —
+  `test_run_decision_loop.py` 10건 실패 무관 확정)
+- 수정내용: **[정정] §52(63차)의 "stash 재실행으로 확인(무관)"은
+  증빙이 약했다** — 이번 턴에 `git worktree add /tmp/wt-pre-
+  mixedness 4fd3ad7e`(§52 이전 커밋, 메인 워크트리는 전혀 건드리지
+  않음)로 격리 비교했다(SPPV-2.64). Docker 컨테이너 안에서 PRE
+  (§52 이전, mixedness 코드 없음)/POST(§52 이후, 현재 main과
+  동일) 두 버전 각각 `pytest tests/scripts/test_run_decision_
+  loop.py -v --tb=long`(807줄 로그) 전체 재실행 후 `diff`로 직접
+  비교. **결과: 두 버전 모두 `10 failed, 109 passed` — 실패한
+  테스트 10건 이름·에러 메시지·assertion 내용까지 완전히 동일**
+  (차이는 비결정적 Python 객체 메모리 주소와 정확히 71줄의 라인
+  번호 오프셋뿐 — §52가 파일 앞부분에 71줄을 추가해 그 뒤 코드가
+  밀린 결과일 뿐, 실패 원인의 변화가 아님). `grep`으로 POST 로그
+  전체에서 `_run_mixedness_check`/`regime_mixedness_monitor`/
+  `mixedness` 문자열을 검색한 결과 **매치 0건** — mixedness 관련
+  코드는 실패 10건의 stack trace 어디에도 등장하지 않는다. 판정:
+  **`무관 확정`** — 10건 실패는 `universe_selection.py`(market_
+  overlay seed pool)와 AsyncMock/Decimal 타입 불일치 관련 사전
+  존재 결함이며, §52(SPPV-2.63)의 국면 혼합도 모니터링 연결과
+  완전히 무관하다. §52의 결론 자체는 맞았으나 이번 턴에 격리된
+  worktree 비교로 증빙을 확정했다. R3b는 Conditional Go를
+  유지한다 — 이번 턴은 코드를 전혀 수정하지 않았다(순수 검증
+  확정). 신규 KIS 호출 0건. 상세: `plans/[DESIGN] regime_
+  conditional_entry_signal_v1.md` §53.
+
 ---
 
 ## 진행 체크리스트
@@ -3392,7 +3419,45 @@ canonical),
   - 다음 과제: `trigger_status` 공급원 자동화/배치화(override=true
     인 동안 낮은 우선순위), entry_score 코드 변경 PR 초안, R3b
     alpha 교체 전체 경로 전체 파이프라인 재현 검증(선택 사항),
-    `portfolio_allocation` gap 실거래 누적 후 재검증.
+    `portfolio_allocation` gap 실거래 누적 후 재검증. **[SPPV-2.64
+    에서 확정] "stash 재실행으로 확인(무관)" 서술의 증빙을
+    격리된 worktree 비교로 확정 — 아래 SPPV-2.64 참고.**
+- [x] **SPPV-2.64(신설)** SPPV-2.63 미확정 항목 확정 — `test_run_
+  decision_loop.py` 10건 실패 무관 확정 (완료, 2026-07-19, 작성자:
+  Codex)
+  - 작업 범위: §52(SPPV-2.63)가 "stash 재실행으로 확인(무관)"
+    이라고만 서술해 증빙이 약했던 부분 — mixedness 변경과 기존
+    테스트 10건 실패의 무관성 — 을 실제 증빙으로 확정한다. 코드
+    수정은 하지 않고 검증만 수행.
+  - **방법**: `git worktree add /tmp/wt-pre-mixedness 4fd3ad7e`
+    (§52 이전 커밋)로 메인 워크트리를 전혀 건드리지 않는 격리
+    비교 구성. Docker 컨테이너 안에서 PRE(mixedness 코드 없음)/
+    POST(현재 main과 동일) 두 버전 각각 `pytest tests/scripts/
+    test_run_decision_loop.py -v --tb=long`로 전체 재실행하고
+    807줄 로그를 저장 후 `diff`로 직접 비교, `grep`으로 mixedness
+    관련 문자열이 실패 stack trace에 등장하는지 확인.
+  - **결과**: PRE/POST 모두 `10 failed, 109 passed` — **실패한
+    테스트 10건의 이름·에러 메시지·assertion 내용까지 완전히
+    동일**(차이는 비결정적 메모리 주소와 정확히 71줄의 라인 번호
+    오프셋뿐 — mixedness 코드가 파일 앞부분에 삽입돼 그 뒤 코드가
+    밀린 결과일 뿐). `grep -n "_run_mixedness_check\|regime_
+    mixedness_monitor\|mixedness"`로 POST 로그 전체를 검색한 결과
+    **매치 0건**.
+  - **판정**: **`무관 확정`** — 10건 실패는 `universe_selection.
+    py`(market_overlay seed pool)와 AsyncMock/Decimal 타입
+    불일치 관련 사전 존재 결함이며, §52의 국면 혼합도 모니터링
+    연결과 완전히 무관하다. R3b는 Conditional Go를 유지한다.
+    이번 턴은 코드를 전혀 수정하지 않았다(순수 검증). 신규 KIS
+    호출 0건, `.env` 미수정, BUY/SELL 게이트 로직 미변경. 상세:
+    `plans/[DESIGN] regime_conditional_entry_signal_v1.md` §53.
+  - 산출물: `logs/r3b_test_run_decision_loop_PRE_mixedness_2026-
+    07-19.log`(신규), `logs/r3b_test_run_decision_loop_POST_
+    mixedness_2026-07-19.log`(신규) — worktree/컨테이너 백업은
+    작업 종료 후 완전히 정리(main 워크트리 무변화 확인).
+  - 다음 과제(변경 없음): `trigger_status` 공급원 자동화, entry_
+    score 코드 변경 PR 초안, `test_run_decision_loop.py`의 10건
+    사전 존재 결함 자체 수정 여부는 이번 세션(SPPV/R3b 트랙) 범위
+    밖 — 별도 이슈로 트래킹 권장.
 - [~] **SPPV-3** `entry_score` point-in-time 재현 및 중복 penalty ablation
   - **보류 유지, 형태 재정의 — 우선순위 재조정**: §12(1년, 자기참조
     포함) 당시 "알파 근거 강화"로 낙관했던 것이 §14(3년, 자기참조

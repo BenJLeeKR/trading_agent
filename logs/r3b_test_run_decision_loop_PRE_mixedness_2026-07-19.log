@@ -1,0 +1,807 @@
+============================= test session starts ==============================
+platform linux -- Python 3.14.6, pytest-9.1.1, pluggy-1.6.0 -- /usr/local/bin/python3
+cachedir: .pytest_cache
+rootdir: /app
+configfile: pyproject.toml
+plugins: anyio-4.14.1, asyncio-1.4.0
+asyncio: mode=Mode.AUTO, debug=False, asyncio_default_fixture_loop_scope=module, asyncio_default_test_loop_scope=function
+collecting ... collected 119 items
+
+tests/scripts/test_run_decision_loop.py::TestSerializeCycleResult::test_submitted_result PASSED [  0%]
+tests/scripts/test_run_decision_loop.py::TestSerializeCycleResult::test_dry_run_result PASSED [  1%]
+tests/scripts/test_run_decision_loop.py::TestSerializeCycleResult::test_error_result PASSED [  2%]
+tests/scripts/test_run_decision_loop.py::TestSerializeCycleResult::test_with_precheck PASSED [  3%]
+tests/scripts/test_run_decision_loop.py::TestSerializeCycleResult::test_includes_universe_anchor_fields PASSED [  4%]
+tests/scripts/test_run_decision_loop.py::TestSerializeCycleResult::test_includes_ai_call_path PASSED [  5%]
+tests/scripts/test_run_decision_loop.py::TestSerializeCycleResult::test_includes_risk_off_exception_flag PASSED [  5%]
+tests/scripts/test_run_decision_loop.py::TestSerializeCycleResultSourceType::test_default_source_type_is_core PASSED [  6%]
+tests/scripts/test_run_decision_loop.py::TestSerializeCycleResultSourceType::test_held_position_source_type PASSED [  7%]
+tests/scripts/test_run_decision_loop.py::TestSerializeCycleResultSourceType::test_source_type_in_submitted_result PASSED [  8%]
+tests/scripts/test_run_decision_loop.py::TestSerializeCycleResultSourceType::test_source_type_in_error_result PASSED [  9%]
+tests/scripts/test_run_decision_loop.py::TestBuildAggregateSummary::test_all_success PASSED [ 10%]
+tests/scripts/test_run_decision_loop.py::TestBuildAggregateSummary::test_mixed_results PASSED [ 10%]
+tests/scripts/test_run_decision_loop.py::TestBuildAggregateSummary::test_empty_results PASSED [ 11%]
+tests/scripts/test_run_decision_loop.py::TestBuildAggregateSummary::test_includes_universe_and_processed_source_metrics PASSED [ 12%]
+tests/scripts/test_run_decision_loop.py::TestBuildAggregateSummary::test_includes_ai_call_path_metrics PASSED [ 13%]
+tests/scripts/test_run_decision_loop.py::TestBuildAggregateSummary::test_includes_risk_off_exception_metrics PASSED [ 14%]
+tests/scripts/test_run_decision_loop.py::TestBuildAggregateSummary::test_includes_universe_anchor_metrics PASSED [ 15%]
+tests/scripts/test_run_decision_loop.py::TestSerializePrecheck::test_healthy PASSED [ 15%]
+tests/scripts/test_run_decision_loop.py::TestSerializePrecheck::test_stale PASSED [ 16%]
+tests/scripts/test_run_decision_loop.py::TestRunOneCycle::test_dry_run PASSED [ 17%]
+tests/scripts/test_run_decision_loop.py::TestRunOneCycle::test_submit PASSED [ 18%]
+tests/scripts/test_run_decision_loop.py::TestRunOneCycle::test_precheck_stale_in_summary PASSED [ 19%]
+tests/scripts/test_run_decision_loop.py::TestRunOneCycle::test_dry_run_with_held_position_source_type FAILED [ 20%]
+tests/scripts/test_run_decision_loop.py::TestRunOneCycle::test_scheduler_dry_run_records_guardrail_evaluation PASSED [ 21%]
+tests/scripts/test_run_decision_loop.py::TestRunOneCycle::test_submit_with_held_position_source_type PASSED [ 21%]
+tests/scripts/test_run_decision_loop.py::TestRunOneCycle::test_held_position_can_trigger_t3_live_pipeline_when_not_fresh FAILED [ 22%]
+tests/scripts/test_run_decision_loop.py::TestRunOneCycle::test_pre_ai_skip_when_orderable_amount_below_threshold FAILED [ 23%]
+tests/scripts/test_run_decision_loop.py::TestRunOneCycle::test_pre_ai_does_not_skip_when_cash_snapshot_is_stale PASSED [ 24%]
+tests/scripts/test_run_decision_loop.py::TestRunOneCycle::test_pre_ai_skip_when_held_position_has_no_quantity PASSED [ 25%]
+tests/scripts/test_run_decision_loop.py::TestRunOneCycle::test_pre_ai_skip_when_held_position_recent_hold_has_no_change PASSED [ 26%]
+tests/scripts/test_run_decision_loop.py::TestRunOneCycle::test_pre_ai_validation_result_uses_common_contract PASSED [ 26%]
+tests/scripts/test_run_decision_loop.py::TestRunOneCycle::test_pre_ai_skip_not_triggered_for_held_position_after_cutoff PASSED [ 27%]
+tests/scripts/test_run_decision_loop.py::TestRunOneCycle::test_pre_ai_skip_not_triggered_for_held_position_when_recent_event_exists PASSED [ 28%]
+tests/scripts/test_run_decision_loop.py::TestRunOneCycle::test_pre_ai_skip_when_held_position_recent_risk_sell_has_no_change PASSED [ 29%]
+tests/scripts/test_run_decision_loop.py::TestRunOneCycle::test_pre_ai_skip_not_triggered_when_position_increased_after_recent_risk_sell PASSED [ 30%]
+tests/scripts/test_run_decision_loop.py::TestRunOneCycle::test_pre_ai_skip_when_held_position_recent_buy_sell_cooldown_active PASSED [ 31%]
+tests/scripts/test_run_decision_loop.py::TestRunOneCycle::test_pre_ai_skip_when_holding_profile_earliest_reduce_window_active PASSED [ 31%]
+tests/scripts/test_run_decision_loop.py::TestRunOneCycle::test_pre_ai_skip_when_reverse_trade_uses_same_signal_feature_snapshot_after_buy PASSED [ 32%]
+tests/scripts/test_run_decision_loop.py::TestRunOneCycle::test_pre_ai_skip_not_triggered_when_position_reduced_after_recent_buy PASSED [ 33%]
+tests/scripts/test_run_decision_loop.py::TestRunOneCycle::test_pre_ai_skip_when_same_symbol_reentry_cooldown_active PASSED [ 34%]
+tests/scripts/test_run_decision_loop.py::TestRunOneCycle::test_pre_ai_skip_when_reentry_uses_same_signal_feature_snapshot PASSED [ 35%]
+tests/scripts/test_run_decision_loop.py::TestRunOneCycle::test_pre_ai_skip_when_holding_profile_earliest_reentry_window_active PASSED [ 36%]
+tests/scripts/test_run_decision_loop.py::TestRunOneCycle::test_pre_ai_same_symbol_reentry_cooldown_skips_core_cycle FAILED [ 36%]
+tests/scripts/test_run_decision_loop.py::TestRunOneCycle::test_pre_ai_recent_buy_sell_cooldown_skips_held_position_cycle FAILED [ 37%]
+tests/scripts/test_run_decision_loop.py::TestRunOneCycle::test_pre_ai_reverse_trade_same_snapshot_skips_cycle FAILED [ 38%]
+tests/scripts/test_run_decision_loop.py::TestRunOneCycle::test_pre_ai_skip_when_general_buy_budget_exhausted_and_no_position PASSED [ 39%]
+tests/scripts/test_run_decision_loop.py::TestRunOneCycle::test_pre_ai_skip_reason_not_triggered_when_position_exists_even_if_buy_budget_zero PASSED [ 40%]
+tests/scripts/test_run_decision_loop.py::TestRunOneCycle::test_pre_ai_cash_gate_not_triggered_when_position_exists_and_orderable_amount_low PASSED [ 41%]
+tests/scripts/test_run_decision_loop.py::TestRunOneCycle::test_t3_fresh_skip_when_fresh_events_exist PASSED [ 42%]
+tests/scripts/test_run_decision_loop.py::TestRunOneCycle::test_t3_quota_exhausted_skip PASSED [ 42%]
+tests/scripts/test_run_decision_loop.py::TestRunOneCycle::test_t3_fresh_skip_completes_normally PASSED [ 43%]
+tests/scripts/test_run_decision_loop.py::TestHeldPositionSellBudget::test_hp_sell_ignores_general_submit_budget_consumed PASSED [ 44%]
+tests/scripts/test_run_decision_loop.py::TestHeldPositionSellBudget::test_hp_sell_cycle_count_no_longer_blocks_submit PASSED [ 45%]
+tests/scripts/test_run_decision_loop.py::TestHeldPositionSellBudget::test_hp_sell_symbol_dedupe_blocks_duplicate PASSED [ 46%]
+tests/scripts/test_run_decision_loop.py::TestHeldPositionSellBudget::test_core_symbol_still_respects_general_submit_budget PASSED [ 47%]
+tests/scripts/test_run_decision_loop.py::TestHeldPositionSellBudget::test_core_symbol_blocked_when_general_submit_disabled PASSED [ 47%]
+tests/scripts/test_run_decision_loop.py::TestHeldPositionSellBudget::test_infer_core_dry_run_reason_when_general_submit_disabled PASSED [ 48%]
+tests/scripts/test_run_decision_loop.py::TestHeldPositionSellBudget::test_infer_market_overlay_dry_run_reason_when_slot_consumed PASSED [ 49%]
+tests/scripts/test_run_decision_loop.py::TestHeldPositionSellBudget::test_core_symbol_allows_submit_while_cycle_budget_remains PASSED [ 50%]
+tests/scripts/test_run_decision_loop.py::TestGeneralSubmitLane::test_run_loop_allows_next_general_submit_after_pre_submit_failure PASSED [ 51%]
+tests/scripts/test_run_decision_loop.py::TestGeneralSubmitLane::test_run_loop_allows_multiple_general_submits_up_to_cycle_budget PASSED [ 52%]
+tests/scripts/test_run_decision_loop.py::TestGeneralSubmitLane::test_run_loop_general_submit_lane_does_not_serialize_symbol_execution PASSED [ 52%]
+tests/scripts/test_run_decision_loop.py::TestParseArgs::test_defaults PASSED [ 53%]
+tests/scripts/test_run_decision_loop.py::TestParseArgs::test_count_one PASSED [ 54%]
+tests/scripts/test_run_decision_loop.py::TestParseArgs::test_dry_run PASSED [ 55%]
+tests/scripts/test_run_decision_loop.py::TestParseArgs::test_interval PASSED [ 56%]
+tests/scripts/test_run_decision_loop.py::TestParseArgs::test_json_output PASSED [ 57%]
+tests/scripts/test_run_decision_loop.py::TestTradingUniverse::test_default_universe PASSED [ 57%]
+tests/scripts/test_run_decision_loop.py::TestTradingUniverse::test_parse_symbols_with_default_market PASSED [ 58%]
+tests/scripts/test_run_decision_loop.py::TestTradingUniverse::test_parse_explicit_markets_and_dedup PASSED [ 59%]
+tests/scripts/test_run_decision_loop.py::TestTradingUniverse::test_read_trading_universe_from_env PASSED [ 60%]
+tests/scripts/test_run_decision_loop.py::TestTradingUniverse::test_read_trading_universe_prefers_latest_intraday_freeze PASSED [ 61%]
+tests/scripts/test_run_decision_loop.py::TestTradingUniverse::test_read_trading_universe_dedupes_duplicate_freeze_rows PASSED [ 62%]
+tests/scripts/test_run_decision_loop.py::TestTradingUniverse::test_universe_selection_service_fallback FAILED [ 63%]
+tests/scripts/test_run_decision_loop.py::TestTradingUniverse::test_universe_selection_service_fallback_preserves_kosdaq_market FAILED [ 63%]
+tests/scripts/test_run_decision_loop.py::TestTradingUniverse::test_read_trading_universe_applies_cap_overrides PASSED [ 64%]
+tests/scripts/test_run_decision_loop.py::TestTradingUniverse::test_read_trading_universe_applies_core_cap PASSED [ 65%]
+tests/scripts/test_run_decision_loop.py::TestTradingUniverse::test_universe_selection_service_with_kis_market_overlay FAILED [ 66%]
+tests/scripts/test_run_decision_loop.py::TestTradingUniverse::test_universe_selection_service_with_kis_quotes_returned FAILED [ 67%]
+tests/scripts/test_run_decision_loop.py::TestTradingUniverse::test_kis_client_init_failure_logs_warning PASSED [ 68%]
+tests/scripts/test_run_decision_loop.py::TestTradingUniverse::test_universe_selection_service_empty_fallback PASSED [ 68%]
+tests/scripts/test_run_decision_loop.py::TestTradingUniverse::test_universe_selection_service_error_fallback PASSED [ 69%]
+tests/scripts/test_run_decision_loop.py::TestResolveSymbolPrice::test_uses_live_quote PASSED [ 70%]
+tests/scripts/test_run_decision_loop.py::TestResolveSymbolPrice::test_fallback_on_quote_none PASSED [ 71%]
+tests/scripts/test_run_decision_loop.py::TestResolveSymbolPrice::test_fallback_on_quote_zero PASSED [ 72%]
+tests/scripts/test_run_decision_loop.py::TestResolveSymbolPrice::test_fallback_on_quote_exception PASSED [ 73%]
+tests/scripts/test_run_decision_loop.py::TestResolveSymbolPrice::test_fallback_no_broker PASSED [ 73%]
+tests/scripts/test_run_decision_loop.py::TestResolveSymbolPrice::test_uses_kis_smoke_price_env_fallback PASSED [ 74%]
+tests/scripts/test_run_decision_loop.py::TestResolveSymbolPrice::test_quote_priority_over_env PASSED [ 75%]
+tests/scripts/test_run_decision_loop.py::TestPersistSeededEvents::test_persists_new PASSED [ 76%]
+tests/scripts/test_run_decision_loop.py::TestPersistSeededEvents::test_skips_duplicate PASSED [ 77%]
+tests/scripts/test_run_decision_loop.py::TestPersistSeededEvents::test_non_fatal_on_error PASSED [ 78%]
+tests/scripts/test_run_decision_loop.py::TestPersistSeededEvents::test_mixed_persist_and_skip PASSED [ 78%]
+tests/scripts/test_run_decision_loop.py::TestSigtermHandler::test_sigterm_handler_uses_add_signal_handler PASSED [ 79%]
+tests/scripts/test_run_decision_loop.py::TestSigtermHandler::test_handle_signal_cancels_all_tasks PASSED [ 80%]
+tests/scripts/test_run_decision_loop.py::TestCollectPersistedSeededEvents::test_empty_when_no_events PASSED [ 81%]
+tests/scripts/test_run_decision_loop.py::TestCollectPersistedSeededEvents::test_filters_to_t3_only PASSED [ 82%]
+tests/scripts/test_run_decision_loop.py::TestCollectPersistedSeededEvents::test_with_data PASSED [ 83%]
+tests/scripts/test_run_decision_loop.py::TestCollectPersistedSeededEvents::test_includes_seeded_news_event_type PASSED [ 84%]
+tests/scripts/test_run_decision_loop.py::TestIsT3FreshForSymbol::test_true_when_fresh_events_exist PASSED [ 84%]
+tests/scripts/test_run_decision_loop.py::TestIsT3FreshForSymbol::test_false_when_no_events PASSED [ 85%]
+tests/scripts/test_run_decision_loop.py::TestIsT3FreshForSymbol::test_false_when_only_stale_events PASSED [ 86%]
+tests/scripts/test_run_decision_loop.py::TestIsT3FreshForSymbol::test_true_with_seeded_news_event_type PASSED [ 87%]
+tests/scripts/test_run_decision_loop.py::TestRunT3LivePipeline::test_skip_when_services_unavailable PASSED [ 88%]
+tests/scripts/test_run_decision_loop.py::TestRunT3LivePipeline::test_skip_when_naver_quota_exhausted PASSED [ 89%]
+tests/scripts/test_run_decision_loop.py::TestRunT3LivePipeline::test_process_quota_exhausted_degraded_persist_does_not_crash PASSED [ 89%]
+tests/scripts/test_run_decision_loop.py::TestRunT3LivePipeline::test_timeout_handled_gracefully PASSED [ 90%]
+tests/scripts/test_run_decision_loop.py::TestRunT3LivePipeline::test_exception_handled_gracefully PASSED [ 91%]
+tests/scripts/test_run_decision_loop.py::TestRunT3LivePipeline::test_success_path PASSED [ 92%]
+tests/scripts/test_run_decision_loop.py::TestRunT3LivePipelinePartialPersist::test_partial_persist_after_convert_timeout PASSED [ 93%]
+tests/scripts/test_run_decision_loop.py::TestRunT3LivePipelinePartialPersist::test_partial_persist_with_seeds_only PASSED [ 94%]
+tests/scripts/test_run_decision_loop.py::TestRunT3LivePipelineShielded::test_creatable_via_create_task PASSED [ 94%]
+tests/scripts/test_run_decision_loop.py::TestRunT3LivePipelineShielded::test_propagates_inner_result PASSED [ 95%]
+tests/scripts/test_run_decision_loop.py::TestT3DegradedPath::test_collect_and_freshness_integration PASSED [ 96%]
+tests/scripts/test_run_decision_loop.py::TestAccountLookupFieldName::test_account_alias_field_exists PASSED [ 97%]
+tests/scripts/test_run_decision_loop.py::TestAccountLookupFieldName::test_alias_field_does_not_exist PASSED [ 98%]
+tests/scripts/test_run_decision_loop.py::TestAccountLookupFieldName::test_account_alias_construction_succeeds PASSED [ 99%]
+tests/scripts/test_run_decision_loop.py::TestAccountLookupFieldName::test_alias_construction_raises_type_error PASSED [100%]
+
+=================================== FAILURES ===================================
+_________ TestRunOneCycle.test_dry_run_with_held_position_source_type __________
+
+self = <tests.scripts.test_run_decision_loop.TestRunOneCycle object at 0xe7b2b754eb10>
+
+    @pytest.mark.asyncio
+    async def test_dry_run_with_held_position_source_type(self) -> None:
+        """Dry-run 모드에서 source_type='held_position'이 결과에 포함됨."""
+        async with _mock_runtime_for_one_cycle() as runtime:
+            result = await _run_one_cycle(
+                cycle=1,
+                submit=False,
+                dry_run=True,
+                output="text",
+                source_type="held_position",
+                runtime=runtime,
+            )
+    
+>       assert result["status"] == "DRY_RUN"
+E       AssertionError: assert 'ERROR' == 'DRY_RUN'
+E         
+E         - DRY_RUN
+E         + ERROR
+
+tests/scripts/test_run_decision_loop.py:1121: AssertionError
+------------------------------ Captured log call -------------------------------
+ERROR    scripts.run_decision_loop:run_decision_loop.py:1896 [SYMBOL_DONE] cycle=1 symbol=005930 status=ERROR duration=0.0s error=[<class 'decimal.ConversionSyntax'>]
+Traceback (most recent call last):
+  File "/app/scripts/run_decision_loop.py", line 1550, in _run_one_cycle
+    pre_ai_validation_result, pre_ai_skip_details = await _evaluate_pre_ai_validation_result(
+                                                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    ...<7 lines>...
+    )
+    ^
+  File "/app/scripts/run_decision_loop.py", line 195, in _evaluate_pre_ai_validation_result
+    return await evaluate_pre_ai_validation_result(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    ...<9 lines>...
+    )
+    ^
+  File "/app/src/agent_trading/services/pre_ai_gate.py", line 359, in evaluate_pre_ai_validation_result
+    held_skip_reason = await evaluate_held_position_skip_reason(
+                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    ...<7 lines>...
+    )
+    ^
+  File "/app/src/agent_trading/services/pre_ai_gate.py", line 542, in evaluate_held_position_skip_reason
+    await _get_latest_recent_held_decision(
+    ...<5 lines>...
+    )
+  File "/app/src/agent_trading/services/pre_ai_gate.py", line 150, in _get_latest_recent_held_decision
+    Decimal(str(row["anchored_edge_after_cost_bps"]))
+    ~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+decimal.InvalidOperation: [<class 'decimal.ConversionSyntax'>]
+_ TestRunOneCycle.test_held_position_can_trigger_t3_live_pipeline_when_not_fresh _
+
+self = <tests.scripts.test_run_decision_loop.TestRunOneCycle object at 0xe7b2b780b570>
+
+    @pytest.mark.asyncio
+    async def test_held_position_can_trigger_t3_live_pipeline_when_not_fresh(self) -> None:
+        """held_position도 T3 freshness가 stale이면 live pipeline을 태워야 한다."""
+        async with _mock_runtime_for_one_cycle() as runtime:
+            live_pipeline = AsyncMock(return_value=None)
+            with (
+                patch.dict("os.environ", {"SEEDED_NEWS_ENABLED": "1"}),
+                patch(
+                    "scripts.run_decision_loop._collect_persisted_seeded_events",
+                    new=AsyncMock(return_value=[]),
+                ),
+                patch(
+                    "scripts.run_decision_loop._is_t3_fresh_for_symbol",
+                    new=AsyncMock(return_value=False),
+                ),
+                patch(
+                    "scripts.run_decision_loop._run_t3_live_pipeline_shielded",
+                    new=live_pipeline,
+                ),
+                patch(
+                    "agent_trading.brokers.naver_news_adapter.NaverNewsSearchAdapter.is_quota_exhausted",
+                    return_value=False,
+                ),
+            ):
+                result = await _run_one_cycle(
+                    cycle=1,
+                    submit=False,
+                    dry_run=True,
+                    output="text",
+                    source_type="held_position",
+                    runtime=runtime,
+                )
+                await asyncio.sleep(0)
+    
+        assert result["source_type"] == "held_position"
+>       live_pipeline.assert_called_once()
+
+tests/scripts/test_run_decision_loop.py:1199: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <AsyncMock id='254754758783200'>
+
+    def assert_called_once(self):
+        """assert that the mock was called only once.
+        """
+        if not self.call_count == 1:
+            msg = ("Expected '%s' to have been called once. Called %s times.%s"
+                   % (self._mock_name or 'mock',
+                      self.call_count,
+                      self._calls_repr()))
+>           raise AssertionError(msg)
+E           AssertionError: Expected 'mock' to have been called once. Called 0 times.
+
+/usr/local/lib/python3.14/unittest/mock.py:965: AssertionError
+------------------------------ Captured log call -------------------------------
+ERROR    scripts.run_decision_loop:run_decision_loop.py:1896 [SYMBOL_DONE] cycle=1 symbol=005930 status=ERROR duration=0.0s error=[<class 'decimal.ConversionSyntax'>]
+Traceback (most recent call last):
+  File "/app/scripts/run_decision_loop.py", line 1550, in _run_one_cycle
+    pre_ai_validation_result, pre_ai_skip_details = await _evaluate_pre_ai_validation_result(
+                                                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    ...<7 lines>...
+    )
+    ^
+  File "/app/scripts/run_decision_loop.py", line 195, in _evaluate_pre_ai_validation_result
+    return await evaluate_pre_ai_validation_result(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    ...<9 lines>...
+    )
+    ^
+  File "/app/src/agent_trading/services/pre_ai_gate.py", line 359, in evaluate_pre_ai_validation_result
+    held_skip_reason = await evaluate_held_position_skip_reason(
+                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    ...<7 lines>...
+    )
+    ^
+  File "/app/src/agent_trading/services/pre_ai_gate.py", line 542, in evaluate_held_position_skip_reason
+    await _get_latest_recent_held_decision(
+    ...<5 lines>...
+    )
+  File "/app/src/agent_trading/services/pre_ai_gate.py", line 150, in _get_latest_recent_held_decision
+    Decimal(str(row["anchored_edge_after_cost_bps"]))
+    ~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+decimal.InvalidOperation: [<class 'decimal.ConversionSyntax'>]
+____ TestRunOneCycle.test_pre_ai_skip_when_orderable_amount_below_threshold ____
+
+self = <tests.scripts.test_run_decision_loop.TestRunOneCycle object at 0xe7b2b74d8850>
+
+    @pytest.mark.asyncio
+    async def test_pre_ai_skip_when_orderable_amount_below_threshold(self) -> None:
+        """일반 BUY 후보는 주문가능금액이 기준 이하이면 AI 전에 SKIPPED 처리한다."""
+        async with _mock_runtime_for_one_cycle() as runtime:
+            repos = runtime["repositories"]
+            await repos.instruments.add(
+                InstrumentEntity(
+                    instrument_id=uuid4(),
+                    symbol="000100",
+                    market_code=MARKET,
+                    asset_class="KR_STOCK",
+                    currency="KRW",
+                    name="유한양행",
+                    is_active=True,
+                )
+            )
+            latest_cash = await repos.cash_balance_snapshots.get_latest_by_account(ACCOUNT_ID)
+            assert latest_cash is not None
+            repos.cash_balance_snapshots._items[latest_cash.cash_balance_snapshot_id] = (  # type: ignore[attr-defined]
+                CashBalanceSnapshotEntity(
+                    cash_balance_snapshot_id=latest_cash.cash_balance_snapshot_id,
+                    account_id=latest_cash.account_id,
+                    currency=latest_cash.currency,
+                    available_cash=latest_cash.available_cash,
+                    settled_cash=latest_cash.settled_cash,
+                    unsettled_cash=latest_cash.unsettled_cash,
+                    orderable_amount=Decimal("499999"),
+                    source_of_truth=latest_cash.source_of_truth,
+                    snapshot_at=latest_cash.snapshot_at,
+                    created_at=latest_cash.created_at,
+                )
+            )
+            result = await _run_one_cycle(
+                cycle=1,
+                submit=True,
+                dry_run=False,
+                output="text",
+                symbol="000100",
+                source_type="core",
+                runtime=runtime,
+            )
+    
+>       assert result["status"] == "SKIPPED"
+E       AssertionError: assert 'ERROR' == 'SKIPPED'
+E         
+E         - SKIPPED
+E         + ERROR
+
+tests/scripts/test_run_decision_loop.py:1244: AssertionError
+------------------------------ Captured log call -------------------------------
+ERROR    scripts.run_decision_loop:run_decision_loop.py:1896 [SYMBOL_DONE] cycle=1 symbol=000100 status=ERROR duration=0.0s error=[<class 'decimal.ConversionSyntax'>]
+Traceback (most recent call last):
+  File "/app/scripts/run_decision_loop.py", line 1550, in _run_one_cycle
+    pre_ai_validation_result, pre_ai_skip_details = await _evaluate_pre_ai_validation_result(
+                                                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    ...<7 lines>...
+    )
+    ^
+  File "/app/scripts/run_decision_loop.py", line 195, in _evaluate_pre_ai_validation_result
+    return await evaluate_pre_ai_validation_result(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    ...<9 lines>...
+    )
+    ^
+  File "/app/src/agent_trading/services/pre_ai_gate.py", line 398, in evaluate_pre_ai_validation_result
+    reentry_skip_reason = await evaluate_same_symbol_reentry_skip_reason(
+                          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    ...<7 lines>...
+    )
+    ^
+  File "/app/src/agent_trading/services/pre_ai_gate.py", line 724, in evaluate_same_symbol_reentry_skip_reason
+    ) = await _get_latest_recent_held_decision(
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    ...<5 lines>...
+    )
+    ^
+  File "/app/src/agent_trading/services/pre_ai_gate.py", line 150, in _get_latest_recent_held_decision
+    Decimal(str(row["anchored_edge_after_cost_bps"]))
+    ~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+decimal.InvalidOperation: [<class 'decimal.ConversionSyntax'>]
+__ TestRunOneCycle.test_pre_ai_same_symbol_reentry_cooldown_skips_core_cycle ___
+
+self = <tests.scripts.test_run_decision_loop.TestRunOneCycle object at 0xe7b2b74e3e00>
+
+    @pytest.mark.asyncio
+    async def test_pre_ai_same_symbol_reentry_cooldown_skips_core_cycle(self) -> None:
+        """최근 SELL 직후 동일 종목 core cycle은 pre-AI gate에서 SKIPPED 처리된다."""
+        async with _mock_runtime_for_one_cycle() as runtime:
+            repos = runtime["repositories"]
+            with patch(
+                "scripts.run_decision_loop._evaluate_pre_ai_skip_reason",
+                new=AsyncMock(
+                    return_value=(
+                        "same_symbol_reentry_cooldown",
+                        {
+                            "held_quantity": "0",
+                            "reentry_recent_sell_order_count": "1",
+                            "reentry_latest_sell_decision_type": "reduce",
+                        },
+                    )
+                ),
+            ):
+                result = await _run_one_cycle(
+                    cycle=1,
+                    submit=True,
+                    dry_run=False,
+                    output="text",
+                    symbol=SYMBOL,
+                    source_type="core",
+                    runtime=runtime,
+                )
+    
+>       assert result["status"] == "SKIPPED"
+E       AssertionError: assert 'ERROR' == 'SKIPPED'
+E         
+E         - SKIPPED
+E         + ERROR
+
+tests/scripts/test_run_decision_loop.py:2188: AssertionError
+------------------------------ Captured log call -------------------------------
+ERROR    scripts.run_decision_loop:run_decision_loop.py:1896 [SYMBOL_DONE] cycle=1 symbol=005930 status=ERROR duration=0.0s error='>' not supported between instances of 'AsyncMock' and 'int'
+Traceback (most recent call last):
+  File "/app/scripts/run_decision_loop.py", line 1811, in _run_one_cycle
+    result = await asyncio.wait_for(
+             ^^^^^^^^^^^^^^^^^^^^^^^
+    ...<7 lines>...
+    )
+    ^
+  File "/usr/local/lib/python3.14/asyncio/tasks.py", line 488, in wait_for
+    return await fut
+           ^^^^^^^^^
+  File "/app/src/agent_trading/services/decision_orchestrator.py", line 2596, in assemble_and_submit
+    return await self._execution_service.run_execution_pipeline(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    ...<9 lines>...
+    )
+    ^
+  File "/app/src/agent_trading/services/execution_service.py", line 2079, in run_execution_pipeline
+    _resolved_quote, reference_price = await self._resolve_quote(
+                                       ^^^^^^^^^^^^^^^^^^^^^^^^^^
+    ...<5 lines>...
+    )
+    ^
+  File "/app/src/agent_trading/services/execution_service.py", line 1717, in _resolve_quote
+    if quote.last is not None and quote.last > 0:
+                                  ^^^^^^^^^^^^^^
+TypeError: '>' not supported between instances of 'AsyncMock' and 'int'
+_ TestRunOneCycle.test_pre_ai_recent_buy_sell_cooldown_skips_held_position_cycle _
+
+self = <tests.scripts.test_run_decision_loop.TestRunOneCycle object at 0xe7b2b74b8130>
+
+    @pytest.mark.asyncio
+    async def test_pre_ai_recent_buy_sell_cooldown_skips_held_position_cycle(self) -> None:
+        """최근 BUY 직후 held_position cycle은 pre-AI gate에서 SKIPPED 처리된다."""
+        async with _mock_runtime_for_one_cycle() as runtime:
+            repos = runtime["repositories"]
+            with patch(
+                "scripts.run_decision_loop._evaluate_pre_ai_skip_reason",
+                new=AsyncMock(
+                    return_value=(
+                        "held_position_recent_buy_sell_cooldown",
+                        {
+                            "held_quantity": "10",
+                            "recent_buy_order_count": "1",
+                            "latest_buy_decision_type": "buy",
+                        },
+                    )
+                ),
+            ):
+                result = await _run_one_cycle(
+                    cycle=1,
+                    submit=True,
+                    dry_run=False,
+                    output="text",
+                    symbol=SYMBOL,
+                    source_type="held_position",
+                    runtime=runtime,
+                )
+    
+>       assert result["status"] == "SKIPPED"
+E       AssertionError: assert 'ERROR' == 'SKIPPED'
+E         
+E         - SKIPPED
+E         + ERROR
+
+tests/scripts/test_run_decision_loop.py:2225: AssertionError
+------------------------------ Captured log call -------------------------------
+ERROR    scripts.run_decision_loop:run_decision_loop.py:1896 [SYMBOL_DONE] cycle=1 symbol=005930 status=ERROR duration=0.0s error=[<class 'decimal.ConversionSyntax'>]
+Traceback (most recent call last):
+  File "/app/scripts/run_decision_loop.py", line 1550, in _run_one_cycle
+    pre_ai_validation_result, pre_ai_skip_details = await _evaluate_pre_ai_validation_result(
+                                                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    ...<7 lines>...
+    )
+    ^
+  File "/app/scripts/run_decision_loop.py", line 195, in _evaluate_pre_ai_validation_result
+    return await evaluate_pre_ai_validation_result(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    ...<9 lines>...
+    )
+    ^
+  File "/app/src/agent_trading/services/pre_ai_gate.py", line 359, in evaluate_pre_ai_validation_result
+    held_skip_reason = await evaluate_held_position_skip_reason(
+                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    ...<7 lines>...
+    )
+    ^
+  File "/app/src/agent_trading/services/pre_ai_gate.py", line 542, in evaluate_held_position_skip_reason
+    await _get_latest_recent_held_decision(
+    ...<5 lines>...
+    )
+  File "/app/src/agent_trading/services/pre_ai_gate.py", line 150, in _get_latest_recent_held_decision
+    Decimal(str(row["anchored_edge_after_cost_bps"]))
+    ~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+decimal.InvalidOperation: [<class 'decimal.ConversionSyntax'>]
+_____ TestRunOneCycle.test_pre_ai_reverse_trade_same_snapshot_skips_cycle ______
+
+self = <tests.scripts.test_run_decision_loop.TestRunOneCycle object at 0xe7b2b77a4d10>
+
+    @pytest.mark.asyncio
+    async def test_pre_ai_reverse_trade_same_snapshot_skips_cycle(self) -> None:
+        """signal_feature_snapshot_id 불변 reverse trade는 pre-AI gate에서 SKIPPED 처리된다."""
+        async with _mock_runtime_for_one_cycle() as runtime:
+            repos = runtime["repositories"]
+            with patch(
+                "scripts.run_decision_loop._evaluate_pre_ai_skip_reason",
+                new=AsyncMock(
+                    return_value=(
+                        "reverse_trade_same_signal_feature_snapshot",
+                        {
+                            "current_signal_feature_snapshot_id": "same-snapshot",
+                            "reentry_signal_feature_snapshot_unchanged": "true",
+                        },
+                    )
+                ),
+            ):
+                result = await _run_one_cycle(
+                    cycle=1,
+                    submit=True,
+                    dry_run=False,
+                    output="text",
+                    symbol=SYMBOL,
+                    source_type="core",
+                    runtime=runtime,
+                )
+    
+>       assert result["status"] == "SKIPPED"
+E       AssertionError: assert 'ERROR' == 'SKIPPED'
+E         
+E         - SKIPPED
+E         + ERROR
+
+tests/scripts/test_run_decision_loop.py:2261: AssertionError
+------------------------------ Captured log call -------------------------------
+ERROR    scripts.run_decision_loop:run_decision_loop.py:1896 [SYMBOL_DONE] cycle=1 symbol=005930 status=ERROR duration=0.0s error='>' not supported between instances of 'AsyncMock' and 'int'
+Traceback (most recent call last):
+  File "/app/scripts/run_decision_loop.py", line 1811, in _run_one_cycle
+    result = await asyncio.wait_for(
+             ^^^^^^^^^^^^^^^^^^^^^^^
+    ...<7 lines>...
+    )
+    ^
+  File "/usr/local/lib/python3.14/asyncio/tasks.py", line 488, in wait_for
+    return await fut
+           ^^^^^^^^^
+  File "/app/src/agent_trading/services/decision_orchestrator.py", line 2596, in assemble_and_submit
+    return await self._execution_service.run_execution_pipeline(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    ...<9 lines>...
+    )
+    ^
+  File "/app/src/agent_trading/services/execution_service.py", line 2079, in run_execution_pipeline
+    _resolved_quote, reference_price = await self._resolve_quote(
+                                       ^^^^^^^^^^^^^^^^^^^^^^^^^^
+    ...<5 lines>...
+    )
+    ^
+  File "/app/src/agent_trading/services/execution_service.py", line 1717, in _resolve_quote
+    if quote.last is not None and quote.last > 0:
+                                  ^^^^^^^^^^^^^^
+TypeError: '>' not supported between instances of 'AsyncMock' and 'int'
+_________ TestTradingUniverse.test_universe_selection_service_fallback _________
+
+self = <tests.scripts.test_run_decision_loop.TestTradingUniverse object at 0xe7b2b780b8a0>
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0xe7b2b71bf930>
+
+    @pytest.mark.asyncio
+    async def test_universe_selection_service_fallback(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """When env var is not set, UniverseSelectionService reads active KRX instruments."""
+        monkeypatch.delenv(ENV_TRADING_UNIVERSE, raising=False)
+    
+        # Build in-memory repos with active KRX instruments
+        repos = build_in_memory_repositories()
+        from agent_trading.domain.entities import InstrumentEntity
+        await repos.instruments.add(
+            InstrumentEntity(
+                instrument_id=UUID("11111111-1111-1111-1111-111111111111"),
+                symbol="005930",
+                market_code="KRX",
+                name="Samsung Electronics",
+                is_active=True,
+                asset_class="KR_STOCK",
+                currency="KRW",
+                tick_size=Decimal("50"),
+                metadata={"core_universe": True, "market_segment": "KOSPI"},
+            )
+        )
+        await repos.instruments.add(
+            InstrumentEntity(
+                instrument_id=UUID("22222222-2222-2222-2222-222222222222"),
+                symbol="000660",
+                market_code="KRX",
+                name="SK Hynix",
+                is_active=True,
+                asset_class="KR_STOCK",
+                currency="KRW",
+                tick_size=Decimal("50"),
+                metadata={"core_universe": True, "market_segment": "KOSPI"},
+            )
+        )
+    
+        # Mock postgres_runtime to return our in-memory repos
+        @asynccontextmanager
+        async def _mock_postgres_runtime(run_migrations: bool = False) -> AsyncIterator[dict[str, Any]]:
+            yield {"repositories": repos}
+    
+        with (
+            patch(
+                "scripts.run_decision_loop.postgres_runtime",
+                new=_mock_postgres_runtime,
+            ),
+            patch(
+                "scripts.run_decision_loop._HAS_KIS",
+                False,
+            ),
+        ):
+            result = await _read_trading_universe()
+>           assert len(result) == 2
+E           AssertionError: assert 1 == 2
+E            +  where 1 = len((UniverseSymbol(symbol='005930', market='KRX', source_type='core', inclusion_reason='approved_core_universe', market_segment=None, index_memberships=()),))
+
+tests/scripts/test_run_decision_loop.py:3152: AssertionError
+_ TestTradingUniverse.test_universe_selection_service_fallback_preserves_kosdaq_market _
+
+self = <tests.scripts.test_run_decision_loop.TestTradingUniverse object at 0xe7b2b74da150>
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0xe7b2b71bfa80>
+
+    @pytest.mark.asyncio
+    async def test_universe_selection_service_fallback_preserves_kosdaq_market(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """DB fallback universe가 KOSDAQ instrument market_code를 유지해야 한다."""
+        monkeypatch.delenv(ENV_TRADING_UNIVERSE, raising=False)
+    
+        repos = build_in_memory_repositories()
+        from agent_trading.domain.entities import InstrumentEntity
+    
+        await repos.instruments.add(
+            InstrumentEntity(
+                instrument_id=UUID("33333333-3333-3333-3333-333333333333"),
+                symbol="090150",
+                market_code="KOSDAQ",
+                name="광진윈텍",
+                is_active=True,
+                asset_class="KR_STOCK",
+                currency="KRW",
+                tick_size=Decimal("50"),
+                metadata={"core_universe": True},
+            )
+        )
+    
+        @asynccontextmanager
+        async def _mock_postgres_runtime(run_migrations: bool = False) -> AsyncIterator[dict[str, Any]]:
+            yield {"repositories": repos}
+    
+        with (
+            patch(
+                "scripts.run_decision_loop.postgres_runtime",
+                new=_mock_postgres_runtime,
+            ),
+            patch("scripts.run_decision_loop._HAS_KIS", False),
+        ):
+            result = await _read_trading_universe()
+    
+>       assert any(
+            item.symbol == "090150" and item.market == "KOSDAQ"
+            for item in result
+        )
+E       assert False
+E        +  where False = any(<generator object TestTradingUniverse.test_universe_selection_service_fallback_preserves_kosdaq_market.<locals>.<genexpr> at 0xe7b2b72bee90>)
+
+tests/scripts/test_run_decision_loop.py:3197: AssertionError
+_ TestTradingUniverse.test_universe_selection_service_with_kis_market_overlay __
+
+self = <tests.scripts.test_run_decision_loop.TestTradingUniverse object at 0xe7b2b74988c0>
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0xe7b2b71af5b0>
+
+    @pytest.mark.asyncio
+    async def test_universe_selection_service_with_kis_market_overlay(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """KIS client가 정상 생성되면 _add_market_overlay() 경로가 활성화됨.
+    
+        KISRestClient.get_quotes_batch()를 mock하여 real API 호출을 방지.
+        """
+        monkeypatch.delenv(ENV_TRADING_UNIVERSE, raising=False)
+    
+        repos = build_in_memory_repositories()
+        from agent_trading.domain.entities import InstrumentEntity
+        for sym in ("005930", "000660", "090150"):
+            await repos.instruments.add(
+                InstrumentEntity(
+                    instrument_id=uuid4(),
+                    symbol=sym,
+                    market_code="KRX",
+                    name=f"Test-{sym}",
+                    is_active=True,
+                    asset_class="KR_STOCK",
+                    currency="KRW",
+                    tick_size=Decimal("50"),
+                    metadata={"core_universe": True, "market_segment": "KOSPI"},
+                )
+            )
+    
+        # Mock KISRestClient so it returns empty batch (no market overlay added)
+        mock_kis = AsyncMock(spec=KISRestClient)
+        mock_kis.get_quotes_batch = AsyncMock(return_value={})
+    
+        @asynccontextmanager
+        async def _mock_runtime(run_migrations: bool = False) -> AsyncIterator[dict[str, Any]]:
+            yield {"repositories": repos}
+    
+        with (
+            patch(
+                "scripts.run_decision_loop.postgres_runtime",
+                new=_mock_runtime,
+            ),
+            patch(
+                "scripts.run_decision_loop._build_kis_live_quote_client",
+                return_value=mock_kis,
+            ),
+        ):
+            result = await _read_trading_universe()
+>           assert len(result) == 3
+E           AssertionError: assert 1 == 3
+E            +  where 1 = len((UniverseSymbol(symbol='005930', market='KRX', source_type='core', inclusion_reason='approved_core_universe', market_segment=None, index_memberships=()),))
+
+tests/scripts/test_run_decision_loop.py:3348: AssertionError
+------------------------------ Captured log call -------------------------------
+WARNING  agent_trading.services.universe_selection:universe_selection.py:1332 market_overlay: seed_pool 0건이 base liquidity filter에서 전부 탈락 — pre-pool 0건 (seed_pool_source=core_fallback).
+_ TestTradingUniverse.test_universe_selection_service_with_kis_quotes_returned _
+
+self = <tests.scripts.test_run_decision_loop.TestTradingUniverse object at 0xe7b2b7494590>
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0xe7b2b6ef0830>
+
+    @pytest.mark.asyncio
+    async def test_universe_selection_service_with_kis_quotes_returned(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """KIS client가 quote를 반환하면 market_overlay symbol이 추가됨."""
+        monkeypatch.delenv(ENV_TRADING_UNIVERSE, raising=False)
+    
+        repos = build_in_memory_repositories()
+        from agent_trading.domain.entities import InstrumentEntity
+        await repos.instruments.add(
+            InstrumentEntity(
+                instrument_id=UUID("11111111-1111-1111-1111-111111111111"),
+                symbol="005930",
+                market_code="KRX",
+                name="Samsung Electronics",
+                is_active=True,
+                asset_class="KR_STOCK",
+                currency="KRW",
+                tick_size=Decimal("50"),
+                metadata={"core_universe": True, "market_segment": "KOSPI"},
+            )
+        )
+    
+        mock_quote: dict[str, object] = {
+            "stck_prpr": "70000",
+            "prdy_ctrt": "2.5",
+            "acml_tr_pbmn": "500000000000",
+            "stck_hgpr": "71000",
+            "stck_lwpr": "69000",
+            "stck_oprc": "69500",
+            "iscd_stat_cls_code": "",
+        }
+        mock_kis = AsyncMock(spec=KISRestClient)
+        mock_kis.get_quotes_batch = AsyncMock(
+            return_value={"005930": mock_quote},
+        )
+    
+        @asynccontextmanager
+        async def _mock_runtime(run_migrations: bool = False) -> AsyncIterator[dict[str, Any]]:
+            yield {"repositories": repos}
+    
+        with (
+            patch(
+                "scripts.run_decision_loop.postgres_runtime",
+                new=_mock_runtime,
+            ),
+            patch(
+                "scripts.run_decision_loop._build_kis_live_quote_client",
+                return_value=mock_kis,
+            ),
+        ):
+            result = await _read_trading_universe()
+            assert len(result) == 1
+            u = result[0]
+            assert u.symbol == "005930"
+>           assert u.source_type == "market_overlay"
+E           AssertionError: assert 'core' == 'market_overlay'
+E             
+E             - market_overlay
+E             + core
+
+tests/scripts/test_run_decision_loop.py:3409: AssertionError
+------------------------------ Captured log call -------------------------------
+WARNING  agent_trading.services.universe_selection:universe_selection.py:1332 market_overlay: seed_pool 0건이 base liquidity filter에서 전부 탈락 — pre-pool 0건 (seed_pool_source=core_fallback).
+=========================== short test summary info ============================
+FAILED tests/scripts/test_run_decision_loop.py::TestRunOneCycle::test_dry_run_with_held_position_source_type
+FAILED tests/scripts/test_run_decision_loop.py::TestRunOneCycle::test_held_position_can_trigger_t3_live_pipeline_when_not_fresh
+FAILED tests/scripts/test_run_decision_loop.py::TestRunOneCycle::test_pre_ai_skip_when_orderable_amount_below_threshold
+FAILED tests/scripts/test_run_decision_loop.py::TestRunOneCycle::test_pre_ai_same_symbol_reentry_cooldown_skips_core_cycle
+FAILED tests/scripts/test_run_decision_loop.py::TestRunOneCycle::test_pre_ai_recent_buy_sell_cooldown_skips_held_position_cycle
+FAILED tests/scripts/test_run_decision_loop.py::TestRunOneCycle::test_pre_ai_reverse_trade_same_snapshot_skips_cycle
+FAILED tests/scripts/test_run_decision_loop.py::TestTradingUniverse::test_universe_selection_service_fallback
+FAILED tests/scripts/test_run_decision_loop.py::TestTradingUniverse::test_universe_selection_service_fallback_preserves_kosdaq_market
+FAILED tests/scripts/test_run_decision_loop.py::TestTradingUniverse::test_universe_selection_service_with_kis_market_overlay
+FAILED tests/scripts/test_run_decision_loop.py::TestTradingUniverse::test_universe_selection_service_with_kis_quotes_returned
+======================== 10 failed, 109 passed in 2.34s ========================

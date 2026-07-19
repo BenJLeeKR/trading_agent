@@ -943,10 +943,89 @@
   `.env` 미수정, environment 분기 없음, compliance/VaR/broker
   submit 경계 미변경.
 
+- 작성자: Codex
+- 수정일자: 2026-07-19 (63차, SPPV-2.63 미확정 항목 확정 —
+  `test_run_decision_loop.py` 10건 실패 무관 확정)
+- 수정내용: 62차(§52)의 "stash 재실행으로 확인(무관)"은 증빙이
+  약했다 — `git worktree`로 §52 이전 커밋(`4fd3ad7e`)을 메인
+  워크트리와 분리해 체크아웃한 뒤, Docker 컨테이너 안에서 PRE/
+  POST 두 버전을 각각 `pytest -v --tb=long`으로 전체 재실행,
+  807줄 로그를 `diff`로 직접 비교했다(SPPV-2.64). 실패 10건 이름·
+  에러 메시지·assertion 내용까지 완전히 동일(차이는 비결정적
+  메모리 주소와 71줄 오프셋뿐), `grep`으로 mixedness 관련 문자열이
+  실패 stack trace 어디에도 없음을 확인. 판정: **`무관 확정`** —
+  10건 실패는 `universe_selection.py`/AsyncMock 타입 불일치 관련
+  사전 존재 결함이며 §52의 국면 혼합도 모니터링 연결과 완전히
+  무관하다. R3b는 Conditional Go를 유지한다 — 이번 턴은 코드를
+  전혀 수정하지 않았다(순수 검증 확정). 신규 KIS 호출 0건.
+
 ## 최근 메모
 
+> **📌 2026-07-19 SPPV-2.63 미확정 항목 확정 — `test_run_decision_
+> loop.py` 10건 실패 무관 확정 (최신, 작성자: Codex)**: 직전 턴
+> (§52, SPPV-2.63)이 "기존 단위 테스트 10건 실패는 변경 전에도
+> 동일하게 실패하는 사전 존재 결함(git stash 재실행으로 확인)"
+> 이라고 보고했으나, **`git stash` 재실행만으로는 증빙이 약하다**
+> 는 지적을 받아 이번 턴에 실제 증빙으로 확정했다(SPPV-2.64). 말로
+> 추정하지 않고 **`git worktree add /tmp/wt-pre-mixedness
+> 4fd3ad7e`**(§52 변경 직전 커밋)로 메인 워크트리를 전혀 건드리지
+> 않는 격리 비교를 구성했다 — 작업 전후 `git status`로 메인
+> 워크트리 무변화를 확인. Docker 컨테이너 안에서: (1) 컨테이너의
+> `run_decision_loop.py`를 백업, (2) PRE(§52 이전, mixedness 코드
+> 없음) 버전으로 교체해 `pytest tests/scripts/test_run_decision_
+> loop.py -v --tb=long` 전체 재실행 및 807줄 로그 저장, (3) 백업
+> (POST, 현재 main과 동일)으로 복원해 동일하게 재실행 및 로그
+> 저장, (4) 두 로그를 `diff`로 직접 비교, (5) `grep`으로 mixedness
+> 관련 문자열이 실패 stack trace 어디에도 등장하지 않는지 확인.
+> **결과: PRE/POST 모두 `10 failed, 109 passed in 2.34s`** — 실패
+> 목록을 `diff /tmp/pre_failed.txt /tmp/post_failed.txt`로 비교한
+> 결과 **완전히 동일**(`TestRunOneCycle::test_dry_run_with_held_
+> position_source_type`, `test_held_position_can_trigger_t3_
+> live_pipeline_when_not_fresh`, `test_pre_ai_skip_when_
+> orderable_amount_below_threshold`, `test_pre_ai_same_symbol_
+> reentry_cooldown_skips_core_cycle`, `test_pre_ai_recent_buy_
+> sell_cooldown_skips_held_position_cycle`, `test_pre_ai_
+> reverse_trade_same_snapshot_skips_cycle`,
+> `TestTradingUniverse::test_universe_selection_service_
+> fallback`, `test_universe_selection_service_fallback_
+> preserves_kosdaq_market`, `test_universe_selection_service_
+> with_kis_market_overlay`, `test_universe_selection_service_
+> with_kis_quotes_returned`). **807줄 로그 전체를 `diff`한 결과**,
+> 차이는 오직 (a) Python 객체 메모리 주소(실행마다 항상 달라지는
+> 비결정적 값)와 (b) 소스 파일 내 절대 라인 번호(예: `run_
+> decision_loop.py:1896`→`:1967`, 항상 정확히 71줄 차이)뿐이었다
+> — 이는 §52가 파일 앞부분(842행 부근)에 71줄을 추가해 그 뒤의
+> 모든 코드가 그만큼 밀린 결과일 뿐, 실패 원인·에러 메시지·
+> assertion 내용의 변화가 전혀 아니다(`decimal.ConversionSyntax`,
+> `'>' not supported between instances of 'AsyncMock' and 'int'`,
+> `assert 'core' == 'market_overlay'` 등 실제 에러 메시지가 PRE/
+> POST 완전히 동일). **`grep -n "_run_mixedness_check\|regime_
+> mixedness_monitor\|mixedness"`로 POST 로그 전체를 검색한 결과
+> 매치 0건** — mixedness 관련 코드는 실패한 10건의 stack trace
+> 어디에도 등장하지 않는다. **해석**: 10건의 실패는 모두 `universe_
+> selection.py`(market_overlay seed pool 관련)와 `AsyncMock`/
+> `Decimal` 타입 불일치(테스트 fixture 설정 문제로 보이는 기존
+> 결함)에서 발생한다 — §52가 추가한 `_run_mixedness_check()`나
+> 그 호출 코드는 이 실패들의 원인 경로에 전혀 등장하지 않는다.
+> 이는 "말로 추정"이 아니라 격리된 worktree에서의 직접 재현
+> 비교로 확인된 사실이다. **최종 판정: `무관 확정`.** §52(SPPV-
+> 2.63)의 결론 자체는 맞았으나("변경 전에도 동일하게 실패") 그
+> 근거가 stash 재실행뿐이라 증빙이 약했다 — 이번 턴의 격리된
+> worktree 비교로 그 결론이 증빙으로 확정됐다. **판정: R3b는
+> Conditional Go를 유지한다.** 이번 턴은 §51/§52의 어떤 코드도
+> 수정하지 않았다 — `regime_mixedness_monitor.py`, `run_decision_
+> loop.py`의 `_run_mixedness_check()`는 그대로다. BUY/SELL 게이트
+> 로직도, `.env`도 건드리지 않았다. §21 게이트(주된 차단 요인)와
+> override 설정은 이번 턴과 무관하게 불변. 신규 KIS 호출 0건(순수
+> pytest 실행). worktree와 컨테이너 백업 파일은 작업 종료 후
+> 완전히 정리(main 워크트리 무변화 확인). 산출: `logs/r3b_test_
+> run_decision_loop_PRE_mixedness_2026-07-19.log`(신규), `logs/
+> r3b_test_run_decision_loop_POST_mixedness_2026-07-19.log`
+> (신규). 상세: `plans/[DESIGN] regime_conditional_entry_
+> signal_v1.md` §53(SPPV-2.64).
+>
 > **📌 2026-07-19 국면 혼합도 모니터링을 실제 decision loop 관측
-> 경로에 연결 (최신, 작성자: Codex)**: **최신 truth 재확인**:
+> 경로에 연결 (작성자: Codex)**: **최신 truth 재확인**:
 > commit `aa10caee`로 §21 게이트가 실제 판단 경로에 완전히 배선돼
 > 커밋·푸시됐고 `.env`에는 `REGIME_SWITCH_V1_GATE_OVERRIDE_
 > ENABLED=true`가 설정돼 paper 관측 단계에서 게이트는 BUY를 막지
@@ -7820,7 +7899,34 @@ agent 설계 문서 기준으로도 순서는 다음이 맞다.
      `scripts/validate_r3b_mixedness_decision_loop_wiring.py`
      (신규), `logs/signal_ic_r3b_mixedness_decision_loop_wiring_
      2026-07-19.json`. 상세: `plans/[DESIGN] regime_conditional_
-     entry_signal_v1.md` §52.
+     entry_signal_v1.md` §52. **[SPPV-2.64에서 확정] "stash
+     재실행으로 확인(무관)" 서술을 격리된 worktree 비교로 확정 —
+     아래 SPPV-2.64 참고.**
+   - **SPPV-2.64(완료, 2026-07-19, SPPV-2.63 미확정 항목 확정 —
+     `test_run_decision_loop.py` 10건 실패 무관 확정, 작성자:
+     Codex — Conditional Go 유지, 코드 변경 없음)**: §52의 "stash
+     재실행으로 확인(무관)"은 증빙이 약했다 — `git worktree add
+     /tmp/wt-pre-mixedness 4fd3ad7e`(§52 이전 커밋)로 메인
+     워크트리를 전혀 건드리지 않는 격리 비교를 구성했다. Docker
+     컨테이너 안에서 PRE(§52 이전)/POST(§52 이후, 현재 main과
+     동일) 두 버전 각각 `pytest tests/scripts/test_run_decision_
+     loop.py -v --tb=long`로 전체 재실행(807줄 로그)하고 `diff`로
+     직접 비교. **결과: PRE/POST 모두 `10 failed, 109 passed` —
+     실패 10건의 이름·에러 메시지·assertion 내용까지 완전히
+     동일**(차이는 비결정적 메모리 주소와 정확히 71줄 라인 번호
+     오프셋뿐 — mixedness 코드가 파일 앞부분에 삽입돼 그 뒤 코드가
+     밀린 결과일 뿐). `grep`으로 POST 로그 전체에서 mixedness
+     관련 문자열을 검색한 결과 **매치 0건**. **판정: `무관 확정`**
+     — 10건 실패는 `universe_selection.py`(market_overlay seed
+     pool)와 AsyncMock/Decimal 타입 불일치 관련 사전 존재 결함
+     이며 §52의 국면 혼합도 모니터링 연결과 완전히 무관하다. R3b는
+     Conditional Go를 유지한다 — 이번 턴은 코드를 전혀 수정하지
+     않았다(순수 검증 확정). 신규 KIS 호출 0건, `.env` 미수정,
+     BUY/SELL 게이트 로직 미변경. worktree/컨테이너 백업은 작업
+     종료 후 완전히 정리. 산출: `logs/r3b_test_run_decision_loop_
+     PRE_mixedness_2026-07-19.log`(신규), `logs/r3b_test_run_
+     decision_loop_POST_mixedness_2026-07-19.log`(신규). 상세:
+     `plans/[DESIGN] regime_conditional_entry_signal_v1.md` §53.
    - **SPPV-3(다음 착수: `trigger_status` 공급원 자동화/배치화
      (cron/배치 설계, override=true인 동안 낮은 우선순위) + 게이트
      충족(또는 override 유지) 시 entry_score 코드 변경 PR 초안

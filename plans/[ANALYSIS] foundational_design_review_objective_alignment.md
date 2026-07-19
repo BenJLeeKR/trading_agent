@@ -1479,6 +1479,23 @@ value/compliance/broker가 아니라 `entry_score < 0.65`다.
   environment 분기 없음, compliance/VaR/broker submit 경계
   미변경. 상세: `plans/[DESIGN] regime_conditional_entry_signal_
   v1.md` §52.
+
+- 작성자: Codex
+- 수정일자: 2026-07-19 (2.66순위, SPPV-2.63 미확정 항목 확정 —
+  `test_run_decision_loop.py` 10건 실패 무관 확정)
+- 수정내용: §52(2.65순위)의 "stash 재실행으로 확인(무관)"은
+  증빙이 약했다 — `git worktree`로 §52 이전 커밋(`4fd3ad7e`)을
+  메인 워크트리와 분리해 체크아웃한 뒤, Docker 컨테이너 안에서
+  PRE/POST 두 버전을 각각 `pytest -v --tb=long`으로 전체 재실행,
+  807줄 로그를 `diff`로 직접 비교했다(SPPV-2.64). 실패 10건 이름·
+  에러 메시지·assertion 내용까지 완전히 동일(차이는 비결정적
+  메모리 주소와 71줄 오프셋뿐), `grep`으로 mixedness 관련 문자열이
+  실패 stack trace 어디에도 없음을 확인. 판정: **`무관 확정`** —
+  10건 실패는 `universe_selection.py`/AsyncMock 타입 불일치 관련
+  사전 존재 결함이며 §52의 국면 혼합도 모니터링 연결과 완전히
+  무관하다. R3b는 Conditional Go를 유지한다 — 이번 턴은 코드를
+  전혀 수정하지 않았다(순수 검증 확정). 신규 KIS 호출 0건. 상세:
+  `plans/[DESIGN] regime_conditional_entry_signal_v1.md` §53.
 - **3순위(보류 유지, 형태 재정의 — 우선순위 재조정)**: **`entry_
   score`와 BUY funnel 재현** — §2.7 확장 검증에서 하락장 안정성이
   확인되지 않아 단순 재현으로는 착수하지 않는다. §2.16~§2.21에서
