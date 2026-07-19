@@ -6690,3 +6690,98 @@ def assess_deterministic_triggers(
    추가 필요성 낮음).
 4. `portfolio_allocation` gap·실제 청산 시점 분포는 실거래 누적
    이후 재검증 대상으로 계속 유보.
+
+## 55. entry_score R3b alpha 교체 — 1단계(엔진 파라미터 배선) 실제 코드 적용 (SPPV-2.66, 2026-07-19)
+
+### 55.1 최신 truth 재확인
+
+`aa10caee`(§21 gate 배선)~`220ca785`(SPPV-2.65, §54 설계)까지 모두
+`origin/main`에 push 완료 상태를 재확인했다(`git log origin/main..
+HEAD` 결과 없음). §54는 "미적용, 코드 변경 없음"으로 명시된 순수
+설계 문서였다. 이번 턴은 그 설계 중 **"1단계: 엔진 파라미터 배선"**
+만을 실제로 적용한다 — cycle 단위 candidate_percentile 사전 계산
+배선("2단계")은 이번 턴 범위 밖이며 이후 별도 승인 대상으로 유보한다.
+
+### 55.2 선택 근거
+
+"방패 보강"(trigger_status 자동화)보다 "창 교체 이후 실전진"에
+직접 기여하는 쪽을 선택했다. §54.5에서 이미 설계된 3-part 중
+가장 낮은 리스크·최고 backward-compat 검증 가능성을 가진 부분
+(엔진 파라미터 2개 + config 스위치 1개)만 이번 턴에 적용하고,
+cycle 단위 precompute(§54.5의 2단계, `run_decision_loop.py`/
+`decision_orchestrator.py` 수정 필요·리스크 더 큼)는 별도 턴으로
+분리했다 — §48→§49가 "엔진 내부"와 "호출부 배선"을 두 턴으로
+나눠 진행한 선례와 동일한 단계적 접근이다.
+
+### 55.3 실제 적용 내용
+
+- `src/agent_trading/config/settings.py`: `_resolve_entry_score_r3b_
+  alpha_enabled()` 신규 함수 + `AppSettings.entry_score_r3b_alpha_
+  enabled: bool` 필드 추가(env: `ENTRY_SCORE_R3B_ALPHA_ENABLED`,
+  기본값 `False`) — `regime_switch_v1_gate_override_enabled`와
+  100% 동일한 패턴.
+- `src/agent_trading/services/deterministic_trigger_engine.py`:
+  - `assess_deterministic_triggers()`에 `r3b_alpha_percentile:
+    float | None = None`, `r3b_alpha_enabled: bool = False` 신규
+    optional 파라미터 추가, `_build_entry_score` 호출부에 그대로
+    전달.
+  - `_build_entry_score()`에 동일 파라미터 2개 추가. `r3b_alpha_
+    enabled and r3b_alpha_percentile is not None`인 경우에만
+    alpha 항(0.80 가중치)이 `0.80 * clamp(r3b_alpha_percentile)`로
+    교체되고, 그 외(기본값 포함) 기존 `0.45*norm(overall) +
+    0.20*norm(fast) + 0.15*norm(slow)` 공식이 100% 그대로 유지된다.
+- `.env`는 전혀 수정하지 않았다 — `ENTRY_SCORE_R3B_ALPHA_ENABLED`는
+  설정되지 않아 기본값 `False`로 동작한다.
+
+### 55.4 실측 결과(수치 + 해석)
+
+1. **기존 회귀 테스트**: `tests/services/test_deterministic_trigger_
+   engine.py` 20건, `tests/services/test_decision_orchestrator.py`
+   포함 총 83건 — **전부 통과(83 passed)**, 실패 0건. → 신규
+   optional 파라미터 추가가 기존 호출부(파라미터를 모르는 모든
+   지점)의 동작에 전혀 영향을 주지 않음을 확인.
+2. **`AppSettings().entry_score_r3b_alpha_enabled` 기본값 직접
+   조회**: `False` 반환 확인. → `.env` 미변경 상태에서 신규 스위치가
+   완전히 비활성 상태로 존재함을 실측 확인.
+3. **`_build_entry_score` 직접 호출 비교(ad-hoc, overall=fast=slow=
+   0.5 고정)**:
+   - 파라미터 미전달(default) 경로: `entry_score = 0.6000...`,
+     `reason_codes=[]` — 기존 공식(0.45*0.5+0.20*0.5+0.15*0.5=0.40의
+     정규화 결과)과 일치.
+   - `r3b_alpha_enabled=True, r3b_alpha_percentile=0.9` 경로:
+     `entry_score = 0.7200...`, `reason_codes=['trigger_r3b_alpha_
+     percentile']` — 기대값 `0.80*0.9=0.72`와 **완전 일치**(오차
+     `<1e-9`).
+   → alpha 교체 로직이 설계(§54.5) 그대로 정확히 동작하며, 활성화
+   시에만 reason_code가 남아 추적 가능함을 확인.
+
+### 55.5 결과 해석
+
+§54에서 "미적용, 설계만"이었던 3-part 중 엔진 파라미터/config
+스위치 부분이 실제 코드로 전환되었고, 83건 회귀 테스트와 3건의
+직접 수치 검증으로 backward-compat과 alpha 교체 정확성을 모두
+확인했다. 남은 것은 cycle 단위 candidate_percentile 사전 계산
+(§54.5의 precompute 함수, `run_decision_loop.py`/`decision_
+orchestrator.py` 수정 필요)뿐이며, 이는 §48→§49와 동일하게 별도
+승인이 필요한 다음 단계로 명확히 좁혀졌다.
+
+### 55.6 판정 — Conditional Go 유지, entry_score PR 초안이 "설계 완료" → "1단계 코드 적용·검증 완료" 단계로 진전
+
+**R3b는 Conditional Go를 유지한다.** BUY/SELL gate 로직은 전혀
+더 세게 만들지 않았고(신규 스위치는 기본 비활성), 환경 분기 코드도
+추가하지 않았다. `.env` 값 미변경. compliance/VaR/broker submit
+경계 미변경. 신규 KIS 호출 0건.
+
+### 55.7 다음 우선 작업
+
+1. cycle 단위 candidate_percentile 사전 계산 배선(§54.5의 2단계) —
+   `run_decision_loop.py`에 `_build_r3b_alpha_percentile_overrides_
+   for_cycle(universe)` 신규 함수 추가 + `decision_orchestrator.py`
+   경유 배선. 이 작업은 §48/§49와 동일하게 별도 명시적 사용자 승인
+   필요(operational 코드 수정이므로 커밋 시 classifier 차단 가능성
+   있음).
+2. `trigger_status` 공급원 자동화/배치화(override=true인 동안 낮은
+   우선순위).
+3. T+5/경로 리스크 후속 검증 — 추가 필요성 낮음(유보 유지).
+4. `portfolio_allocation` gap — 실거래 누적 이후 재검증 대상으로
+   계속 유보.

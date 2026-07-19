@@ -1516,6 +1516,21 @@ value/compliance/broker가 아니라 `entry_score < 0.65`다.
   별도 승인 필요. R3b는 Conditional Go를 유지한다. 신규 KIS 호출
   0건, compliance/VaR/broker submit 경계 미변경. 상세: `plans/
   [DESIGN] regime_conditional_entry_signal_v1.md` §54.
+
+- 작성자: Codex
+- 수정일자: 2026-07-19 (2.68순위, entry_score R3b alpha 교체 —
+  1단계 엔진 파라미터 배선 실제 코드 적용)
+- 수정내용: §54(SPPV-2.65) 설계 중 실전진에 직접 기여하는 "1단계:
+  엔진 파라미터 배선"만 선택해 실제 코드로 적용했다(SPPV-2.66).
+  `settings.py`에 `entry_score_r3b_alpha_enabled` config 스위치
+  (기본값 False) 추가, `deterministic_trigger_engine.py`에 `r3b_
+  alpha_percentile`/`r3b_alpha_enabled` optional 파라미터 2개 추가
+  — §48/§49와 동일한 기본값-비활성 backward-compat 패턴. 기존
+  회귀 테스트 83건 전부 통과, 활성 경로 ad-hoc 검증(percentile=0.9
+  → entry_score=0.72, 기대값과 완전 일치) 완료. cycle 단위
+  precompute("2단계")는 범위 밖, 별도 승인 대상 유보. `.env` 미변경,
+  gate 로직 강화 없음. R3b는 Conditional Go를 유지한다. 상세:
+  `plans/[DESIGN] regime_conditional_entry_signal_v1.md` §55.
 - **3순위(보류 유지, 형태 재정의 — 우선순위 재조정)**: **`entry_
   score`와 BUY funnel 재현** — §2.7 확장 검증에서 하락장 안정성이
   확인되지 않아 단순 재현으로는 착수하지 않는다. §2.16~§2.21에서

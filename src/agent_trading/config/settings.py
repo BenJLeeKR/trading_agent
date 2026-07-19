@@ -499,6 +499,27 @@ def _resolve_regime_switch_v1_gate_override_enabled() -> bool:
     return raw.strip().lower() == "true"
 
 
+def _resolve_entry_score_r3b_alpha_enabled() -> bool:
+    """entry_score의 alpha 항을 R3b(국면 조건부 신호) percentile로
+    교체하는 config 스위치를 ``ENTRY_SCORE_R3B_ALPHA_ENABLED`` env에서
+    읽는다.
+
+    SPPV-2.65(§54) 설계에서 도출된 신규 항목 — `deterministic_trigger_
+    engine.py`의 ``_build_entry_score``/``assess_deterministic_triggers``
+    가 참조하는 mode-agnostic config 스위치다. `regime_switch_v1_gate_
+    override_enabled`와 동일한 패턴: paper/real/production 같은
+    environment 값은 절대 보지 않는다.
+
+    기본값 ``False``(비활성) — 명시적으로 ``"true"``로 설정해야만
+    entry_score의 alpha 항이 R3b percentile로 교체된다. cycle 단위
+    candidate_percentile 사전 계산 배선(§54.5의 2단계)은 아직 완료되지
+    않았으므로, 이 스위치를 ``true``로 설정해도 percentile 값이
+    호출자로부터 전달되지 않는 한 기존 동작이 그대로 유지된다.
+    """
+    raw = os.getenv("ENTRY_SCORE_R3B_ALPHA_ENABLED", "false")
+    return raw.strip().lower() == "true"
+
+
 # ---------------------------------------------------------------------------
 # Application settings
 # ---------------------------------------------------------------------------
@@ -709,4 +730,17 @@ class AppSettings:
     값을 참조하지 않는다. 아직 실제 운영 파이프라인
     (`deterministic_trigger_engine.py`)에는 연결돼 있지 않다 — 신규
     격리 모듈에서만 소비되는 config 값이다.
+    """
+
+    # ---- entry_score R3b alpha 교체 config override (SPPV-2.65/§54) -------
+    entry_score_r3b_alpha_enabled: bool = field(
+        default_factory=_resolve_entry_score_r3b_alpha_enabled
+    )
+    """`ENTRY_SCORE_R3B_ALPHA_ENABLED` env로 제어하는 mode-agnostic
+    config 스위치. 기본값 ``False`` — 명시적으로 ``"true"``로 설정하고
+    호출자가 ``r3b_alpha_percentile``을 함께 전달해야만
+    `deterministic_trigger_engine.py`의 entry_score alpha 항이 R3b
+    percentile로 교체된다. cycle 단위 candidate_percentile 사전 계산
+    배선(§54.5의 2단계)은 아직 완료되지 않았다 — 이 스위치와 엔진
+    파라미터만 존재하는 1단계 상태다.
     """

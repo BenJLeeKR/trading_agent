@@ -74,8 +74,19 @@ def assess_deterministic_triggers(
     deterministic_trigger_override: dict[str, object] | None = None,
     regime_switch_v1_trigger_status: str | None = None,
     regime_switch_v1_gate_override_enabled: bool = False,
+    r3b_alpha_percentile: float | None = None,
+    r3b_alpha_enabled: bool = False,
 ) -> DeterministicTriggerAssessment | None:
     """기존 deterministic 파생값을 이용해 후보를 생성한다.
+
+    ``r3b_alpha_percentile``/``r3b_alpha_enabled``: entry_score의 alpha
+    항을 R3b(국면 조건부 신호) candidate_percentile로 교체하는
+    파라미터(SPPV-2.65/§54). 호출자가 당일 cross-sectional 순위를
+    사전 계산해 전달해야 하며, 이 함수 자체는 순위를 계산하지 않는다.
+    **기본값(``r3b_alpha_enabled=False``, ``r3b_alpha_percentile=None``)
+    이면 기존 non-alpha 가중합 공식이 100% 그대로 유지**되어 이
+    파라미터를 모르는 모든 기존 호출부의 동작에 영향이 없다 — §48의
+    게이트 파라미터와 동일한 backward-compat 패턴이다.
 
     ``regime_switch_v1_trigger_status``: `§21 게이트`(regime_switch_v1)
     실측 상태(TRIGGERED/PARTIAL/NOT_TRIGGERED)를 호출자가 전달하면
@@ -141,6 +152,8 @@ def assess_deterministic_triggers(
         portfolio_allocation=portfolio_allocation,
         source_type=normalized_source_type,
         reason_codes=reason_codes,
+        r3b_alpha_percentile=r3b_alpha_percentile,
+        r3b_alpha_enabled=r3b_alpha_enabled,
     )
     exit_score = _build_exit_score(
         overall=overall,
@@ -1165,11 +1178,24 @@ def _build_entry_score(
     portfolio_allocation: PortfolioAllocationAssessment | None,
     source_type: str,
     reason_codes: list[str],
+    r3b_alpha_percentile: float | None = None,
+    r3b_alpha_enabled: bool = False,
 ) -> float:
+    """entry_score를 계산한다.
+
+    ``r3b_alpha_enabled and r3b_alpha_percentile is not None`` 인
+    경우에만 alpha 항(0.80 가중치, non-alpha 세 항의 합과 동일 비중)이
+    ``0.80 * r3b_alpha_percentile``로 교체된다(SPPV-2.65/§54). 그 외
+    모든 경우(기본값 포함) 기존 공식이 100% 그대로 유지된다.
+    """
     score = 0.0
-    score += 0.45 * _normalize_signed_score(overall)
-    score += 0.20 * _normalize_signed_score(fast)
-    score += 0.15 * _normalize_signed_score(slow)
+    if r3b_alpha_enabled and r3b_alpha_percentile is not None:
+        score += 0.80 * _clamp(r3b_alpha_percentile)
+        reason_codes.append("trigger_r3b_alpha_percentile")
+    else:
+        score += 0.45 * _normalize_signed_score(overall)
+        score += 0.20 * _normalize_signed_score(fast)
+        score += 0.15 * _normalize_signed_score(slow)
 
     if market_regime is not None:
         if market_regime.regime_label == "bullish_trend":

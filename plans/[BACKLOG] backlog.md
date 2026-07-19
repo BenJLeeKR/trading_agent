@@ -1001,6 +1001,20 @@
   Conditional Go를 유지한다. 신규 KIS 호출 0건, compliance/VaR/
   broker submit 경계 미변경.
 
+- 작성자: Codex
+- 수정일자: 2026-07-19 (65차, entry_score R3b alpha 교체 — 1단계
+  엔진 파라미터 배선 실제 코드 적용)
+- 수정내용: §54(SPPV-2.65) 설계 중 "1단계: 엔진 파라미터 배선"만
+  실제 코드로 적용했다(SPPV-2.66). `settings.py`에 `entry_score_
+  r3b_alpha_enabled` config 스위치(기본값 False), `deterministic_
+  trigger_engine.py`에 `r3b_alpha_percentile`/`r3b_alpha_enabled`
+  optional 파라미터 2개 추가 — §48/§49와 동일한 backward-compat
+  패턴. 기존 회귀 테스트 83건 전부 통과, 활성 경로 ad-hoc 검증
+  (percentile=0.9 → entry_score=0.72, 기대값과 완전 일치) 완료.
+  cycle 단위 precompute("2단계")는 범위 밖, 별도 승인 대상 유보.
+  `.env` 미변경. R3b는 Conditional Go를 유지한다. 상세: `plans/
+  [DESIGN] regime_conditional_entry_signal_v1.md` §55.
+
 ---
 
 ## 관리 원칙
@@ -2424,8 +2438,27 @@
     유지한다. 신규 KIS 호출 0건, compliance/VaR/broker submit
     경계 미변경, 코드 미변경(순수 설계 문서 작업). 상세: `plans/
     [DESIGN] regime_conditional_entry_signal_v1.md` §54.
-  - **SPPV-3(다음 착수: 이 설계(§54.5)를 실제로 적용할지 여부
-    사용자 결정(적용 시 §48/§49와 동일한 승인 절차 필요) +
+  - **SPPV-2.66(완료, 2026-07-19, entry_score R3b alpha 교체 —
+    1단계 엔진 파라미터 배선 실제 코드 적용, 작성자: Codex —
+    Conditional Go 유지)**: §54(SPPV-2.65)의 미적용 설계 중 "1단계:
+    엔진 파라미터 배선"만 선택해 실제 코드로 적용했다(cycle 단위
+    precompute인 "2단계"는 범위 밖, 별도 승인 대상 유보). `settings.
+    py`에 `entry_score_r3b_alpha_enabled` config 스위치(env:
+    `ENTRY_SCORE_R3B_ALPHA_ENABLED`, 기본값 False) 추가,
+    `deterministic_trigger_engine.py`의 `assess_deterministic_
+    triggers`/`_build_entry_score`에 `r3b_alpha_percentile`/
+    `r3b_alpha_enabled` optional 파라미터 2개 추가 — 활성 시에만
+    alpha 항이 `0.80 * candidate_percentile`로 교체, 비활성(기본값)
+    시 기존 공식 100% 유지. 실측: 기존 회귀 테스트 83건 전부 통과
+    (0건 실패), `AppSettings().entry_score_r3b_alpha_enabled` 기본값
+    `False` 확인, `_build_entry_score` ad-hoc 호출 비교로 활성
+    경로(percentile=0.9) 결과 `0.72`가 기대값(`0.80*0.9`)과 완전
+    일치(오차 <1e-9) 확인. `.env` 미변경, gate 로직 강화 없음, 환경
+    분기 없음. R3b는 Conditional Go를 유지한다. 상세: `plans/
+    [DESIGN] regime_conditional_entry_signal_v1.md` §55.
+  - **SPPV-3(다음 착수: cycle 단위 candidate_percentile 사전 계산
+    배선(§54.5의 2단계, `run_decision_loop.py`/`decision_
+    orchestrator.py` 수정 필요·별도 승인 필요) +
     `trigger_status` 공급원 자동화/배치화(cron/배치 설계,
     override=true인 동안 낮은 우선순위) + 포지션 사이징 등 exit
     외 리스크 관리 수단 검토(신규, 낮은 우선순위, 실거래 계좌
