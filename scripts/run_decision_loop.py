@@ -842,6 +842,77 @@ async def _run_precheck(
         return None
 
 
+# 국면 혼합도 모니터링 벤치마크 — KODEX 200(§40/SPPV-2.50~2.62와 동일 기준).
+_MIXEDNESS_BENCHMARK_SYMBOL = "069500"
+_MIXEDNESS_BENCHMARK_MARKET = "KRX"
+
+
+async def _run_mixedness_check(
+    repos: RepositoryContainer,
+) -> dict[str, object] | None:
+    """국면 혼합도(regime mixedness) 관측/로깅 전용 체크(SPPV-2.63).
+
+    ``plans/[DESIGN] regime_conditional_entry_signal_v1.md`` §40/§51
+    참고 — `services/regime_mixedness_monitor.py`(순수 함수, BUY/SELL
+    판정과 완전히 분리)를 이용해 벤치마크(KODEX 200)의 최근 국면
+    혼합도 버킷을 계산하고 로그에 남긴다.
+
+    **이 체크는 BUY/SELL 판정에 어떤 영향도 주지 않는다** — 신규
+    KIS 호출도 하지 않는다(이미 스냅샷 동기화 루프가 채워 넣은
+    `signal_feature_snapshots`를 read-only로 읽을 뿐이다). 실패해도
+    사이클 진행에 영향을 주지 않도록 예외를 전부 흡수한다(``_run_
+    precheck``와 동일한 안전 패턴).
+    """
+    from agent_trading.services.market_regime import classify_market_regime
+    from agent_trading.services.regime_mixedness_monitor import (
+        classify_mixedness_bucket,
+        compute_mixed_score,
+    )
+
+    try:
+        instrument = await repos.instruments.get_by_symbol(
+            symbol=_MIXEDNESS_BENCHMARK_SYMBOL,
+            market_code=_MIXEDNESS_BENCHMARK_MARKET,
+        )
+        if instrument is None:
+            return None
+        snapshots = await repos.signal_feature_snapshots.list_by_instrument(
+            instrument.instrument_id,
+            timeframe="1d",
+            limit=60,
+        )
+        if len(snapshots) < 20:
+            logger.info(
+                "Mixedness check: 벤치마크 스냅샷 이력 부족(%d건, 20건 미만) — skip.",
+                len(snapshots),
+            )
+            return None
+
+        trailing_labels = [
+            classify_market_regime(snapshot).regime_label for snapshot in snapshots
+        ]
+        mixed_score = compute_mixed_score(trailing_labels)
+        if mixed_score is None:
+            return None
+
+        assessment = classify_mixedness_bucket(mixed_score)
+        logger.info(
+            "Mixedness check: bucket=%s mixed_score=%.4f reason_code=%s "
+            "(관측 전용 — BUY/SELL 판정에 영향 없음).",
+            assessment.bucket,
+            assessment.mixed_score,
+            assessment.reason_code,
+        )
+        return {
+            "mixed_score": assessment.mixed_score,
+            "bucket": assessment.bucket,
+            "reason_code": assessment.reason_code,
+        }
+    except Exception as exc:
+        logger.warning("Mixedness check failed (관측 전용, 사이클에는 영향 없음): %s", exc)
+        return None
+
+
 # ── Result serialization ────────────────────────────────────────────────────
 
 
@@ -2378,6 +2449,17 @@ async def _run_loop(
                     await tx.commit()
             except Exception as exc:
                 logger.warning("Cycle pre-check failed: %s", exc)
+
+            # ── Cycle당 1회 국면 혼합도 관측(SPPV-2.63, 관측 전용) ──────
+            # BUY/SELL 판정과 완전히 분리된 순수 로깅 — 실패해도 사이클에
+            # 영향 없음(_run_mixedness_check 내부에서 예외를 전부 흡수).
+            try:
+                async with _db_transaction() as tx:
+                    mixedness_repos = build_postgres_repositories(tx)
+                    await _run_mixedness_check(mixedness_repos)
+                    await tx.commit()
+            except Exception as exc:
+                logger.warning("Mixedness check failed (관측 전용, 사이클에는 영향 없음): %s", exc)
 
             # Semaphore-based parallel symbol processing.
             # Max 5 concurrent symbols to avoid overwhelming broker/LLM resources

@@ -921,10 +921,100 @@
   KIS 호출 0건, 운영 코드 미변경, compliance/VaR/broker submit
   경계 미변경.
 
+- 작성자: Codex
+- 수정일자: 2026-07-19 (62차, 국면 혼합도 모니터링을 실제 decision
+  loop 관측 경로에 연결)
+- 수정내용: §51(61차)이 검증만 하고 미연결로 남긴 gap을 메웠다
+  (SPPV-2.63). 후속 과제 후보 중 **혼합도 모니터링의 실제 소비
+  위치 연결**을 최우선으로 선택 — trigger_status 자동화는 override
+  =true인 동안 급하지 않고, T+5/경로 리스크는 §41~§44에서 이미
+  답변됨. `scripts/run_decision_loop.py`에 신규 함수 `_run_
+  mixedness_check()`를 추가 — 기존 `_run_precheck()`와 동일한
+  cycle당 1회 안전 패턴으로, 벤치마크 `signal_feature_snapshots`
+  최근 60건을 read-only 조회(신규 KIS 호출 없음)해 §51 모듈로
+  국면 혼합도 버킷을 계산·로그에 남긴다. **BUY/SELL 판정에는
+  전혀 연결하지 않았다.** in-memory repos로 저혼합/고혼합 두
+  시나리오를 `_run_mixedness_check()` 실제 호출로 검증한 결과 둘
+  다 정확히 분류됨을 확인, 소스 검사로 BUY/SELL 판정 코드가 전혀
+  없음도 확인. 기존 단위 테스트 10건 실패는 변경 전에도 동일하게
+  실패하는 사전 존재 결함임을 stash 재실행으로 확인(무관). 판정:
+  **R3b는 Conditional Go를 유지한다.** BUY/SELL 게이트 로직은 더
+  세지지 않았다 — 관측/로깅 경로만 추가. 신규 KIS 호출 0건,
+  `.env` 미수정, environment 분기 없음, compliance/VaR/broker
+  submit 경계 미변경.
+
 ## 최근 메모
 
+> **📌 2026-07-19 국면 혼합도 모니터링을 실제 decision loop 관측
+> 경로에 연결 (최신, 작성자: Codex)**: **최신 truth 재확인**:
+> commit `aa10caee`로 §21 게이트가 실제 판단 경로에 완전히 배선돼
+> 커밋·푸시됐고 `.env`에는 `REGIME_SWITCH_V1_GATE_OVERRIDE_
+> ENABLED=true`가 설정돼 paper 관측 단계에서 게이트는 BUY를 막지
+> 않는다. commit `4fd3ad7e`(§51, SPPV-2.62)로 `services/regime_
+> mixedness_monitor.py`가 구현·검증됐으나(§40의 217/215/202 버킷
+> 재현성 확인), decision loop나 대시보드 어디에도 아직 연결되지
+> 않은 상태였다 — 이번 턴이 그 마지막 gap을 메운다. 후속 과제
+> 후보(trigger_status 자동화/혼합도 모니터링 실제 소비 위치 연결/
+> T+5 후속 검증/SPPV-3 착수 준비) 중 **혼합도 모니터링의 실제
+> 소비 위치 연결**을 최우선으로 선택했다 — trigger_status 자동화
+> 는 override=true인 동안 실질적 영향이 없어 급하지 않고, T+5/
+> 경로 리스크는 §41~§44에서 이미 충분히 답이 나온 반복 질문이기
+> 때문이다. **구현**: `scripts/run_decision_loop.py`에 신규 함수
+> `_run_mixedness_check(repos)`를 추가했다 — cycle당 1회 실행되는
+> 기존 pre-check 블록(`_run_precheck()`, snapshot sync health
+> 체크)과 완전히 동일한 안전 패턴(try/except로 예외 전부 흡수,
+> 실패해도 사이클 진행 무영향)을 그대로 재사용: (1) 벤치마크
+> (KODEX 200, 069500)의 instrument 조회, (2) `signal_feature_
+> snapshots.list_by_instrument(limit=60)`로 최근 60건을 read-only
+> 조회(**신규 KIS 호출 없음** — 이미 별도 스냅샷 동기화 루프가
+> 채워 넣은 데이터 재사용), (3) 각 스냅샷에 실제 운영 함수
+> `classify_market_regime()`을 적용해 국면 라벨 trailing 리스트
+> 구성, (4) §51의 `compute_mixed_score()`/`classify_mixedness_
+> bucket()`(순수 함수, 그대로 재사용)으로 버킷·reason_code 계산,
+> (5) `logger.info()`로 로그 기록. **핵심 설계 원칙(반드시 지켜짐)**:
+> BUY/SELL 판정에 전혀 연결하지 않았다 — `cycle_precheck`처럼
+> 판정 로직에 전달되는 변수와 완전히 분리된 독립 블록이다.
+> environment 분기 코드를 추가하지 않았다. `.env`는 수정하지
+> 않았다. 신규 KIS 호출이 없다. **검증**(`scripts/validate_r3b_
+> mixedness_decision_loop_wiring.py`, 신규, read-only, in-memory
+> repos, 신규 KIS 호출 0건): `run_decision_loop.py`에 실제로
+> 배선된 `_run_mixedness_check()`를 **그대로 import해 직접
+> 호출**(로직 복제가 아님)해 두 시나리오를 확인했다 — 저혼합
+> (벤치마크 합성 스냅샷 60건 전부 강한 bullish 고정) →
+> `mixed_score=0.0, bucket=저혼합(단일 국면 지배)`, 고혼합
+> (bullish/bearish 빈번 교차) → `mixed_score=0.5, bucket=고혼합`.
+> **결과: 두 시나리오 모두 기대한 버킷으로 정확히 분류됨을 확인
+> (`low_bucket_correct=True`, `high_bucket_correct=True`).**
+> 추가로 `inspect.getsource()`로 `_run_mixedness_check()`의
+> 소스를 직접 검사해 `buy_candidate`/`sell_candidate`/`assess_
+> deterministic_triggers` 문자열이 전혀 등장하지 않음을 확인
+> (`no_buy_sell_reference_in_mixedness_check=True`) — BUY/SELL
+> 판정과의 분리를 코드 레벨로 재확인. 기존 단위 테스트(`tests/
+> scripts/test_run_decision_loop.py`)도 재확인했다: 119건 중
+> 10건 실패했으나, **이 변경 전(git stash로 원복) 동일 테스트를
+> 재실행한 결과 동일한 10건이 동일하게 실패**함을 확인 —
+> universe_selection/market_overlay 관련 사전 존재 결함으로
+> 이번 변경과 무관(109건은 변경 전후 모두 통과). **해석**: §51에서
+> 검증한 순수 모듈을 실제 운영 루프 안에서 실제로 실행되는 코드로
+> 전환한 것이다 — "창 교체(R3b) 검증"에서 "창 교체 이후 실제 운영
+> 관측"으로의 마지막 단계다. 이제 `run_decision_loop.py`가 실제로
+> 실행될 때마다(cycle당 1회) 그 순간의 국면 혼합도 버킷이 로그에
+> 남는다 — 사람이 로그를 보고 "오늘은 고혼합 구간이라 신호 신뢰도
+> 가 낮다"는 것을 즉시 인지할 수 있다. BUY/SELL 판정 자체는 이
+> 정보와 무관하게 그대로 동작한다(§40.5의 "모니터링 지표, 차단
+> 사유 아님" 원칙이 코드 레벨에서도 그대로 지켜짐). **판정: R3b는
+> Conditional Go를 유지한다.** §21 게이트(주된 차단 요인)나
+> override 설정은 이번 턴과 무관하게 불변(override=true 유지).
+> BUY/SELL 게이트 로직은 전혀 더 세지지 않았다 — 오직 관측/로깅
+> 경로만 추가됐다. compliance/VaR/broker submit 경계는 전혀
+> 건드리지 않았다. 신규 KIS 호출 0건. 산출: `scripts/run_decision_
+> loop.py`(수정), `scripts/validate_r3b_mixedness_decision_loop_
+> wiring.py`(신규), `logs/signal_ic_r3b_mixedness_decision_loop_
+> wiring_2026-07-19.json`. 상세: `plans/[DESIGN] regime_
+> conditional_entry_signal_v1.md` §52(SPPV-2.63).
+>
 > **📌 2026-07-18 국면 혼합도 모니터링 모듈 구현 및 §40 재현성
-> 검증 (최신, 작성자: Codex)**: **최신 truth 확정**: commit
+> 검증 (작성자: Codex)**: **최신 truth 확정**: commit
 > `aa10caee`("SPPV-2.61: wire §21 gate and lock paper ops to config
 > override")로 §21 게이트가 실제 판단 경로에 완전히 배선돼 커밋·
 > 푸시됐고, 현재 `.env`에는 `REGIME_SWITCH_V1_GATE_OVERRIDE_
@@ -7705,20 +7795,43 @@ agent 설계 문서 기준으로도 순서는 다음이 맞다.
      mixedness_monitor.py`(신규), `scripts/validate_regime_
      mixedness_monitor.py`(신규), `logs/signal_ic_regime_
      mixedness_monitor_validation_2026-07-18.json`. 상세: `plans/
-     [DESIGN] regime_conditional_entry_signal_v1.md` §51.
+     [DESIGN] regime_conditional_entry_signal_v1.md` §51. **[SPPV-
+     2.63에서 진전] 실제 소비 위치 연결 완료 — 아래 SPPV-2.63
+     참고.**
+   - **SPPV-2.63(완료, 2026-07-19, 국면 혼합도 모니터링을 실제
+     decision loop 관측 경로에 연결, 작성자: Codex — Conditional
+     Go 유지)**: §51의 미완 지점(검증만, 미연결)을 메웠다.
+     `scripts/run_decision_loop.py`에 신규 함수 `_run_mixedness_
+     check()`를 추가 — 기존 `_run_precheck()`와 동일한 cycle당
+     1회 안전 패턴으로, 벤치마크 `signal_feature_snapshots` 최근
+     60건을 read-only 조회(신규 KIS 호출 없음)해 §51 모듈로 국면
+     혼합도 버킷을 계산·로그에 남긴다. **BUY/SELL 판정에는 전혀
+     연결하지 않았다.** `scripts/validate_r3b_mixedness_decision_
+     loop_wiring.py`(read-only, in-memory repos, 신규 KIS 호출
+     0건)로 `_run_mixedness_check()`를 실제 import·호출해 저혼합/
+     고혼합 두 시나리오 모두 정확히 분류됨을 확인, 소스 검사로
+     BUY/SELL 판정 코드가 전혀 없음도 확인. 기존 단위 테스트 10건
+     실패는 변경 전에도 동일하게 실패하는 사전 존재 결함임을 stash
+     재실행으로 확인(무관). 판정: **R3b는 Conditional Go를
+     유지한다.** BUY/SELL 게이트 로직은 더 세지지 않았다 — 관측/
+     로깅 경로만 추가. 신규 KIS 호출 0건, `.env` 미수정,
+     environment 분기 없음, compliance/VaR/broker submit 경계
+     미변경. 산출: `scripts/run_decision_loop.py`(수정),
+     `scripts/validate_r3b_mixedness_decision_loop_wiring.py`
+     (신규), `logs/signal_ic_r3b_mixedness_decision_loop_wiring_
+     2026-07-19.json`. 상세: `plans/[DESIGN] regime_conditional_
+     entry_signal_v1.md` §52.
    - **SPPV-3(다음 착수: `trigger_status` 공급원 자동화/배치화
-     (cron/배치 설계, override=true인 동안 낮은 우선순위) + 혼합도
-     모니터링 모듈을 실제 소비 위치(decision loop 로그, 대시보드)에
-     연결할지 여부(선택 사항, 별도 승인 필요) + 게이트 충족(또는
-     override 유지) 시 entry_score 코드 변경 PR 초안 작성 착수 여부
-     사용자 확인(shadow 정합성 확보 완료, B 시나리오 non-alpha
-     조정 항 범위) + R3b alpha 교체 전체 경로를 전체 파이프라인
-     수준에서 재현 검증(신규, 선택 사항) + 포지션 사이징 등 exit
-     외 리스크 관리 수단 검토(신규, 낮은 우선순위, 실거래 계좌 상태
-     필요) + T+5 리스크 20일판·60일판 진짜 페어드 비교(선택 사항,
-     20일판을 1048건 부분집합으로 제한 재계산) + `portfolio_
-     allocation` gap 실거래 누적 후 재검증 + "국면 조건부 활동성
-     threshold" 설계 검토 여부 사용자 확인)**:
+     (cron/배치 설계, override=true인 동안 낮은 우선순위) + 게이트
+     충족(또는 override 유지) 시 entry_score 코드 변경 PR 초안
+     작성 착수 여부 사용자 확인(shadow 정합성 확보 완료, B 시나리오
+     non-alpha 조정 항 범위) + R3b alpha 교체 전체 경로를 전체
+     파이프라인 수준에서 재현 검증(신규, 선택 사항) + 포지션 사이징
+     등 exit 외 리스크 관리 수단 검토(신규, 낮은 우선순위, 실거래
+     계좌 상태 필요) + T+5 리스크 20일판·60일판 진짜 페어드 비교
+     (선택 사항, 20일판을 1048건 부분집합으로 제한 재계산) +
+     `portfolio_allocation` gap 실거래 누적 후 재검증 + "국면
+     조건부 활동성 threshold" 설계 검토 여부 사용자 확인)**:
      §2.16~§2.21에서 국면 정의 통일(차단 축)은 Watch/No-Go에
      근접한다는 것이 확인됐고, §2.22에서 alpha layer 교체(선별 축)는
      Conditional Go를 확보했으며, **§2.27~§2.28에서 그 Conditional

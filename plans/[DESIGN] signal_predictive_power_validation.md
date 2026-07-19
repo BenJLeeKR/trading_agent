@@ -1346,6 +1346,41 @@ entry 설계 검토로 전환**을 확정했다. 별도 문서
   submit 경계 미변경. 상세: `plans/[DESIGN] regime_conditional_
   entry_signal_v1.md` §51.
 
+- 작성자: Codex
+- 수정일자: 2026-07-19 (63차, 국면 혼합도 모니터링을 실제 decision
+  loop 관측 경로에 연결)
+- 수정내용: 최신 truth 재확인(commit `aa10caee` §21 게이트 배선
+  완료, `.env`에 override=true, commit `4fd3ad7e` §51 혼합도 모듈
+  검증 완료·미연결 상태). 후속 과제 후보 중 **혼합도 모니터링의
+  실제 소비 위치 연결**을 최우선으로 선택했다(SPPV-2.63) —
+  trigger_status 자동화는 override=true인 동안 급하지 않고, T+5/
+  경로 리스크는 §41~§44에서 이미 답변됨. `scripts/run_decision_
+  loop.py`에 신규 함수 `_run_mixedness_check()`를 추가 — 기존
+  `_run_precheck()`(snapshot sync health)와 동일한 cycle당 1회
+  안전 패턴으로, 벤치마크(069500) `signal_feature_snapshots`
+  최근 60건을 read-only 조회(신규 KIS 호출 없음)해 §51 모듈로
+  국면 혼합도 버킷·reason_code를 계산·로그에 남긴다. **BUY/SELL
+  판정에는 전혀 연결하지 않았다** — 별도 트랜잭션, 별도 변수,
+  예외 전부 흡수. `scripts/validate_r3b_mixedness_decision_loop_
+  wiring.py`(신규, read-only, in-memory repos, 신규 KIS 호출
+  0건)로 `_run_mixedness_check()`를 실제로 import·호출해 검증:
+  저혼합 시나리오(합성 스냅샷 60건 전부 강한 bullish) → `mixed_
+  score=0.0, bucket=저혼합`, 고혼합 시나리오(bullish/bearish
+  빈번 교차) → `mixed_score=0.5, bucket=고혼합` — **두 시나리오
+  모두 기대한 버킷으로 정확히 분류됨(low_bucket_correct=True,
+  high_bucket_correct=True).** `inspect.getsource()`로 소스에
+  `buy_candidate`/`sell_candidate`/`assess_deterministic_
+  triggers` 문자열이 전혀 없음도 확인(`no_buy_sell_reference_
+  in_mixedness_check=True`). 기존 단위 테스트(`test_run_decision_
+  loop.py`) 10건 실패는 변경 전(git stash 재실행)에도 동일하게
+  실패하는 사전 존재 결함(universe_selection/market_overlay
+  관련)임을 확인 — 이번 변경과 무관. 판정: **R3b는 Conditional
+  Go를 유지한다.** BUY/SELL 게이트 로직은 더 세지지 않았다 —
+  관측/로깅 경로만 추가. 신규 KIS 호출 0건, `.env` 미수정,
+  environment 분기 없음, compliance/VaR/broker submit 경계
+  미변경. 상세: `plans/[DESIGN] regime_conditional_entry_
+  signal_v1.md` §52.
+
 ---
 
 ## 진행 체크리스트
@@ -3310,7 +3345,54 @@ canonical),
   - 다음 과제: 이 모듈을 실제 소비 위치(decision loop 로그, 대시
     보드 등)에 연결할지 여부(선택 사항, 별도 승인 필요), `trigger_
     status` 공급원 자동화(override=true인 동안 낮은 우선순위),
-    entry_score 코드 변경 PR 초안, SPPV-3 착수 준비.
+    entry_score 코드 변경 PR 초안, SPPV-3 착수 준비. **[SPPV-2.63
+    에서 진전] 실제 소비 위치 연결 완료 — 아래 SPPV-2.63 참고.**
+- [x] **SPPV-2.63(신설)** 국면 혼합도 모니터링을 실제 decision loop
+  관측 경로에 연결 (완료, 2026-07-19, 작성자: Codex)
+  - 작업 범위: §51(SPPV-2.62)이 검증만 하고 미연결로 남긴 gap을
+    메운다. 후속 과제 후보(trigger_status 자동화/혼합도 모니터링
+    실제 소비 위치 연결/T+5 후속 검증/SPPV-3 착수 준비) 중 이 항목
+    을 최우선으로 선택 — trigger_status 자동화는 override=true인
+    동안 급하지 않고, T+5/경로 리스크는 §41~§44에서 이미 답변됨.
+  - **구현**: `scripts/run_decision_loop.py`에 신규 함수 `_run_
+    mixedness_check(repos)` 추가 — 기존 `_run_precheck()`(snapshot
+    sync health, cycle당 1회 실행)와 동일한 안전 패턴. 벤치마크
+    (069500) `signal_feature_snapshots` 최근 60건을 read-only
+    조회(신규 KIS 호출 없음, 이미 스냅샷 동기화 루프가 채워 넣은
+    데이터 재사용) → 각 스냅샷에 실제 `classify_market_regime()`
+    적용해 국면 라벨 trailing 리스트 구성 → §51의 `compute_mixed_
+    score()`/`classify_mixedness_bucket()`(그대로 재사용)로 버킷·
+    reason_code 계산 → `logger.info()`로 로그 기록. 예외는 전부
+    흡수(사이클 진행에 영향 없음). **BUY/SELL 판정에는 전혀
+    연결하지 않음** — 별도 트랜잭션·별도 변수로 완전히 분리.
+  - **검증**(`scripts/validate_r3b_mixedness_decision_loop_
+    wiring.py`, 신규, read-only, in-memory repos, 신규 KIS 호출
+    0건): `_run_mixedness_check()`를 실제로 import·호출(로직 복제
+    아님)해 저혼합(합성 60건 전부 강한 bullish)·고혼합(bullish/
+    bearish 빈번 교차) 두 시나리오 검증. **결과: 저혼합 →
+    mixed_score=0.0/bucket=저혼합, 고혼합 → mixed_score=0.5/
+    bucket=고혼합 — 두 시나리오 모두 기대한 버킷으로 정확히
+    분류됨.** `inspect.getsource()`로 소스에 BUY/SELL 판정 관련
+    코드가 전혀 없음도 확인.
+  - **테스트**: 기존 `tests/scripts/test_run_decision_loop.py`
+    10건 실패는 변경 전(git stash 재실행)에도 동일하게 실패하는
+    사전 존재 결함(universe_selection/market_overlay 관련)임을
+    확인 — 이번 변경과 무관, 109건은 변경 전후 모두 통과.
+  - **판정**: R3b는 Conditional Go를 유지한다. BUY/SELL 게이트
+    로직은 더 세지지 않았다 — 관측/로깅 경로만 추가. 신규 KIS 호출
+    0건, `.env` 미수정, environment 분기 없음, compliance/VaR/
+    broker submit 경계 미변경. 상세: `plans/[DESIGN] regime_
+    conditional_entry_signal_v1.md` §52.
+  - 산출물: `scripts/run_decision_loop.py`(수정, `_run_mixedness_
+    check()` 추가 + 배선), `scripts/validate_r3b_mixedness_
+    decision_loop_wiring.py`(신규, read-only), `logs/signal_ic_
+    r3b_mixedness_decision_loop_wiring_2026-07-19.json`, `logs/
+    r3b_mixedness_decision_loop_wiring_run_2026-07-19.log`, `logs/
+    r3b_pytest_run_decision_loop_2026-07-19.log`.
+  - 다음 과제: `trigger_status` 공급원 자동화/배치화(override=true
+    인 동안 낮은 우선순위), entry_score 코드 변경 PR 초안, R3b
+    alpha 교체 전체 경로 전체 파이프라인 재현 검증(선택 사항),
+    `portfolio_allocation` gap 실거래 누적 후 재검증.
 - [~] **SPPV-3** `entry_score` point-in-time 재현 및 중복 penalty ablation
   - **보류 유지, 형태 재정의 — 우선순위 재조정**: §12(1년, 자기참조
     포함) 당시 "알파 근거 강화"로 낙관했던 것이 §14(3년, 자기참조

@@ -1456,6 +1456,29 @@ value/compliance/broker가 아니라 `entry_score < 0.65`다.
   **R3b는 Conditional Go를 유지한다.** 신규 KIS 호출 0건, 운영
   코드 미변경, compliance/VaR/broker submit 경계 미변경. 상세:
   `plans/[DESIGN] regime_conditional_entry_signal_v1.md` §51.
+
+- 작성자: Codex
+- 수정일자: 2026-07-19 (2.65순위, 국면 혼합도 모니터링을 실제
+  decision loop 관측 경로에 연결)
+- 수정내용: §51(2.64순위)이 검증만 하고 미연결로 남긴 gap을
+  메웠다(SPPV-2.63). 후속 과제 후보 중 **혼합도 모니터링의 실제
+  소비 위치 연결**을 최우선으로 선택 — trigger_status 자동화는
+  override=true인 동안 급하지 않고, T+5/경로 리스크는 §41~§44에서
+  이미 답변됨. `scripts/run_decision_loop.py`에 신규 함수 `_run_
+  mixedness_check()`를 추가 — 기존 `_run_precheck()`와 동일한
+  cycle당 1회 안전 패턴으로, 벤치마크 `signal_feature_snapshots`
+  최근 60건을 read-only 조회(신규 KIS 호출 없음)해 §51 모듈로
+  국면 혼합도 버킷을 계산·로그에 남긴다. **BUY/SELL 판정에는 전혀
+  연결하지 않았다.** in-memory repos로 저혼합/고혼합 두 시나리오를
+  `_run_mixedness_check()` 실제 호출로 검증한 결과 둘 다 정확히
+  분류됨을 확인, 소스 검사로 BUY/SELL 판정 코드가 전혀 없음도
+  확인. 기존 단위 테스트 10건 실패는 변경 전에도 동일하게 실패하는
+  사전 존재 결함임을 stash 재실행으로 확인(무관). 판정: **R3b는
+  Conditional Go를 유지한다.** BUY/SELL 게이트 로직은 더 세지지
+  않았다 — 관측/로깅 경로만 추가. 신규 KIS 호출 0건, `.env` 미수정,
+  environment 분기 없음, compliance/VaR/broker submit 경계
+  미변경. 상세: `plans/[DESIGN] regime_conditional_entry_signal_
+  v1.md` §52.
 - **3순위(보류 유지, 형태 재정의 — 우선순위 재조정)**: **`entry_
   score`와 BUY funnel 재현** — §2.7 확장 검증에서 하락장 안정성이
   확인되지 않아 단순 재현으로는 착수하지 않는다. §2.16~§2.21에서

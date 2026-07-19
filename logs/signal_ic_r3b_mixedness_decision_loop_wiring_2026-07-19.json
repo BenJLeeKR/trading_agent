@@ -1,0 +1,17 @@
+{
+  "as_of": "2026-07-19T10:47:46.645949+09:00",
+  "low_mixedness_scenario": {
+    "mixed_score": 0.0,
+    "bucket": "저혼합(단일 국면 지배)",
+    "reason_code": "mixedness_low_bucket_high_confidence"
+  },
+  "high_mixedness_scenario": {
+    "mixed_score": 0.5,
+    "bucket": "고혼합",
+    "reason_code": "mixedness_high_bucket_low_confidence_caveat"
+  },
+  "low_bucket_correct": true,
+  "high_bucket_correct": true,
+  "no_buy_sell_reference_in_mixedness_check": true,
+  "note": "_run_mixedness_check()는 scripts/run_decision_loop.py에 실제로 배선된 함수를 그대로 import해 호출했다(로직 복제 아님). in-memory repos만 사용, 신규 KIS 호출 없음, DB write/주문 경로/broker submit 없음. BUY/SELL 판정에 영향을 주지 않는 순수 관측/로깅 체크임을 소스 검사로 확인."
+}

@@ -1,0 +1,16 @@
+
+=== 1. 저혼합 시나리오(단일 bullish 지배) — _run_mixedness_check() 실제 호출 ===
+결과: {'mixed_score': 0.0, 'bucket': '저혼합(단일 국면 지배)', 'reason_code': 'mixedness_low_bucket_high_confidence'}
+
+=== 2. 고혼합 시나리오(bullish/bearish 빈번 교차) — _run_mixedness_check() 실제 호출 ===
+INFO:run_decision_loop:Mixedness check: bucket=저혼합(단일 국면 지배) mixed_score=0.0000 reason_code=mixedness_low_bucket_high_confidence (관측 전용 — BUY/SELL 판정에 영향 없음).
+INFO:run_decision_loop:Mixedness check: bucket=고혼합 mixed_score=0.5000 reason_code=mixedness_high_bucket_low_confidence_caveat (관측 전용 — BUY/SELL 판정에 영향 없음).
+결과: {'mixed_score': 0.5, 'bucket': '고혼합', 'reason_code': 'mixedness_high_bucket_low_confidence_caveat'}
+
+저혼합 시나리오가 실제로 '저혼합' 버킷으로 분류됨: True
+고혼합 시나리오가 실제로 '고혼합' 버킷으로 분류됨: True
+
+=== 3. 이 체크가 BUY/SELL 판정과 분리돼 있다는 구조적 확인 ===
+_run_mixedness_check() 소스에 BUY/SELL 판정 관련 코드가 전혀 없음: True
+
+산출 저장: logs/signal_ic_r3b_mixedness_decision_loop_wiring_2026-07-19.json
