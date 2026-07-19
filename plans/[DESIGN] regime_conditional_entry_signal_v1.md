@@ -346,7 +346,22 @@ PRE/POST 두 버전을 각각 `pytest -v --tb=long`으로 전체 재실행,
 assertion 내용까지 완전히 동일(차이는 비결정적 메모리 주소와
 71줄 오프셋뿐), `grep`으로 mixedness 관련 문자열이 실패 stack
 trace 어디에도 없음을 확인 — **"무관 확정".** 코드 변경 없음,
-Conditional Go 유지.**
+Conditional Go 유지.** +
+**entry_score PR 초안 설계(§54, SPPV-2.65, 2026-07-19) — "R3b
+alpha 교체 전체 경로 재현"을 다시 실측하는 대신(§45의 non-alpha
+100% 일치의 논리적 귀결이라 반복 검증 불필요), **새로 발견한
+아키텍처 제약**을 정리했다: entry_score는 종목 단위 계산이지만
+R3b alpha(candidate_percentile)는 당일 cross-sectional 순위가
+필요해 사전 계산 단계가 있어야 한다 — `run_decision_loop.py`의
+기존 `_build_core_risk_off_apply_overrides_for_cycle()`(cycle당
+1회 전체 universe precompute → override 주입)이 정확히 필요한
+선례로 이미 존재함을 확인. 이를 근거로 실제 코드 diff 초안(신규
+precompute 함수 1개 + `assess_deterministic_triggers` optional
+파라미터 2개 + config 스위치 1개, 전부 §48/§49와 동일한 기본값-
+비활성 패턴)을 설계했다 — **미적용, 코드 변경 없음.** "entry_score
+코드 반영 절차"는 "shadow 정합성 확보"에서 "구체적 구현 설계
+확보(diff 초안)"로 진전. 적용은 별도 승인 필요. Conditional Go
+유지, 신규 KIS 호출 0건.**
 상위 문서: `plans/[ANALYSIS] sppv_regime_polarity_synthesis_and_next_direction.md`
 (§4 판정 — "국면 분기형 entry 설계로 전환"), `plans/[DESIGN] signal_
 predictive_power_validation.md`(§16 이원 기준, §19/§20/§21 근거 실측),
@@ -6529,3 +6544,149 @@ BUY/SELL 게이트 로직도, `.env`도 건드리지 않았다. §21 게이트
    fixture 문제로 별개 영역).
 4. R3b alpha 교체 전체 경로를 전체 파이프라인 수준에서 재현 검증
    (선택 사항).
+
+## 54. entry_score 코드 변경 PR 초안 설계 — R3b alpha 교체 실제 파이프라인 연결 방안 (SPPV-2.65, 2026-07-19)
+
+- 작성자: Codex
+- 수정일자: 2026-07-19
+
+### 54.1 최신 truth 재확인
+
+commit `aa10caee`(§21 게이트 배선), `.env`의 override=true(paper
+관측 단계 BUY 미차단), commit `4fd3ad7e`/`bcec9d03`(§51/§52 혼합도
+모니터링 구현·연결), commit `5c977017`(§53 테스트 실패 무관 확정)
+— 모두 확인. 후속 과제 후보(trigger_status 자동화, entry_score
+코드 변경 PR 초안 준비, R3b alpha 전체 경로 재현 검증, T+5/경로
+리스크 후속 검증) 중 **entry_score 코드 변경 PR 초안 준비**를
+선택했다 — trigger_status 자동화는 override=true인 동안 실질
+영향이 없어 여전히 급하지 않고, mixedness는 이미 실제 소비 위치
+연결까지 끝나 같은 축 반복은 피한다.
+
+### 54.2 왜 "재검증"이 아니라 "설계"인가
+
+§45(SPPV-2.56)가 이미 확인한 것: B 시나리오의 non-alpha 조정 항은
+실제 `_build_entry_score`와 100% 일치(58,493건 전수). 이 세션 내내
+쓰인 `_score_b(row) = clamp01(0.80 * candidate_percentile +
+non_alpha)` 공식은 그 자체가 정의상 "실제 non-alpha(§45 확인) +
+R3b alpha(0.80*candidate_percentile)"의 합이므로, **이 조합이
+실제 함수와 수치적으로 일치한다는 것을 다시 실측으로 확인하는
+것은 §45의 논리적 귀결을 반복 검증하는 것**이다 — 새로운 정보가
+없다. 대신 이번 턴에 진짜 남아 있던 gap을 조사했다: **"R3b alpha
+항을 실제 운영 파이프라인에 넣으려면 어떤 구조 변경이 필요한가"**
+는 이 세션 전체에서 한 번도 명시적으로 설계되지 않았었다.
+
+### 54.3 핵심 발견 — 아키텍처 제약: entry_score는 종목 단위로 계산되지만 R3b alpha는 당일 cross-sectional 순위가 필요하다
+
+코드 조사 결과, `DecisionOrchestratorService._derive_deterministic_
+context_components`(§48/§49에서 실제로 연결·검증한 그 메서드)는
+**요청(symbol) 1건마다 독립적으로 호출**되며, `assess_
+deterministic_triggers`도 마찬가지로 **종목 단위**로 `entry_score`
+를 계산한다 — 그 시점에 "오늘 다른 candidate들의 `regime_
+conditional_signal` 값"은 알 수 없다. 그런데 R3b의 alpha 항
+(`candidate_percentile(regime_conditional_signal)`)은 **당일 quintile
+후보 집합 안에서의 상대 순위**로 정의된다 — 이는 종목 단위 계산
+만으로는 얻을 수 없고, **하루치 전체 후보를 먼저 훑어 순위를
+매기는 cross-sectional 사전 계산 단계**가 있어야 한다.
+
+**이는 이 세션에서 지금까지 명시적으로 다뤄지지 않은 새로운
+architectural 제약이다** — 모든 R3b shadow 검증 스크립트는 이
+사전 계산을 스크립트 안에서 (`_attach_candidate_percentile()`류
+함수로) 이미 수행해왔지만, 그 사실 자체가 "실제 코드에 반영하려면
+단순 공식 교체가 아니라 파이프라인 단계 추가가 필요하다"는 것을
+뜻한다는 점은 별도로 정리된 적이 없었다.
+
+### 54.4 이미 존재하는 정확한 선례 — 새 코드를 짜지 않고 재사용 가능
+
+다행히 이 세션이 §21 게이트/혼합도 모니터링에서 쓴 것과 **완전히
+동일한 패턴**이 이미 운영 코드에 두 번 구현돼 있다:
+
+1. **`scripts/run_decision_loop.py`의 `_build_core_risk_off_apply_
+   overrides_for_cycle(universe)`**(1247행) — cycle당 1회, 그날의
+   `universe`(전체 후보 종목) 전부를 순회해 core risk-off top-k
+   예외 승격 대상을 **미리 계산**하고, 그 결과를 `deterministic_
+   trigger_override`(dict)로 `assess_deterministic_triggers`에
+   전달한다. **이것이 정확히 R3b alpha percentile에 필요한 것과
+   동일한 구조**(cross-sectional 사전 계산 → 종목별 override 주입)
+   다.
+2. **§48/§49의 `regime_switch_v1_trigger_status`/`regime_switch_
+   v1_gate_override_enabled`** — 이미 검증된 "config 스위치로
+   보호된 optional 파라미터, 기본값 비활성=기존 동작 100% 유지"
+   패턴.
+
+### 54.5 제안 설계(미적용 — 실제 코드 변경 아님, 검토용 초안)
+
+**1) 신규 cycle당 1회 precompute 함수**(`run_decision_loop.py`에
+   `_build_core_risk_off_apply_overrides_for_cycle`와 나란히
+   추가하는 형태로 설계):
+```python
+async def _build_r3b_alpha_percentile_overrides_for_cycle(
+    *, universe: tuple[UniverseSymbol, ...],
+) -> dict[str, float]:
+    """당일 universe 전체에서 regime_conditional_signal의 quintile
+    상위 20% candidate만 골라 candidate_percentile을 계산한다
+    (이 세션의 _attach_candidate_percentile()과 동일 로직 — 신규
+    로직이 아니라 기존 shadow 스크립트 로직을 운영 코드로 이식).
+    기본적으로 이 함수 자체가 호출되지 않으면(config 스위치 off)
+    아무 영향이 없다.
+    """
+    ...  # 신규 로직 없음 — 기존 shadow 스크립트의 순위 계산을 그대로 이식
+```
+
+**2) `_build_entry_score`/`assess_deterministic_triggers`에 §48과
+   동일한 패턴의 신규 optional 파라미터 추가**:
+```python
+def assess_deterministic_triggers(
+    ...,
+    r3b_alpha_percentile: float | None = None,
+    r3b_alpha_enabled: bool = False,
+) -> DeterministicTriggerAssessment | None:
+    ...
+    if r3b_alpha_enabled and r3b_alpha_percentile is not None:
+        alpha_term = 0.80 * r3b_alpha_percentile  # R3b 공식 그대로
+    else:
+        alpha_term = 0.45*norm(overall) + 0.20*norm(fast) + 0.15*norm(slow)  # 기존 공식 그대로 유지
+```
+
+**3) 신규 config 스위치**(§21 게이트와 동일 패턴):
+   `AppSettings.entry_score_r3b_alpha_enabled`(env:
+   `ENTRY_SCORE_R3B_ALPHA_ENABLED`, 기본값 `False`) — 켜지지
+   않으면 위 조건문이 항상 기존 공식을 쓰므로 기존 호출부는 100%
+   무영향.
+
+### 54.6 이 설계로 명확해진 것
+
+- **기존 결론 유지**: §45의 non-alpha 100% 일치 결과는 이 설계
+  에서도 그대로 재사용된다(조정 항 공식은 그대로).
+- **새로 명확해진 것**: R3b alpha 항을 실제로 반영하려면 (a) cycle
+  당 1회 cross-sectional precompute 함수 1개, (b) 종목별 override
+  주입 파라미터 2개, (c) config 스위치 1개 — 총 3가지 신규 요소가
+  필요하며, **이 세 요소 모두 이 세션에서 이미 검증된 기존 패턴의
+  재사용**이라 새로운 설계 리스크는 낮다.
+- **아직 실측하지 않은 것**: 이 설계를 실제로 적용했을 때 cycle당
+  precompute 연산 비용(당일 universe 크기에 비례, `_build_core_
+  risk_off_apply_overrides_for_cycle`가 이미 매 cycle 수행하는
+  것과 동일한 크기의 부담이라 추가 비용은 미미할 것으로 예상되나
+  실측은 안 됨).
+
+### 54.7 판정 — Conditional Go 유지, "entry_score PR 초안" 준비도 격상(설계 완료, 코드 미적용)
+
+**R3b는 Conditional Go를 유지한다.** 이번 턴은 코드를 전혀
+수정하지 않았다 — 순수 설계 문서 작업이다. "entry_score 코드
+변경 PR 초안 작성 착수"는 §45~§46의 "shadow 계산 정합성 확보"
+단계에서 **"구체적 구현 설계 확보(실제 코드 diff 초안, 미적용)"
+단계로 진전**했다 — 다만 이 설계를 실제로 코드에 적용하는 것은
+`deterministic_trigger_engine.py`/`run_decision_loop.py`를 다시
+수정하는 것이므로, 이전 §48/§49와 마찬가지로 **별도의 명시적
+사용자 승인이 필요**하다. compliance/VaR/broker submit 경계는
+전혀 건드리지 않았다. 신규 KIS 호출 0건(코드 조사만 수행).
+
+### 54.8 다음 우선 작업
+
+1. 이 설계(§54.5)를 실제로 적용할지 여부 사용자 결정(적용 시
+   §48/§49와 동일한 승인 절차 필요).
+2. `trigger_status` 공급원 자동화/배치화(override=true인 동안
+   낮은 우선순위).
+3. T+5/경로 리스크 후속 검증(§41~§44에서 이미 상당 부분 답변됨,
+   추가 필요성 낮음).
+4. `portfolio_allocation` gap·실제 청산 시점 분포는 실거래 누적
+   이후 재검증 대상으로 계속 유보.

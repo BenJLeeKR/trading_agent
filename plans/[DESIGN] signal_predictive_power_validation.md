@@ -1408,6 +1408,33 @@ entry 설계 검토로 전환**을 확정했다. 별도 문서
   확정). 신규 KIS 호출 0건. 상세: `plans/[DESIGN] regime_
   conditional_entry_signal_v1.md` §53.
 
+- 작성자: Codex
+- 수정일자: 2026-07-19 (65차, entry_score 코드 변경 PR 초안 설계 —
+  R3b alpha 교체 실제 파이프라인 연결 방안)
+- 수정내용: 후속 과제 후보(trigger_status 자동화, entry_score
+  코드 변경 PR 초안, R3b alpha 전체 경로 재현 검증, T+5 후속
+  검증) 중 **entry_score 코드 변경 PR 초안 준비**를 선택했다
+  (SPPV-2.65) — trigger_status 자동화는 override=true인 동안
+  급하지 않고, mixedness는 실제 소비 위치 연결까지 이미 끝나 같은
+  축 반복을 피했다. "R3b alpha 전체 경로 재현 검증"은 §45(non-
+  alpha 100% 일치)의 논리적 귀결이라 다시 실측하지 않고, 대신
+  **이 세션에서 한 번도 명시되지 않은 아키텍처 제약**을 조사했다:
+  `entry_score`는 종목 단위로 계산되지만 R3b alpha(`candidate_
+  percentile`)는 당일 cross-sectional 순위가 필요해 사전 계산
+  단계가 있어야 한다. 코드 조사 결과 `run_decision_loop.py`의
+  기존 `_build_core_risk_off_apply_overrides_for_cycle()`(cycle당
+  1회 전체 universe precompute → override 주입)이 정확히 필요한
+  선례로 이미 존재함을 확인 — 이를 근거로 실제 코드 diff 초안
+  (신규 precompute 함수 1개 + `assess_deterministic_triggers`
+  optional 파라미터 2개 + config 스위치 1개, 전부 §48/§49와 동일한
+  기본값-비활성 패턴)을 설계했다. **미적용, 코드 변경 없음** —
+  순수 설계 문서 작업. 판정: "entry_score 코드 반영 절차"는
+  "shadow 정합성 확보"에서 "구체적 구현 설계 확보(diff 초안)"로
+  진전됐다 — 다만 실제 적용은 §48/§49와 동일하게 별도의 명시적
+  사용자 승인이 필요하다. R3b는 Conditional Go를 유지한다. 신규
+  KIS 호출 0건, compliance/VaR/broker submit 경계 미변경. 상세:
+  `plans/[DESIGN] regime_conditional_entry_signal_v1.md` §54.
+
 ---
 
 ## 진행 체크리스트
@@ -3457,7 +3484,49 @@ canonical),
   - 다음 과제(변경 없음): `trigger_status` 공급원 자동화, entry_
     score 코드 변경 PR 초안, `test_run_decision_loop.py`의 10건
     사전 존재 결함 자체 수정 여부는 이번 세션(SPPV/R3b 트랙) 범위
-    밖 — 별도 이슈로 트래킹 권장.
+    밖 — 별도 이슈로 트래킹 권장. **[SPPV-2.65에서 진전] entry_
+    score PR 초안 설계 완료 — 아래 SPPV-2.65 참고.**
+- [x] **SPPV-2.65(신설)** entry_score 코드 변경 PR 초안 설계 — R3b
+  alpha 교체 실제 파이프라인 연결 방안 (완료, 2026-07-19, 작성자:
+  Codex)
+  - 작업 범위: 후속 과제 후보(trigger_status 자동화/entry_score
+    코드 변경 PR 초안/R3b alpha 전체 경로 재현 검증/T+5 후속 검증)
+    중 **entry_score 코드 변경 PR 초안 준비**를 선택 — trigger_
+    status 자동화는 override=true인 동안 급하지 않고, mixedness는
+    실제 소비 위치 연결까지 이미 끝나 같은 축 반복 회피. "R3b
+    alpha 전체 경로 재현 검증"은 §45(non-alpha 100% 일치)의
+    논리적 귀결이라 다시 실측하지 않고, 대신 이 세션에서 한 번도
+    명시되지 않은 **아키텍처 제약**을 조사했다.
+  - **핵심 발견**: `entry_score`는 종목 단위로 계산되지만 R3b
+    alpha(`candidate_percentile`)는 당일 cross-sectional 순위가
+    필요해 사전 계산 단계가 있어야 한다 — `DecisionOrchestrator
+    Service._derive_deterministic_context_components`는 요청
+    (symbol) 1건마다 독립 호출되므로 그 시점에 "오늘 다른
+    candidate들의 신호 값"을 알 수 없다.
+  - **기존 선례 발견**: `scripts/run_decision_loop.py`의 `_build_
+    core_risk_off_apply_overrides_for_cycle()`(cycle당 1회 전체
+    universe precompute → `deterministic_trigger_override`로
+    종목별 주입)이 정확히 필요한 구조로 이미 존재함을 확인 — 신규
+    설계 리스크를 낮추는 유리한 선례.
+  - **제안 설계(미적용, 코드 변경 없음)**: (1) 신규 cycle당 1회
+    precompute 함수(당일 quintile 상위 20% candidate의 `candidate_
+    percentile` 계산, 기존 shadow 스크립트 로직 이식), (2)
+    `assess_deterministic_triggers`에 §48/§49와 동일 패턴의 신규
+    optional 파라미터 2개(`r3b_alpha_percentile`, `r3b_alpha_
+    enabled`, 기본값 None/False = 기존 공식 100% 유지), (3) 신규
+    config 스위치 `ENTRY_SCORE_R3B_ALPHA_ENABLED`(기본값 False).
+  - **판정**: "entry_score 코드 반영 절차"는 "shadow 정합성 확보"
+    에서 "구체적 구현 설계 확보(diff 초안)"로 진전됐다 — 실제
+    적용은 §48/§49와 동일하게 별도의 명시적 사용자 승인 필요. R3b
+    는 Conditional Go를 유지한다. 신규 KIS 호출 0건, compliance/
+    VaR/broker submit 경계 미변경, 코드 미변경(순수 설계 문서
+    작업). 상세: `plans/[DESIGN] regime_conditional_entry_
+    signal_v1.md` §54.
+  - 다음 과제: 이 설계를 실제로 적용할지 여부 사용자 결정(적용
+    시 별도 승인 절차 필요), `trigger_status` 공급원 자동화(낮은
+    우선순위), T+5/경로 리스크 후속 검증(§41~§44에서 이미 상당
+    부분 답변됨, 추가 필요성 낮음), `portfolio_allocation` gap
+    실거래 누적 후 재검증.
 - [~] **SPPV-3** `entry_score` point-in-time 재현 및 중복 penalty ablation
   - **보류 유지, 형태 재정의 — 우선순위 재조정**: §12(1년, 자기참조
     포함) 당시 "알파 근거 강화"로 낙관했던 것이 §14(3년, 자기참조

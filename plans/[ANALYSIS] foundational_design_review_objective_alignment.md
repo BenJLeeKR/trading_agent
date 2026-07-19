@@ -1496,6 +1496,26 @@ value/compliance/broker가 아니라 `entry_score < 0.65`다.
   무관하다. R3b는 Conditional Go를 유지한다 — 이번 턴은 코드를
   전혀 수정하지 않았다(순수 검증 확정). 신규 KIS 호출 0건. 상세:
   `plans/[DESIGN] regime_conditional_entry_signal_v1.md` §53.
+
+- 작성자: Codex
+- 수정일자: 2026-07-19 (2.67순위, entry_score 코드 변경 PR 초안
+  설계 — R3b alpha 교체 실제 파이프라인 연결 방안)
+- 수정내용: "R3b alpha 전체 경로 재현 검증"은 §45(non-alpha 100%
+  일치)의 논리적 귀결이라 다시 실측하지 않고, 이 세션에서 한 번도
+  명시되지 않은 **아키텍처 제약**을 조사했다(SPPV-2.65): entry_
+  score는 종목 단위로 계산되지만 R3b alpha(candidate_percentile)
+  는 당일 cross-sectional 순위가 필요해 사전 계산 단계가 있어야
+  한다. `run_decision_loop.py`의 기존 `_build_core_risk_off_
+  apply_overrides_for_cycle()`(cycle당 1회 전체 universe precompute
+  → override 주입)이 정확히 필요한 선례로 이미 존재함을 확인 —
+  이를 근거로 실제 코드 diff 초안(신규 precompute 함수 1개 +
+  optional 파라미터 2개 + config 스위치 1개, 전부 §48/§49와 동일
+  기본값-비활성 패턴)을 설계했다. **미적용, 코드 변경 없음.** 판정:
+  "entry_score 코드 반영 절차"는 "shadow 정합성 확보"에서
+  "구체적 구현 설계 확보(diff 초안)"로 진전됐다 — 실제 적용은
+  별도 승인 필요. R3b는 Conditional Go를 유지한다. 신규 KIS 호출
+  0건, compliance/VaR/broker submit 경계 미변경. 상세: `plans/
+  [DESIGN] regime_conditional_entry_signal_v1.md` §54.
 - **3순위(보류 유지, 형태 재정의 — 우선순위 재조정)**: **`entry_
   score`와 BUY funnel 재현** — §2.7 확장 검증에서 하락장 안정성이
   확인되지 않아 단순 재현으로는 착수하지 않는다. §2.16~§2.21에서
