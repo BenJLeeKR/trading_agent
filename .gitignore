@@ -41,5 +41,6 @@ build/
 .DS_Store
 Thumbs.db
 .aider*
+reorganize_docs.sh
 node_modules/
 postgres_data/
