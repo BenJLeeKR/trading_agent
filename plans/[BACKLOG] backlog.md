@@ -1092,6 +1092,21 @@
   Go를 유지한다. `.env` 미변경, 코드 변경 없음. 상세: `plans/
   [DESIGN] regime_conditional_entry_signal_v1.md` §60.
 
+- 작성자: Codex
+- 수정일자: 2026-07-19 (71차, 벤치마크(069500) signal_feature_
+  snapshot 배치 미포함 문제 실제 해소)
+- 수정내용: §60이 확인한 유일한 실제 차단 요소를 실제로 해소했다
+  (SPPV-2.72). `generate_signal_feature_snapshot_input.py`에 신규
+  `_with_regime_benchmark_symbol()` 추가(기존 벤치마크 상수 재사용,
+  거래 universe/DB freeze 기록 불변). 실제 KIS 조회+`build_signal_
+  feature_snapshots.py` CLI 실행+DB 재조회로 069500 snapshot
+  0건→1건 실측 확인, precompute 재호출로 빈 dict 탈출 확인. 회귀
+  20+83 passed 무손상. 판정: 실제 차단 요소 해소 — `ENTRY_SCORE_
+  R3B_ALPHA_ENABLED=true` 전환 시 이제 실제 발동 가능. R3b는
+  Conditional Go를 유지한다. `.env` 미변경, 신규 KIS 호출 1건
+  (read-only). 상세: `plans/[DESIGN] regime_conditional_entry_
+  signal_v1.md` §61.
+
 ---
 
 ## 관리 원칙
@@ -2613,11 +2628,24 @@
     3분류로 재정리. R3b는 Conditional Go를 유지한다. `.env`
     미변경, 코드 변경 없음. 상세: `plans/[DESIGN] regime_
     conditional_entry_signal_v1.md` §60.
-  - **SPPV-3(다음 착수: 벤치마크(069500) signal_feature_snapshot
-    배치 포함 여부 해소(신규 최우선 항목, 실제 차단 요소, 별도
-    승인 필요) → 해소 후 `ENTRY_SCORE_R3B_ALPHA_ENABLED=true` 실제
-    활성화 여부 사용자 결정(신중한 검토 필요, `.env` 값이므로
-    사용자가 직접 변경) +
+  - **SPPV-2.72(완료, 2026-07-19, 벤치마크(069500) signal_feature_
+    snapshot 배치 미포함 문제 실제 해소, 작성자: Codex —
+    Conditional Go 유지, 실제 차단 요소 해소)**: §60이 확인한
+    유일한 실제 차단 요소를 실제로 해소했다. `generate_signal_
+    feature_snapshot_input.py`에 신규 `_with_regime_benchmark_
+    symbol()` 추가(기존 벤치마크 상수 재사용, 거래 universe/DB
+    freeze 기록 불변). 실제 KIS 조회(rows=1)+`build_signal_
+    feature_snapshots.py` CLI 그대로 실행(persisted=1)+DB 재조회로
+    069500 snapshot 0건→1건 실측 확인, precompute 재호출로 빈 dict
+    탈출(`{'000810': 1.0, '001450': 0.0}`) 확인. 회귀 20+83 passed
+    무손상. `ENTRY_SCORE_R3B_ALPHA_ENABLED=true` 전환 시 이제 실제
+    발동 가능. R3b는 Conditional Go를 유지한다. `.env` 미변경,
+    신규 KIS 호출 1건(read-only). 상세: `plans/[DESIGN] regime_
+    conditional_entry_signal_v1.md` §61.
+  - **SPPV-3(다음 착수: `ENTRY_SCORE_R3B_ALPHA_ENABLED=true` 실제
+    활성화 여부 사용자 결정(이제 의미 있는 결정, `.env` 값이므로
+    사용자가 직접 변경) + 다음 정기 signal feature 배치 사이클에서
+    벤치마크 자동 반영 재확인(후속 검증 과제, 낮은 우선순위) +
     `trigger_status` 공급원 자동화/배치화(cron/배치 설계,
     override=true인 동안 낮은 우선순위) + 포지션 사이징 등 exit
     외 리스크 관리 수단 검토(신규, 낮은 우선순위, 실거래 계좌

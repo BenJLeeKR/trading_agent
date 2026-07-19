@@ -1547,6 +1547,24 @@ entry 설계 검토로 전환**을 확정했다. 별도 문서
   유지한다. `.env` 미변경, 코드 변경 없음(순수 점검). 상세: `plans/
   [DESIGN] regime_conditional_entry_signal_v1.md` §60.
 
+- 작성자: Codex
+- 수정일자: 2026-07-19 (72차, 벤치마크(069500) signal_feature_
+  snapshot 배치 미포함 문제 실제 해소)
+- 수정내용: §60이 확인한 유일한 실제 차단 요소를 실제로 해소했다
+  (SPPV-2.72). `generate_signal_feature_snapshot_input.py`에 신규
+  `_with_regime_benchmark_symbol()` 추가 — 기존 `_R3B_ALPHA_
+  BENCHMARK_SYMBOL`/`_R3B_ALPHA_BENCHMARK_MARKET` 재사용, 거래
+  universe/DB freeze 기록은 불변, `_build_rows`/`_write_rows`
+  로컬 tuple에만 벤치마크 추가. 실제 KIS 조회+`build_signal_
+  feature_snapshots.py` CLI 실행+DB 재조회로 069500 snapshot
+  0건→1건 실측 확인, `_build_r3b_alpha_percentile_overrides_for_
+  cycle()` 재호출 결과 빈 dict 탈출 확인. 회귀 20+83 passed, `test_
+  run_decision_loop.py` 8 failed/111 passed(기존 비결정성 동일).
+  판정: 실제 차단 요소 해소 — `ENTRY_SCORE_R3B_ALPHA_ENABLED=true`
+  전환 시 이제 실제 발동 가능. `.env` 미변경, 신규 KIS 호출 1건
+  (read-only). R3b는 Conditional Go를 유지한다. 상세: `plans/
+  [DESIGN] regime_conditional_entry_signal_v1.md` §61.
+
 ---
 
 ## 진행 체크리스트
@@ -3804,6 +3822,46 @@ canonical),
   - 다음 과제: 벤치마크 signal_feature_snapshot 배치 포함 여부
     해소(신규 최우선 항목, 별도 승인 필요) → 해소 후 `ENTRY_SCORE_
     R3B_ALPHA_ENABLED=true` 전환 여부 사용자 결정.
+- [x] **SPPV-2.72(신설)** 벤치마크(069500) signal_feature_snapshot
+  배치 미포함 문제 실제 해소 (완료, 2026-07-19, 작성자: Codex)
+  - **목적**: §60(SPPV-2.71)이 확인한 유일한 실제 차단 요소를
+    실제로 해소하는 운영 데이터 경로 수정 턴(검증 아님).
+  - **원인**: `generate_signal_feature_snapshot_input.py`의
+    universe는 거래 후보 universe(`UniverseSelectionService.
+    compose()`)뿐 — 069500은 거래 후보가 아니라 애초에 이 구성에
+    나타날 수 없었다(버그 아님, 설계상 분리된 두 개념 간의 편입
+    경로 부재).
+  - **수정**: 신규 함수 `_with_regime_benchmark_symbol()`을 추가 —
+    `run_decision_loop.py`가 이미 두 곳(mixedness, R3b alpha)에서
+    쓰는 `_R3B_ALPHA_BENCHMARK_SYMBOL`/`_R3B_ALPHA_BENCHMARK_
+    MARKET`("069500"/"KRX")을 재사용(신규 하드코딩 아님), 거래
+    universe/DB freeze 기록은 그대로 두고 `_build_rows`/`_write_
+    rows`에 전달되는 로컬 tuple에만 `source_type="regime_
+    benchmark"`로 벤치마크 1건 추가.
+  - **실제 검증(신규 `scripts/validate_r3b_alpha_benchmark_
+    snapshot_fix.py`)**: 실제 KIS 일봉 조회(rows=1, errors=0) →
+    실제 `build_signal_feature_snapshots.py` CLI 그대로 실행
+    (processed=1, persisted=1, errors=0) → DB 재조회 069500
+    snapshot **0건→1건** 실측 확인 → `_build_r3b_alpha_percentile_
+    overrides_for_cycle()`을 실제 core 종목 10개+벤치마크로 재호출
+    → **`{'000810': 1.0, '001450': 0.0}`**(빈 dict 아님, 실제
+    재발동 확인).
+  - **회귀**: `test_generate_signal_feature_snapshot_input.py`+
+    `test_build_signal_feature_snapshots.py` 20 passed/0 failed;
+    엔진/orchestrator 83 passed/0 failed; `test_run_decision_
+    loop.py` 8 failed/111 passed(기존 비결정성과 동일).
+  - **판정**: 실제 차단 요소 해소 확정 — `ENTRY_SCORE_R3B_ALPHA_
+    ENABLED=true` 전환 시 이제 실제로 발동 가능한 상태다. 다만
+    "1회성 실행으로 채운 것"과 "매일 정기 배치가 앞으로 계속
+    포함하는 것"은 구분(후자는 이미 존재하는 ops-scheduler
+    스케줄이 자동 소비할 것으로 예상되나 시간 경과 후 재확인
+    권장). R3b는 Conditional Go를 유지한다. `.env` 미변경, gate
+    로직 강화 없음, 신규 KIS 호출 1건(read-only 시세 조회). 상세:
+    `plans/[DESIGN] regime_conditional_entry_signal_v1.md` §61.
+  - 다음 과제: `ENTRY_SCORE_R3B_ALPHA_ENABLED=true` 실제 활성화
+    여부 사용자 결정(이제 의미 있는 결정); 다음 정기 배치 사이클
+    자동 반영 재확인(후속 검증 과제, 낮은 우선순위); `trigger_
+    status` 자동화(낮은 우선순위).
 - [~] **SPPV-3** `entry_score` point-in-time 재현 및 중복 penalty ablation
   - **보류 유지, 형태 재정의 — 우선순위 재조정**: §12(1년, 자기참조
     포함) 당시 "알파 근거 강화"로 낙관했던 것이 §14(3년, 자기참조

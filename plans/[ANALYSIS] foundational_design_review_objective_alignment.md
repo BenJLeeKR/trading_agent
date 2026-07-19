@@ -1607,6 +1607,19 @@ value/compliance/broker가 아니라 `entry_score < 0.65`다.
   검증 과제 3분류로 재정리. R3b는 Conditional Go를 유지한다. `.env`
   미변경, 코드 변경 없음. 상세: `plans/[DESIGN] regime_conditional_
   entry_signal_v1.md` §60.
+
+- 작성자: Codex
+- 수정일자: 2026-07-19 (2.74순위, 벤치마크(069500) signal_feature_
+  snapshot 배치 미포함 문제 실제 해소)
+- 수정내용: §60이 확인한 유일한 실제 차단 요소를 실제로 해소했다
+  (SPPV-2.72). `generate_signal_feature_snapshot_input.py`에 신규
+  함수 추가(기존 벤치마크 상수 재사용, 거래 universe 불변). 실제
+  KIS 조회+CLI 실행+DB 재조회로 069500 snapshot 0건→1건 실측 확인,
+  precompute 재호출로 빈 dict 탈출 확인. 회귀 무손상. 판정: 실제
+  차단 요소 해소 — `ENTRY_SCORE_R3B_ALPHA_ENABLED=true` 전환 시
+  이제 실제 발동 가능. R3b는 Conditional Go를 유지한다. `.env`
+  미변경, 신규 KIS 호출 1건(read-only). 상세: `plans/[DESIGN]
+  regime_conditional_entry_signal_v1.md` §61.
 - **3순위(보류 유지, 형태 재정의 — 우선순위 재조정)**: **`entry_
   score`와 BUY funnel 재현** — §2.7 확장 검증에서 하락장 안정성이
   확인되지 않아 단순 재현으로는 착수하지 않는다. §2.16~§2.21에서

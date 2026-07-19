@@ -1,0 +1,16 @@
+[1] 벤치마크(069500) 실제 일봉 조회 시작(KIS 호출 1건)...
+[1] rows=1 errors=0
+[2] 입력 JSON 저장: tmp/r3b_benchmark_snapshot_input_test.json
+[3] build_signal_feature_snapshots.py를 실제 CLI 그대로 실행(subprocess)...
+=== Signal Feature Snapshot Batch ===
+processed: 1
+persisted: 1
+skipped: 0
+errors: 0
+- instrument_id=22651dda-c67c-50f4-ad66-ce00a2fb37d9 timeframe=1d snapshot_at=2026-07-16T11:00:00+00:00 overall_score=-0.15800000
+
+[4] DB 재조회 — 벤치마크 signal_feature_snapshot 전체 건수: 1
+[5] _build_r3b_alpha_percentile_overrides_for_cycle() 결과: {'000810': 1.0, '001450': 0.0}
+[5] 더 이상 빈 dict가 아님(벤치마크 스냅샷 결측으로 인한 조기 종료 해소): 예
+
+=== 결론: 벤치마크 signal_feature_snapshot이 DB에 실제로 생성됨 ===

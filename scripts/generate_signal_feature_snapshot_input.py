@@ -48,6 +48,8 @@ from scripts.run_decision_loop import (
     ACCOUNT_ALIAS,
     DEFAULT_EVENT_LOOKBACK_HOURS,
     UniverseSymbol,
+    _R3B_ALPHA_BENCHMARK_MARKET,
+    _R3B_ALPHA_BENCHMARK_SYMBOL,
 )
 
 logger = logging.getLogger(__name__)
@@ -776,6 +778,54 @@ async def _resolve_frozen_universe(
     )
 
 
+def _with_regime_benchmark_symbol(
+    universe: tuple[UniverseSymbol, ...],
+) -> tuple[UniverseSymbol, ...]:
+    """`069500`(regime 벤치마크)이 signal feature 배치 대상에서 항상
+    빠지던 문제를 해소한다(SPPV-2.72).
+
+    §60(SPPV-2.71)이 확인한 근본 원인: 이 스크립트의 universe는
+    `UniverseSelectionService.compose()`가 구성하는 **거래 후보
+    universe**(core/held_position/market_overlay/manual)뿐이다 —
+    069500(KODEX 200 ETF)은 거래 후보가 아니므로 이 구성에 애초에
+    나타나지 않는다. `run_decision_loop.py`의 `_run_mixedness_
+    check()`/`_build_r3b_alpha_percentile_overrides_for_cycle()`
+    모두 이 벤치마크의 최신 signal_feature_snapshot을 조회하지만,
+    그 snapshot을 만드는 입력 자체에 벤치마크가 없어 DB에 이력이
+    한 번도 쌓이지 못했다.
+
+    **재사용 원칙**: 신규 universe 소스나 별도 배치 파이프라인을
+    만들지 않는다 — `run_decision_loop.py`가 이미 정의한 `_R3B_
+    ALPHA_BENCHMARK_SYMBOL`/`_R3B_ALPHA_BENCHMARK_MARKET`("069500"/
+    "KRX", `_MIXEDNESS_BENCHMARK_SYMBOL`과 동일 값)을 그대로
+    import해 사용한다 — 이 값은 이미 두 곳(mixedness, R3b alpha)의
+    실제 소비 코드에 하드코딩돼 있으므로, 그 값과 동일한 상수를
+    입력 생성 단계에도 추가하는 것이지 새로운 하드코딩을 도입하는
+    것이 아니다.
+
+    **거래 universe와의 분리**: 이 함수는 `UniverseSelectionService.
+    compose()`의 결과(및 그것을 저장하는 `universe_freeze_runs`/
+    `universe_freeze_run_items` DB 테이블)에는 전혀 손대지 않는다 —
+    오직 `_build_rows()`/`_write_rows()`에 전달되는 **로컬 tuple**
+    끝에 벤치마크 1건을 추가할 뿐이다. `source_type="regime_
+    benchmark"`라는 신규(기존 core/held_position/market_overlay/
+    manual/event_overlay와 겹치지 않는) 값으로 명확히 구분해, 이후
+    어떤 코드도 이 항목을 거래 후보로 오인하지 않도록 한다. 이미
+    universe에 069500이 포함돼 있다면(예: 향후 core universe 구성이
+    바뀌는 경우) 중복 추가하지 않는다.
+    """
+    if any(item.symbol == _R3B_ALPHA_BENCHMARK_SYMBOL for item in universe):
+        return universe
+    return universe + (
+        UniverseSymbol(
+            symbol=_R3B_ALPHA_BENCHMARK_SYMBOL,
+            market=_R3B_ALPHA_BENCHMARK_MARKET,
+            source_type="regime_benchmark",
+            inclusion_reason="regime_benchmark_snapshot",
+        ),
+    )
+
+
 async def _run(args: argparse.Namespace) -> int:
     end_date = _parse_end_date(args.end_date)
     retry_source_input = str(args.retry_from_input).strip() if args.retry_from_input else None
@@ -818,12 +868,16 @@ async def _run(args: argparse.Namespace) -> int:
                 )
         freeze_purpose = args.freeze_purpose
         trigger_type = args.trigger_type
+    # SPPV-2.72 — regime 벤치마크(069500)를 signal feature 배치 입력에
+    # 추가한다. 거래 universe(freeze.universe/DB freeze 기록)에는 손대지
+    # 않고, fetch/output에만 쓰이는 로컬 tuple에만 추가한다.
+    fetch_universe = _with_regime_benchmark_symbol(freeze.universe)
     settings = AppSettings()
     client = _build_chart_client(settings)
     try:
         rows, errors = await _build_rows(
             client,
-            universe=freeze.universe,
+            universe=fetch_universe,
             end_date=end_date,
             lookback_days=args.lookback_days,
             timeframe=args.timeframe,
@@ -846,7 +900,7 @@ async def _run(args: argparse.Namespace) -> int:
         args.output,
         rows,
         fetch_errors=errors,
-        universe=freeze.universe,
+        universe=fetch_universe,
         universe_freeze_run_id=freeze.universe_freeze_run_id,
         universe_freeze_reused=freeze.reused_existing,
         freeze_purpose=freeze_purpose,
@@ -854,7 +908,7 @@ async def _run(args: argparse.Namespace) -> int:
     )
     payload = {
         "output": args.output,
-        "universe_count": len(freeze.universe),
+        "universe_count": len(fetch_universe),
         "generated_count": len(rows),
         "error_count": len(all_errors),
         "universe_max_cap": args.universe_max_cap,
