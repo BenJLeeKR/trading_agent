@@ -1565,6 +1565,29 @@ entry 설계 검토로 전환**을 확정했다. 별도 문서
   (read-only). R3b는 Conditional Go를 유지한다. 상세: `plans/
   [DESIGN] regime_conditional_entry_signal_v1.md` §61.
 
+- 작성자: Codex
+- 수정일자: 2026-07-19 (73차, R3b alpha 운영 반영 여부 실제 점검 —
+  docker-compose 환경변수 배선 미비 신규 발견)
+- 수정내용: "전환할지"가 아니라 "이미 `.env`에 반영된 값이 실제
+  paper decision loop에 도달했는지"를 점검했다(SPPV-2.73). 호스트
+  `.env`에는 `ENTRY_SCORE_R3B_ALPHA_ENABLED=true`가 실제로 있음을
+  확인(사용자 전제 정확). 그러나 실행 중인 `ops-scheduler`
+  컨테이너는 이 값을 전혀 읽지 못한다 — `Dockerfile`이 `.env`를
+  이미지에 COPY하지 않고, `docker-compose.yml`도 `.env`를 `env_
+  file`/마운트로 지정하지 않으며, `environment:` 화이트리스트에
+  이 변수(및 `REGIME_SWITCH_V1_GATE_OVERRIDE_ENABLED`)가 선언돼
+  있지 않다. 실행 중 프로세스의 실제 환경변수를 직접 읽어(`docker
+  exec ... env`, `/proc/1/environ`) 두 변수 모두 부재 확인. 이는
+  R3b alpha에 국한되지 않는 구조적 문제 — `.env` 기반 config
+  스위치 전체가 운영 컨테이너에 전달될 경로가 없다. 최근 3일
+  연속 비거래일로 decision loop 자체도 최근 실행되지 않았음을
+  로그로 확인(마지막 cycle 07-16). 3단계 분리: 코드 구현 완료(예)/
+  env 설정 완료(예)/실행 중 paper 프로세스 반영 완료(**아니오**).
+  이번 턴은 코드/`.env`/`docker-compose.yml` 어느 것도 수정하지
+  않았고 컨테이너도 재시작하지 않았다. R3b는 Conditional Go를
+  유지한다. 상세: `plans/[DESIGN] regime_conditional_entry_
+  signal_v1.md` §62.
+
 ---
 
 ## 진행 체크리스트
@@ -3862,6 +3885,47 @@ canonical),
     여부 사용자 결정(이제 의미 있는 결정); 다음 정기 배치 사이클
     자동 반영 재확인(후속 검증 과제, 낮은 우선순위); `trigger_
     status` 자동화(낮은 우선순위).
+- [x] **SPPV-2.73(신설)** R3b alpha 운영 반영 여부 실제 점검 —
+  docker-compose 환경변수 배선 미비 신규 발견 (완료, 2026-07-19,
+  작성자: Codex)
+  - **목적**: "전환할지"가 아니라 "`ENTRY_SCORE_R3B_ALPHA_
+    ENABLED=true`가 이미 `.env`에 반영된 상태에서 실제 paper
+    decision loop에 반영됐는지"를 운영 경로 기준으로 점검.
+  - **전제 확인**: 호스트 `.env`에 값이 실제로 있음을 확인(`grep`
+    결과 `39:ENTRY_SCORE_R3B_ALPHA_ENABLED=true`) — 사용자 전제는
+    정확함.
+  - **핵심 신규 발견**: 그러나 실행 중인 `ops-scheduler` 컨테이너는
+    이 값을 전혀 읽지 못한다 — (1) `Dockerfile`이 `.env`를 이미지에
+    COPY하지 않음; (2) `docker-compose.yml`이 `.env`를 어떤
+    서비스에도 `env_file`/마운트로 지정하지 않고, `ops-scheduler`의
+    `environment:` 화이트리스트에도 `ENTRY_SCORE_R3B_ALPHA_ENABLED`
+    /`REGIME_SWITCH_V1_GATE_OVERRIDE_ENABLED` 둘 다 선언돼 있지
+    않음; (3) 실행 중 프로세스의 실제 환경변수(`docker exec ...
+    env`, `/proc/1/environ`)를 직접 읽어 두 변수 모두 부재 확인;
+    (4) subprocess 상속 경로(`_build_base_env()`의 `os.environ.
+    copy()`)도 부모에 없는 값을 자식에 줄 수 없고, `run_decision_
+    loop.py`의 `load_dotenv()`도 컨테이너 안에 `.env` 파일 자체가
+    없어 완전한 no-op임을 확인.
+  - **추가 발견**: 이 문제는 R3b alpha에 국한되지 않는다 — `.env`
+    기반 config 스위치 전체(§21 게이트 override 포함)가 구조적으로
+    운영 컨테이너에 전달될 경로가 없다. 이 세션이 여러 턴에 걸쳐
+    "`REGIME_SWITCH_V1_GATE_OVERRIDE_ENABLED=true`이므로 게이트가
+    BUY를 막지 않는다"고 확정해 온 것은 호스트 `.env` 서술로는
+    정확했으나, 실제 운영 컨테이너 도달 여부는 이번 턴 이전까지
+    한 번도 검증된 적이 없었다.
+  - **추가 관측**: 최근 3일(07-17~19)이 연속 비거래일로 판정돼
+    `run_decision_loop.py` 자체가 최근 실행되지 않음(마지막 실제
+    cycle은 07-16) — `trigger_r3b_alpha_percentile` 로그도 0건.
+  - **판정**: 코드 구현 완료(예)/env 설정 완료(예)/**실행 중 paper
+    프로세스 반영 완료(아니오)**로 3단계 분리 확정. R3b는
+    Conditional Go를 유지한다. 이번 턴은 코드/`.env`/`docker-
+    compose.yml` 어느 것도 수정하지 않았고 컨테이너도 재시작하지
+    않았다(순수 조사 턴, 실거래/주문 없음). 상세: `plans/[DESIGN]
+    regime_conditional_entry_signal_v1.md` §62.
+  - 다음 과제: `docker-compose.yml`에 두 변수 환경변수 배선 추가 +
+    `ops-scheduler` 재생성 여부 사용자 결정(별도 승인 필요, 살아
+    있는 운영 컨테이너 재기동 포함) → 승인 시 다음 실제 거래일
+    cycle에서 재확인.
 - [~] **SPPV-3** `entry_score` point-in-time 재현 및 중복 penalty ablation
   - **보류 유지, 형태 재정의 — 우선순위 재조정**: §12(1년, 자기참조
     포함) 당시 "알파 근거 강화"로 낙관했던 것이 §14(3년, 자기참조

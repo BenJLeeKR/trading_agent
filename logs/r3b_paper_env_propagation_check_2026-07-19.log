@@ -1,0 +1,61 @@
+=== SPPV-2.73: R3b alpha paper 운영 반영 여부 점검 — 실행 증거 ===
+
+[1] 호스트 .env 파일 확인
+$ grep ENTRY_SCORE_R3B_ALPHA_ENABLED .env
+ENTRY_SCORE_R3B_ALPHA_ENABLED=true
+
+[2] 실행 중인 컨테이너
+$ docker ps --format "{{.Names}}\t{{.Image}}\t{{.Status}}"
+agent_trading-frontend-1        agent_trading-frontend   Up 5 days
+agent_trading-api-1              agent_trading-api        Up 5 days (healthy)
+agent_trading-ops-scheduler      agent_trading-app:latest Up 5 days (healthy)
+agent_trading-reconciliation-worker agent_trading-app:latest Up 6 days
+nginx-proxy                      nginx:latest             Up 5 days
+agent_trading-app-1               727937195f0d             Up 2 weeks
+trading_db                        postgres:16-alpine        Up 3 weeks (healthy)
+dozzle                            amir20/dozzle:latest      Up 3 weeks
+
+[3] ops-scheduler 컨테이너 시작 시각 / 실행 커맨드
+$ docker inspect agent_trading-ops-scheduler --format '{{.State.StartedAt}}'
+2026-07-14T00:17:36.946265819Z
+$ docker inspect agent_trading-ops-scheduler --format '{{json .Config.Cmd}}'
+["python3","/app/scripts/run_ops_scheduler.py","--max-general-buy-submit-per-day","8"]
+
+[4] ops-scheduler 컨테이너 마운트 — .env 바인드 마운트 없음
+$ docker inspect agent_trading-ops-scheduler --format '{{json .Mounts}}'
+(logs/.cache/data/tmp/scripts/src 6개 bind mount만 존재 — .env 없음)
+
+[5] 컨테이너 내부 실제 프로세스 환경변수 확인
+$ docker exec agent_trading-ops-scheduler bash -lc "env | grep -i ENTRY_SCORE_R3B"
+NOT_IN_ENV
+$ docker exec agent_trading-ops-scheduler bash -lc "env | grep -i REGIME_SWITCH"
+NOT_IN_ENV
+$ docker exec agent_trading-ops-scheduler bash -lc "test -f /app/.env && echo EXISTS || echo NOT_FOUND"
+NOT_FOUND
+
+[6] docker-compose.yml에 해당 변수가 environment: 블록에 선언돼
+있는지 확인 — 선언 없음(다른 KIS_*/LLM_*/CORS_* 변수는 전부
+"${VAR:-default}" 형태로 명시 선언돼 있으나, ENTRY_SCORE_R3B_
+ALPHA_ENABLED / REGIME_SWITCH_V1_GATE_OVERRIDE_ENABLED 둘 다 없음)
+$ grep -n "ENTRY_SCORE_R3B\|REGIME_SWITCH_V1_GATE_OVERRIDE_ENABLED" docker-compose.yml
+(결과 없음)
+
+[7] Dockerfile에도 해당 변수 ENV 선언 없음
+$ grep -n "ENTRY_SCORE\|REGIME_SWITCH" Dockerfile
+(결과 없음 — PYTHONPATH/PYTHONUNBUFFERED만 ENV로 선언됨)
+
+[8] 호스트에서 실제로 run_decision_loop.py를 구동하는 유일한
+프로세스는 ops-scheduler뿐(다른 cron/host 프로세스 없음)
+$ ps aux | grep -E "run_decision_loop|run_ops_scheduler" | grep -v grep
+root     1496401  ...  python3 /app/scripts/run_ops_scheduler.py --max-general-buy-submit-per-day 8
+
+[9] ops-scheduler 최근 로그 — 오늘(2026-07-19)은 비거래일로 판정돼
+decision loop 자체가 idle 상태(cycle 미실행)
+$ docker logs agent_trading-ops-scheduler --tail 50
+... session_is_trading_day: False ...
+... "═══ Non-trading day detected (source=kis_holiday_api) — entering idle mode ═══" ...
+... "═══ Next run_date: 2026-07-20 — waiting for next trading day ═══" ...
+
+[10] r3b 관련 reason_code/로그 라인 검색 — 24시간 로그에 없음
+$ docker logs agent_trading-ops-scheduler --since 24h | grep -i "r3b\|trigger_r3b_alpha"
+(결과 없음)

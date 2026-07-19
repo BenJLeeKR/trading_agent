@@ -1107,6 +1107,25 @@
   (read-only). 상세: `plans/[DESIGN] regime_conditional_entry_
   signal_v1.md` §61.
 
+- 작성자: Codex
+- 수정일자: 2026-07-19 (72차, R3b alpha 운영 반영 여부 실제 점검 —
+  docker-compose 환경변수 배선 미비 신규 발견)
+- 수정내용: "이미 `.env`에 반영된 값이 실제 paper decision loop에
+  도달했는지"를 점검했다(SPPV-2.73). 호스트 `.env`에는 `ENTRY_
+  SCORE_R3B_ALPHA_ENABLED=true`가 실제로 있음을 확인(사용자 전제
+  정확). 그러나 실행 중인 `ops-scheduler` 컨테이너는 이 값을
+  전혀 읽지 못한다 — `Dockerfile`이 `.env`를 COPY하지 않고,
+  `docker-compose.yml`도 `env_file`/마운트로 지정하지 않으며,
+  `environment:` 화이트리스트에 이 변수(및 `REGIME_SWITCH_V1_
+  GATE_OVERRIDE_ENABLED`)가 없다. 실행 중 프로세스 실제 환경변수를
+  직접 읽어 부재 확인 — R3b alpha에 국한되지 않는 구조적 문제.
+  최근 3일 연속 비거래일로 decision loop 자체도 최근 실행되지
+  않았음을 로그로 확인. 3단계 분리: 코드 완료(예)/env 설정(예)/
+  실행 중 반영(**아니오**). 코드/`.env`/`docker-compose.yml`
+  미변경, 컨테이너 재시작 없음. R3b는 Conditional Go를 유지한다.
+  상세: `plans/[DESIGN] regime_conditional_entry_signal_v1.md`
+  §62.
+
 ---
 
 ## 관리 원칙
@@ -2642,10 +2661,26 @@
     발동 가능. R3b는 Conditional Go를 유지한다. `.env` 미변경,
     신규 KIS 호출 1건(read-only). 상세: `plans/[DESIGN] regime_
     conditional_entry_signal_v1.md` §61.
-  - **SPPV-3(다음 착수: `ENTRY_SCORE_R3B_ALPHA_ENABLED=true` 실제
-    활성화 여부 사용자 결정(이제 의미 있는 결정, `.env` 값이므로
-    사용자가 직접 변경) + 다음 정기 signal feature 배치 사이클에서
-    벤치마크 자동 반영 재확인(후속 검증 과제, 낮은 우선순위) +
+  - **SPPV-2.73(완료, 2026-07-19, R3b alpha 운영 반영 여부 실제
+    점검 — docker-compose 환경변수 배선 미비 신규 발견, 작성자:
+    Codex — Conditional Go 유지, 실행 중 반영 미완료 확인)**:
+    호스트 `.env`에는 값이 실제로 있음을 확인했으나(사용자 전제
+    정확), 실행 중인 `ops-scheduler` 컨테이너는 이 값을 전혀 읽지
+    못함을 확인 — `Dockerfile`이 `.env`를 COPY하지 않고,
+    `docker-compose.yml`도 `env_file`/마운트 지정이 없으며,
+    `environment:` 화이트리스트에 이 변수(및 `REGIME_SWITCH_V1_
+    GATE_OVERRIDE_ENABLED`)가 없음. 실행 중 프로세스의 실제
+    환경변수를 직접 읽어 부재 확인 — R3b alpha에 국한되지 않는
+    구조적 문제(§21 게이트 override도 동일). 최근 3일 연속
+    비거래일로 decision loop 자체도 최근 실행되지 않음 확인.
+    3단계 분리: 코드 완료(예)/env 설정(예)/실행 중 반영(**아니오**).
+    코드/`.env`/`docker-compose.yml` 미변경, 컨테이너 재시작 없음.
+    R3b는 Conditional Go를 유지한다. 상세: `plans/[DESIGN] regime_
+    conditional_entry_signal_v1.md` §62.
+  - **SPPV-3(다음 착수: `docker-compose.yml`에 두 변수 환경변수
+    배선 추가 + `ops-scheduler` 컨테이너 재생성 여부 사용자 결정
+    (별도 승인 필요, 살아있는 운영 컨테이너 재기동 포함) → 승인 시
+    다음 실제 거래일 cycle에서 재확인 +
     `trigger_status` 공급원 자동화/배치화(cron/배치 설계,
     override=true인 동안 낮은 우선순위) + 포지션 사이징 등 exit
     외 리스크 관리 수단 검토(신규, 낮은 우선순위, 실거래 계좌

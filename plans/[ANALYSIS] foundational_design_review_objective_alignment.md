@@ -1620,6 +1620,24 @@ value/compliance/broker가 아니라 `entry_score < 0.65`다.
   이제 실제 발동 가능. R3b는 Conditional Go를 유지한다. `.env`
   미변경, 신규 KIS 호출 1건(read-only). 상세: `plans/[DESIGN]
   regime_conditional_entry_signal_v1.md` §61.
+
+- 작성자: Codex
+- 수정일자: 2026-07-19 (2.75순위, R3b alpha 운영 반영 여부 실제
+  점검 — docker-compose 환경변수 배선 미비 신규 발견)
+- 수정내용: "이미 `.env`에 반영된 값이 실제 paper decision loop에
+  도달했는지"를 점검했다(SPPV-2.73). 호스트 `.env`에는 `ENTRY_
+  SCORE_R3B_ALPHA_ENABLED=true`가 실제로 있음을 확인(사용자 전제
+  정확). 그러나 실행 중인 `ops-scheduler` 컨테이너는 이 값을
+  전혀 읽지 못한다 — `Dockerfile`이 `.env`를 COPY하지 않고,
+  `docker-compose.yml`도 `env_file`/마운트로 지정하지 않으며,
+  `environment:` 화이트리스트에 이 변수(및 `REGIME_SWITCH_V1_
+  GATE_OVERRIDE_ENABLED`)가 없다. 실행 중 프로세스 실제 환경변수를
+  직접 읽어 부재 확인 — R3b alpha에 국한되지 않는 구조적 문제.
+  최근 3일 연속 비거래일로 decision loop 자체도 최근 실행되지
+  않았음을 로그로 확인. 3단계 분리: 코드 완료(예)/env 설정(예)/
+  실행 중 반영(**아니오**). 코드/`.env`/`docker-compose.yml` 미변경,
+  컨테이너 재시작 없음. R3b는 Conditional Go를 유지한다. 상세:
+  `plans/[DESIGN] regime_conditional_entry_signal_v1.md` §62.
 - **3순위(보류 유지, 형태 재정의 — 우선순위 재조정)**: **`entry_
   score`와 BUY funnel 재현** — §2.7 확장 검증에서 하락장 안정성이
   확인되지 않아 단순 재현으로는 착수하지 않는다. §2.16~§2.21에서
