@@ -1588,6 +1588,24 @@ entry 설계 검토로 전환**을 확정했다. 별도 문서
   유지한다. 상세: `plans/[DESIGN] regime_conditional_entry_
   signal_v1.md` §62.
 
+- 작성자: Codex
+- 수정일자: 2026-07-19 (74차, docker-compose 환경변수 배선 실제
+  수정 — R3b alpha/§21 게이트 override 운영 반영 완료)
+- 수정내용: §62가 확인한 실제 차단 요소를 실제로 해소했다(SPPV-
+  2.74, 사용자 명시적 승인·상세 지시에 따라 실행). `docker-
+  compose.yml`의 `ops-scheduler` `environment:` 블록에 기존 패턴
+  그대로 `REGIME_SWITCH_V1_GATE_OVERRIDE_ENABLED`/`ENTRY_SCORE_
+  R3B_ALPHA_ENABLED` 2줄 추가(기본값 false, 분기 로직 없음).
+  `docker compose up -d --force-recreate --no-deps ops-scheduler`
+  로 재생성. 실제 프로세스 env 재확인 결과 두 값 모두 `true`,
+  `/app/.env` 파일은 여전히 없음(compose environment 주입만으로
+  전달 증명), 컨테이너 안에서 `AppSettings()` 실행 결과도 `True
+  True`. 재생성 후 로그 정상(비거래일 정상 판정, `submit_count=0`).
+  판정: 실제 차단 요소 완전 해소 — R3b alpha/§21 게이트 override
+  모두 이제 실제 paper 운영 프로세스에 도달. R3b는 Conditional
+  Go를 유지한다. 상세: `plans/[DESIGN] regime_conditional_entry_
+  signal_v1.md` §63.
+
 ---
 
 ## 진행 체크리스트
@@ -3926,6 +3944,41 @@ canonical),
     `ops-scheduler` 재생성 여부 사용자 결정(별도 승인 필요, 살아
     있는 운영 컨테이너 재기동 포함) → 승인 시 다음 실제 거래일
     cycle에서 재확인.
+- [x] **SPPV-2.74(신설)** docker-compose 환경변수 배선 실제 수정 —
+  R3b alpha/§21 게이트 override 운영 반영 완료 (완료, 2026-07-19,
+  작성자: Codex)
+  - **목적**: §62(SPPV-2.73)가 확인한 실제 차단 요소(compose 환경
+    변수 배선 누락)를 실제로 해소하는 운영 배선 수정 턴(사용자
+    명시적 승인·상세 지시에 따라 실행).
+  - **수정**: `docker-compose.yml`의 `ops-scheduler`
+    `environment:` 블록(`DETERMINISTIC_TRIGGER_APPLY_CORE_RISK_
+    OFF_TOPK` 바로 다음)에 기존 `${VAR:-default}` 패턴 그대로
+    `REGIME_SWITCH_V1_GATE_OVERRIDE_ENABLED`/`ENTRY_SCORE_R3B_
+    ALPHA_ENABLED` 2줄 추가(기본값 false, paper/production 분기
+    없음). `api`/`reconciliation-worker`는 `DecisionOrchestrator
+    Service`/`run_decision_loop`를 참조하지 않음을 확인해 배선
+    대상에서 제외(불필요한 서비스 확장 없음).
+  - **실제 검증(신규 `logs/r3b_docker_compose_env_wiring_fix_
+    2026-07-19.log`)**: 수정 전 컨테이너 env에 두 값 없음 확인 →
+    `docker compose config` 렌더링으로 `"true"`/`"true"` 치환 확인
+    → `docker compose up -d --force-recreate --no-deps ops-
+    scheduler`로 재생성(다른 서비스 무영향) → 재생성 후 `Up ...
+    (healthy)` → 실제 프로세스 env 재확인 **`ENTRY_SCORE_R3B_
+    ALPHA_ENABLED=true`, `REGIME_SWITCH_V1_GATE_OVERRIDE_
+    ENABLED=true`** → `/app/.env` 파일은 여전히 없음(compose
+    environment 주입만으로 값 전달 증명) → 컨테이너 안에서 직접
+    `AppSettings()` 실행 결과 **`True True`** → 재생성 후 로그
+    정상(비거래일 정상 판정, `submit_count=0`, 예기치 않은 주문
+    없음).
+  - **판정**: 실제 차단 요소 완전 해소 — R3b alpha/§21 게이트
+    override 모두 이제 실제 paper 운영 프로세스에 도달한다. R3b는
+    Conditional Go를 유지한다. 상세: `plans/[DESIGN] regime_
+    conditional_entry_signal_v1.md` §63.
+  - 다음 과제(실제 차단 요소 아님, 다음 거래일 관측 과제): 다음
+    실제 거래일(2026-07-20 예정) cycle에서 `trigger_r3b_alpha_
+    percentile` reason_code 실제 관측; 다음 정기 signal feature
+    배치 사이클에서 벤치마크 자동 반영 재확인; `trigger_status`
+    자동화(낮은 우선순위); T+5; `portfolio_allocation` gap.
 - [~] **SPPV-3** `entry_score` point-in-time 재현 및 중복 penalty ablation
   - **보류 유지, 형태 재정의 — 우선순위 재조정**: §12(1년, 자기참조
     포함) 당시 "알파 근거 강화"로 낙관했던 것이 §14(3년, 자기참조

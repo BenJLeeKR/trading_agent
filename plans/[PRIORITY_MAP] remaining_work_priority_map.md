@@ -1086,6 +1086,25 @@
   signal_v1.md` §62.
 
 - 작성자: Codex
+- 수정일자: 2026-07-19 (73차, docker-compose 환경변수 배선 실제
+  수정 — R3b alpha/§21 게이트 override 운영 반영 완료)
+- 수정내용: §62가 확인한 실제 차단 요소를 실제로 해소했다(SPPV-
+  2.74, 사용자 명시적 승인·상세 지시에 따라 실행). `docker-
+  compose.yml`의 `ops-scheduler` `environment:` 블록에 기존
+  `${VAR:-default}` 패턴 그대로 `REGIME_SWITCH_V1_GATE_OVERRIDE_
+  ENABLED`/`ENTRY_SCORE_R3B_ALPHA_ENABLED` 2줄 추가(기본값 false,
+  paper/production 분기 없음). `docker compose up -d --force-
+  recreate --no-deps ops-scheduler`로 재생성. 재생성 후 실제
+  프로세스 env 재확인 결과 두 값 모두 `true`, `/app/.env` 파일은
+  여전히 없음(compose environment 주입만으로 전달 증명), 컨테이너
+  안에서 `AppSettings()` 실행 결과도 `True True`. 재생성 후 로그
+  정상(비거래일 정상 판정, `submit_count=0`, 예기치 않은 주문
+  없음). 판정: 실제 차단 요소 완전 해소 — R3b alpha/§21 게이트
+  override 모두 이제 실제 paper 운영 프로세스에 도달. R3b는
+  Conditional Go를 유지한다. 상세: `plans/[DESIGN] regime_
+  conditional_entry_signal_v1.md` §63.
+
+- 작성자: Codex
 - 수정일자: 2026-07-19 (64차, entry_score 코드 변경 PR 초안 설계 —
   R3b alpha 교체 실제 파이프라인 연결 방안)
 - 수정내용: "R3b alpha 전체 경로 재현 검증"은 §45(non-alpha 100%
@@ -1106,8 +1125,76 @@
 
 ## 최근 메모
 
+> **📌 2026-07-19 docker-compose 환경변수 배선 실제 수정 — R3b
+> alpha/§21 게이트 override 운영 반영 완료 (최신, 작성자: Codex)**:
+> §62(SPPV-2.73)가 확인한 실제 차단 요소(`docker-compose.yml`의
+> `ops-scheduler` `environment:` 화이트리스트에 `ENTRY_SCORE_R3B_
+> ALPHA_ENABLED`/`REGIME_SWITCH_V1_GATE_OVERRIDE_ENABLED`가 선언돼
+> 있지 않아 호스트 `.env` 값이 실제 운영 컨테이너에 전달되지 않던
+> 문제)를 사용자의 명시적 승인·상세 지시에 따라 실제로 해소했다
+> (SPPV-2.74, 검증 아닌 배선 수정 턴). **수정 내용**: `docker-
+> compose.yml`의 `ops-scheduler` `environment:` 블록,
+> `DETERMINISTIC_TRIGGER_APPLY_CORE_RISK_OFF_TOPK` 바로 다음에
+> 기존 `${VAR:-default}` 패턴 그대로 `REGIME_SWITCH_V1_GATE_
+> OVERRIDE_ENABLED: "${REGIME_SWITCH_V1_GATE_OVERRIDE_ENABLED:-
+> false}"`/`ENTRY_SCORE_R3B_ALPHA_ENABLED: "${ENTRY_SCORE_R3B_
+> ALPHA_ENABLED:-false}"` 2줄을 추가했다 — paper/production 분기
+> 로직 없음, 기본값(false)은 각 config 모듈의 기존 기본값과 동일해
+> 하위 호환 유지. `api`/`reconciliation-worker` 서비스는 `Decision
+> OrchestratorService`/`run_decision_loop`를 전혀 참조하지 않음을
+> 코드로 확인해 배선 대상에서 제외했다(불필요한 서비스 확장 없음
+> — `run_decision_loop.py`를 subprocess로 실행하는 프로세스는
+> `run_ops_scheduler.py` 하나뿐임을 §62에서 이미 확인). **실제
+> 검증(신규 `logs/r3b_docker_compose_env_wiring_fix_2026-07-19.
+> log`, 이번 턴 직접 실행)**: (1) 수정 전 — `docker exec agent_
+> trading-ops-scheduler env | grep -E "ENTRY_SCORE_R3B_ALPHA_
+> ENABLED|REGIME_SWITCH_V1_GATE_OVERRIDE_ENABLED"` → 결과 없음(§62
+> 와 동일 재확인); (2) `docker compose config --quiet` 문법 검증
+> 통과, `docker compose config` 렌더링 결과 두 변수 모두 `"true"`
+> 로 정확히 치환됨을 확인(호스트 `.env` 값 그대로); (3) `docker
+> compose up -d --force-recreate --no-deps ops-scheduler`로
+> `ops-scheduler`만 재생성(다른 서비스 무영향) —
+> `Recreate`/`Recreated`/`Starting`/`Started` 확인; (4) 재생성 후
+> `docker ps` → `Up 8 seconds (healthy)`; (5) **재생성 후 env
+> 재확인** — `ENTRY_SCORE_R3B_ALPHA_ENABLED=true`, `REGIME_SWITCH_
+> V1_GATE_OVERRIDE_ENABLED=true`(수정 전 없음 → 수정 후 있음을
+> 직접 대조 확인); (6) `/app/.env` 파일 유무 재확인 — 여전히
+> `No such file or directory`(**컨테이너 안에 `.env` 파일이 없는
+> 상태 그대로, 순수 compose `environment:` 주입만으로 값이
+> 전달됨**을 증명); (7) 컨테이너 안에서 직접 `AppSettings()` 실행
+> — `s.entry_score_r3b_alpha_enabled`/`s.regime_switch_v1_gate_
+> override_enabled` 결과 **`True True`**(실제 운영 코드가 참조하는
+> 바로 그 설정 객체가 새 값을 정확히 읽음을 확인); (8) 재생성 후
+> 시작 로그 — 정상 기동, 오늘(2026-07-19)도 비거래일로 정상 판정,
+> `submit_count=0`(재시작 자체가 예기치 않은 주문을 유발하지
+> 않았음을 확인, 실거래/주문 submit 없음 원칙 준수). **핵심 질문
+> 답변**: (1) 어떤 서비스에 배선이 필요했는가 → `ops-scheduler`
+> 단 하나; (2) 왜 compose 수정이 필요했고 단순 재시작으로는 안
+> 됐는가 → 환경변수는 컨테이너 **생성 시점**에 고정되므로, compose
+> 파일 자체를 수정하고 컨테이너를 **재생성**해야만 새
+> `environment:` 블록이 적용됨(단순 `restart`는 기존 값 그대로
+> 유지); (3) 재생성 후 컨테이너가 두 값을 실제로 읽는가 → **그렇다**
+> (실측 확인); (4) 다음 trading day에 R3b alpha 반영이 실제 발동
+> 가능한 상태가 되었는가 → **그렇다** — §58~§61의 코드/데이터
+> 준비와 이번 턴의 배선 완료로, 남은 것은 다음 실제 거래일에
+> cycle이 도는 것을 관측하는 것뿐; (5) 아직 남는 것의 성격 →
+> **더 이상 실제 차단 요소는 없다** — 전부 "다음 거래일 관측
+> 과제"로 재분류됨. **판정**: §60(벤치마크 데이터)→§62(compose
+> 배선)로 이어진 두 실제 차단 요소가 모두 해소됐다. R3b는
+> Conditional Go를 유지한다. paper/production 분기 로직 추가 없음,
+> gate 로직 강화 없음(오히려 §21 게이트는 override로 완화 방향),
+> 신규 KIS 호출 없음, 실거래/주문 submit 없음. **SPPV-3까지 남은
+> 항목 재분류**: (1) 실제 차단 요소 — 없음; (2) 사용자 결정 대기
+> — 없음(모두 이미 `.env`에 설정돼 있고 이제 운영 컨테이너에도
+> 반영됨); (3) 다음 거래일 관측 과제 — 다음 실제 거래일(2026-07-20
+> 예정) cycle에서 `trigger_r3b_alpha_percentile` reason_code 실제
+> 관측 + 다음 정기 signal feature 배치 사이클에서 벤치마크 자동
+> 반영 재확인 + `trigger_status` 자동화(낮은 우선순위) + T+5 +
+> `portfolio_allocation` gap. 상세: `plans/[DESIGN] regime_
+> conditional_entry_signal_v1.md` §63.
+
 > **📌 2026-07-19 R3b alpha 운영 반영 여부 실제 점검 — docker-
-> compose 환경변수 배선 미비 신규 발견 (최신, 작성자: Codex)**:
+> compose 환경변수 배선 미비 신규 발견 (작성자: Codex)**:
 > 이번 턴은 "전환할지"가 아니라 "`ENTRY_SCORE_R3B_ALPHA_ENABLED=
 > true`가 이미 `.env`에 반영된 상태에서 실제 paper decision loop에
 > 반영됐는지"를 점검하는 턴이다(SPPV-2.73). **전제 확인**: 호스트
@@ -8673,11 +8760,24 @@ agent 설계 문서 기준으로도 순서는 다음이 맞다.
      compose.yml` 미변경, 컨테이너 재시작 없음. R3b는 Conditional
      Go를 유지한다. 상세: `plans/[DESIGN] regime_conditional_
      entry_signal_v1.md` §62.
-   - **SPPV-3(다음 착수: `docker-compose.yml`에 `ENTRY_SCORE_R3B_
-     ALPHA_ENABLED`/`REGIME_SWITCH_V1_GATE_OVERRIDE_ENABLED` 환경
-     변수 배선 추가 + `ops-scheduler` 컨테이너 재생성 여부 사용자
-     결정(별도 승인 필요, 살아있는 운영 컨테이너 재기동 포함) →
-     승인 시 다음 실제 거래일 cycle에서 재확인 +
+   - **SPPV-2.74(완료, 2026-07-19, docker-compose 환경변수 배선
+     실제 수정 — R3b alpha/§21 게이트 override 운영 반영 완료,
+     작성자: Codex — Conditional Go 유지, 실제 차단 요소 완전
+     해소)**: §62가 확인한 실제 차단 요소를 실제로 해소했다(사용자
+     명시적 승인·상세 지시에 따라 실행). `docker-compose.yml`의
+     `ops-scheduler` `environment:` 블록에 기존 패턴 그대로 두
+     변수 추가(기본값 false, 분기 없음), `--force-recreate
+     --no-deps`로 재생성. 재생성 후 실제 프로세스 env 확인 결과
+     두 값 모두 `true`, `/app/.env` 파일은 여전히 없음(compose
+     주입만으로 전달 증명), `AppSettings()` 실행 결과도 `True
+     True`. 재생성 후 로그 정상(비거래일 정상 판정, submit_count=
+     0). 판정: 실제 차단 요소 완전 해소 — R3b alpha/§21 게이트
+     override 모두 이제 실제 paper 운영 프로세스에 도달. R3b는
+     Conditional Go를 유지한다. 상세: `plans/[DESIGN] regime_
+     conditional_entry_signal_v1.md` §63.
+   - **SPPV-3(다음 착수: 다음 실제 거래일(2026-07-20 예정) cycle
+     에서 `trigger_r3b_alpha_percentile` reason_code 실제 관측
+     (다음 거래일 관측 과제, 실제 차단 요소 아님) +
      `trigger_status` 공급원 자동화/배치화(cron/배치 설계,
      override=true인 동안 낮은 우선순위) + 포지션 사이징 등 exit
      외 리스크 관리 수단 검토(신규, 낮은 우선순위, 실거래 계좌

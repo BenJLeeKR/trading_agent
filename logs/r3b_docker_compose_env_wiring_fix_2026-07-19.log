@@ -1,0 +1,49 @@
+=== SPPV-2.74: docker-compose 환경변수 배선 수정 — 실행 증거 ===
+
+[0] 수정 전 확인 (재생성 전, 실행 중이던 구 컨테이너)
+$ docker exec agent_trading-ops-scheduler bash -lc "env | grep -E 'ENTRY_SCORE_R3B_ALPHA_ENABLED|REGIME_SWITCH_V1_GATE_OVERRIDE_ENABLED'"
+NOT_FOUND
+
+[1] docker-compose.yml 수정 — ops-scheduler environment: 블록에
+    두 변수 추가(DETERMINISTIC_TRIGGER_APPLY_CORE_RISK_OFF_TOPK 바로
+    다음, 기존 "${VAR:-default}" 패턴 그대로):
+      REGIME_SWITCH_V1_GATE_OVERRIDE_ENABLED: "${REGIME_SWITCH_V1_GATE_OVERRIDE_ENABLED:-false}"
+      ENTRY_SCORE_R3B_ALPHA_ENABLED: "${ENTRY_SCORE_R3B_ALPHA_ENABLED:-false}"
+
+[2] 문법 검증
+$ docker compose config --quiet
+(경고만 있음 — version 속성 obsolete, 무해)
+
+[3] 값 치환 확인(재생성 전, dry-run 형태의 config 렌더링)
+$ docker compose config | grep -E "ENTRY_SCORE_R3B_ALPHA_ENABLED|REGIME_SWITCH_V1_GATE_OVERRIDE_ENABLED"
+ENTRY_SCORE_R3B_ALPHA_ENABLED: "true"
+REGIME_SWITCH_V1_GATE_OVERRIDE_ENABLED: "true"
+
+[4] 컨테이너 재생성(ops-scheduler만, --no-deps로 다른 서비스 영향 없음)
+$ docker compose up -d --force-recreate --no-deps ops-scheduler
+ Container agent_trading-ops-scheduler Recreate
+ Container agent_trading-ops-scheduler Recreated
+ Container agent_trading-ops-scheduler Starting
+ Container agent_trading-ops-scheduler Started
+
+[5] 재생성 후 컨테이너 상태
+$ docker ps --filter "name=agent_trading-ops-scheduler" --format "{{.Names}}\t{{.Status}}"
+agent_trading-ops-scheduler	Up 8 seconds (healthy)
+
+[6] 재생성 후 실제 프로세스 환경변수 확인 — 수정 후
+$ docker exec agent_trading-ops-scheduler bash -lc "env | grep -E 'ENTRY_SCORE_R3B_ALPHA_ENABLED|REGIME_SWITCH_V1_GATE_OVERRIDE_ENABLED'"
+ENTRY_SCORE_R3B_ALPHA_ENABLED=true
+REGIME_SWITCH_V1_GATE_OVERRIDE_ENABLED=true
+
+[7] /app/.env 파일 유무 확인 — 여전히 없음(순수 compose environment
+    주입만으로 값이 전달됨을 증명)
+$ docker exec agent_trading-ops-scheduler bash -lc "test -f /app/.env && echo EXISTS || echo NOT_FOUND"
+NOT_FOUND
+
+[8] AppSettings() 실제 스모크 확인 — 컨테이너 안에서 직접 실행
+$ docker exec agent_trading-ops-scheduler bash -lc "python3 -c \"from agent_trading.config.settings import AppSettings; s=AppSettings(); print(s.entry_score_r3b_alpha_enabled, s.regime_switch_v1_gate_override_enabled)\""
+True True
+
+[9] 재생성 후 시작 로그 — 정상 기동, 오늘(2026-07-19)도 비거래일로
+    정상 판정, submit_count=0(재시작으로 인한 예기치 않은 주문 없음)
+2026-07-19 17:42:17 [INFO] ops-scheduler: ═══ Next run_date: 2026-07-20 — waiting for next trading day ═══

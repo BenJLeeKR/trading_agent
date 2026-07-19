@@ -1638,6 +1638,22 @@ value/compliance/broker가 아니라 `entry_score < 0.65`다.
   실행 중 반영(**아니오**). 코드/`.env`/`docker-compose.yml` 미변경,
   컨테이너 재시작 없음. R3b는 Conditional Go를 유지한다. 상세:
   `plans/[DESIGN] regime_conditional_entry_signal_v1.md` §62.
+
+- 작성자: Codex
+- 수정일자: 2026-07-19 (2.76순위, docker-compose 환경변수 배선
+  실제 수정 — R3b alpha/§21 게이트 override 운영 반영 완료)
+- 수정내용: §62가 확인한 실제 차단 요소를 실제로 해소했다(SPPV-
+  2.74). `docker-compose.yml`의 `ops-scheduler` `environment:`
+  블록에 기존 패턴 그대로 두 변수 추가(기본값 false, 분기 없음),
+  `--force-recreate --no-deps`로 재생성. 재생성 후 실제 프로세스
+  env 확인 결과 두 값 모두 `true`, `/app/.env` 파일은 여전히
+  없음(compose 주입만으로 전달 증명), 컨테이너 안에서 `AppSettings
+  ()` 실행 결과도 `True True`. 재생성 후 로그 정상(비거래일 정상
+  판정, submit_count=0, 예기치 않은 주문 없음). 판정: 실제 차단
+  요소 완전 해소 — R3b alpha/§21 게이트 override 모두 이제 실제
+  paper 운영 프로세스에 도달. R3b는 Conditional Go를 유지한다.
+  상세: `plans/[DESIGN] regime_conditional_entry_signal_v1.md`
+  §63.
 - **3순위(보류 유지, 형태 재정의 — 우선순위 재조정)**: **`entry_
   score`와 BUY funnel 재현** — §2.7 확장 검증에서 하락장 안정성이
   확인되지 않아 단순 재현으로는 착수하지 않는다. §2.16~§2.21에서

@@ -1126,6 +1126,23 @@
   상세: `plans/[DESIGN] regime_conditional_entry_signal_v1.md`
   §62.
 
+- 작성자: Codex
+- 수정일자: 2026-07-19 (73차, docker-compose 환경변수 배선 실제
+  수정 — R3b alpha/§21 게이트 override 운영 반영 완료)
+- 수정내용: §62가 확인한 실제 차단 요소를 실제로 해소했다(SPPV-
+  2.74, 사용자 명시적 승인·상세 지시에 따라 실행). `docker-
+  compose.yml`의 `ops-scheduler` `environment:` 블록에 기존
+  `${VAR:-default}` 패턴 그대로 두 변수 추가(기본값 false,
+  paper/production 분기 없음). `docker compose up -d --force-
+  recreate --no-deps ops-scheduler`로 재생성. 재생성 후 실제
+  프로세스 env 재확인 결과 두 값 모두 `true`, `/app/.env` 파일은
+  여전히 없음(compose environment 주입만으로 전달 증명),
+  `AppSettings()` 실행 결과도 `True True`. 재생성 후 로그 정상
+  (비거래일 정상 판정, submit_count=0). 판정: 실제 차단 요소 완전
+  해소 — R3b alpha/§21 게이트 override 모두 이제 실제 paper 운영
+  프로세스에 도달. R3b는 Conditional Go를 유지한다. 상세: `plans/
+  [DESIGN] regime_conditional_entry_signal_v1.md` §63.
+
 ---
 
 ## 관리 원칙
@@ -2677,10 +2694,24 @@
     코드/`.env`/`docker-compose.yml` 미변경, 컨테이너 재시작 없음.
     R3b는 Conditional Go를 유지한다. 상세: `plans/[DESIGN] regime_
     conditional_entry_signal_v1.md` §62.
-  - **SPPV-3(다음 착수: `docker-compose.yml`에 두 변수 환경변수
-    배선 추가 + `ops-scheduler` 컨테이너 재생성 여부 사용자 결정
-    (별도 승인 필요, 살아있는 운영 컨테이너 재기동 포함) → 승인 시
-    다음 실제 거래일 cycle에서 재확인 +
+  - **SPPV-2.74(완료, 2026-07-19, docker-compose 환경변수 배선
+    실제 수정 — R3b alpha/§21 게이트 override 운영 반영 완료,
+    작성자: Codex — Conditional Go 유지, 실제 차단 요소 완전
+    해소)**: §62가 확인한 실제 차단 요소를 실제로 해소했다(사용자
+    명시적 승인·상세 지시에 따라 실행). `docker-compose.yml`의
+    `ops-scheduler` `environment:` 블록에 기존 패턴 그대로 두
+    변수 추가(기본값 false, 분기 없음), `--force-recreate
+    --no-deps`로 재생성. 재생성 후 실제 프로세스 env 확인 결과 두
+    값 모두 `true`, `/app/.env` 파일은 여전히 없음(compose 주입
+    만으로 전달 증명), `AppSettings()` 실행 결과도 `True True`.
+    재생성 후 로그 정상(비거래일 정상 판정, submit_count=0). 판정:
+    실제 차단 요소 완전 해소 — R3b alpha/§21 게이트 override 모두
+    이제 실제 paper 운영 프로세스에 도달. R3b는 Conditional Go를
+    유지한다. 상세: `plans/[DESIGN] regime_conditional_entry_
+    signal_v1.md` §63.
+  - **SPPV-3(다음 착수: 다음 실제 거래일(2026-07-20 예정) cycle에서
+    `trigger_r3b_alpha_percentile` reason_code 실제 관측(다음
+    거래일 관측 과제, 실제 차단 요소 아님) +
     `trigger_status` 공급원 자동화/배치화(cron/배치 설계,
     override=true인 동안 낮은 우선순위) + 포지션 사이징 등 exit
     외 리스크 관리 수단 검토(신규, 낮은 우선순위, 실거래 계좌
