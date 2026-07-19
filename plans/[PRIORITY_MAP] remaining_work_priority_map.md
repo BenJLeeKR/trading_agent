@@ -1038,6 +1038,19 @@
   상세: `plans/[DESIGN] regime_conditional_entry_signal_v1.md` §59.
 
 - 작성자: Codex
+- 수정일자: 2026-07-19 (70차, R3b alpha paper 운영 전환 최종 착수
+  준비 상태 점검)
+- 수정내용: "config만 켜면 되는가"를 판정하는 준비 턴(SPPV-2.71).
+  DB 직접 조회로 신규 사실 확인 — 벤치마크(069500) `signal_
+  feature_snapshot`이 DB에 0건, 일일 배치 입력 목록에 애초에
+  미포함. 이 때문에 `ENTRY_SCORE_R3B_ALPHA_ENABLED=true` 전환해도
+  alpha 교체가 실제로는 발동하지 않는다 — "구현 완료"와 "운영
+  전환 준비 완료"를 분리 확정. SPPV-3 남은 항목을 실제 차단 요소/
+  사용자 결정 대기/후속 검증 과제 3분류로 재정리. R3b는 Conditional
+  Go를 유지한다. `.env` 미변경, 코드 변경 없음. 상세: `plans/
+  [DESIGN] regime_conditional_entry_signal_v1.md` §60.
+
+- 작성자: Codex
 - 수정일자: 2026-07-19 (64차, entry_score 코드 변경 PR 초안 설계 —
   R3b alpha 교체 실제 파이프라인 연결 방안)
 - 수정내용: "R3b alpha 전체 경로 재현 검증"은 §45(non-alpha 100%
@@ -1058,8 +1071,49 @@
 
 ## 최근 메모
 
+> **📌 2026-07-19 R3b alpha paper 운영 전환 최종 착수 준비 상태
+> 점검 (최신, 작성자: Codex)**: "지금 `ENTRY_SCORE_R3B_ALPHA_
+> ENABLED=true`만 켜면 되는가?"라는 단일 질문 기준으로 §55~§59를
+> 재검증 없이 종합 점검하고, 코드/DB를 이번 턴 직접 다시 조회해
+> 신규 사실 하나를 확인했다(SPPV-2.71). **최신 truth 3분류**: (A)
+> 이미 구현/증빙 완료 — config 스위치, 엔진 파라미터, orchestrator
+> 배선, cycle precompute, 저장소 로그/JSON 실제 발동 증명(§55~§59
+> 그대로, 재검증 안 함). (B) 사용자 결정만 남은 것 — `ENTRY_SCORE_
+> R3B_ALPHA_ENABLED=true` 전환 자체(`.env` 값, 이 세션은 수정하지
+> 않음). (C) **이번 턴 신규 발견 — paper 전환 전 마지막으로 확인
+>해야 할 것**: 벤치마크(069500) `signal_feature_snapshot`이 DB에
+> **전체 이력 통틀어 0건**임을 실제 SQL 조회로 확인(`SELECT
+> count(*) FROM signal_feature_snapshots s JOIN instruments i ON
+> i.instrument_id=s.instrument_id WHERE i.symbol='069500'` →
+> `0`). 원인도 확인 — `data/signal_feature_snapshot_input.json`
+> (일일 signal feature 배치 입력, `fetch_success_rows` 80건)에
+> `069500`이 애초에 포함돼 있지 않다(구조적 결측, 일시적 장애
+> 아님). **실제 영향**: `_build_r3b_alpha_percentile_overrides_
+> for_cycle()`(§58)이 벤치마크 스냅샷 조회 실패 → `market_common_
+> label=None` → 즉시 빈 dict 반환 분기를 항상 타게 되므로, `ENTRY_
+> SCORE_R3B_ALPHA_ENABLED=true`로 전환해도 **alpha 교체가 실제로는
+> 절대 발동하지 않는다**(config는 켜지지만 벤치마크 데이터 결측
+>으로 실질 무동작). **핵심 질문 답변**: (1) 지금 config만 켜면
+> 발동하는가 → **아니오**(벤치마크 데이터 결측); (2) 그 외 paper
+> 운영을 막는 코드 레벨 차단 요소가 남아 있는가 → 벤치마크 결측
+> 해소를 가정하면 추가 코드 차단은 없음(`--submit`/`--dry-run`
+> 같은 기존 운영 스위치만 존재); (3) SPPV-3 착수 전 마지막 준비
+> 상태 → "벤치마크 signal_feature_snapshot 배치 포함 여부 확인/
+> 해소"로 재정의; (4) 남은 것의 성격 → 벤치마크 결측은 **실제 차단
+> 요소**(관측 지표 결측이 아니라 기능 자체가 발동하지 않음),
+> `trigger_status` 자동화/T+5/`portfolio_allocation` gap은 **후속
+> 검증 과제**(발동을 막지 않음)로 명확히 분리. **판정**: "구현
+> 완료"(§55~§59, `.env` 전환만으로 코드 추가 변경 불필요)와 "운영
+> 전환 준비 완료"(벤치마크 데이터 결측으로 미완료)를 분리 확정한다.
+> R3b는 Conditional Go를 유지한다. `.env` 미변경, 코드 변경 없음
+> (이번 턴은 순수 점검/조회). **SPPV-3까지 남은 항목 3분류**: (1)
+> 실제 차단 요소 — 벤치마크 signal_feature_snapshot 배치 미포함
+> (해소 필요, 별도 승인); (2) 사용자 결정 대기 — `.env` 전환(위 (1)
+> 해소 이후 의미 생김); (3) 후속 검증 과제 — 기존 항목 그대로. 상세:
+> `plans/[DESIGN] regime_conditional_entry_signal_v1.md` §60.
+
 > **📌 2026-07-19 SPPV-2.69 보고 증빙 정정 — 테스트 수치·실행 증빙
-> 재확인 (최신, 작성자: Codex)**: 새 기능 구현이 아니라 §58(SPPV-
+> 재확인 (작성자: Codex)**: 새 기능 구현이 아니라 §58(SPPV-
 > 2.69)의 수치·실행 증빙을 실제 파일/로그 기준으로 재검증했다
 > (SPPV-2.70). **확인 결과**: `logs/r3b_pytest_run_decision_
 > loop_2026-07-19.log`(01:48 생성)는 §58 이전 §53(SPPV-2.64) 턴의
@@ -8413,7 +8467,23 @@ agent 설계 문서 기준으로도 순서는 다음이 맞다.
      부족했다 — 판정: **결론 유지 + 증빙 보강**. R3b는 Conditional
      Go를 유지한다. `.env` 미변경, production 코드 미변경. 상세:
      `plans/[DESIGN] regime_conditional_entry_signal_v1.md` §59.
-   - **SPPV-3(다음 착수: `ENTRY_SCORE_R3B_ALPHA_ENABLED=true` 실제
+   - **SPPV-2.71(완료, 2026-07-19, R3b alpha paper 운영 전환 최종
+     착수 준비 상태 점검, 작성자: Codex — Conditional Go 유지,
+     실제 차단 요소 신규 발견)**: "config만 켜면 되는가"를 판정.
+     DB 직접 조회로 벤치마크(069500) `signal_feature_snapshot`이
+     전체 이력 0건임을 확인 — `data/signal_feature_snapshot_
+     input.json`(일일 배치 입력)에 애초에 미포함이 원인. 이 때문에
+     `ENTRY_SCORE_R3B_ALPHA_ENABLED=true` 전환해도 `_build_r3b_
+     alpha_percentile_overrides_for_cycle()`이 항상 빈 dict를
+     반환해 alpha 교체가 실제로는 발동하지 않는다. "구현 완료"와
+     "운영 전환 준비 완료"를 분리 확정 — 실제 차단 요소(벤치마크
+     배치 미포함)/사용자 결정 대기(`.env` 전환)/후속 검증 과제
+     3분류로 재정리. R3b는 Conditional Go를 유지한다. `.env`
+     미변경, 코드 변경 없음. 상세: `plans/[DESIGN] regime_
+     conditional_entry_signal_v1.md` §60.
+   - **SPPV-3(다음 착수: 벤치마크(069500) signal_feature_snapshot
+     배치 포함 여부 해소(신규 최우선 항목, 실제 차단 요소, 별도
+     승인 필요) → 해소 후 `ENTRY_SCORE_R3B_ALPHA_ENABLED=true` 실제
      활성화 여부 사용자 결정(신중한 검토 필요, `.env` 값이므로
      사용자가 직접 변경) +
      `trigger_status` 공급원 자동화/배치화(cron/배치 설계,

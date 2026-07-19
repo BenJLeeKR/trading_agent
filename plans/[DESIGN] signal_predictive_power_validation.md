@@ -1530,6 +1530,23 @@ entry 설계 검토로 전환**을 확정했다. 별도 문서
   추가). 상세: `plans/[DESIGN] regime_conditional_entry_signal_
   v1.md` §59.
 
+- 작성자: Codex
+- 수정일자: 2026-07-19 (71차, R3b alpha paper 운영 전환 최종 착수
+  준비 상태 점검)
+- 수정내용: "config만 켜면 되는가"를 판정하는 준비 턴(SPPV-2.71).
+  이미 구현/증빙 완료(§55~§59)를 재검증하지 않고, DB 직접 조회로
+  신규 사실 확인 — 벤치마크(069500) `signal_feature_snapshot`이
+  DB에 0건(전체 이력 통틀어), `data/signal_feature_snapshot_input.
+  json`(일일 배치 입력)에 애초에 미포함. 이 때문에 `ENTRY_SCORE_
+  R3B_ALPHA_ENABLED=true`로 전환해도 `_build_r3b_alpha_percentile_
+  overrides_for_cycle()`이 항상 빈 dict를 반환해 alpha 교체가 실제
+  로는 발동하지 않는다 — "구현 완료"와 "운영 전환 준비 완료"를
+  분리 확정. SPPV-3까지 남은 항목을 실제 차단 요소(벤치마크 배치
+  미포함)/사용자 결정 대기(`.env` 전환)/후속 검증 과제(trigger_
+  status 자동화 등) 3분류로 재정리. R3b는 Conditional Go를
+  유지한다. `.env` 미변경, 코드 변경 없음(순수 점검). 상세: `plans/
+  [DESIGN] regime_conditional_entry_signal_v1.md` §60.
+
 ---
 
 ## 진행 체크리스트
@@ -3757,6 +3774,36 @@ canonical),
     conditional_entry_signal_v1.md` §59.
   - 다음 과제: 변경 없음(§58과 동일) — `ENTRY_SCORE_R3B_ALPHA_
     ENABLED=true` 활성화 여부 사용자 결정.
+- [x] **SPPV-2.71(신설)** R3b alpha paper 운영 전환 최종 착수 준비
+  상태 점검 (완료, 2026-07-19, 작성자: Codex)
+  - **목적**: "`ENTRY_SCORE_R3B_ALPHA_ENABLED=true`만 켜면 되는가?"
+    라는 단일 질문 기준으로, 이미 구현/증빙 완료된 것(§55~§59)을
+    재검증하지 않고 종합 점검. 코드/DB를 이번 턴 직접 다시 조회해
+    신규 사실 하나를 확인.
+  - **핵심 신규 발견**: `_R3B_ALPHA_BENCHMARK_SYMBOL="069500"`(벤치
+    마크)의 `signal_feature_snapshot`이 DB에 **전체 이력 통틀어
+    0건**임을 직접 SQL 조회로 확인. 원인도 확인 — `data/signal_
+    feature_snapshot_input.json`(일일 배치 입력 목록, 80건)에
+    `069500`이 애초에 포함돼 있지 않음(구조적 결측, 일시적 장애
+    아님).
+  - **실제 영향**: `_build_r3b_alpha_percentile_overrides_for_
+    cycle()`이 벤치마크 스냅샷 없음 → `market_common_label=None`
+    → 즉시 빈 dict 반환 분기를 항상 타게 되어, `ENTRY_SCORE_R3B_
+    ALPHA_ENABLED=true`로 전환해도 **alpha 교체가 실제로는 절대
+    발동하지 않는다**(config는 켜지지만 벤치마크 데이터 결측으로
+    실질 무동작).
+  - **판정**: "구현 완료"(§55~§59, `.env` 전환만으로 코드 추가 변경
+    불필요)와 "운영 전환 준비 완료"(벤치마크 데이터 결측으로 미완료)
+    를 분리 확정. R3b는 Conditional Go를 유지한다. **SPPV-3까지
+    남은 항목 3분류**: (1) 실제 차단 요소 — 벤치마크 signal_
+    feature_snapshot 배치 미포함(해소 필요, 별도 승인); (2) 사용자
+    결정 대기 — `ENTRY_SCORE_R3B_ALPHA_ENABLED=true` 전환(위 (1)
+    해소 이후 의미 생김); (3) 후속 검증 과제 — `trigger_status`
+    자동화, T+5, `portfolio_allocation` gap(발동을 막지 않음). 상세:
+    `plans/[DESIGN] regime_conditional_entry_signal_v1.md` §60.
+  - 다음 과제: 벤치마크 signal_feature_snapshot 배치 포함 여부
+    해소(신규 최우선 항목, 별도 승인 필요) → 해소 후 `ENTRY_SCORE_
+    R3B_ALPHA_ENABLED=true` 전환 여부 사용자 결정.
 - [~] **SPPV-3** `entry_score` point-in-time 재현 및 중복 penalty ablation
   - **보류 유지, 형태 재정의 — 우선순위 재조정**: §12(1년, 자기참조
     포함) 당시 "알파 근거 강화"로 낙관했던 것이 §14(3년, 자기참조

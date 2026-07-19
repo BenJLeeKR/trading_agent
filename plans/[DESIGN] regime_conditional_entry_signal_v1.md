@@ -7243,3 +7243,175 @@ JSON 근거로 격상). R3b는 Conditional Go를 유지한다. `.env` 미변경,
 않는다 — `ENTRY_SCORE_R3B_ALPHA_ENABLED=true` 실제 활성화 여부에
 대한 사용자 결정이 여전히 유일한 남은 항목이며, 이번 턴은 그 결정에
 필요한 근거(재현 가능한 로그/JSON)를 보강했을 뿐이다.
+
+## 60. R3b alpha paper 운영 전환 최종 착수 준비 상태 점검 (SPPV-2.71, 2026-07-19)
+
+### 60.1 목적 — 이번 턴은 구현이 아니라 "전환 가능 여부" 판정
+
+§54(SPPV-2.65) 설계 이후 §55(1단계)~§59(증빙 정정)까지 6개 턴에
+걸쳐 진행된 entry_score R3b alpha 교체 작업을, "지금 당장 `ENTRY_
+SCORE_R3B_ALPHA_ENABLED=true`로 전환해도 되는가?"라는 단일 질문
+기준으로 종합 점검한다. 새 기능 구현·재검증 없이, 이미 확정된 사실
+(§55~§59)을 재인용하지 않고 **코드/DB 상태를 직접 다시 조회**해
+이번 턴 전용의 새로운 사실 하나를 확인했다(§60.3).
+
+### 60.2 최신 truth 재정리 — 3분류
+
+**(A) 이미 구현/증빙 완료된 것**:
+1. `settings.py`의 `entry_score_r3b_alpha_enabled` config 스위치
+   (기본값 False) — §55.
+2. `deterministic_trigger_engine.py`의 `assess_deterministic_
+   triggers`/`_build_entry_score`에 `r3b_alpha_percentile`/`r3b_
+   alpha_enabled` optional 파라미터 — 활성 시 alpha 항이 `0.80 *
+   candidate_percentile`로 교체, 비활성 시 기존 공식 100% 유지 —
+   §55.
+3. `decision_orchestrator.py`의 `r3b_alpha_enabled` 생성자 파라미터
+   + `request.metadata["r3b_alpha_percentile"]` 추출·엔진 전달
+   배선(두 호출 지점 모두) — §56.
+4. `run_decision_loop.py`의 `_build_r3b_alpha_percentile_
+   overrides_for_cycle()`(cycle당 1회 precompute) + `_run_one_
+   cycle`의 `SubmitOrderRequest.metadata["r3b_alpha_percentile"]`
+   실제 주입 — §58.
+5. 저장소 로그/JSON으로 뒷받침되는 실제 발동 증명(비활성 entry_
+   score=0.1159 → 활성+percentile=0.9 entry_score=0.5999) — §59.
+
+**(B) 아직 사용자 결정만 남은 것**: `ENTRY_SCORE_R3B_ALPHA_ENABLED=
+true` 전환 자체 — `.env` 값이므로 이 세션은 절대 수정하지 않는다
+(작업 원칙). 이는 실제 paper 운영에서 R3b alpha가 실거래 entry_
+score에 처음 반영되는 결정이므로, §48/§49(§21 게이트)/§21 override
+전환과 같은 수준의 신중한 사용자 승인이 필요하다.
+
+**(C) paper 운영 전환 전 마지막으로 확인해야 할 것 — 이번 턴 신규
+발견**: §60.3 참고. 이것은 (B)와 성격이 다르다 — (B)는 "결정만
+하면 되는" 상태인 반면, (C)는 **"결정을 해도 실제로는 발동하지
+않는" 상태**를 가리킨다.
+
+### 60.3 핵심 신규 발견 — 벤치마크(069500) signal_feature_snapshot이
+DB에 단 1건도 없음
+
+`_build_r3b_alpha_percentile_overrides_for_cycle()`(§58)은 `_R3B_
+ALPHA_BENCHMARK_SYMBOL = "069500"`의 최신 `signal_feature_snapshot`
+을 `classify_market_regime()`으로 분류해 `market_common_label`을
+구한 뒤에야 universe 순회를 시작한다. 이번 턴 실제 DB를 직접
+조회한 결과:
+
+```sql
+SELECT count(*) FROM signal_feature_snapshots s
+JOIN instruments i ON i.instrument_id = s.instrument_id
+WHERE i.symbol = '069500'
+-- 결과: 0
+```
+
+**벤치마크 종목의 signal_feature_snapshot이 이 DB에 생성된 이력이
+단 한 번도 없다.** 원인도 함께 확인했다 — `data/signal_feature_
+snapshot_input.json`(일일 signal feature 배치의 실제 입력 목록)의
+`fetch_success_rows`(80건) 안에 `069500`이 **포함돼 있지 않다**
+(핵심 거래 유니버스 80개 종목만 포함, 벤치마크 ETF는 배치 대상이
+아님). 즉 이것은 일시적 결측이 아니라 **구조적으로 벤치마크가 이
+배치 파이프라인의 대상에서 애초에 빠져 있다는 것**이다.
+
+**실제 영향**: `resolve_by_symbol` → `get_latest_by_instrument`가
+`None`을 반환하면, `_build_r3b_alpha_percentile_overrides_for_
+cycle()`은 `market_common_label is None`으로 판정해 **즉시 빈
+dict를 반환하고 종료**한다(코드상 `logger.info("R3b alpha
+precompute: 벤치마크 국면 라벨 산출 실패(스냅샷 없음) — skip.")`
+분기). 결과적으로 **`ENTRY_SCORE_R3B_ALPHA_ENABLED=true`로 전환해도,
+현재 운영 DB 상태에서는 cycle마다 `r3b_alpha_percentile`이 항상
+빈 dict/`None`으로만 계산되어 alpha 교체가 실제로는 한 번도
+발동하지 않는다** — config는 켜지지만 파이프라인 앞단(벤치마크
+데이터)이 없어 실질적으로 무동작 상태가 된다.
+
+**참고(재논의 아님)**: 동일한 벤치마크·동일한 `get_latest_by_
+instrument` 조회를 쓰는 `_run_mixedness_check()`(§52, 이미 실제
+decision loop에 연결됨)도 구조적으로 동일한 제약을 받는다 — 이는
+mixedness 자체의 새로운 이슈가 아니라(mixedness는 관측 전용이라
+BUY/SELL에 영향이 없으므로 §52~§53에서 이미 다룬 논점과 무관하다),
+이번 턴에 R3b alpha 준비 상태를 점검하다 발견한 **구조적으로 같은
+근본 원인(벤치마크가 signal feature 배치 대상 목록에서 빠짐)**을
+공유한다는 사실만 기록한다.
+
+### 60.4 핵심 질문에 대한 명시적 답변
+
+1. **"지금 상태에서 `ENTRY_SCORE_R3B_ALPHA_ENABLED=true`만 켜면
+   R3b alpha 교체가 실제로 발동하는가?"** → **아니오.** 코드 배선은
+   전부 완성돼 있고(§60.2-A), config만 켜면 `r3b_alpha_enabled`
+   플래그 자체는 전달되지만, 벤치마크 signal_feature_snapshot이
+   없어 `_build_r3b_alpha_percentile_overrides_for_cycle()`이 항상
+   빈 dict를 반환한다 — 따라서 `r3b_alpha_percentile`이 항상
+   `None`으로 주입되고, `_build_entry_score`의 `r3b_alpha_enabled
+   and r3b_alpha_percentile is not None` 조건이 항상 거짓이 되어
+   **alpha 항 교체가 실제로는 절대 일어나지 않는다**(기존 공식이
+   100% 그대로 유지되는 것과 동일한 결과 — 다만 그 이유가 "의도된
+   비활성"이 아니라 "데이터 결측에 의한 무동작"이라는 점이 다르다).
+2. **"발동한다면, 그 외에 paper 운영을 막는 코드 레벨 차단 요소가
+   남아 있는가?"** → 발동 자체가 안 되므로 이 질문은 현재 조건부로
+   답한다: 벤치마크 스냅샷 결측을 해소한 **이후**를 가정하면, 코드
+   레벨에서 추가로 발견된 차단 요소는 없다 — `--submit`/`--dry-run`
+   같은 기존 운영 제어(§21 게이트와 무관하게 이미 존재하는 일반
+   운영 스위치)만 있을 뿐, R3b alpha 전용의 별도 코드 차단은 없다.
+3. **"없다면, SPPV-3 착수 전 마지막 준비 상태를 어떻게 정의해야
+   하는가?"** → 있으므로(§60.3) 이 질문은 해당하지 않는다 — 대신
+   "R3b alpha 활성화의 마지막 준비 상태"는 **"벤치마크 signal_
+   feature_snapshot 배치 포함 여부 확인/해소"**로 재정의된다.
+4. **"아직 남아 있다면, 그것이 '실제 차단 요소'인지 '관측/모니터링/
+   후속 검증 과제'인지 구분해달라"** → §60.3의 벤치마크 스냅샷
+   결측은 **명백한 실제 차단 요소**다(관측 지표 결측이 아니라, 켜도
+   기능 자체가 발동하지 않는 구조적 결함). `trigger_status` 공급원
+   자동화, T+5 후속 검증, `portfolio_allocation` gap 등 기존 항목은
+   여전히 "후속 검증 과제"(발동을 막지 않음)로 분류된다.
+
+### 60.5 `ENTRY_SCORE_R3B_ALPHA_ENABLED=true` 전환 시 실제로 바뀌는
+경로(코드 기준, 벤치마크 스냅샷이 있다고 가정할 경우)
+
+1. `AppSettings().entry_score_r3b_alpha_enabled` → `True`.
+2. `run_decision_loop.py`의 두 `DecisionOrchestratorService(...)`
+   인스턴스화 지점 모두 `r3b_alpha_enabled=True`로 생성.
+3. 메인 cycle 루프에서 `_build_r3b_alpha_percentile_overrides_for_
+   cycle()`이 (벤치마크 스냅샷이 있다면) 실제로 그날의 `market_
+   common_label`을 구하고 universe 전체를 순회해 상위 20% quintile
+   candidate에만 `candidate_percentile`을 계산.
+4. 각 종목의 `_run_one_cycle()`이 `SubmitOrderRequest.metadata
+   ["r3b_alpha_percentile"]`에 그 값(candidate 밖 종목은 `None`)을
+   주입.
+5. `decision_orchestrator.py`가 이 값을 읽어 `assess_deterministic_
+   triggers`에 전달 → `_build_entry_score`가 candidate 종목에
+   한해 alpha 항을 `0.80 * candidate_percentile`로 교체(§59의
+   0.1159→0.5999 사례가 실측한 그대로) → `reason_codes`에
+   `trigger_r3b_alpha_percentile` 추가.
+6. entry_score 변화는 `ranking_score`/`eligibility`/`candidate_set`
+   판정에도 연쇄적으로 영향을 준다(entry_score가 BUY_CANDIDATE
+   문턱(0.65)을 넘나드는 종목이 바뀔 수 있음) — 즉 **candidate
+   pool 상위 20% 종목의 BUY 후보 선정 여부/우선순위가 실제로
+   바뀔 수 있다.**
+
+### 60.6 "코드 변경 없이 `.env` 전환만으로 가능한 상태인가?"
+
+**코드 배선 자체는 `.env` 전환만으로 충분하다** — 추가 코드 변경은
+필요 없다(§60.2-A가 이미 완비). 그러나 §60.3의 벤치마크 스냅샷
+결측 때문에, `.env` 전환만으로는 **"config가 켜지지만 기능은
+실질적으로 무동작"**인 상태가 된다 — 이는 코드 수정이 아니라 **DB에
+벤치마크 signal_feature_snapshot을 채우는 배치 작업(운영 데이터
+문제)**으로 해소해야 하는 영역이며, 이번 턴은 그 작업을 수행하지
+않는다(범위 밖 — 이번 턴은 판단 턴).
+
+### 60.7 판정 — Conditional Go 유지, "구현 완료"와 "운영 전환 준비
+완료"는 분리 확정
+
+**구현은 완료됐다**(§60.2-A). **운영 전환 준비는 완료되지
+않았다** — 벤치마크 데이터 결측이라는 실제 차단 요소가 있다(§60.3).
+R3b는 Conditional Go를 유지한다. `.env` 미변경, 코드 변경 없음(이번
+턴은 순수 점검/조회).
+
+### 60.8 SPPV-3까지 남은 항목 — 3분류 최종 확정
+
+1. **실제 차단 요소**: 벤치마크(069500) signal_feature_snapshot이
+   일일 배치 대상 목록(`data/signal_feature_snapshot_input.json`)
+   에 없어 DB에 이력이 0건 — `ENTRY_SCORE_R3B_ALPHA_ENABLED=true`
+   전환 후에도 alpha 교체가 실제로 발동하지 않는 원인. 해소하려면
+   벤치마크를 배치 대상에 포함하는 별도 작업이 필요(코드/운영 데이터
+   변경 — 이번 턴 범위 밖, 별도 승인 필요).
+2. **사용자 결정 대기**: `ENTRY_SCORE_R3B_ALPHA_ENABLED=true` 실제
+   전환 여부(위 실제 차단 요소 해소 이후에 의미가 생김).
+3. **후속 검증 과제(발동을 막지 않음)**: `trigger_status` 공급원
+   자동화/배치화(낮은 우선순위), T+5/경로 리스크 후속 검증(추가
+   필요성 낮음), `portfolio_allocation` gap(실거래 누적 후 재검증).

@@ -1593,6 +1593,20 @@ value/compliance/broker가 아니라 `entry_score < 0.65`다.
   "결론 유지 + 증빙 보강"(결론 하향 아님). R3b는 Conditional Go를
   유지한다. `.env` 미변경, production 코드 미변경. 상세: `plans/
   [DESIGN] regime_conditional_entry_signal_v1.md` §59.
+
+- 작성자: Codex
+- 수정일자: 2026-07-19 (2.73순위, R3b alpha paper 운영 전환 최종
+  착수 준비 상태 점검)
+- 수정내용: "config만 켜면 되는가"를 판정하는 준비 턴(SPPV-2.71).
+  DB 직접 조회로 신규 사실 확인 — 벤치마크(069500) `signal_
+  feature_snapshot`이 DB에 0건, 일일 배치 입력 목록(`data/signal_
+  feature_snapshot_input.json`)에 애초에 미포함. 이 때문에 `ENTRY_
+  SCORE_R3B_ALPHA_ENABLED=true` 전환해도 alpha 교체가 실제로는
+  발동하지 않는다 — "구현 완료"와 "운영 전환 준비 완료"를 분리
+  확정. SPPV-3 남은 항목을 실제 차단 요소/사용자 결정 대기/후속
+  검증 과제 3분류로 재정리. R3b는 Conditional Go를 유지한다. `.env`
+  미변경, 코드 변경 없음. 상세: `plans/[DESIGN] regime_conditional_
+  entry_signal_v1.md` §60.
 - **3순위(보류 유지, 형태 재정의 — 우선순위 재조정)**: **`entry_
   score`와 BUY funnel 재현** — §2.7 확장 검증에서 하락장 안정성이
   확인되지 않아 단순 재현으로는 착수하지 않는다. §2.16~§2.21에서

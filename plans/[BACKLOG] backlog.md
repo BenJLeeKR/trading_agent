@@ -1079,6 +1079,19 @@
   Conditional Go를 유지한다. `.env` 미변경, production 코드 미변경.
   상세: `plans/[DESIGN] regime_conditional_entry_signal_v1.md` §59.
 
+- 작성자: Codex
+- 수정일자: 2026-07-19 (70차, R3b alpha paper 운영 전환 최종 착수
+  준비 상태 점검)
+- 수정내용: "config만 켜면 되는가"를 판정하는 준비 턴(SPPV-2.71).
+  DB 직접 조회로 신규 사실 확인 — 벤치마크(069500) `signal_
+  feature_snapshot`이 DB에 0건, 일일 배치 입력 목록에 애초에
+  미포함. 이 때문에 `ENTRY_SCORE_R3B_ALPHA_ENABLED=true` 전환해도
+  alpha 교체가 실제로는 발동하지 않는다 — "구현 완료"와 "운영
+  전환 준비 완료"를 분리 확정. SPPV-3 남은 항목을 실제 차단 요소/
+  사용자 결정 대기/후속 검증 과제 3분류로 재정리. R3b는 Conditional
+  Go를 유지한다. `.env` 미변경, 코드 변경 없음. 상세: `plans/
+  [DESIGN] regime_conditional_entry_signal_v1.md` §60.
+
 ---
 
 ## 관리 원칙
@@ -2586,7 +2599,23 @@
     부족했다 — 판정: 결론 유지 + 증빙 보강. R3b는 Conditional Go를
     유지한다. `.env` 미변경, production 코드 미변경. 상세: `plans/
     [DESIGN] regime_conditional_entry_signal_v1.md` §59.
-  - **SPPV-3(다음 착수: `ENTRY_SCORE_R3B_ALPHA_ENABLED=true` 실제
+  - **SPPV-2.71(완료, 2026-07-19, R3b alpha paper 운영 전환 최종
+    착수 준비 상태 점검, 작성자: Codex — Conditional Go 유지,
+    실제 차단 요소 신규 발견)**: "config만 켜면 되는가"를 판정.
+    DB 직접 조회로 벤치마크(069500) `signal_feature_snapshot`이
+    전체 이력 0건임을 확인 — `data/signal_feature_snapshot_
+    input.json`(일일 배치 입력)에 애초에 미포함이 원인. 이 때문에
+    `ENTRY_SCORE_R3B_ALPHA_ENABLED=true` 전환해도 `_build_r3b_
+    alpha_percentile_overrides_for_cycle()`이 항상 빈 dict를
+    반환해 alpha 교체가 실제로는 발동하지 않는다. "구현 완료"와
+    "운영 전환 준비 완료"를 분리 확정 — 실제 차단 요소(벤치마크
+    배치 미포함)/사용자 결정 대기(`.env` 전환)/후속 검증 과제
+    3분류로 재정리. R3b는 Conditional Go를 유지한다. `.env`
+    미변경, 코드 변경 없음. 상세: `plans/[DESIGN] regime_
+    conditional_entry_signal_v1.md` §60.
+  - **SPPV-3(다음 착수: 벤치마크(069500) signal_feature_snapshot
+    배치 포함 여부 해소(신규 최우선 항목, 실제 차단 요소, 별도
+    승인 필요) → 해소 후 `ENTRY_SCORE_R3B_ALPHA_ENABLED=true` 실제
     활성화 여부 사용자 결정(신중한 검토 필요, `.env` 값이므로
     사용자가 직접 변경) +
     `trigger_status` 공급원 자동화/배치화(cron/배치 설계,
