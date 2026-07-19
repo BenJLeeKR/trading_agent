@@ -1578,6 +1578,21 @@ value/compliance/broker가 아니라 `entry_score < 0.65`다.
   failed/111 passed는 git stash 대조로 이번 턴과 무관함(사전 존재
   비결정성) 확인. `.env` 미변경. R3b는 Conditional Go를 유지한다.
   상세: `plans/[DESIGN] regime_conditional_entry_signal_v1.md` §58.
+
+- 작성자: Codex
+- 수정일자: 2026-07-19 (2.72순위, SPPV-2.69 보고 증빙 정정 — 테스트
+  수치·실행 증빙 재확인)
+- 수정내용: 새 기능 구현 없이 §58(SPPV-2.69)의 수치·실행 증빙을
+  실제 파일/로그 기준으로 재검증했다(SPPV-2.70). 기존 `logs/r3b_
+  pytest_run_decision_loop_2026-07-19.log`는 §53의 오래된 로그
+  (10 failed/109 passed)였고, §58이 인용한 "8 failed/111 passed"는
+  저장소 로그가 아니라 대화 출력 인용이었음을 확인. end-to-end
+  검증 스크립트 실행 결과도 저장소 산출물이 없었음을 확인. 이번
+  턴 재실행으로 4개 신규 로그/JSON 저장 — 수치 전부 §58과 정확히
+  일치 재현(8 failed/111 passed; entry_score 0.1159→0.5999). 판정:
+  "결론 유지 + 증빙 보강"(결론 하향 아님). R3b는 Conditional Go를
+  유지한다. `.env` 미변경, production 코드 미변경. 상세: `plans/
+  [DESIGN] regime_conditional_entry_signal_v1.md` §59.
 - **3순위(보류 유지, 형태 재정의 — 우선순위 재조정)**: **`entry_
   score`와 BUY funnel 재현** — §2.7 확장 검증에서 하락장 안정성이
   확인되지 않아 단순 재현으로는 착수하지 않는다. §2.16~§2.21에서

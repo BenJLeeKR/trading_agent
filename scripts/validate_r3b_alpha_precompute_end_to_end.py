@@ -153,7 +153,7 @@ async def step1_precompute_function_actually_runs() -> dict[str, float]:
     return percentiles
 
 
-async def step2_orchestrator_engine_reflects_value() -> None:
+async def step2_orchestrator_engine_reflects_value() -> dict[str, object]:
     """실제 DB의 core 종목 하나로 orchestrator→engine 반영을 확인한다."""
     from agent_trading.db.connection import create_pool
     from agent_trading.db.transaction import transaction
@@ -259,13 +259,53 @@ async def step2_orchestrator_engine_reflects_value() -> None:
 
     print("[2단계] 검증 결과: 활성 시에만 reason_code 발생 + entry_score 변화 확인됨")
 
+    return {
+        "symbol": symbol,
+        "market": market,
+        "off": {
+            "r3b_alpha_enabled": False,
+            "entry_score": entry_off,
+            "reason_codes": list(reasons_off),
+        },
+        "on": {
+            "r3b_alpha_enabled": True,
+            "r3b_alpha_percentile_injected": 0.9,
+            "entry_score": entry_on,
+            "reason_codes": list(reasons_on),
+        },
+        "entry_score_changed": entry_off != entry_on,
+        "alpha_reason_code_present_only_when_enabled": (
+            "trigger_r3b_alpha_percentile" not in reasons_off
+            and "trigger_r3b_alpha_percentile" in reasons_on
+        ),
+    }
+
 
 async def main() -> None:
-    await step1_precompute_function_actually_runs()
+    import json
+
+    step1_result = await step1_precompute_function_actually_runs()
     print()
-    await step2_orchestrator_engine_reflects_value()
+    step2_result = await step2_orchestrator_engine_reflects_value()
     print()
     print("=== 전체 결론: precompute 호출 확인 + orchestrator/engine 실제 반영 확인 ===")
+
+    summary = {
+        "script": "validate_r3b_alpha_precompute_end_to_end.py",
+        "step1_precompute_candidate_percentiles": {
+            symbol: pct for symbol, pct in step1_result.items()
+        },
+        "step1_candidate_count": len(step1_result),
+        "step2": step2_result,
+    }
+    # NOTE: 이 스크립트가 컨테이너 안에서 실행될 경우 `/app/logs`는
+    # 호스트에 마운트되지 않은 컨테이너 전용 경로다(docker-compose.yml
+    # 확인 결과 app 서비스는 logs를 바인드하지 않음) — 반드시 마운트된
+    # `tmp/`에 쓰고, 호출부가 `mv`로 `logs/`에 옮겨야 호스트에 남는다.
+    out_path = "tmp/r3b_alpha_precompute_end_to_end_summary.json"
+    with open(out_path, "w", encoding="utf-8") as f:
+        json.dump(summary, f, ensure_ascii=False, indent=2)
+    print(f"[산출물] JSON 요약 저장: {out_path}")
 
 
 if __name__ == "__main__":

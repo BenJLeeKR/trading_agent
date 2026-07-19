@@ -1510,6 +1510,26 @@ entry 설계 검토로 전환**을 확정했다. 별도 문서
   직접 확인. `.env` 미변경. R3b는 Conditional Go를 유지한다. 상세:
   `plans/[DESIGN] regime_conditional_entry_signal_v1.md` §58.
 
+- 작성자: Codex
+- 수정일자: 2026-07-19 (70차, SPPV-2.69 보고 증빙 정정 — 테스트
+  수치·실행 증빙 재확인)
+- 수정내용: 새 기능 구현 없이 §58(SPPV-2.69)의 수치·실행 증빙을
+  실제 파일/로그 기준으로 재검증했다(SPPV-2.70). `logs/r3b_pytest_
+  run_decision_loop_2026-07-19.log`(01:48 생성)는 §68 이전(§53)의
+  오래된 로그(10 failed/109 passed)였고, §58이 인용한 "8 failed/
+  111 passed"는 저장소 로그가 아니라 대화 출력 인용이었음을 확인;
+  end-to-end 검증 스크립트의 실행 결과도 저장소 산출물이 없었음을
+  확인. 이번 턴 재실행으로 4개 신규 로그/JSON을 저장소에 남겼다 —
+  `test_run_decision_loop.py` 재실행 결과 8 failed/111 passed로
+  §58 수치와 정확히 일치 확인; end-to-end 스크립트 재실행으로
+  000080 종목 entry_score 0.1159→0.5999 완전 재현(JSON에도 명시적
+  기록); 엔진/orchestrator 회귀 83 passed/0 failed. 판정: §58의
+  수치 자체는 틀리지 않았으나 저장소 증빙이 부족했다 — "결론 유지
+  + 증빙 보강"으로 확정. R3b는 Conditional Go를 유지한다. `.env`
+  미변경, production 코드 미변경(검증 스크립트에 JSON 출력 기능만
+  추가). 상세: `plans/[DESIGN] regime_conditional_entry_signal_
+  v1.md` §59.
+
 ---
 
 ## 진행 체크리스트
@@ -3710,6 +3730,33 @@ canonical),
   - 다음 과제: `ENTRY_SCORE_R3B_ALPHA_ENABLED=true` 실제 활성화
     여부 사용자 결정(신중한 검토 필요, `.env` 값이므로 사용자가
     직접 변경), `trigger_status` 자동화(낮은 우선순위).
+  - **[SPPV-2.70에서 증빙 정정] 위 "8 failed/111 passed"·"실제
+    발동 증명" 수치 자체는 정확했으나, 저장소 내 재현 가능한
+    로그/JSON 산출물이 없었음이 확인됨 — 아래 SPPV-2.70 참고. 이
+    항목의 텍스트는 삭제하지 않고 보존한다.**
+- [x] **SPPV-2.70(신설)** SPPV-2.69 보고 증빙 정정 — 테스트 수치·
+  실행 증빙 재확인 (완료, 2026-07-19, 작성자: Codex)
+  - **목적**: 새 기능 구현이 아니라 §58(SPPV-2.69)의 수치·실행
+    증빙을 실제 파일/로그 기준으로 재검증. `logs/r3b_pytest_run_
+    decision_loop_2026-07-19.log`(01:48 생성)가 §68 이전(SPPV-2.64,
+    §53) 턴의 오래된 로그(10 failed/109 passed)였고, §58이 인용한
+    "8 failed/111 passed"는 저장소 로그가 아니라 대화 출력 인용
+    이었음을 확인. `validate_r3b_alpha_precompute_end_to_end.py`의
+    실행 결과도 저장소에 로그/JSON으로 남아있지 않았음을 확인.
+  - **이번 턴 재실행·신규 저장 증빙**: `logs/r3b_pytest_run_
+    decision_loop_2026-07-19b.log`(신규, 8 failed/111 passed —
+    §58 수치와 정확히 일치); `logs/r3b_alpha_precompute_end_to_
+    end_run_2026-07-19.log`(신규, stdout 전체) + `logs/signal_ic_
+    r3b_alpha_precompute_end_to_end_2026-07-19.json`(신규, 검증
+    스크립트에 JSON 출력 기능 추가 후 재실행) — 000080 종목 기준
+    entry_score 0.1159→0.5999 완전 재현; `logs/r3b_pytest_engine_
+    orchestrator_2026-07-19.log`(신규, 83 passed/0 failed).
+  - **판정**: §58의 수치 자체는 틀리지 않았으나 저장소 증빙이
+    부족했다 — "결론 유지 + 증빙 보강"으로 확정(결론 하향 아님).
+    R3b는 Conditional Go를 유지한다. 상세: `plans/[DESIGN] regime_
+    conditional_entry_signal_v1.md` §59.
+  - 다음 과제: 변경 없음(§58과 동일) — `ENTRY_SCORE_R3B_ALPHA_
+    ENABLED=true` 활성화 여부 사용자 결정.
 - [~] **SPPV-3** `entry_score` point-in-time 재현 및 중복 penalty ablation
   - **보류 유지, 형태 재정의 — 우선순위 재조정**: §12(1년, 자기참조
     포함) 당시 "알파 근거 강화"로 낙관했던 것이 §14(3년, 자기참조

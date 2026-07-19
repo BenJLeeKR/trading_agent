@@ -1024,6 +1024,20 @@
   conditional_entry_signal_v1.md` §58.
 
 - 작성자: Codex
+- 수정일자: 2026-07-19 (69차, SPPV-2.69 보고 증빙 정정 — 테스트
+  수치·실행 증빙 재확인)
+- 수정내용: 새 기능 구현 없이 §58(SPPV-2.69)의 수치·실행 증빙을
+  실제 파일/로그 기준으로 재검증했다(SPPV-2.70). 기존 `logs/r3b_
+  pytest_run_decision_loop_2026-07-19.log`는 §53의 오래된 로그
+  (10 failed/109 passed)였고, §58이 인용한 "8 failed/111 passed"는
+  저장소 로그가 아니라 대화 출력 인용이었음을 확인. end-to-end
+  검증 스크립트 실행 결과도 저장소 산출물이 없었음을 확인. 이번
+  턴 재실행으로 신규 로그/JSON 4개 저장 — 수치 전부 §58과 정확히
+  일치 재현. 판정: "결론 유지 + 증빙 보강"(결론 하향 아님). R3b는
+  Conditional Go를 유지한다. `.env` 미변경, production 코드 미변경.
+  상세: `plans/[DESIGN] regime_conditional_entry_signal_v1.md` §59.
+
+- 작성자: Codex
 - 수정일자: 2026-07-19 (64차, entry_score 코드 변경 PR 초안 설계 —
   R3b alpha 교체 실제 파이프라인 연결 방안)
 - 수정내용: "R3b alpha 전체 경로 재현 검증"은 §45(non-alpha 100%
@@ -1044,8 +1058,47 @@
 
 ## 최근 메모
 
+> **📌 2026-07-19 SPPV-2.69 보고 증빙 정정 — 테스트 수치·실행 증빙
+> 재확인 (최신, 작성자: Codex)**: 새 기능 구현이 아니라 §58(SPPV-
+> 2.69)의 수치·실행 증빙을 실제 파일/로그 기준으로 재검증했다
+> (SPPV-2.70). **확인 결과**: `logs/r3b_pytest_run_decision_
+> loop_2026-07-19.log`(01:48 생성)는 §58 이전 §53(SPPV-2.64) 턴의
+> 오래된 로그(10 failed/109 passed)였다 — §58이 인용한 "8 failed/
+> 111 passed"는 이 저장소 로그가 아니라 §58 작성 당시 대화창에
+> 출력된 실행 결과 인용이었다. `scripts/validate_r3b_alpha_
+> precompute_end_to_end.py`는 실제로 존재하고 §58에서 실행된 것은
+> 맞지만, 그 실행 stdout을 `logs/`에 저장한 산출물이 하나도 없었다
+> — "실제 발동 증명"이 저장소 내 재현 가능한 증거 없이 대화 인용
+> 만으로 주장된 상태였다. **이번 턴 재실행·신규 저장 증빙**: (1)
+> `test_run_decision_loop.py` 재실행 → `logs/r3b_pytest_run_
+> decision_loop_2026-07-19b.log`(신규) — **8 failed, 111 passed**,
+> §58 수치와 정확히 일치 재현; (2) `validate_r3b_alpha_precompute_
+> end_to_end.py` 재실행 → `logs/r3b_alpha_precompute_end_to_end_
+> run_2026-07-19.log`(신규, stdout 전체) + `logs/signal_ic_r3b_
+> alpha_precompute_end_to_end_2026-07-19.json`(신규 — 스크립트에
+> JSON 출력 기능을 추가해 재실행) — 000080 종목 기준 비활성
+> entry_score=0.1159 → 활성+percentile=0.9 entry_score=0.5999로
+> §58과 완전히 동일한 결과 재현, JSON에 `entry_score_changed=true`/
+> `alpha_reason_code_present_only_when_enabled=true`를 명시적으로
+> 기록; (3) `test_deterministic_trigger_engine.py`+`test_decision_
+> orchestrator.py` 재실행 → `logs/r3b_pytest_engine_orchestrator_
+> 2026-07-19.log`(신규) — **83 passed, 0 failed**. **분리 판정**:
+> §58의 수치 자체(8 failed/111 passed, entry_score 0.1159→0.5999)는
+> **틀리지 않았다** — 오직 그 수치를 뒷받침하는 저장소 내 로그/JSON
+> 산출물이 없었다는 **증빙 부족**만이 문제였다. 코드 구현 범위
+> (cycle precompute 함수, metadata 주입, orchestrator/engine 배선)
+> 서술은 §58 그대로 정확했다. **최종 결론**: "결론 유지 + 증빙
+> 보강" — 결론 하향이 아니다. R3b alpha 교체 파이프라인이 실제로
+> 완성되고 발동함을 증명하는 §58의 결론은 이번 재검증으로 오히려
+> 더 강화됐다(대화 인용 → 저장소 로그/JSON 근거). R3b는 Conditional
+> Go를 유지한다. `.env` 미변경, production 코드 미변경(검증
+> 스크립트에 JSON 출력 기능만 추가). SPPV-3까지 남은 조건은 변경
+> 없음 — `ENTRY_SCORE_R3B_ALPHA_ENABLED=true` 활성화 여부 사용자
+> 결정만 남아 있다. 상세: `plans/[DESIGN] regime_conditional_
+> entry_signal_v1.md` §59.
+
 > **📌 2026-07-19 entry_score R3b alpha 교체 — cycle precompute
-> 실제 구현·발동 확인 (최신, 작성자: Codex)**: §57(SPPV-2.68)이
+> 실제 구현·발동 확인 (작성자: Codex)**: §57(SPPV-2.68)이
 > "여전히 유일한 실행 단계"로 남긴 cycle precompute를 실제로
 > 구현했다(SPPV-2.69) — 이번 턴은 문서 정정이 아니라 실제 기능
 > 연결 완료 여부를 확인하는 구현 턴이다. **구현 내용**: `run_
@@ -8343,6 +8396,23 @@ agent 설계 문서 기준으로도 순서는 다음이 맞다.
      무관함(사전 존재 비결정성) 확인. `.env` 미변경, gate 로직
      강화 없음. R3b는 Conditional Go를 유지한다. 상세: `plans/
      [DESIGN] regime_conditional_entry_signal_v1.md` §58.
+   - **SPPV-2.70(완료, 2026-07-19, SPPV-2.69 보고 증빙 정정 — 테스트
+     수치·실행 증빙 재확인, 작성자: Codex — 결론 유지+증빙 보강,
+     결론 하향 아님)**: §58의 수치·실행 증빙을 실제 파일/로그 기준
+     으로 재검증했다. 기존 `logs/r3b_pytest_run_decision_loop_
+     2026-07-19.log`는 §53의 오래된 로그(10 failed/109 passed)였고,
+     §58이 인용한 "8 failed/111 passed"는 저장소 로그가 아니라 대화
+     출력 인용이었음을 확인; end-to-end 검증 스크립트 실행 결과도
+     저장소 산출물이 없었음을 확인. 이번 턴 재실행으로 신규 로그/
+     JSON 4개(`r3b_pytest_run_decision_loop_2026-07-19b.log`,
+     `r3b_alpha_precompute_end_to_end_run_2026-07-19.log`, `signal_
+     ic_r3b_alpha_precompute_end_to_end_2026-07-19.json`, `r3b_
+     pytest_engine_orchestrator_2026-07-19.log`) 저장 — 수치 전부
+     §58과 정확히 일치 재현(8 failed/111 passed; entry_score
+     0.1159→0.5999). §58의 수치 자체는 틀리지 않았고 증빙만
+     부족했다 — 판정: **결론 유지 + 증빙 보강**. R3b는 Conditional
+     Go를 유지한다. `.env` 미변경, production 코드 미변경. 상세:
+     `plans/[DESIGN] regime_conditional_entry_signal_v1.md` §59.
    - **SPPV-3(다음 착수: `ENTRY_SCORE_R3B_ALPHA_ENABLED=true` 실제
      활성화 여부 사용자 결정(신중한 검토 필요, `.env` 값이므로
      사용자가 직접 변경) +

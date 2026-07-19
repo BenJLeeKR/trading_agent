@@ -1,0 +1,13 @@
+[1단계] 벤치마크 스냅샷 분류 결과 market_common_label=bullish_trend
+[1단계] precompute 결과: 4개 종목 percentile 부여
+[1단계] 상세: [('S03', 0.0), ('S02', 0.3333333333333333), ('S01', 0.6666666666666666), ('S00', 1.0)]
+
+[2단계] 검증 대상 종목: 000080 (KRX)
+[2단계] (a) r3b_alpha_enabled=False → entry_score=0.1159
+[2단계]     reason_codes=('trigger_source_core', 'trigger_risk_off_penalty', 'trigger_allocation_budget_available', 'trigger_relative_activity_bonus', 'trigger_bearish_regime', 'trigger_exit_risk_off', 'trigger_no_position_exit_penalty', 'trigger_watch_from_exit_setup', 'trigger_core_watch_path', 'trigger_watch_candidate')
+[2단계] (b) r3b_alpha_enabled=True + percentile=0.9 → entry_score=0.5999
+[2단계]     reason_codes=('trigger_source_core', 'trigger_r3b_alpha_percentile', 'trigger_risk_off_penalty', 'trigger_allocation_budget_available', 'trigger_relative_activity_bonus', 'trigger_bearish_regime', 'trigger_exit_risk_off', 'trigger_no_position_exit_penalty', 'trigger_watch_from_entry_setup', 'trigger_watch_from_exit_setup', 'trigger_core_watch_path', 'trigger_watch_candidate')
+[2단계] 검증 결과: 활성 시에만 reason_code 발생 + entry_score 변화 확인됨
+
+=== 전체 결론: precompute 호출 확인 + orchestrator/engine 실제 반영 확인 ===
+[산출물] JSON 요약 저장: tmp/r3b_alpha_precompute_end_to_end_summary.json

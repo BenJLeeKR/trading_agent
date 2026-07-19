@@ -1,0 +1,309 @@
+============================= test session starts ==============================
+platform linux -- Python 3.14.6, pytest-9.1.1, pluggy-1.6.0 -- /usr/local/bin/python3
+cachedir: .pytest_cache
+rootdir: /app
+configfile: pyproject.toml
+plugins: anyio-4.14.1, asyncio-1.4.0
+asyncio: mode=Mode.AUTO, debug=False, asyncio_default_fixture_loop_scope=module, asyncio_default_test_loop_scope=function
+collecting ... collected 119 items
+
+tests/scripts/test_run_decision_loop.py::TestSerializeCycleResult::test_submitted_result PASSED [  0%]
+tests/scripts/test_run_decision_loop.py::TestSerializeCycleResult::test_dry_run_result PASSED [  1%]
+tests/scripts/test_run_decision_loop.py::TestSerializeCycleResult::test_error_result PASSED [  2%]
+tests/scripts/test_run_decision_loop.py::TestSerializeCycleResult::test_with_precheck PASSED [  3%]
+tests/scripts/test_run_decision_loop.py::TestSerializeCycleResult::test_includes_universe_anchor_fields PASSED [  4%]
+tests/scripts/test_run_decision_loop.py::TestSerializeCycleResult::test_includes_ai_call_path PASSED [  5%]
+tests/scripts/test_run_decision_loop.py::TestSerializeCycleResult::test_includes_risk_off_exception_flag PASSED [  5%]
+tests/scripts/test_run_decision_loop.py::TestSerializeCycleResultSourceType::test_default_source_type_is_core PASSED [  6%]
+tests/scripts/test_run_decision_loop.py::TestSerializeCycleResultSourceType::test_held_position_source_type PASSED [  7%]
+tests/scripts/test_run_decision_loop.py::TestSerializeCycleResultSourceType::test_source_type_in_submitted_result PASSED [  8%]
+tests/scripts/test_run_decision_loop.py::TestSerializeCycleResultSourceType::test_source_type_in_error_result PASSED [  9%]
+tests/scripts/test_run_decision_loop.py::TestBuildAggregateSummary::test_all_success PASSED [ 10%]
+tests/scripts/test_run_decision_loop.py::TestBuildAggregateSummary::test_mixed_results PASSED [ 10%]
+tests/scripts/test_run_decision_loop.py::TestBuildAggregateSummary::test_empty_results PASSED [ 11%]
+tests/scripts/test_run_decision_loop.py::TestBuildAggregateSummary::test_includes_universe_and_processed_source_metrics PASSED [ 12%]
+tests/scripts/test_run_decision_loop.py::TestBuildAggregateSummary::test_includes_ai_call_path_metrics PASSED [ 13%]
+tests/scripts/test_run_decision_loop.py::TestBuildAggregateSummary::test_includes_risk_off_exception_metrics PASSED [ 14%]
+tests/scripts/test_run_decision_loop.py::TestBuildAggregateSummary::test_includes_universe_anchor_metrics PASSED [ 15%]
+tests/scripts/test_run_decision_loop.py::TestSerializePrecheck::test_healthy PASSED [ 15%]
+tests/scripts/test_run_decision_loop.py::TestSerializePrecheck::test_stale PASSED [ 16%]
+tests/scripts/test_run_decision_loop.py::TestRunOneCycle::test_dry_run PASSED [ 17%]
+tests/scripts/test_run_decision_loop.py::TestRunOneCycle::test_submit PASSED [ 18%]
+tests/scripts/test_run_decision_loop.py::TestRunOneCycle::test_precheck_stale_in_summary PASSED [ 19%]
+tests/scripts/test_run_decision_loop.py::TestRunOneCycle::test_dry_run_with_held_position_source_type PASSED [ 20%]
+tests/scripts/test_run_decision_loop.py::TestRunOneCycle::test_scheduler_dry_run_records_guardrail_evaluation PASSED [ 21%]
+tests/scripts/test_run_decision_loop.py::TestRunOneCycle::test_submit_with_held_position_source_type PASSED [ 21%]
+tests/scripts/test_run_decision_loop.py::TestRunOneCycle::test_held_position_can_trigger_t3_live_pipeline_when_not_fresh PASSED [ 22%]
+tests/scripts/test_run_decision_loop.py::TestRunOneCycle::test_pre_ai_skip_when_orderable_amount_below_threshold FAILED [ 23%]
+tests/scripts/test_run_decision_loop.py::TestRunOneCycle::test_pre_ai_does_not_skip_when_cash_snapshot_is_stale PASSED [ 24%]
+tests/scripts/test_run_decision_loop.py::TestRunOneCycle::test_pre_ai_skip_when_held_position_has_no_quantity PASSED [ 25%]
+tests/scripts/test_run_decision_loop.py::TestRunOneCycle::test_pre_ai_skip_when_held_position_recent_hold_has_no_change PASSED [ 26%]
+tests/scripts/test_run_decision_loop.py::TestRunOneCycle::test_pre_ai_validation_result_uses_common_contract PASSED [ 26%]
+tests/scripts/test_run_decision_loop.py::TestRunOneCycle::test_pre_ai_skip_not_triggered_for_held_position_after_cutoff PASSED [ 27%]
+tests/scripts/test_run_decision_loop.py::TestRunOneCycle::test_pre_ai_skip_not_triggered_for_held_position_when_recent_event_exists PASSED [ 28%]
+tests/scripts/test_run_decision_loop.py::TestRunOneCycle::test_pre_ai_skip_when_held_position_recent_risk_sell_has_no_change PASSED [ 29%]
+tests/scripts/test_run_decision_loop.py::TestRunOneCycle::test_pre_ai_skip_not_triggered_when_position_increased_after_recent_risk_sell PASSED [ 30%]
+tests/scripts/test_run_decision_loop.py::TestRunOneCycle::test_pre_ai_skip_when_held_position_recent_buy_sell_cooldown_active PASSED [ 31%]
+tests/scripts/test_run_decision_loop.py::TestRunOneCycle::test_pre_ai_skip_when_holding_profile_earliest_reduce_window_active PASSED [ 31%]
+tests/scripts/test_run_decision_loop.py::TestRunOneCycle::test_pre_ai_skip_when_reverse_trade_uses_same_signal_feature_snapshot_after_buy PASSED [ 32%]
+tests/scripts/test_run_decision_loop.py::TestRunOneCycle::test_pre_ai_skip_not_triggered_when_position_reduced_after_recent_buy PASSED [ 33%]
+tests/scripts/test_run_decision_loop.py::TestRunOneCycle::test_pre_ai_skip_when_same_symbol_reentry_cooldown_active PASSED [ 34%]
+tests/scripts/test_run_decision_loop.py::TestRunOneCycle::test_pre_ai_skip_when_reentry_uses_same_signal_feature_snapshot PASSED [ 35%]
+tests/scripts/test_run_decision_loop.py::TestRunOneCycle::test_pre_ai_skip_when_holding_profile_earliest_reentry_window_active PASSED [ 36%]
+tests/scripts/test_run_decision_loop.py::TestRunOneCycle::test_pre_ai_same_symbol_reentry_cooldown_skips_core_cycle FAILED [ 36%]
+tests/scripts/test_run_decision_loop.py::TestRunOneCycle::test_pre_ai_recent_buy_sell_cooldown_skips_held_position_cycle FAILED [ 37%]
+tests/scripts/test_run_decision_loop.py::TestRunOneCycle::test_pre_ai_reverse_trade_same_snapshot_skips_cycle FAILED [ 38%]
+tests/scripts/test_run_decision_loop.py::TestRunOneCycle::test_pre_ai_skip_when_general_buy_budget_exhausted_and_no_position PASSED [ 39%]
+tests/scripts/test_run_decision_loop.py::TestRunOneCycle::test_pre_ai_skip_reason_not_triggered_when_position_exists_even_if_buy_budget_zero PASSED [ 40%]
+tests/scripts/test_run_decision_loop.py::TestRunOneCycle::test_pre_ai_cash_gate_not_triggered_when_position_exists_and_orderable_amount_low PASSED [ 41%]
+tests/scripts/test_run_decision_loop.py::TestRunOneCycle::test_t3_fresh_skip_when_fresh_events_exist PASSED [ 42%]
+tests/scripts/test_run_decision_loop.py::TestRunOneCycle::test_t3_quota_exhausted_skip PASSED [ 42%]
+tests/scripts/test_run_decision_loop.py::TestRunOneCycle::test_t3_fresh_skip_completes_normally PASSED [ 43%]
+tests/scripts/test_run_decision_loop.py::TestHeldPositionSellBudget::test_hp_sell_ignores_general_submit_budget_consumed PASSED [ 44%]
+tests/scripts/test_run_decision_loop.py::TestHeldPositionSellBudget::test_hp_sell_cycle_count_no_longer_blocks_submit PASSED [ 45%]
+tests/scripts/test_run_decision_loop.py::TestHeldPositionSellBudget::test_hp_sell_symbol_dedupe_blocks_duplicate PASSED [ 46%]
+tests/scripts/test_run_decision_loop.py::TestHeldPositionSellBudget::test_core_symbol_still_respects_general_submit_budget PASSED [ 47%]
+tests/scripts/test_run_decision_loop.py::TestHeldPositionSellBudget::test_core_symbol_blocked_when_general_submit_disabled PASSED [ 47%]
+tests/scripts/test_run_decision_loop.py::TestHeldPositionSellBudget::test_infer_core_dry_run_reason_when_general_submit_disabled PASSED [ 48%]
+tests/scripts/test_run_decision_loop.py::TestHeldPositionSellBudget::test_infer_market_overlay_dry_run_reason_when_slot_consumed PASSED [ 49%]
+tests/scripts/test_run_decision_loop.py::TestHeldPositionSellBudget::test_core_symbol_allows_submit_while_cycle_budget_remains PASSED [ 50%]
+tests/scripts/test_run_decision_loop.py::TestGeneralSubmitLane::test_run_loop_allows_next_general_submit_after_pre_submit_failure PASSED [ 51%]
+tests/scripts/test_run_decision_loop.py::TestGeneralSubmitLane::test_run_loop_allows_multiple_general_submits_up_to_cycle_budget PASSED [ 52%]
+tests/scripts/test_run_decision_loop.py::TestGeneralSubmitLane::test_run_loop_general_submit_lane_does_not_serialize_symbol_execution PASSED [ 52%]
+tests/scripts/test_run_decision_loop.py::TestParseArgs::test_defaults PASSED [ 53%]
+tests/scripts/test_run_decision_loop.py::TestParseArgs::test_count_one PASSED [ 54%]
+tests/scripts/test_run_decision_loop.py::TestParseArgs::test_dry_run PASSED [ 55%]
+tests/scripts/test_run_decision_loop.py::TestParseArgs::test_interval PASSED [ 56%]
+tests/scripts/test_run_decision_loop.py::TestParseArgs::test_json_output PASSED [ 57%]
+tests/scripts/test_run_decision_loop.py::TestTradingUniverse::test_default_universe PASSED [ 57%]
+tests/scripts/test_run_decision_loop.py::TestTradingUniverse::test_parse_symbols_with_default_market PASSED [ 58%]
+tests/scripts/test_run_decision_loop.py::TestTradingUniverse::test_parse_explicit_markets_and_dedup PASSED [ 59%]
+tests/scripts/test_run_decision_loop.py::TestTradingUniverse::test_read_trading_universe_from_env PASSED [ 60%]
+tests/scripts/test_run_decision_loop.py::TestTradingUniverse::test_read_trading_universe_prefers_latest_intraday_freeze PASSED [ 61%]
+tests/scripts/test_run_decision_loop.py::TestTradingUniverse::test_read_trading_universe_dedupes_duplicate_freeze_rows PASSED [ 62%]
+tests/scripts/test_run_decision_loop.py::TestTradingUniverse::test_universe_selection_service_fallback FAILED [ 63%]
+tests/scripts/test_run_decision_loop.py::TestTradingUniverse::test_universe_selection_service_fallback_preserves_kosdaq_market FAILED [ 63%]
+tests/scripts/test_run_decision_loop.py::TestTradingUniverse::test_read_trading_universe_applies_cap_overrides PASSED [ 64%]
+tests/scripts/test_run_decision_loop.py::TestTradingUniverse::test_read_trading_universe_applies_core_cap PASSED [ 65%]
+tests/scripts/test_run_decision_loop.py::TestTradingUniverse::test_universe_selection_service_with_kis_market_overlay FAILED [ 66%]
+tests/scripts/test_run_decision_loop.py::TestTradingUniverse::test_universe_selection_service_with_kis_quotes_returned FAILED [ 67%]
+tests/scripts/test_run_decision_loop.py::TestTradingUniverse::test_kis_client_init_failure_logs_warning PASSED [ 68%]
+tests/scripts/test_run_decision_loop.py::TestTradingUniverse::test_universe_selection_service_empty_fallback PASSED [ 68%]
+tests/scripts/test_run_decision_loop.py::TestTradingUniverse::test_universe_selection_service_error_fallback PASSED [ 69%]
+tests/scripts/test_run_decision_loop.py::TestResolveSymbolPrice::test_uses_live_quote PASSED [ 70%]
+tests/scripts/test_run_decision_loop.py::TestResolveSymbolPrice::test_fallback_on_quote_none PASSED [ 71%]
+tests/scripts/test_run_decision_loop.py::TestResolveSymbolPrice::test_fallback_on_quote_zero PASSED [ 72%]
+tests/scripts/test_run_decision_loop.py::TestResolveSymbolPrice::test_fallback_on_quote_exception PASSED [ 73%]
+tests/scripts/test_run_decision_loop.py::TestResolveSymbolPrice::test_fallback_no_broker PASSED [ 73%]
+tests/scripts/test_run_decision_loop.py::TestResolveSymbolPrice::test_uses_kis_smoke_price_env_fallback PASSED [ 74%]
+tests/scripts/test_run_decision_loop.py::TestResolveSymbolPrice::test_quote_priority_over_env PASSED [ 75%]
+tests/scripts/test_run_decision_loop.py::TestPersistSeededEvents::test_persists_new PASSED [ 76%]
+tests/scripts/test_run_decision_loop.py::TestPersistSeededEvents::test_skips_duplicate PASSED [ 77%]
+tests/scripts/test_run_decision_loop.py::TestPersistSeededEvents::test_non_fatal_on_error PASSED [ 78%]
+tests/scripts/test_run_decision_loop.py::TestPersistSeededEvents::test_mixed_persist_and_skip PASSED [ 78%]
+tests/scripts/test_run_decision_loop.py::TestSigtermHandler::test_sigterm_handler_uses_add_signal_handler PASSED [ 79%]
+tests/scripts/test_run_decision_loop.py::TestSigtermHandler::test_handle_signal_cancels_all_tasks PASSED [ 80%]
+tests/scripts/test_run_decision_loop.py::TestCollectPersistedSeededEvents::test_empty_when_no_events PASSED [ 81%]
+tests/scripts/test_run_decision_loop.py::TestCollectPersistedSeededEvents::test_filters_to_t3_only PASSED [ 82%]
+tests/scripts/test_run_decision_loop.py::TestCollectPersistedSeededEvents::test_with_data PASSED [ 83%]
+tests/scripts/test_run_decision_loop.py::TestCollectPersistedSeededEvents::test_includes_seeded_news_event_type PASSED [ 84%]
+tests/scripts/test_run_decision_loop.py::TestIsT3FreshForSymbol::test_true_when_fresh_events_exist PASSED [ 84%]
+tests/scripts/test_run_decision_loop.py::TestIsT3FreshForSymbol::test_false_when_no_events PASSED [ 85%]
+tests/scripts/test_run_decision_loop.py::TestIsT3FreshForSymbol::test_false_when_only_stale_events PASSED [ 86%]
+tests/scripts/test_run_decision_loop.py::TestIsT3FreshForSymbol::test_true_with_seeded_news_event_type PASSED [ 87%]
+tests/scripts/test_run_decision_loop.py::TestRunT3LivePipeline::test_skip_when_services_unavailable PASSED [ 88%]
+tests/scripts/test_run_decision_loop.py::TestRunT3LivePipeline::test_skip_when_naver_quota_exhausted PASSED [ 89%]
+tests/scripts/test_run_decision_loop.py::TestRunT3LivePipeline::test_process_quota_exhausted_degraded_persist_does_not_crash PASSED [ 89%]
+tests/scripts/test_run_decision_loop.py::TestRunT3LivePipeline::test_timeout_handled_gracefully PASSED [ 90%]
+tests/scripts/test_run_decision_loop.py::TestRunT3LivePipeline::test_exception_handled_gracefully PASSED [ 91%]
+tests/scripts/test_run_decision_loop.py::TestRunT3LivePipeline::test_success_path PASSED [ 92%]
+tests/scripts/test_run_decision_loop.py::TestRunT3LivePipelinePartialPersist::test_partial_persist_after_convert_timeout PASSED [ 93%]
+tests/scripts/test_run_decision_loop.py::TestRunT3LivePipelinePartialPersist::test_partial_persist_with_seeds_only PASSED [ 94%]
+tests/scripts/test_run_decision_loop.py::TestRunT3LivePipelineShielded::test_creatable_via_create_task PASSED [ 94%]
+tests/scripts/test_run_decision_loop.py::TestRunT3LivePipelineShielded::test_propagates_inner_result PASSED [ 95%]
+tests/scripts/test_run_decision_loop.py::TestT3DegradedPath::test_collect_and_freshness_integration PASSED [ 96%]
+tests/scripts/test_run_decision_loop.py::TestAccountLookupFieldName::test_account_alias_field_exists PASSED [ 97%]
+tests/scripts/test_run_decision_loop.py::TestAccountLookupFieldName::test_alias_field_does_not_exist PASSED [ 98%]
+tests/scripts/test_run_decision_loop.py::TestAccountLookupFieldName::test_account_alias_construction_succeeds PASSED [ 99%]
+tests/scripts/test_run_decision_loop.py::TestAccountLookupFieldName::test_alias_construction_raises_type_error PASSED [100%]
+
+=================================== FAILURES ===================================
+____ TestRunOneCycle.test_pre_ai_skip_when_orderable_amount_below_threshold ____
+tests/scripts/test_run_decision_loop.py:1244: in test_pre_ai_skip_when_orderable_amount_below_threshold
+    assert result["status"] == "SKIPPED"
+E   AssertionError: assert 'ERROR' == 'SKIPPED'
+E     
+E     - SKIPPED
+E     + ERROR
+------------------------------ Captured log call -------------------------------
+ERROR    scripts.run_decision_loop:run_decision_loop.py:2080 [SYMBOL_DONE] cycle=1 symbol=000100 status=ERROR duration=0.0s error=[<class 'decimal.ConversionSyntax'>]
+Traceback (most recent call last):
+  File "/app/scripts/run_decision_loop.py", line 1733, in _run_one_cycle
+    pre_ai_validation_result, pre_ai_skip_details = await _evaluate_pre_ai_validation_result(
+                                                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    ...<7 lines>...
+    )
+    ^
+  File "/app/scripts/run_decision_loop.py", line 195, in _evaluate_pre_ai_validation_result
+    return await evaluate_pre_ai_validation_result(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    ...<9 lines>...
+    )
+    ^
+  File "/app/src/agent_trading/services/pre_ai_gate.py", line 398, in evaluate_pre_ai_validation_result
+    reentry_skip_reason = await evaluate_same_symbol_reentry_skip_reason(
+                          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    ...<7 lines>...
+    )
+    ^
+  File "/app/src/agent_trading/services/pre_ai_gate.py", line 724, in evaluate_same_symbol_reentry_skip_reason
+    ) = await _get_latest_recent_held_decision(
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    ...<5 lines>...
+    )
+    ^
+  File "/app/src/agent_trading/services/pre_ai_gate.py", line 150, in _get_latest_recent_held_decision
+    Decimal(str(row["anchored_edge_after_cost_bps"]))
+    ~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+decimal.InvalidOperation: [<class 'decimal.ConversionSyntax'>]
+__ TestRunOneCycle.test_pre_ai_same_symbol_reentry_cooldown_skips_core_cycle ___
+tests/scripts/test_run_decision_loop.py:2188: in test_pre_ai_same_symbol_reentry_cooldown_skips_core_cycle
+    assert result["status"] == "SKIPPED"
+E   AssertionError: assert 'ERROR' == 'SKIPPED'
+E     
+E     - SKIPPED
+E     + ERROR
+------------------------------ Captured log call -------------------------------
+ERROR    scripts.run_decision_loop:run_decision_loop.py:2080 [SYMBOL_DONE] cycle=1 symbol=005930 status=ERROR duration=0.0s error='>' not supported between instances of 'AsyncMock' and 'int'
+Traceback (most recent call last):
+  File "/app/scripts/run_decision_loop.py", line 1995, in _run_one_cycle
+    result = await asyncio.wait_for(
+             ^^^^^^^^^^^^^^^^^^^^^^^
+    ...<7 lines>...
+    )
+    ^
+  File "/usr/local/lib/python3.14/asyncio/tasks.py", line 488, in wait_for
+    return await fut
+           ^^^^^^^^^
+  File "/app/src/agent_trading/services/decision_orchestrator.py", line 2627, in assemble_and_submit
+    return await self._execution_service.run_execution_pipeline(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    ...<9 lines>...
+    )
+    ^
+  File "/app/src/agent_trading/services/execution_service.py", line 2079, in run_execution_pipeline
+    _resolved_quote, reference_price = await self._resolve_quote(
+                                       ^^^^^^^^^^^^^^^^^^^^^^^^^^
+    ...<5 lines>...
+    )
+    ^
+  File "/app/src/agent_trading/services/execution_service.py", line 1717, in _resolve_quote
+    if quote.last is not None and quote.last > 0:
+                                  ^^^^^^^^^^^^^^
+TypeError: '>' not supported between instances of 'AsyncMock' and 'int'
+_ TestRunOneCycle.test_pre_ai_recent_buy_sell_cooldown_skips_held_position_cycle _
+tests/scripts/test_run_decision_loop.py:2225: in test_pre_ai_recent_buy_sell_cooldown_skips_held_position_cycle
+    assert result["status"] == "SKIPPED"
+E   AssertionError: assert 'ERROR' == 'SKIPPED'
+E     
+E     - SKIPPED
+E     + ERROR
+------------------------------ Captured log call -------------------------------
+ERROR    scripts.run_decision_loop:run_decision_loop.py:2080 [SYMBOL_DONE] cycle=1 symbol=005930 status=ERROR duration=0.0s error='>' not supported between instances of 'AsyncMock' and 'int'
+Traceback (most recent call last):
+  File "/app/scripts/run_decision_loop.py", line 1995, in _run_one_cycle
+    result = await asyncio.wait_for(
+             ^^^^^^^^^^^^^^^^^^^^^^^
+    ...<7 lines>...
+    )
+    ^
+  File "/usr/local/lib/python3.14/asyncio/tasks.py", line 488, in wait_for
+    return await fut
+           ^^^^^^^^^
+  File "/app/src/agent_trading/services/decision_orchestrator.py", line 2627, in assemble_and_submit
+    return await self._execution_service.run_execution_pipeline(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    ...<9 lines>...
+    )
+    ^
+  File "/app/src/agent_trading/services/execution_service.py", line 2079, in run_execution_pipeline
+    _resolved_quote, reference_price = await self._resolve_quote(
+                                       ^^^^^^^^^^^^^^^^^^^^^^^^^^
+    ...<5 lines>...
+    )
+    ^
+  File "/app/src/agent_trading/services/execution_service.py", line 1717, in _resolve_quote
+    if quote.last is not None and quote.last > 0:
+                                  ^^^^^^^^^^^^^^
+TypeError: '>' not supported between instances of 'AsyncMock' and 'int'
+_____ TestRunOneCycle.test_pre_ai_reverse_trade_same_snapshot_skips_cycle ______
+tests/scripts/test_run_decision_loop.py:2261: in test_pre_ai_reverse_trade_same_snapshot_skips_cycle
+    assert result["status"] == "SKIPPED"
+E   AssertionError: assert 'ERROR' == 'SKIPPED'
+E     
+E     - SKIPPED
+E     + ERROR
+------------------------------ Captured log call -------------------------------
+ERROR    scripts.run_decision_loop:run_decision_loop.py:2080 [SYMBOL_DONE] cycle=1 symbol=005930 status=ERROR duration=0.0s error='>' not supported between instances of 'AsyncMock' and 'int'
+Traceback (most recent call last):
+  File "/app/scripts/run_decision_loop.py", line 1995, in _run_one_cycle
+    result = await asyncio.wait_for(
+             ^^^^^^^^^^^^^^^^^^^^^^^
+    ...<7 lines>...
+    )
+    ^
+  File "/usr/local/lib/python3.14/asyncio/tasks.py", line 488, in wait_for
+    return await fut
+           ^^^^^^^^^
+  File "/app/src/agent_trading/services/decision_orchestrator.py", line 2627, in assemble_and_submit
+    return await self._execution_service.run_execution_pipeline(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    ...<9 lines>...
+    )
+    ^
+  File "/app/src/agent_trading/services/execution_service.py", line 2079, in run_execution_pipeline
+    _resolved_quote, reference_price = await self._resolve_quote(
+                                       ^^^^^^^^^^^^^^^^^^^^^^^^^^
+    ...<5 lines>...
+    )
+    ^
+  File "/app/src/agent_trading/services/execution_service.py", line 1717, in _resolve_quote
+    if quote.last is not None and quote.last > 0:
+                                  ^^^^^^^^^^^^^^
+TypeError: '>' not supported between instances of 'AsyncMock' and 'int'
+_________ TestTradingUniverse.test_universe_selection_service_fallback _________
+tests/scripts/test_run_decision_loop.py:3152: in test_universe_selection_service_fallback
+    assert len(result) == 2
+E   AssertionError: assert 1 == 2
+E    +  where 1 = len((UniverseSymbol(symbol='005930', market='KRX', source_type='core', inclusion_reason='approved_core_universe', market_segment=None, index_memberships=()),))
+_ TestTradingUniverse.test_universe_selection_service_fallback_preserves_kosdaq_market _
+tests/scripts/test_run_decision_loop.py:3197: in test_universe_selection_service_fallback_preserves_kosdaq_market
+    assert any(
+E   assert False
+E    +  where False = any(<generator object TestTradingUniverse.test_universe_selection_service_fallback_preserves_kosdaq_market.<locals>.<genexpr> at 0xf56257b3c790>)
+_ TestTradingUniverse.test_universe_selection_service_with_kis_market_overlay __
+tests/scripts/test_run_decision_loop.py:3348: in test_universe_selection_service_with_kis_market_overlay
+    assert len(result) == 3
+E   AssertionError: assert 1 == 3
+E    +  where 1 = len((UniverseSymbol(symbol='005930', market='KRX', source_type='core', inclusion_reason='approved_core_universe', market_segment=None, index_memberships=()),))
+------------------------------ Captured log call -------------------------------
+WARNING  agent_trading.services.universe_selection:universe_selection.py:1332 market_overlay: seed_pool 0건이 base liquidity filter에서 전부 탈락 — pre-pool 0건 (seed_pool_source=core_fallback).
+_ TestTradingUniverse.test_universe_selection_service_with_kis_quotes_returned _
+tests/scripts/test_run_decision_loop.py:3409: in test_universe_selection_service_with_kis_quotes_returned
+    assert u.source_type == "market_overlay"
+E   AssertionError: assert 'core' == 'market_overlay'
+E     
+E     - market_overlay
+E     + core
+------------------------------ Captured log call -------------------------------
+WARNING  agent_trading.services.universe_selection:universe_selection.py:1332 market_overlay: seed_pool 0건이 base liquidity filter에서 전부 탈락 — pre-pool 0건 (seed_pool_source=core_fallback).
+=========================== short test summary info ============================
+FAILED tests/scripts/test_run_decision_loop.py::TestRunOneCycle::test_pre_ai_skip_when_orderable_amount_below_threshold
+FAILED tests/scripts/test_run_decision_loop.py::TestRunOneCycle::test_pre_ai_same_symbol_reentry_cooldown_skips_core_cycle
+FAILED tests/scripts/test_run_decision_loop.py::TestRunOneCycle::test_pre_ai_recent_buy_sell_cooldown_skips_held_position_cycle
+FAILED tests/scripts/test_run_decision_loop.py::TestRunOneCycle::test_pre_ai_reverse_trade_same_snapshot_skips_cycle
+FAILED tests/scripts/test_run_decision_loop.py::TestTradingUniverse::test_universe_selection_service_fallback
+FAILED tests/scripts/test_run_decision_loop.py::TestTradingUniverse::test_universe_selection_service_fallback_preserves_kosdaq_market
+FAILED tests/scripts/test_run_decision_loop.py::TestTradingUniverse::test_universe_selection_service_with_kis_market_overlay
+FAILED tests/scripts/test_run_decision_loop.py::TestTradingUniverse::test_universe_selection_service_with_kis_quotes_returned
+======================== 8 failed, 111 passed in 2.14s =========================

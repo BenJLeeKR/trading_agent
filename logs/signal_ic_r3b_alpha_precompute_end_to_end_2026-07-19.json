@@ -1,0 +1,51 @@
+{
+  "script": "validate_r3b_alpha_precompute_end_to_end.py",
+  "step1_precompute_candidate_percentiles": {
+    "S00": 1.0,
+    "S01": 0.6666666666666666,
+    "S02": 0.3333333333333333,
+    "S03": 0.0
+  },
+  "step1_candidate_count": 4,
+  "step2": {
+    "symbol": "000080",
+    "market": "KRX",
+    "off": {
+      "r3b_alpha_enabled": false,
+      "entry_score": 0.1159,
+      "reason_codes": [
+        "trigger_source_core",
+        "trigger_risk_off_penalty",
+        "trigger_allocation_budget_available",
+        "trigger_relative_activity_bonus",
+        "trigger_bearish_regime",
+        "trigger_exit_risk_off",
+        "trigger_no_position_exit_penalty",
+        "trigger_watch_from_exit_setup",
+        "trigger_core_watch_path",
+        "trigger_watch_candidate"
+      ]
+    },
+    "on": {
+      "r3b_alpha_enabled": true,
+      "r3b_alpha_percentile_injected": 0.9,
+      "entry_score": 0.5999,
+      "reason_codes": [
+        "trigger_source_core",
+        "trigger_r3b_alpha_percentile",
+        "trigger_risk_off_penalty",
+        "trigger_allocation_budget_available",
+        "trigger_relative_activity_bonus",
+        "trigger_bearish_regime",
+        "trigger_exit_risk_off",
+        "trigger_no_position_exit_penalty",
+        "trigger_watch_from_entry_setup",
+        "trigger_watch_from_exit_setup",
+        "trigger_core_watch_path",
+        "trigger_watch_candidate"
+      ]
+    },
+    "entry_score_changed": true,
+    "alpha_reason_code_present_only_when_enabled": true
+  }
+}
