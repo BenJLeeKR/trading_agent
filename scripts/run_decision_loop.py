@@ -1336,6 +1336,115 @@ async def _build_core_risk_off_apply_overrides_for_cycle(
     return overrides
 
 
+_R3B_ALPHA_BENCHMARK_SYMBOL = "069500"
+_R3B_ALPHA_BENCHMARK_MARKET = "KRX"
+
+
+async def _build_r3b_alpha_percentile_overrides_for_cycle(
+    repos: RepositoryContainer,
+    *,
+    universe: tuple[UniverseSymbol, ...],
+) -> dict[str, float]:
+    """cycle당 1회 entry_score R3b alpha의 candidate_percentile을
+    사전 계산한다(SPPV-2.69, §54.5의 "3단계" — 이 세션에서 처음으로
+    production 코드에 옮겨진 실제 precompute).
+
+    `_build_core_risk_off_apply_overrides_for_cycle`과 동일한 구조
+    (cycle당 1회 그날의 universe 전체를 순회해 dict로 사전 계산 →
+    종목별로 `request.metadata`에 주입)를 따른다. 신규 알고리즘 없음
+    — `services/r3b_alpha_percentile.py`(SPPV-2.67, shadow 스크립트
+    로직 이식·200회 무작위 trial parity 검증 완료)를 그대로 호출할
+    뿐이다.
+
+    **`AppSettings.entry_score_r3b_alpha_enabled`(기본값 False)가
+    꺼져 있으면 이 함수는 아무것도 하지 않고 빈 dict를 반환**한다 —
+    비활성 상태에서 불필요한 DB 조회를 만들지 않기 위함이며, 동시에
+    "기본값이면 기존 동작 100% 유지"를 보장하는 이 세션의 backward-
+    compat 원칙과 일치한다.
+
+    반환값은 ``{symbol: candidate_percentile}`` — candidate pool
+    밖의 종목/신호 결측 종목은 키 자체가 없다(호출부는 `.get(symbol)`
+    로 조회해 `None` fallback을 사용해야 한다).
+    """
+    from agent_trading.config.settings import AppSettings
+    from agent_trading.services.market_regime import classify_market_regime
+    from agent_trading.services.r3b_alpha_percentile import (
+        R3bAlphaInput,
+        build_candidate_percentiles,
+    )
+
+    settings = AppSettings()
+    if not settings.entry_score_r3b_alpha_enabled:
+        return {}
+
+    try:
+        benchmark_instrument = await repos.instruments.get_by_symbol(
+            symbol=_R3B_ALPHA_BENCHMARK_SYMBOL,
+            market_code=_R3B_ALPHA_BENCHMARK_MARKET,
+        )
+        if benchmark_instrument is None:
+            logger.warning(
+                "R3b alpha precompute: 벤치마크(%s) instrument 조회 실패 — skip.",
+                _R3B_ALPHA_BENCHMARK_SYMBOL,
+            )
+            return {}
+        benchmark_snapshot = await repos.signal_feature_snapshots.get_latest_by_instrument(
+            benchmark_instrument.instrument_id,
+        )
+        market_common_label = (
+            classify_market_regime(benchmark_snapshot).regime_label
+            if benchmark_snapshot is not None
+            else None
+        )
+        if market_common_label is None:
+            logger.info(
+                "R3b alpha precompute: 벤치마크 국면 라벨 산출 실패(스냅샷 없음) — skip."
+            )
+            return {}
+
+        items: list[R3bAlphaInput] = []
+        for symbol_entry in universe:
+            try:
+                instrument = await repos.instruments.get_by_symbol(
+                    symbol=symbol_entry.symbol,
+                    market_code=symbol_entry.market,
+                )
+                if instrument is None:
+                    continue
+                snapshot = await repos.signal_feature_snapshots.get_latest_by_instrument(
+                    instrument.instrument_id,
+                )
+                if snapshot is None:
+                    continue
+            except Exception:
+                continue
+            items.append(
+                R3bAlphaInput(
+                    symbol=symbol_entry.symbol,
+                    market_common_label=market_common_label,
+                    return_1m_pct=snapshot.return_1m_pct,
+                    return_3m_pct=snapshot.return_3m_pct,
+                    volatility_20d_pct=snapshot.volatility_20d_pct,
+                )
+            )
+
+        percentiles = build_candidate_percentiles(items)
+        if percentiles:
+            logger.info(
+                "R3b alpha precompute: market_common_label=%s candidates=%d symbols=%s",
+                market_common_label,
+                len(percentiles),
+                ",".join(sorted(percentiles)),
+            )
+        return percentiles
+    except Exception:
+        logger.warning(
+            "R3b alpha precompute failed(사이클에는 영향 없음 — percentile 미주입)",
+            exc_info=True,
+        )
+        return {}
+
+
 async def _record_pre_ai_guardrail_evaluation(
     repos: RepositoryContainer,
     *,
@@ -1570,6 +1679,7 @@ async def _run_one_cycle(
     cycle_precheck: dict[str, object] | None = None,  # ★ cycle precheck (외부에서 주입)
     universe_anchor: UniverseAnchorMetadata | None = None,
     deterministic_trigger_override: dict[str, object] | None = None,
+    r3b_alpha_percentile: float | None = None,
 ) -> dict[str, object]:
     """Execute a single decision cycle with shared runtime.
 
@@ -1720,6 +1830,7 @@ async def _run_one_cycle(
                         if isinstance(deterministic_trigger_override, dict)
                         else None
                     ),
+                    "r3b_alpha_percentile": r3b_alpha_percentile,
                     "universe_anchor": (
                         asdict(universe_anchor)
                         if universe_anchor is not None
@@ -2463,6 +2574,26 @@ async def _run_loop(
             except Exception as exc:
                 logger.warning("Mixedness check failed (관측 전용, 사이클에는 영향 없음): %s", exc)
 
+            # ── Cycle당 1회 R3b alpha candidate_percentile precompute ──
+            # (SPPV-2.69) — entry_score_r3b_alpha_enabled가 꺼져 있으면
+            # (기본값) 함수 내부에서 즉시 빈 dict를 반환해 DB 조회조차
+            # 하지 않는다. 실패해도 사이클에 영향 없음(예외 전부 흡수).
+            cycle_r3b_alpha_percentiles: dict[str, float] = {}
+            try:
+                async with _db_transaction() as tx:
+                    r3b_alpha_repos = build_postgres_repositories(tx)
+                    cycle_r3b_alpha_percentiles = (
+                        await _build_r3b_alpha_percentile_overrides_for_cycle(
+                            r3b_alpha_repos,
+                            universe=universe,
+                        )
+                    )
+                    await tx.commit()
+            except Exception as exc:
+                logger.warning(
+                    "R3b alpha precompute failed(사이클에는 영향 없음): %s", exc
+                )
+
             # Semaphore-based parallel symbol processing.
             # Max 5 concurrent symbols to avoid overwhelming broker/LLM resources
             # while reducing total wall-clock time from ~190s to ~40s for 35 symbols.
@@ -2526,6 +2657,9 @@ async def _run_loop(
                                 universe_anchor=universe_anchor,
                                 deterministic_trigger_override=(
                                     cycle_deterministic_trigger_overrides.get(item.symbol)
+                                ),
+                                r3b_alpha_percentile=(
+                                    cycle_r3b_alpha_percentiles.get(item.symbol)
                                 ),
                             )
                         except Exception as exc:

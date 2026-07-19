@@ -1048,6 +1048,23 @@
   정정 — §56 원문은 삭제하지 않음. 상세: `plans/[DESIGN] regime_
   conditional_entry_signal_v1.md` §57.
 
+- 작성자: Codex
+- 수정일자: 2026-07-19 (68차, entry_score R3b alpha 교체 — cycle
+  precompute 실제 구현·발동 확인)
+- 수정내용: §57이 남긴 유일한 실행 단계(cycle precompute)를 실제로
+  구현했다(SPPV-2.69). `run_decision_loop.py`에 `_build_r3b_alpha_
+  percentile_overrides_for_cycle()` 신규 함수(config 기본값이면
+  DB 조회 없이 즉시 빈 dict) + cycle당 1회 호출 + `SubmitOrderRequest.
+  metadata["r3b_alpha_percentile"]` 실제 주입. end-to-end 검증
+  스크립트로 실제 발동 증명: 실제 DB 종목(000080) 기준 비활성 시
+  entry_score=0.1159(reason_code 없음) vs 활성+percentile=0.9
+  주입 시 entry_score=0.5999(trigger_r3b_alpha_percentile reason_
+  code 발생) — 값이 실제로 바뀜을 확인. 회귀 테스트 83건 전부 통과,
+  `test_run_decision_loop.py`는 8 failed/111 passed로 git stash
+  대조 시 이번 턴과 무관함(사전 존재 비결정성) 확인. `.env` 미변경.
+  R3b는 Conditional Go를 유지한다. 상세: `plans/[DESIGN] regime_
+  conditional_entry_signal_v1.md` §58.
+
 ---
 
 ## 관리 원칙
@@ -2522,9 +2539,26 @@
     단위 precompute는 이 세션 전체에서 production 코드로 옮겨진 적이
     없다. §56 원문은 삭제하지 않고 보존. 상세: `plans/[DESIGN]
     regime_conditional_entry_signal_v1.md` §57.
-  - **SPPV-3(다음 착수: cycle당 1회 precompute 함수(코드 0줄,
-    `run_decision_loop.py`에 실제 percentile 계산·metadata 주입
-    함수 추가·별도 승인 필요 — 여전히 유일한 실행 단계) +
+  - **SPPV-2.69(완료, 2026-07-19, entry_score R3b alpha 교체 —
+    cycle precompute 실제 구현·발동 확인, 작성자: Codex —
+    Conditional Go 유지, 기능적으로 완성)**: §57이 남긴 유일한 실행
+    단계(cycle precompute)를 실제로 구현했다. `run_decision_
+    loop.py`에 `_build_r3b_alpha_percentile_overrides_for_cycle()`
+    신규 함수(config 기본값이면 DB 조회 없이 즉시 빈 dict) + cycle
+    당 1회 호출 + `SubmitOrderRequest.metadata["r3b_alpha_
+    percentile"]` 실제 주입. **실제 발동 검증**(신규 `scripts/
+    validate_r3b_alpha_precompute_end_to_end.py`): 실제 DB 종목
+    (000080) 기준 비활성 시 entry_score=0.1159(reason_code 없음)
+    vs 활성+percentile=0.9 주입 시 entry_score=0.5999(trigger_r3b_
+    alpha_percentile reason_code 발생) — alpha 교체가 실제로 발동함
+    을 증명. 회귀 테스트 83건 전부 통과, `test_run_decision_
+    loop.py` 8 failed/111 passed는 git stash 대조로 이번 턴과
+    무관함(사전 존재 비결정성) 확인. `.env` 미변경, gate 로직 강화
+    없음. R3b는 Conditional Go를 유지한다. 상세: `plans/[DESIGN]
+    regime_conditional_entry_signal_v1.md` §58.
+  - **SPPV-3(다음 착수: `ENTRY_SCORE_R3B_ALPHA_ENABLED=true` 실제
+    활성화 여부 사용자 결정(신중한 검토 필요, `.env` 값이므로
+    사용자가 직접 변경) +
     `trigger_status` 공급원 자동화/배치화(cron/배치 설계,
     override=true인 동안 낮은 우선순위) + 포지션 사이징 등 exit
     외 리스크 관리 수단 검토(신규, 낮은 우선순위, 실거래 계좌

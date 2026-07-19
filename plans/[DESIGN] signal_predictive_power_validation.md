@@ -1493,6 +1493,23 @@ entry 설계 검토로 전환**을 확정했다. 별도 문서
   않음. 상세: `plans/[DESIGN] regime_conditional_entry_signal_v1.md`
   §57.
 
+- 작성자: Codex
+- 수정일자: 2026-07-19 (69차, entry_score R3b alpha 교체 — cycle
+  precompute 실제 구현·발동 확인)
+- 수정내용: §57이 남긴 유일한 실행 단계(cycle precompute)를 실제로
+  구현했다(SPPV-2.69). `run_decision_loop.py`에 `_build_r3b_alpha_
+  percentile_overrides_for_cycle()` 신규 함수(config 기본값이면
+  DB 조회 없이 즉시 빈 dict) + cycle당 1회 호출 + `SubmitOrderRequest.
+  metadata["r3b_alpha_percentile"]` 실제 주입. 신규 end-to-end
+  검증 스크립트로 실제 발동 증명: 실제 DB 종목(000080) 기준 비활성
+  시 entry_score=0.1159(reason_code 없음) vs 활성+percentile=0.9
+  주입 시 entry_score=0.5999(trigger_r3b_alpha_percentile reason_
+  code 발생) — 값이 실제로 바뀜을 확인. 기존 회귀 테스트 83건
+  전부 통과, `test_run_decision_loop.py`는 8 failed/111 passed로
+  git stash 대조 시 이번 턴 변경과 무관함(사전 존재 비결정성)을
+  직접 확인. `.env` 미변경. R3b는 Conditional Go를 유지한다. 상세:
+  `plans/[DESIGN] regime_conditional_entry_signal_v1.md` §58.
+
 ---
 
 ## 진행 체크리스트
@@ -3664,6 +3681,35 @@ canonical),
   - 다음 과제: 변경 없음(§56.7과 동일) — cycle당 1회 precompute
     함수(코드 0줄, 여전히 유일한 실제 실행 단계로 남은 과제),
     `trigger_status` 자동화(낮은 우선순위).
+- [x] **SPPV-2.69(신설)** entry_score R3b alpha 교체 — cycle
+  precompute 실제 구현·발동 확인 (완료, 2026-07-19, 작성자: Codex)
+  - §57이 "여전히 유일한 실행 단계"로 남긴 cycle precompute를
+    실제로 구현했다: `run_decision_loop.py`에 신규 `_build_r3b_
+    alpha_percentile_overrides_for_cycle()`(config 기본값이면 즉시
+    빈 dict 반환, DB 조회조차 없음) + cycle당 1회 호출 + `_run_
+    one_cycle`의 `SubmitOrderRequest.metadata["r3b_alpha_
+    percentile"]` 주입 + `_process_one`에서 종목별 값 전달.
+  - **실제 발동 검증(신규 `scripts/validate_r3b_alpha_precompute_
+    end_to_end.py`, 이번 턴 직접 실행)**: (1) precompute 함수가
+    실제로 universe를 순회해 20개 중 상위 20%(4개)에만 percentile
+    부여를 실측 확인; (2) 실제 DB 종목(000080)으로 — 비활성 시
+    `entry_score=0.1159`(r3b reason_code 없음) vs 활성+percentile
+    0.9 주입 시 `entry_score=0.5999`(`trigger_r3b_alpha_percentile`
+    reason_code 발생) — **alpha 교체가 실제로 발동함을 증명**.
+  - **회귀**: `test_deterministic_trigger_engine.py`+`test_decision_
+    orchestrator.py` 83 passed/0 failed; `test_run_decision_
+    loop.py` 8 failed/111 passed — `git stash`로 이번 턴 변경분을
+    제외해도 동일하게 8 failed/111 passed임을 직접 대조 확인(이번
+    턴 코드와 무관한 사전 존재 비결정성, §53의 10건 집합의
+    부분집합).
+  - **판정**: R3b alpha 교체 파이프라인이 처음으로 실제 코드에서
+    완성되고 발동이 증명됐다. 기본값(`.env` 미변경)에서는 기존
+    동작 100% 유지. R3b는 Conditional Go를 유지한다. `.env` 미변경,
+    gate 로직 강화 없음, 환경 분기 없음, 신규 KIS 호출 0건. 상세:
+    `plans/[DESIGN] regime_conditional_entry_signal_v1.md` §58.
+  - 다음 과제: `ENTRY_SCORE_R3B_ALPHA_ENABLED=true` 실제 활성화
+    여부 사용자 결정(신중한 검토 필요, `.env` 값이므로 사용자가
+    직접 변경), `trigger_status` 자동화(낮은 우선순위).
 - [~] **SPPV-3** `entry_score` point-in-time 재현 및 중복 penalty ablation
   - **보류 유지, 형태 재정의 — 우선순위 재조정**: §12(1년, 자기참조
     포함) 당시 "알파 근거 강화"로 낙관했던 것이 §14(3년, 자기참조

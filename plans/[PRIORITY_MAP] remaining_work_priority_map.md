@@ -1007,6 +1007,23 @@
   regime_conditional_entry_signal_v1.md` §57.
 
 - 작성자: Codex
+- 수정일자: 2026-07-19 (68차, entry_score R3b alpha 교체 — cycle
+  precompute 실제 구현·발동 확인)
+- 수정내용: §57이 남긴 유일한 실행 단계(cycle precompute)를 실제로
+  구현했다(SPPV-2.69). `run_decision_loop.py`에 `_build_r3b_alpha_
+  percentile_overrides_for_cycle()` 신규 함수(config 기본값이면
+  DB 조회 없이 즉시 빈 dict) + cycle당 1회 호출 + `SubmitOrderRequest.
+  metadata["r3b_alpha_percentile"]` 실제 주입. end-to-end 검증
+  스크립트로 실제 발동 증명: 실제 DB 종목(000080) 기준 비활성 시
+  entry_score=0.1159(reason_code 없음) vs 활성+percentile=0.9
+  주입 시 entry_score=0.5999(trigger_r3b_alpha_percentile reason_
+  code 발생) — 값이 실제로 바뀜을 확인. 회귀 테스트 83건 전부 통과,
+  `test_run_decision_loop.py`는 8 failed/111 passed로 git stash
+  대조 시 이번 턴과 무관함(사전 존재 비결정성) 확인. `.env` 미변경.
+  R3b는 Conditional Go를 유지한다. 상세: `plans/[DESIGN] regime_
+  conditional_entry_signal_v1.md` §58.
+
+- 작성자: Codex
 - 수정일자: 2026-07-19 (64차, entry_score 코드 변경 PR 초안 설계 —
   R3b alpha 교체 실제 파이프라인 연결 방안)
 - 수정내용: "R3b alpha 전체 경로 재현 검증"은 §45(non-alpha 100%
@@ -1027,8 +1044,57 @@
 
 ## 최근 메모
 
+> **📌 2026-07-19 entry_score R3b alpha 교체 — cycle precompute
+> 실제 구현·발동 확인 (최신, 작성자: Codex)**: §57(SPPV-2.68)이
+> "여전히 유일한 실행 단계"로 남긴 cycle precompute를 실제로
+> 구현했다(SPPV-2.69) — 이번 턴은 문서 정정이 아니라 실제 기능
+> 연결 완료 여부를 확인하는 구현 턴이다. **구현 내용**: `run_
+> decision_loop.py`에 신규 `_build_r3b_alpha_percentile_overrides_
+> for_cycle(repos, *, universe)` 함수 추가(`_build_core_risk_off_
+> apply_overrides_for_cycle()`과 동일 구조) — `AppSettings.entry_
+> score_r3b_alpha_enabled`가 꺼져 있으면(기본값) DB 조회조차 하지
+> 않고 즉시 빈 dict 반환; 켜져 있으면 벤치마크(069500) 최신 스냅샷을
+> `classify_market_regime()`으로 분류해 `market_common_label`을
+> 구하고, universe 전체를 순회해 각 종목의 `return_1m_pct`/`return_
+> 3m_pct`/`volatility_20d_pct`로 `R3bAlphaInput`을 만들어 `services/
+> r3b_alpha_percentile.build_candidate_percentiles()`(SPPV-2.67,
+> 200회 trial parity 검증 완료)를 호출한다. 메인 cycle 루프에
+> `_run_mixedness_check`와 동일 패턴(자체 transaction, 예외 흡수)
+> 으로 cycle당 1회 호출을 추가했고, `_run_one_cycle()`에 `r3b_
+> alpha_percentile` 파라미터를 추가해 `SubmitOrderRequest.metadata`
+> 에 실제로 주입하도록 배선했다 — candidate pool 밖 종목은 dict에
+> 키가 없어 자동으로 `None`이 전달된다. **실제 발동 검증(신규
+> `scripts/validate_r3b_alpha_precompute_end_to_end.py`, 이번 턴
+> 직접 실행)**: (1) precompute 함수가 실제로 universe(20개 가상
+> 종목)를 순회해 상위 20%(4개)에만 percentile을 부여함을 실측 확인;
+> (2) 실제 DB 종목(000080) 하나로 — 비활성(기본값) 시 `entry_score
+> =0.1159`(reason_codes에 `trigger_r3b_alpha_percentile` 없음) vs
+> 활성 + `request.metadata["r3b_alpha_percentile"]=0.9` 주입 시
+> `entry_score=0.5999`(reason_codes에 `trigger_r3b_alpha_percentile`
+> 포함) — **alpha 교체가 실제로 발동함을 증명**했다. **회귀(이번
+> 턴 직접 재실행)**: `test_deterministic_trigger_engine.py`+`test_
+> decision_orchestrator.py` 83 passed/0 failed; `test_run_decision_
+> loop.py` 8 failed/111 passed — `git stash`로 이번 턴 코드 변경분을
+> 제외한 상태에서도 동일하게 8 failed/111 passed가 나옴을 직접
+> 대조 확인(스택 트레이스 동일) → 이번 턴 코드와 무관한 사전 존재
+> 비결정성(§53이 확정한 10건 집합의 부분집합, 재논의 없음).
+> `AppSettings().entry_score_r3b_alpha_enabled` 기본값 `False`
+> 유지, `.env` 파일은 전혀 수정하지 않음(환경변수는 검증 스크립트
+> 내에서 프로세스 범위로만 일시 설정 후 즉시 해제). **판정**: §54.5
+> 가 원래 지목한 3-part(precompute 함수 + engine 파라미터 + config
+> 스위치) 전체가 처음으로 실제 코드에 존재하고 실제로 발동함이
+> 증명됐다 — R3b alpha 교체 파이프라인은 이제 기능적으로 완성됐다.
+> 기본값(`.env` 미변경)에서는 기존 동작 100% 유지. R3b는 Conditional
+> Go를 유지한다. `.env` 미변경, BUY/SELL gate 로직 강화 없음, 환경
+> 분기 코드 없음, compliance/VaR/broker submit 경계 미변경, 신규
+> KIS 호출 0건. **남은 것은 `ENTRY_SCORE_R3B_ALPHA_ENABLED=true`
+> 실제 활성화 여부에 대한 별도의 명시적 사용자 결정뿐**(`.env` 값
+> 이므로 사용자가 직접 변경 필요, 이 세션은 `.env`를 수정하지
+> 않는다). 상세: `plans/[DESIGN] regime_conditional_entry_signal_
+> v1.md` §58.
+
 > **📌 2026-07-19 SPPV-2.67 보고 정정 — "2단계 완료" 표현의 과장
-> 부분 확정 (최신, 작성자: Codex)**: 새 기능을 구현하지 않고,
+> 부분 확정 (작성자: Codex)**: 새 기능을 구현하지 않고,
 > 아래 SPPV-2.67 배너/보고의 서술을 코드 기준으로 재검증했다
 > (SPPV-2.68). **코드 확인 결과(추측 없음)**: (1) `src/agent_
 > trading/services/r3b_alpha_percentile.py`의 `compute_regime_
@@ -8260,9 +8326,26 @@ agent 설계 문서 기준으로도 순서는 다음이 맞다.
      확정 — cycle 단위 precompute는 이 세션 전체에서 production
      코드로 옮겨진 적이 없다. §56 원문은 삭제하지 않고 보존. 상세:
      `plans/[DESIGN] regime_conditional_entry_signal_v1.md` §57.
-   - **SPPV-3(다음 착수: cycle당 1회 precompute 함수(코드 0줄,
-     `run_decision_loop.py`에 실제 percentile 계산·metadata 주입
-     함수 추가·별도 승인 필요 — 여전히 유일한 실행 단계) +
+   - **SPPV-2.69(완료, 2026-07-19, entry_score R3b alpha 교체 —
+     cycle precompute 실제 구현·발동 확인, 작성자: Codex —
+     Conditional Go 유지, 기능적으로 완성)**: §57이 남긴 유일한
+     실행 단계(cycle precompute)를 실제로 구현했다. `run_decision_
+     loop.py`에 `_build_r3b_alpha_percentile_overrides_for_cycle()`
+     신규 함수(config 기본값이면 DB 조회 없이 즉시 빈 dict) + cycle
+     당 1회 호출 + `SubmitOrderRequest.metadata["r3b_alpha_
+     percentile"]` 실제 주입. **실제 발동 검증**(신규 `scripts/
+     validate_r3b_alpha_precompute_end_to_end.py`): 실제 DB 종목
+     (000080) 기준 비활성 시 entry_score=0.1159(reason_code 없음)
+     vs 활성+percentile=0.9 주입 시 entry_score=0.5999(trigger_r3b_
+     alpha_percentile reason_code 발생) — alpha 교체가 실제로
+     발동함을 증명. 회귀 테스트 83건 전부 통과, `test_run_decision_
+     loop.py` 8 failed/111 passed는 git stash 대조로 이번 턴과
+     무관함(사전 존재 비결정성) 확인. `.env` 미변경, gate 로직
+     강화 없음. R3b는 Conditional Go를 유지한다. 상세: `plans/
+     [DESIGN] regime_conditional_entry_signal_v1.md` §58.
+   - **SPPV-3(다음 착수: `ENTRY_SCORE_R3B_ALPHA_ENABLED=true` 실제
+     활성화 여부 사용자 결정(신중한 검토 필요, `.env` 값이므로
+     사용자가 직접 변경) +
      `trigger_status` 공급원 자동화/배치화(cron/배치 설계,
      override=true인 동안 낮은 우선순위) + 포지션 사이징 등 exit
      외 리스크 관리 수단 검토(신규, 낮은 우선순위, 실거래 계좌

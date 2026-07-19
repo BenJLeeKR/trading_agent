@@ -7034,3 +7034,125 @@ precompute("3단계")가 없는 한 `r3b_alpha_enabled=True`로 설정해도
 파이프라인은 여전히 준비 단계(설계+통로만 존재)이고, 실질적인
 cycle precompute 구현이 유일하게 남은 실행 단계"로 명확히
 재확정한다. 남은 항목 자체(개수·내용)는 변경 없음.
+
+## 58. entry_score R3b alpha 교체 — cycle precompute 실제 구현·발동 확인 (SPPV-2.69, 2026-07-19)
+
+### 58.1 배경
+
+§57(SPPV-2.68)이 정정한 대로, §56(SPPV-2.67)까지는 "orchestrator
+통로 준비 + 계산 모듈 독립 구현"만 완료됐을 뿐 실제 cycle precompute
+(값을 계산해 `request.metadata`에 주입하는 코드)는 production에
+존재하지 않았다. 이번 턴은 §57이 남긴 "여전히 유일한 실행 단계"를
+실제로 구현하고, **실제 발동 여부**를 코드 실행으로 증명한다(문서
+정정이 아니라 구현 턴).
+
+### 58.2 실제 구현 내용
+
+1. **`scripts/run_decision_loop.py`에 신규 `_build_r3b_alpha_
+   percentile_overrides_for_cycle(repos, *, universe)` 함수 추가**
+   (`_build_core_risk_off_apply_overrides_for_cycle`과 동일한
+   구조): `AppSettings.entry_score_r3b_alpha_enabled`가 꺼져 있으면
+   (기본값) 즉시 빈 dict를 반환해 DB 조회조차 하지 않는다. 켜져
+   있으면 (a) 벤치마크(069500)의 최신 `signal_feature_snapshot`을
+   `classify_market_regime()`으로 분류해 `market_common_label`을
+   구하고, (b) 그날의 `universe` 전체를 순회해 각 종목의 최신
+   snapshot에서 `return_1m_pct`/`return_3m_pct`/`volatility_20d_pct`
+   를 읽어 `R3bAlphaInput`을 만들고, (c) `services/r3b_alpha_
+   percentile.build_candidate_percentiles()`(SPPV-2.67, 이미
+   parity 검증 완료)를 호출해 `{symbol: candidate_percentile}`을
+   반환한다.
+2. **메인 cycle 루프**(`while not _shutdown_event.is_set()` 내부)에
+   `_run_mixedness_check`와 동일한 패턴(자체 DB transaction, 예외
+   전부 흡수, 실패해도 사이클에 영향 없음)으로 이 함수를 cycle당
+   1회 호출해 `cycle_r3b_alpha_percentiles: dict[str, float]`을
+   만든다.
+3. **`_run_one_cycle()`**에 `r3b_alpha_percentile: float | None =
+   None` 파라미터를 추가하고, `SubmitOrderRequest.metadata`에
+   `"r3b_alpha_percentile": r3b_alpha_percentile` 키를 추가했다 —
+   `deterministic_trigger_override`와 동일한 metadata 채널 패턴.
+4. **`_process_one`/`_execute_symbol_cycle`**에서 `_run_one_cycle`
+   호출 시 `r3b_alpha_percentile=cycle_r3b_alpha_percentiles.get(
+   item.symbol)`을 전달 — candidate pool 밖 종목/신호 결측 종목은
+   dict에 키가 없어 자동으로 `None`이 전달된다(요구사항의 "candidate
+   밖 종목은 미주입 또는 None 처리" 그대로 충족).
+
+### 58.3 실제 발동 검증(신규 검증 스크립트 `scripts/validate_r3b_
+alpha_precompute_end_to_end.py`, 이번 턴 직접 실행)
+
+**1단계 — precompute 함수 자체가 실제로 universe를 순회해 계산하는지
+(FakeRepos, 알고리즘 자체는 SPPV-2.67에서 이미 200회 trial로 검증
+완료이므로 재검증하지 않음)**: `_build_r3b_alpha_percentile_
+overrides_for_cycle()`을 실제 production 함수 그대로 호출 — 20개
+가상 종목 중 상위 20%(4개)에만 percentile이 부여됨을 실측 확인
+(`[('S03', 0.0), ('S02', 0.333), ('S01', 0.667), ('S00', 1.0)]`).
+이는 함수가 실제로 호출되고, universe를 순회하며, `build_candidate_
+percentiles()`를 정확히 위임 호출함을 증명한다.
+
+**2단계 — 실제 DB의 core 종목(000080) 하나로 orchestrator→engine
+반영 확인**:
+- **(a) 비활성(기본값, `r3b_alpha_enabled=False`)**: `entry_score=
+  0.1159`, `reason_codes`에 `trigger_r3b_alpha_percentile` **없음**.
+- **(b) 활성 + `request.metadata["r3b_alpha_percentile"]=0.9` 주입**:
+  `entry_score=0.5999`, `reason_codes`에 `trigger_r3b_alpha_
+  percentile` **포함**.
+- 활성/비활성 entry_score가 명확히 다르고(0.1159 → 0.5999), reason_
+  code 발생 여부도 정확히 스위치를 따라간다 — **alpha 교체가 실제로
+  발동함을 실측으로 증명**했다.
+
+### 58.4 회귀 테스트(이번 턴 직접 재실행)
+
+- `test_deterministic_trigger_engine.py`+`test_decision_
+  orchestrator.py`: **83 passed, 0 failed**.
+- `test_run_decision_loop.py`: **8 failed, 111 passed** — `git
+  stash`로 이번 턴 코드 변경분을 제외한 상태에서도 동일하게 **8
+  failed, 111 passed**가 나옴을 직접 대조 확인(스택 트레이스도
+  동일) → 이번 턴 코드와 무관한 사전 존재 비결정성(테스트 실행
+  순서/타이밍 의존)이며, §53이 확정한 "10건" 집합의 부분집합이다
+  (재논의 없음, 회귀 아님을 재현 대조로 확정).
+- `AppSettings().entry_score_r3b_alpha_enabled` 기본값 `False`
+  유지 확인, `.env` 파일은 전혀 수정하지 않았다(`ENTRY_SCORE_R3B_
+  ALPHA_ENABLED`는 `.env`에 없고 프로세스 환경변수로만 일시 설정 후
+  해제).
+
+### 58.5 판정 — R3b alpha 교체 파이프라인 실제 완성, Conditional Go 유지
+
+**이번 턴은 §54.5가 원래 지목한 3-part(precompute 함수 + engine
+파라미터 + config 스위치) 전체가 처음으로 실제 코드에 존재하고
+실제로 발동함을 증명한 턴이다.** `ENTRY_SCORE_R3B_ALPHA_ENABLED=
+true`로 설정하고 cycle precompute가 percentile을 계산해 주입하면,
+entry_score의 alpha 항이 실제로 `0.80 * candidate_percentile`로
+교체된다 — 더 이상 "배선만 있고 발동하지 않는" 상태가 아니다.
+**기본값(`.env` 미변경)에서는 §55~§56에서 이미 확인한 대로 기존
+공식이 100% 그대로 유지된다**(§58.4의 83건 회귀 테스트가 이를
+재확인).
+
+**R3b는 Conditional Go를 유지한다.** `.env` 미변경, BUY/SELL gate
+로직 강화 없음(entry_score 상승/하락 여부는 실제 시장 신호에 따라
+달라지며, gate 자체를 더 세게 만들지 않음), 환경 분기 코드 없음,
+compliance/VaR/broker submit 경계 미변경, 신규 KIS 호출 0건(cycle
+precompute도 이미 채워진 `signal_feature_snapshots` read-only
+조회만 수행).
+
+### 58.6 SPPV-3까지 남은 조건 재확정
+
+§57.6에서 "실질적인 cycle precompute 구현이 유일하게 남은 실행
+단계"라고 명시했던 항목이 이번 턴에 실제로 완료·발동 확인됐다 —
+entry_score R3b alpha 교체 파이프라인 자체는 이제 **기능적으로
+완성**됐다. 다만 이 기능을 실제 paper 운영에서 활성화할지(`ENTRY_
+SCORE_R3B_ALPHA_ENABLED=true`로 전환할지)는 **별도의 명시적 사용자
+결정 사항**으로 남아 있다 — 활성화 여부 자체가 R3b의 실거래 반영
+여부를 결정하는 것이므로, §48/§49/§21 게이트 override 결정과 같은
+수준의 신중한 검토(예: 실제 활성화 전 shadow 기간 재확인, 활성화
+후 paper 성과 모니터링 계획)가 필요하다.
+
+### 58.7 다음 우선 작업
+
+1. `ENTRY_SCORE_R3B_ALPHA_ENABLED=true` 활성화 여부 사용자 결정
+   (활성화 시 실제 paper 운영에서 R3b alpha가 처음으로 실거래
+   entry_score에 반영되므로 신중한 검토 필요 — `.env` 값이므로
+   사용자가 직접 변경해야 하며, 이 세션은 `.env`를 수정하지 않는다).
+2. `trigger_status` 공급원 자동화/배치화(낮은 우선순위, 여전히
+   override=true인 동안 급하지 않음).
+3. T+5/경로 리스크 후속 검증 — 추가 필요성 낮음(유보 유지).
+4. `portfolio_allocation` gap — 실거래 누적 이후 재검증 대상으로
+   계속 유보.

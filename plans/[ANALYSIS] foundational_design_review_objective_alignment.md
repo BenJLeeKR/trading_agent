@@ -1564,6 +1564,20 @@ value/compliance/broker가 아니라 `entry_score < 0.65`다.
   이 세션 전체에서 production 코드로 옮겨진 적이 없다. R3b 판정은
   코드 변경이 없어 불변(Conditional Go). 이력 보존형 정정. 상세:
   `plans/[DESIGN] regime_conditional_entry_signal_v1.md` §57.
+
+- 작성자: Codex
+- 수정일자: 2026-07-19 (2.71순위, entry_score R3b alpha 교체 —
+  cycle precompute 실제 구현·발동 확인)
+- 수정내용: §57이 남긴 유일한 실행 단계(cycle precompute)를 실제로
+  구현했다(SPPV-2.69). `run_decision_loop.py`에 신규 precompute
+  함수 + cycle당 1회 호출 + `SubmitOrderRequest.metadata["r3b_
+  alpha_percentile"]` 실제 주입. end-to-end 검증: 실제 DB 종목
+  (000080) 기준 비활성 시 entry_score=0.1159 vs 활성+percentile=
+  0.9 주입 시 entry_score=0.5999(reason_code 발생) — 실제 발동
+  증명. 회귀 테스트 83건 통과, `test_run_decision_loop.py` 8
+  failed/111 passed는 git stash 대조로 이번 턴과 무관함(사전 존재
+  비결정성) 확인. `.env` 미변경. R3b는 Conditional Go를 유지한다.
+  상세: `plans/[DESIGN] regime_conditional_entry_signal_v1.md` §58.
 - **3순위(보류 유지, 형태 재정의 — 우선순위 재조정)**: **`entry_
   score`와 BUY funnel 재현** — §2.7 확장 검증에서 하락장 안정성이
   확인되지 않아 단순 재현으로는 착수하지 않는다. §2.16~§2.21에서
