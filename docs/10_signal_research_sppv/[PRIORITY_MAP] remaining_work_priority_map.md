@@ -1125,8 +1125,56 @@
 
 ## 최근 메모
 
+> **📌 2026-07-19 보유기간/Churn 제어가 R3b BUY 빈도를 얼마나
+> 깎는지 정량 검증 (최신, 작성자: Codex — canonical 문서 `docs/`
+> 하위 재배치 이후 첫 턴)**: churn guard(`holding_profile_
+> earliest_reentry_guard`/`held_position_recent_hold_no_change`/
+> `held_position_recent_risk_sell_cooldown`)가 R3b BUY_CANDIDATE
+> (entry_score>=0.65) 빈도를 실제로 얼마나 억제하는지를 운영 함수
+> (`_build_entry_score`/`classify_market_regime`, 재구현 없이 그대로
+> import)와 실제 운영 DB(`guardrail_evaluations`/`signal_feature_
+> snapshots`/`trade_decisions`)로 정량 분해했다(SPPV-2.75). **표본
+> 범위**: churn guard는 실제 거래 이력(`symbol_trade_states`)
+> 의존 stateful guard라 3년 합성 표본이 불가능 — 실제 운영 창
+> (2026-05-13~07-16, guardrail_evaluations 실존 구간 06-14~07-16)
+> 을 그대로 사용. **표 A**: `pre_ai_gate_v1` 6,027건 원시 이벤트 중
+> churn 관련 3개 사유(`held_position_recent_hold_no_change`=911,
+> `holding_profile_earliest_reentry_guard`=442, `held_position_
+> recent_risk_sell_cooldown`=72)를 `(symbol, 날짜)` 단위 dedupe해
+> distinct episode 94/31/19건 확인 — `same_symbol_reentry_
+> cooldown`/`holding_profile_earliest_reduce_guard`는 이 창에서
+> 미발동. **표 B(핵심 발견)**: 각 episode 차단 시점 직전 실제
+> snapshot으로 entry_score를 재계산한 결과 **144건 전부 entry_
+> score<0.65**(평균 0.095~0.332, 최댓값 0.594) — R3b BUY_
+> CANDIDATE 문턱을 넘는 표본이 0건. candidate가 0건이라 forward
+> return(T+5/T+20) 계산 대상 자체가 공집합(이것 자체가 실측 결과).
+> 표본 기간(일봉 이력 ~1개월)도 T+20 관측에 구조적으로 짧음을
+> 확인. **표 C**: 같은 창 실제 `decision_type='buy'`=49건 — churn
+> guard 완화 시 추가 BUY는 0건(candidate 0건이므로), 완화가 R3b
+> 기회를 늘려주는 효과가 이번 창에서는 관측 안 됨. **핵심 질문
+> 답변**: (1) R3b BUY 후보를 실제로 막은 churn guard는 이번 창
+> 기준 없음(entry_score>=0.65 차단 사례 0건); (2) 따라서 "좋은
+> BUY까지 과잉 억제"의 증거는 없음 — 다만 표본이 144 episode·
+> 2개월로 작아 일반화는 이르다; (3) BUY 빈도 감소가 있었더라도
+> 기대수익 손실 자체가 관측되지 않았다(줄어든 대상이 R3b 기준
+> 애초에 없었음). **판정**: **Watch** — "churn guard가 R3b 고품질
+> BUY를 과잉 억제한다"는 가설은 기각(공격형 목표에 유리한 방향)
+> 되나, 표본이 작고 `reduce_guard`/`reentry_cooldown`이 미발동
+> 상태라 Go 격상은 시기상조. R3b 자체 판정(Conditional Go)은 이
+> 검증과 무관하게 유지된다. 코드 변경 없음(신규 검증 스크립트
+> `scripts/validate_churn_guard_r3b_buy_frequency_impact.py`
+> 추가만), 신규 KIS 호출 0건(전부 기존 DB read-only). **남은 핵심
+> 리스크**: paper 운영 표본 누적 후 재검증 최우선; `probe_churn_
+> single_share_blocked` 등 execution_service 레벨 guard는 `guard
+> rail_evaluations`에 기록되지 않아 이번 턴 범위 밖; 미발동 축
+> (reduce_guard/reentry_cooldown) 실제 발동 시 재검증 필요.
+> **SPPV-3 관점 권고**: 이 축(보유기간/Churn 제어)은 현행 유지
+> 권고 — 완화도 강화도 이번 근거로는 정당화되지 않음. 상세:
+> `docs/10_signal_research_sppv/[DESIGN] regime_conditional_
+> entry_signal_v1.md` §64.
+
 > **📌 2026-07-19 docker-compose 환경변수 배선 실제 수정 — R3b
-> alpha/§21 게이트 override 운영 반영 완료 (최신, 작성자: Codex)**:
+> alpha/§21 게이트 override 운영 반영 완료 (작성자: Codex)**:
 > §62(SPPV-2.73)가 확인한 실제 차단 요소(`docker-compose.yml`의
 > `ops-scheduler` `environment:` 화이트리스트에 `ENTRY_SCORE_R3B_
 > ALPHA_ENABLED`/`REGIME_SWITCH_V1_GATE_OVERRIDE_ENABLED`가 선언돼
@@ -8775,9 +8823,22 @@ agent 설계 문서 기준으로도 순서는 다음이 맞다.
      override 모두 이제 실제 paper 운영 프로세스에 도달. R3b는
      Conditional Go를 유지한다. 상세: `plans/[DESIGN] regime_
      conditional_entry_signal_v1.md` §63.
+   - **SPPV-2.75(완료, 2026-07-19, 보유기간/Churn 제어가 R3b BUY
+     빈도를 얼마나 깎는지 정량 검증, 작성자: Codex — Watch, R3b
+     Conditional Go 유지)**: churn guard 3종(`held_position_
+     recent_hold_no_change`/`holding_profile_earliest_reentry_
+     guard`/`held_position_recent_risk_sell_cooldown`)이 실제
+     운영 창(2026-05-13~07-16)에서 차단한 144 episode를 운영
+     함수(`_build_entry_score`)로 재계산한 결과 **전부 entry_
+     score<0.65**(candidate 0건) — R3b 고품질 BUY 과잉 억제 증거
+     없음. 다만 표본이 작고 `reduce_guard`/`reentry_cooldown`
+     미발동이라 판정은 **Watch**. 이 축은 현행 유지 권고. 코드
+     변경 없음, 신규 KIS 호출 0건. 상세: `docs/10_signal_research_
+     sppv/[DESIGN] regime_conditional_entry_signal_v1.md` §64.
    - **SPPV-3(다음 착수: 다음 실제 거래일(2026-07-20 예정) cycle
      에서 `trigger_r3b_alpha_percentile` reason_code 실제 관측
-     (다음 거래일 관측 과제, 실제 차단 요소 아님) +
+     (다음 거래일 관측 과제, 실제 차단 요소 아님) + churn guard
+     paper 운영 표본 누적 후 재검증(§64 후속) +
      `trigger_status` 공급원 자동화/배치화(cron/배치 설계,
      override=true인 동안 낮은 우선순위) + 포지션 사이징 등 exit
      외 리스크 관리 수단 검토(신규, 낮은 우선순위, 실거래 계좌

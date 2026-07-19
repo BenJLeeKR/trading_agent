@@ -1,0 +1,1161 @@
+{
+  "episodes": {
+    "held_position_recent_hold_no_change": 125,
+    "held_position_recent_risk_sell_cooldown": 19,
+    "holding_profile_earliest_reentry_guard": 31
+  },
+  "detail": [
+    {
+      "code": "held_position_recent_hold_no_change",
+      "symbol": "000050",
+      "date": "2026-06-16",
+      "entry_score": 0.05862250000000002,
+      "is_r3b_candidate": false,
+      "fwd_5d_sma_proxy_return": null
+    },
+    {
+      "code": "held_position_recent_hold_no_change",
+      "symbol": "000070",
+      "date": "2026-06-16",
+      "entry_score": 0.11815750000000005,
+      "is_r3b_candidate": false,
+      "fwd_5d_sma_proxy_return": null
+    },
+    {
+      "code": "held_position_recent_hold_no_change",
+      "symbol": "000080",
+      "date": "2026-06-16",
+      "entry_score": 0.13122000000000003,
+      "is_r3b_candidate": false,
+      "fwd_5d_sma_proxy_return": -0.05885997521685249
+    },
+    {
+      "code": "held_position_recent_hold_no_change",
+      "symbol": "000087",
+      "date": "2026-06-16",
+      "entry_score": 0.14965888050000004,
+      "is_r3b_candidate": false,
+      "fwd_5d_sma_proxy_return": null
+    },
+    {
+      "code": "held_position_recent_hold_no_change",
+      "symbol": "000100",
+      "date": "2026-06-16",
+      "entry_score": 0.04973250000000001,
+      "is_r3b_candidate": false,
+      "fwd_5d_sma_proxy_return": -0.0461697188547846
+    },
+    {
+      "code": "held_position_recent_hold_no_change",
+      "symbol": "000120",
+      "date": "2026-06-16",
+      "entry_score": 0.11313750000000003,
+      "is_r3b_candidate": false,
+      "fwd_5d_sma_proxy_return": -0.0695714973519499
+    },
+    {
+      "code": "held_position_recent_hold_no_change",
+      "symbol": "000150",
+      "date": "2026-06-16",
+      "entry_score": 0.4595325,
+      "is_r3b_candidate": false,
+      "fwd_5d_sma_proxy_return": -0.0631096486073569
+    },
+    {
+      "code": "held_position_recent_hold_no_change",
+      "symbol": "000155",
+      "date": "2026-06-16",
+      "entry_score": 0.1978675,
+      "is_r3b_candidate": false,
+      "fwd_5d_sma_proxy_return": null
+    },
+    {
+      "code": "held_position_recent_hold_no_change",
+      "symbol": "000210",
+      "date": "2026-06-16",
+      "entry_score": 0.2102494045,
+      "is_r3b_candidate": false,
+      "fwd_5d_sma_proxy_return": -0.09540971168437029
+    },
+    {
+      "code": "held_position_recent_hold_no_change",
+      "symbol": "000227",
+      "date": "2026-06-18",
+      "entry_score": 0.38591250000000005,
+      "is_r3b_candidate": false,
+      "fwd_5d_sma_proxy_return": null
+    },
+    {
+      "code": "held_position_recent_hold_no_change",
+      "symbol": "000227",
+      "date": "2026-06-22",
+      "entry_score": 0.16744500000000004,
+      "is_r3b_candidate": false,
+      "fwd_5d_sma_proxy_return": null
+    },
+    {
+      "code": "held_position_recent_hold_no_change",
+      "symbol": "000270",
+      "date": "2026-06-16",
+      "entry_score": 0.31109,
+      "is_r3b_candidate": false,
+      "fwd_5d_sma_proxy_return": -0.0960741282613996
+    },
+    {
+      "code": "held_position_recent_hold_no_change",
+      "symbol": "000370",
+      "date": "2026-06-16",
+      "entry_score": 0.28644250000000004,
+      "is_r3b_candidate": false,
+      "fwd_5d_sma_proxy_return": null
+    },
+    {
+      "code": "held_position_recent_hold_no_change",
+      "symbol": "000500",
+      "date": "2026-06-16",
+      "entry_score": 0.3880999999999999,
+      "is_r3b_candidate": false,
+      "fwd_5d_sma_proxy_return": null
+    },
+    {
+      "code": "held_position_recent_hold_no_change",
+      "symbol": "000660",
+      "date": "2026-06-16",
+      "entry_score": 0.49878749999999994,
+      "is_r3b_candidate": false,
+      "fwd_5d_sma_proxy_return": 0.231014677728143
+    },
+    {
+      "code": "held_position_recent_hold_no_change",
+      "symbol": "001040",
+      "date": "2026-06-16",
+      "entry_score": 0.15939500000000004,
+      "is_r3b_candidate": false,
+      "fwd_5d_sma_proxy_return": -0.031975421028675455
+    },
+    {
+      "code": "held_position_recent_hold_no_change",
+      "symbol": "001230",
+      "date": "2026-06-16",
+      "entry_score": 0.04051000000000002,
+      "is_r3b_candidate": false,
+      "fwd_5d_sma_proxy_return": null
+    },
+    {
+      "code": "held_position_recent_hold_no_change",
+      "symbol": "001440",
+      "date": "2026-06-16",
+      "entry_score": 0.16895000000000002,
+      "is_r3b_candidate": false,
+      "fwd_5d_sma_proxy_return": -0.046656298600311064
+    },
+    {
+      "code": "held_position_recent_hold_no_change",
+      "symbol": "001440",
+      "date": "2026-06-17",
+      "entry_score": 0.2518236785,
+      "is_r3b_candidate": false,
+      "fwd_5d_sma_proxy_return": -0.09638860630722279
+    },
+    {
+      "code": "held_position_recent_hold_no_change",
+      "symbol": "001440",
+      "date": "2026-06-19",
+      "entry_score": 0.16090000000000002,
+      "is_r3b_candidate": false,
+      "fwd_5d_sma_proxy_return": -0.1501246882793017
+    },
+    {
+      "code": "held_position_recent_hold_no_change",
+      "symbol": "001440",
+      "date": "2026-06-22",
+      "entry_score": 0.16542250000000006,
+      "is_r3b_candidate": false,
+      "fwd_5d_sma_proxy_return": -0.14906043676993397
+    },
+    {
+      "code": "held_position_recent_hold_no_change",
+      "symbol": "001450",
+      "date": "2026-06-16",
+      "entry_score": 0.49175499999999994,
+      "is_r3b_candidate": false,
+      "fwd_5d_sma_proxy_return": -0.05291274484863906
+    },
+    {
+      "code": "held_position_recent_hold_no_change",
+      "symbol": "001450",
+      "date": "2026-06-17",
+      "entry_score": 0.5164024999999999,
+      "is_r3b_candidate": false,
+      "fwd_5d_sma_proxy_return": -0.08435852372583474
+    },
+    {
+      "code": "held_position_recent_hold_no_change",
+      "symbol": "001450",
+      "date": "2026-06-18",
+      "entry_score": 0.5164024999999999,
+      "is_r3b_candidate": false,
+      "fwd_5d_sma_proxy_return": -0.08435852372583474
+    },
+    {
+      "code": "held_position_recent_hold_no_change",
+      "symbol": "001450",
+      "date": "2026-06-19",
+      "entry_score": 0.5254475,
+      "is_r3b_candidate": false,
+      "fwd_5d_sma_proxy_return": -0.1142573273720815
+    },
+    {
+      "code": "held_position_recent_hold_no_change",
+      "symbol": "001450",
+      "date": "2026-06-22",
+      "entry_score": 0.4469599999999999,
+      "is_r3b_candidate": false,
+      "fwd_5d_sma_proxy_return": -0.1028513238289206
+    },
+    {
+      "code": "held_position_recent_hold_no_change",
+      "symbol": "001450",
+      "date": "2026-06-23",
+      "entry_score": 0.378065,
+      "is_r3b_candidate": false,
+      "fwd_5d_sma_proxy_return": -0.08422704682186766
+    },
+    {
+      "code": "held_position_recent_hold_no_change",
+      "symbol": "001680",
+      "date": "2026-06-16",
+      "entry_score": 0.13057500000000002,
+      "is_r3b_candidate": false,
+      "fwd_5d_sma_proxy_return": -0.09764089121887287
+    },
+    {
+      "code": "held_position_recent_hold_no_change",
+      "symbol": "001680",
+      "date": "2026-06-17",
+      "entry_score": 0.13057500000000002,
+      "is_r3b_candidate": false,
+      "fwd_5d_sma_proxy_return": -0.09764089121887287
+    },
+    {
+      "code": "held_position_recent_hold_no_change",
+      "symbol": "001740",
+      "date": "2026-06-16",
+      "entry_score": 0.4846999999999999,
+      "is_r3b_candidate": false,
+      "fwd_5d_sma_proxy_return": -0.19177205058428048
+    },
+    {
+      "code": "held_position_recent_hold_no_change",
+      "symbol": "001740",
+      "date": "2026-06-17",
+      "entry_score": 0.46358,
+      "is_r3b_candidate": false,
+      "fwd_5d_sma_proxy_return": null
+    },
+    {
+      "code": "held_position_recent_hold_no_change",
+      "symbol": "001740",
+      "date": "2026-06-18",
+      "entry_score": 0.46358,
+      "is_r3b_candidate": false,
+      "fwd_5d_sma_proxy_return": null
+    },
+    {
+      "code": "held_position_recent_hold_no_change",
+      "symbol": "001800",
+      "date": "2026-06-16",
+      "entry_score": 0.5033514195,
+      "is_r3b_candidate": false,
+      "fwd_5d_sma_proxy_return": -0.06796845662786333
+    },
+    {
+      "code": "held_position_recent_hold_no_change",
+      "symbol": "001800",
+      "date": "2026-06-17",
+      "entry_score": 0.44648999999999994,
+      "is_r3b_candidate": false,
+      "fwd_5d_sma_proxy_return": -0.0912476722532588
+    },
+    {
+      "code": "held_position_recent_hold_no_change",
+      "symbol": "001800",
+      "date": "2026-06-18",
+      "entry_score": 0.44648999999999994,
+      "is_r3b_candidate": false,
+      "fwd_5d_sma_proxy_return": -0.0912476722532588
+    },
+    {
+      "code": "held_position_recent_hold_no_change",
+      "symbol": "001800",
+      "date": "2026-06-23",
+      "entry_score": 0.06431,
+      "is_r3b_candidate": false,
+      "fwd_5d_sma_proxy_return": -0.06126482213438733
+    },
+    {
+      "code": "held_position_recent_hold_no_change",
+      "symbol": "002380",
+      "date": "2026-06-16",
+      "entry_score": 0.25759999999999994,
+      "is_r3b_candidate": false,
+      "fwd_5d_sma_proxy_return": -0.026720492118415984
+    },
+    {
+      "code": "held_position_recent_hold_no_change",
+      "symbol": "003030",
+      "date": "2026-06-23",
+      "entry_score": 0.0,
+      "is_r3b_candidate": false,
+      "fwd_5d_sma_proxy_return": -0.10146966854283923
+    },
+    {
+      "code": "held_position_recent_hold_no_change",
+      "symbol": "003490",
+      "date": "2026-06-16",
+      "entry_score": 0.5054693375,
+      "is_r3b_candidate": false,
+      "fwd_5d_sma_proxy_return": 0.008813808299669379
+    },
+    {
+      "code": "held_position_recent_hold_no_change",
+      "symbol": "003490",
+      "date": "2026-06-17",
+      "entry_score": 0.539535,
+      "is_r3b_candidate": false,
+      "fwd_5d_sma_proxy_return": -0.014695340501792109
+    },
+    {
+      "code": "held_position_recent_hold_no_change",
+      "symbol": "003490",
+      "date": "2026-06-18",
+      "entry_score": 0.539535,
+      "is_r3b_candidate": false,
+      "fwd_5d_sma_proxy_return": -0.014695340501792109
+    },
+    {
+      "code": "held_position_recent_hold_no_change",
+      "symbol": "003490",
+      "date": "2026-06-19",
+      "entry_score": 0.539535,
+      "is_r3b_candidate": false,
+      "fwd_5d_sma_proxy_return": -0.014695340501792109
+    },
+    {
+      "code": "held_position_recent_hold_no_change",
+      "symbol": "003490",
+      "date": "2026-06-22",
+      "entry_score": 0.4494975,
+      "is_r3b_candidate": false,
+      "fwd_5d_sma_proxy_return": -0.022543148996125417
+    },
+    {
+      "code": "held_position_recent_hold_no_change",
+      "symbol": "003490",
+      "date": "2026-06-23",
+      "entry_score": 0.20778500000000003,
+      "is_r3b_candidate": false,
+      "fwd_5d_sma_proxy_return": 0.013352580295922012
+    },
+    {
+      "code": "held_position_recent_hold_no_change",
+      "symbol": "003490",
+      "date": "2026-06-25",
+      "entry_score": 0.5942839815000001,
+      "is_r3b_candidate": false,
+      "fwd_5d_sma_proxy_return": 0.02147797597378953
+    },
+    {
+      "code": "held_position_recent_hold_no_change",
+      "symbol": "003490",
+      "date": "2026-06-26",
+      "entry_score": 0.4867125,
+      "is_r3b_candidate": false,
+      "fwd_5d_sma_proxy_return": 0.02655511094943619
+    },
+    {
+      "code": "held_position_recent_hold_no_change",
+      "symbol": "003490",
+      "date": "2026-06-29",
+      "entry_score": 0.507855,
+      "is_r3b_candidate": false,
+      "fwd_5d_sma_proxy_return": 0.01981981981981984
+    },
+    {
+      "code": "held_position_recent_hold_no_change",
+      "symbol": "003490",
+      "date": "2026-06-30",
+      "entry_score": 0.444975,
+      "is_r3b_candidate": false,
+      "fwd_5d_sma_proxy_return": 0.019230769230769162
+    },
+    {
+      "code": "held_position_recent_hold_no_change",
+      "symbol": "003490",
+      "date": "2026-07-01",
+      "entry_score": 0.4972724999999999,
+      "is_r3b_candidate": false,
+      "fwd_5d_sma_proxy_return": 0.018459353922612776
+    },
+    {
+      "code": "held_position_recent_hold_no_change",
+      "symbol": "003550",
+      "date": "2026-06-16",
+      "entry_score": 0.38859749999999993,
+      "is_r3b_candidate": false,
+      "fwd_5d_sma_proxy_return": -0.07060518731988474
+    },
+    {
+      "code": "held_position_recent_hold_no_change",
+      "symbol": "003670",
+      "date": "2026-06-16",
+      "entry_score": 0.07469499999999998,
+      "is_r3b_candidate": false,
+      "fwd_5d_sma_proxy_return": -0.07919693301049235
+    },
+    {
+      "code": "held_position_recent_hold_no_change",
+      "symbol": "003670",
+      "date": "2026-06-17",
+      "entry_score": 0.07469499999999998,
+      "is_r3b_candidate": false,
+      "fwd_5d_sma_proxy_return": -0.07919693301049235
+    },
+    {
+      "code": "held_position_recent_hold_no_change",
+      "symbol": "004000",
+      "date": "2026-06-16",
+      "entry_score": 0.10592750000000004,
+      "is_r3b_candidate": false,
+      "fwd_5d_sma_proxy_return": -0.09601969634796881
+    },
+    {
+      "code": "held_position_recent_hold_no_change",
+      "symbol": "004170",
+      "date": "2026-06-16",
+      "entry_score": 0.507855,
+      "is_r3b_candidate": false,
+      "fwd_5d_sma_proxy_return": -0.01346045989904654
+    },
+    {
+      "code": "held_position_recent_hold_no_change",
+      "symbol": "004170",
+      "date": "2026-06-17",
+      "entry_score": 0.507855,
+      "is_r3b_candidate": false,
+      "fwd_5d_sma_proxy_return": -0.028893780957622406
+    },
+    {
+      "code": "held_position_recent_hold_no_change",
+      "symbol": "004170",
+      "date": "2026-06-18",
+      "entry_score": 0.507855,
+      "is_r3b_candidate": false,
+      "fwd_5d_sma_proxy_return": -0.028893780957622406
+    },
+    {
+      "code": "held_position_recent_hold_no_change",
+      "symbol": "004170",
+      "date": "2026-06-19",
+      "entry_score": 0.4937675,
+      "is_r3b_candidate": false,
+      "fwd_5d_sma_proxy_return": -0.034987794955248175
+    },
+    {
+      "code": "held_position_recent_hold_no_change",
+      "symbol": "004170",
+      "date": "2026-06-22",
+      "entry_score": 0.507855,
+      "is_r3b_candidate": false,
+      "fwd_5d_sma_proxy_return": -0.030969845150774278
+    },
+    {
+      "code": "held_position_recent_hold_no_change",
+      "symbol": "004170",
+      "date": "2026-06-23",
+      "entry_score": 0.49942343299999997,
+      "is_r3b_candidate": false,
+      "fwd_5d_sma_proxy_return": 0.017847183491355167
+    },
+    {
+      "code": "held_position_recent_hold_no_change",
+      "symbol": "004370",
+      "date": "2026-06-16",
+      "entry_score": 0.3229575,
+      "is_r3b_candidate": false,
+      "fwd_5d_sma_proxy_return": -0.0659694288012872
+    },
+    {
+      "code": "held_position_recent_hold_no_change",
+      "symbol": "004370",
+      "date": "2026-06-17",
+      "entry_score": 0.30887,
+      "is_r3b_candidate": false,
+      "fwd_5d_sma_proxy_return": -0.08582887700534758
+    },
+    {
+      "code": "held_position_recent_hold_no_change",
+      "symbol": "004370",
+      "date": "2026-06-18",
+      "entry_score": 0.30887,
+      "is_r3b_candidate": false,
+      "fwd_5d_sma_proxy_return": -0.08582887700534758
+    },
+    {
+      "code": "held_position_recent_hold_no_change",
+      "symbol": "004370",
+      "date": "2026-06-19",
+      "entry_score": 0.30887,
+      "is_r3b_candidate": false,
+      "fwd_5d_sma_proxy_return": -0.09287841862984025
+    },
+    {
+      "code": "held_position_recent_hold_no_change",
+      "symbol": "004370",
+      "date": "2026-06-22",
+      "entry_score": 0.07623749999999999,
+      "is_r3b_candidate": false,
+      "fwd_5d_sma_proxy_return": -0.07641379310344831
+    },
+    {
+      "code": "held_position_recent_hold_no_change",
+      "symbol": "004370",
+      "date": "2026-06-23",
+      "entry_score": 0.028612499999999985,
+      "is_r3b_candidate": false,
+      "fwd_5d_sma_proxy_return": -0.056885384398760896
+    },
+    {
+      "code": "held_position_recent_hold_no_change",
+      "symbol": "004800",
+      "date": "2026-06-16",
+      "entry_score": 0.45048749999999993,
+      "is_r3b_candidate": false,
+      "fwd_5d_sma_proxy_return": null
+    },
+    {
+      "code": "held_position_recent_hold_no_change",
+      "symbol": "004800",
+      "date": "2026-06-17",
+      "entry_score": 0.45048749999999993,
+      "is_r3b_candidate": false,
+      "fwd_5d_sma_proxy_return": null
+    },
+    {
+      "code": "held_position_recent_hold_no_change",
+      "symbol": "004990",
+      "date": "2026-06-16",
+      "entry_score": 0.24650250000000007,
+      "is_r3b_candidate": false,
+      "fwd_5d_sma_proxy_return": -0.10184141300263061
+    },
+    {
+      "code": "held_position_recent_hold_no_change",
+      "symbol": "005380",
+      "date": "2026-06-16",
+      "entry_score": 0.43237499999999995,
+      "is_r3b_candidate": false,
+      "fwd_5d_sma_proxy_return": -0.12156482379566769
+    },
+    {
+      "code": "held_position_recent_hold_no_change",
+      "symbol": "005830",
+      "date": "2026-06-16",
+      "entry_score": 0.11313750000000003,
+      "is_r3b_candidate": false,
+      "fwd_5d_sma_proxy_return": -0.05159538357094362
+    },
+    {
+      "code": "held_position_recent_hold_no_change",
+      "symbol": "005930",
+      "date": "2026-06-16",
+      "entry_score": 0.4846999999999999,
+      "is_r3b_candidate": false,
+      "fwd_5d_sma_proxy_return": 0.07263092269326688
+    },
+    {
+      "code": "held_position_recent_hold_no_change",
+      "symbol": "005930",
+      "date": "2026-06-17",
+      "entry_score": 0.4846999999999999,
+      "is_r3b_candidate": false,
+      "fwd_5d_sma_proxy_return": 0.04156553398058249
+    },
+    {
+      "code": "held_position_recent_hold_no_change",
+      "symbol": "005930",
+      "date": "2026-06-18",
+      "entry_score": 0.4846999999999999,
+      "is_r3b_candidate": false,
+      "fwd_5d_sma_proxy_return": 0.04156553398058249
+    },
+    {
+      "code": "held_position_recent_hold_no_change",
+      "symbol": "005930",
+      "date": "2026-06-19",
+      "entry_score": 0.4846999999999999,
+      "is_r3b_candidate": false,
+      "fwd_5d_sma_proxy_return": -0.0326797385620915
+    },
+    {
+      "code": "held_position_recent_hold_no_change",
+      "symbol": "005930",
+      "date": "2026-06-22",
+      "entry_score": 0.49878749999999994,
+      "is_r3b_candidate": false,
+      "fwd_5d_sma_proxy_return": -0.050014208581983466
+    },
+    {
+      "code": "held_position_recent_hold_no_change",
+      "symbol": "005930",
+      "date": "2026-06-23",
+      "entry_score": 0.43385884099999994,
+      "is_r3b_candidate": false,
+      "fwd_5d_sma_proxy_return": -0.01795540110049232
+    },
+    {
+      "code": "held_position_recent_hold_no_change",
+      "symbol": "005935",
+      "date": "2026-06-16",
+      "entry_score": 0.4846999999999999,
+      "is_r3b_candidate": false,
+      "fwd_5d_sma_proxy_return": null
+    },
+    {
+      "code": "held_position_recent_hold_no_change",
+      "symbol": "005940",
+      "date": "2026-06-16",
+      "entry_score": 0.19668500000000003,
+      "is_r3b_candidate": false,
+      "fwd_5d_sma_proxy_return": -0.08742138364779872
+    },
+    {
+      "code": "held_position_recent_hold_no_change",
+      "symbol": "006360",
+      "date": "2026-06-16",
+      "entry_score": 0.4296,
+      "is_r3b_candidate": false,
+      "fwd_5d_sma_proxy_return": -0.13551077136900624
+    },
+    {
+      "code": "held_position_recent_hold_no_change",
+      "symbol": "006400",
+      "date": "2026-06-16",
+      "entry_score": 0.21846250000000003,
+      "is_r3b_candidate": false,
+      "fwd_5d_sma_proxy_return": -0.04135053110773901
+    },
+    {
+      "code": "held_position_recent_hold_no_change",
+      "symbol": "007070",
+      "date": "2026-06-16",
+      "entry_score": 0.4761525,
+      "is_r3b_candidate": false,
+      "fwd_5d_sma_proxy_return": -0.06431790249897584
+    },
+    {
+      "code": "held_position_recent_hold_no_change",
+      "symbol": "008770",
+      "date": "2026-06-19",
+      "entry_score": 0.47650249999999994,
+      "is_r3b_candidate": false,
+      "fwd_5d_sma_proxy_return": -0.15209850849809226
+    },
+    {
+      "code": "held_position_recent_hold_no_change",
+      "symbol": "008770",
+      "date": "2026-06-22",
+      "entry_score": 0.20835249999999997,
+      "is_r3b_candidate": false,
+      "fwd_5d_sma_proxy_return": -0.1475061903077467
+    },
+    {
+      "code": "held_position_recent_hold_no_change",
+      "symbol": "009150",
+      "date": "2026-06-19",
+      "entry_score": 0.4937675,
+      "is_r3b_candidate": false,
+      "fwd_5d_sma_proxy_return": -0.03983386822729851
+    },
+    {
+      "code": "held_position_recent_hold_no_change",
+      "symbol": "009150",
+      "date": "2026-06-22",
+      "entry_score": 0.507855,
+      "is_r3b_candidate": false,
+      "fwd_5d_sma_proxy_return": -0.07385414733716833
+    },
+    {
+      "code": "held_position_recent_hold_no_change",
+      "symbol": "009540",
+      "date": "2026-06-19",
+      "entry_score": 0.334765,
+      "is_r3b_candidate": false,
+      "fwd_5d_sma_proxy_return": -0.1376726761882463
+    },
+    {
+      "code": "held_position_recent_hold_no_change",
+      "symbol": "009540",
+      "date": "2026-06-22",
+      "entry_score": 0.14329,
+      "is_r3b_candidate": false,
+      "fwd_5d_sma_proxy_return": -0.14336492890995256
+    },
+    {
+      "code": "held_position_recent_hold_no_change",
+      "symbol": "009540",
+      "date": "2026-06-23",
+      "entry_score": 0.045552500000000024,
+      "is_r3b_candidate": false,
+      "fwd_5d_sma_proxy_return": -0.11935166994106094
+    },
+    {
+      "code": "held_position_recent_hold_no_change",
+      "symbol": "011070",
+      "date": "2026-06-19",
+      "entry_score": 0.4846999999999999,
+      "is_r3b_candidate": false,
+      "fwd_5d_sma_proxy_return": -0.20772792591409872
+    },
+    {
+      "code": "held_position_recent_hold_no_change",
+      "symbol": "011070",
+      "date": "2026-06-22",
+      "entry_score": 0.40924249999999995,
+      "is_r3b_candidate": false,
+      "fwd_5d_sma_proxy_return": -0.2143330023171135
+    },
+    {
+      "code": "held_position_recent_hold_no_change",
+      "symbol": "015760",
+      "date": "2026-06-19",
+      "entry_score": 0.07440249999999998,
+      "is_r3b_candidate": false,
+      "fwd_5d_sma_proxy_return": -0.06736526946107779
+    },
+    {
+      "code": "held_position_recent_hold_no_change",
+      "symbol": "017670",
+      "date": "2026-06-19",
+      "entry_score": 0.2245,
+      "is_r3b_candidate": false,
+      "fwd_5d_sma_proxy_return": null
+    },
+    {
+      "code": "held_position_recent_hold_no_change",
+      "symbol": "024110",
+      "date": "2026-06-19",
+      "entry_score": 0.35724500000000003,
+      "is_r3b_candidate": false,
+      "fwd_5d_sma_proxy_return": null
+    },
+    {
+      "code": "held_position_recent_hold_no_change",
+      "symbol": "024110",
+      "date": "2026-06-22",
+      "entry_score": 0.04369500000000001,
+      "is_r3b_candidate": false,
+      "fwd_5d_sma_proxy_return": null
+    },
+    {
+      "code": "held_position_recent_risk_sell_cooldown",
+      "symbol": "000227",
+      "date": "2026-06-18",
+      "entry_score": 0.38591250000000005,
+      "is_r3b_candidate": false,
+      "fwd_5d_sma_proxy_return": null
+    },
+    {
+      "code": "held_position_recent_risk_sell_cooldown",
+      "symbol": "000227",
+      "date": "2026-06-19",
+      "entry_score": 0.3949575,
+      "is_r3b_candidate": false,
+      "fwd_5d_sma_proxy_return": null
+    },
+    {
+      "code": "held_position_recent_risk_sell_cooldown",
+      "symbol": "000227",
+      "date": "2026-06-22",
+      "entry_score": 0.16744500000000004,
+      "is_r3b_candidate": false,
+      "fwd_5d_sma_proxy_return": null
+    },
+    {
+      "code": "held_position_recent_risk_sell_cooldown",
+      "symbol": "000227",
+      "date": "2026-06-23",
+      "entry_score": 0.27596624950000004,
+      "is_r3b_candidate": false,
+      "fwd_5d_sma_proxy_return": null
+    },
+    {
+      "code": "held_position_recent_risk_sell_cooldown",
+      "symbol": "000270",
+      "date": "2026-06-22",
+      "entry_score": 0.08041000000000001,
+      "is_r3b_candidate": false,
+      "fwd_5d_sma_proxy_return": -0.13710079840319356
+    },
+    {
+      "code": "held_position_recent_risk_sell_cooldown",
+      "symbol": "000390",
+      "date": "2026-06-17",
+      "entry_score": 0.04973250000000001,
+      "is_r3b_candidate": false,
+      "fwd_5d_sma_proxy_return": null
+    },
+    {
+      "code": "held_position_recent_risk_sell_cooldown",
+      "symbol": "001440",
+      "date": "2026-06-18",
+      "entry_score": 0.2518236785,
+      "is_r3b_candidate": false,
+      "fwd_5d_sma_proxy_return": -0.09638860630722279
+    },
+    {
+      "code": "held_position_recent_risk_sell_cooldown",
+      "symbol": "001440",
+      "date": "2026-06-22",
+      "entry_score": 0.16542250000000006,
+      "is_r3b_candidate": false,
+      "fwd_5d_sma_proxy_return": -0.14906043676993397
+    },
+    {
+      "code": "held_position_recent_risk_sell_cooldown",
+      "symbol": "001450",
+      "date": "2026-06-23",
+      "entry_score": 0.378065,
+      "is_r3b_candidate": false,
+      "fwd_5d_sma_proxy_return": -0.08422704682186766
+    },
+    {
+      "code": "held_position_recent_risk_sell_cooldown",
+      "symbol": "001740",
+      "date": "2026-06-19",
+      "entry_score": 0.3880999999999999,
+      "is_r3b_candidate": false,
+      "fwd_5d_sma_proxy_return": null
+    },
+    {
+      "code": "held_position_recent_risk_sell_cooldown",
+      "symbol": "001800",
+      "date": "2026-06-19",
+      "entry_score": 0.38646499999999995,
+      "is_r3b_candidate": false,
+      "fwd_5d_sma_proxy_return": -0.09090909090909094
+    },
+    {
+      "code": "held_position_recent_risk_sell_cooldown",
+      "symbol": "001800",
+      "date": "2026-06-22",
+      "entry_score": 0.14887750000000002,
+      "is_r3b_candidate": false,
+      "fwd_5d_sma_proxy_return": -0.08551617873651773
+    },
+    {
+      "code": "held_position_recent_risk_sell_cooldown",
+      "symbol": "003030",
+      "date": "2026-06-23",
+      "entry_score": 0.0,
+      "is_r3b_candidate": false,
+      "fwd_5d_sma_proxy_return": -0.10146966854283923
+    },
+    {
+      "code": "held_position_recent_risk_sell_cooldown",
+      "symbol": "003490",
+      "date": "2026-06-24",
+      "entry_score": 0.4561950254999999,
+      "is_r3b_candidate": false,
+      "fwd_5d_sma_proxy_return": 0.027352297592997843
+    },
+    {
+      "code": "held_position_recent_risk_sell_cooldown",
+      "symbol": "003550",
+      "date": "2026-06-23",
+      "entry_score": 0.12823000000000004,
+      "is_r3b_candidate": false,
+      "fwd_5d_sma_proxy_return": -0.08243793997776949
+    },
+    {
+      "code": "held_position_recent_risk_sell_cooldown",
+      "symbol": "005930",
+      "date": "2026-06-23",
+      "entry_score": 0.43385884099999994,
+      "is_r3b_candidate": false,
+      "fwd_5d_sma_proxy_return": -0.01795540110049232
+    },
+    {
+      "code": "held_position_recent_risk_sell_cooldown",
+      "symbol": "007070",
+      "date": "2026-06-18",
+      "entry_score": 0.2642525,
+      "is_r3b_candidate": false,
+      "fwd_5d_sma_proxy_return": -0.07501019160211986
+    },
+    {
+      "code": "held_position_recent_risk_sell_cooldown",
+      "symbol": "008770",
+      "date": "2026-06-23",
+      "entry_score": 0.194615,
+      "is_r3b_candidate": false,
+      "fwd_5d_sma_proxy_return": -0.12527512839325017
+    },
+    {
+      "code": "held_position_recent_risk_sell_cooldown",
+      "symbol": "017670",
+      "date": "2026-06-19",
+      "entry_score": 0.2245,
+      "is_r3b_candidate": false,
+      "fwd_5d_sma_proxy_return": null
+    },
+    {
+      "code": "holding_profile_earliest_reentry_guard",
+      "symbol": "000120",
+      "date": "2026-07-08",
+      "entry_score": 0.033471959,
+      "is_r3b_candidate": false,
+      "fwd_5d_sma_proxy_return": -0.0455143383320179
+    },
+    {
+      "code": "holding_profile_earliest_reentry_guard",
+      "symbol": "000240",
+      "date": "2026-07-09",
+      "entry_score": 0.24351250000000005,
+      "is_r3b_candidate": false,
+      "fwd_5d_sma_proxy_return": -0.03644823575029077
+    },
+    {
+      "code": "holding_profile_earliest_reentry_guard",
+      "symbol": "000240",
+      "date": "2026-07-10",
+      "entry_score": 0.19717750000000003,
+      "is_r3b_candidate": false,
+      "fwd_5d_sma_proxy_return": null
+    },
+    {
+      "code": "holding_profile_earliest_reentry_guard",
+      "symbol": "000270",
+      "date": "2026-07-13",
+      "entry_score": 0.057627500000000026,
+      "is_r3b_candidate": false,
+      "fwd_5d_sma_proxy_return": null
+    },
+    {
+      "code": "holding_profile_earliest_reentry_guard",
+      "symbol": "000660",
+      "date": "2026-07-13",
+      "entry_score": 0.20681669300000002,
+      "is_r3b_candidate": false,
+      "fwd_5d_sma_proxy_return": null
+    },
+    {
+      "code": "holding_profile_earliest_reentry_guard",
+      "symbol": "000660",
+      "date": "2026-07-14",
+      "entry_score": 0.25193605,
+      "is_r3b_candidate": false,
+      "fwd_5d_sma_proxy_return": null
+    },
+    {
+      "code": "holding_profile_earliest_reentry_guard",
+      "symbol": "000660",
+      "date": "2026-07-15",
+      "entry_score": 0.37436250000000004,
+      "is_r3b_candidate": false,
+      "fwd_5d_sma_proxy_return": null
+    },
+    {
+      "code": "holding_profile_earliest_reentry_guard",
+      "symbol": "000660",
+      "date": "2026-07-16",
+      "entry_score": 0.1749875,
+      "is_r3b_candidate": false,
+      "fwd_5d_sma_proxy_return": null
+    },
+    {
+      "code": "holding_profile_earliest_reentry_guard",
+      "symbol": "000670",
+      "date": "2026-07-09",
+      "entry_score": 0.032816042499999996,
+      "is_r3b_candidate": false,
+      "fwd_5d_sma_proxy_return": -0.05021030494216616
+    },
+    {
+      "code": "holding_profile_earliest_reentry_guard",
+      "symbol": "000670",
+      "date": "2026-07-10",
+      "entry_score": 0.0,
+      "is_r3b_candidate": false,
+      "fwd_5d_sma_proxy_return": null
+    },
+    {
+      "code": "holding_profile_earliest_reentry_guard",
+      "symbol": "000670",
+      "date": "2026-07-14",
+      "entry_score": 0.023963447999999995,
+      "is_r3b_candidate": false,
+      "fwd_5d_sma_proxy_return": null
+    },
+    {
+      "code": "holding_profile_earliest_reentry_guard",
+      "symbol": "000670",
+      "date": "2026-07-15",
+      "entry_score": 0.0,
+      "is_r3b_candidate": false,
+      "fwd_5d_sma_proxy_return": null
+    },
+    {
+      "code": "holding_profile_earliest_reentry_guard",
+      "symbol": "000670",
+      "date": "2026-07-16",
+      "entry_score": 0.0,
+      "is_r3b_candidate": false,
+      "fwd_5d_sma_proxy_return": null
+    },
+    {
+      "code": "holding_profile_earliest_reentry_guard",
+      "symbol": "000810",
+      "date": "2026-07-07",
+      "entry_score": 0.5093475,
+      "is_r3b_candidate": false,
+      "fwd_5d_sma_proxy_return": -0.007118539151965364
+    },
+    {
+      "code": "holding_profile_earliest_reentry_guard",
+      "symbol": "000880",
+      "date": "2026-07-01",
+      "entry_score": 0.025925000000000004,
+      "is_r3b_candidate": false,
+      "fwd_5d_sma_proxy_return": 0.002143413873733513
+    },
+    {
+      "code": "holding_profile_earliest_reentry_guard",
+      "symbol": "000880",
+      "date": "2026-07-02",
+      "entry_score": 0.03185558400000001,
+      "is_r3b_candidate": false,
+      "fwd_5d_sma_proxy_return": -0.015487159380513593
+    },
+    {
+      "code": "holding_profile_earliest_reentry_guard",
+      "symbol": "000880",
+      "date": "2026-07-07",
+      "entry_score": 0.0,
+      "is_r3b_candidate": false,
+      "fwd_5d_sma_proxy_return": -0.12112514351320325
+    },
+    {
+      "code": "holding_profile_earliest_reentry_guard",
+      "symbol": "000880",
+      "date": "2026-07-08",
+      "entry_score": 0.0,
+      "is_r3b_candidate": false,
+      "fwd_5d_sma_proxy_return": -0.11277464514874591
+    },
+    {
+      "code": "holding_profile_earliest_reentry_guard",
+      "symbol": "000880",
+      "date": "2026-07-15",
+      "entry_score": 0.0,
+      "is_r3b_candidate": false,
+      "fwd_5d_sma_proxy_return": null
+    },
+    {
+      "code": "holding_profile_earliest_reentry_guard",
+      "symbol": "000990",
+      "date": "2026-07-02",
+      "entry_score": 0.2201802715,
+      "is_r3b_candidate": false,
+      "fwd_5d_sma_proxy_return": -0.17554949001580233
+    },
+    {
+      "code": "holding_profile_earliest_reentry_guard",
+      "symbol": "000990",
+      "date": "2026-07-10",
+      "entry_score": 0.16845250000000003,
+      "is_r3b_candidate": false,
+      "fwd_5d_sma_proxy_return": null
+    },
+    {
+      "code": "holding_profile_earliest_reentry_guard",
+      "symbol": "000990",
+      "date": "2026-07-14",
+      "entry_score": 0.18254000000000006,
+      "is_r3b_candidate": false,
+      "fwd_5d_sma_proxy_return": null
+    },
+    {
+      "code": "holding_profile_earliest_reentry_guard",
+      "symbol": "000990",
+      "date": "2026-07-16",
+      "entry_score": 0.04753750000000001,
+      "is_r3b_candidate": false,
+      "fwd_5d_sma_proxy_return": null
+    },
+    {
+      "code": "holding_profile_earliest_reentry_guard",
+      "symbol": "001040",
+      "date": "2026-07-08",
+      "entry_score": 0.0,
+      "is_r3b_candidate": false,
+      "fwd_5d_sma_proxy_return": -0.09839488450998302
+    },
+    {
+      "code": "holding_profile_earliest_reentry_guard",
+      "symbol": "001040",
+      "date": "2026-07-09",
+      "entry_score": 0.0,
+      "is_r3b_candidate": false,
+      "fwd_5d_sma_proxy_return": -0.06836913930549926
+    },
+    {
+      "code": "holding_profile_earliest_reentry_guard",
+      "symbol": "001040",
+      "date": "2026-07-10",
+      "entry_score": 0.0,
+      "is_r3b_candidate": false,
+      "fwd_5d_sma_proxy_return": null
+    },
+    {
+      "code": "holding_profile_earliest_reentry_guard",
+      "symbol": "001040",
+      "date": "2026-07-16",
+      "entry_score": 0.0,
+      "is_r3b_candidate": false,
+      "fwd_5d_sma_proxy_return": null
+    },
+    {
+      "code": "holding_profile_earliest_reentry_guard",
+      "symbol": "001430",
+      "date": "2026-07-15",
+      "entry_score": 0.0,
+      "is_r3b_candidate": false,
+      "fwd_5d_sma_proxy_return": null
+    },
+    {
+      "code": "holding_profile_earliest_reentry_guard",
+      "symbol": "001680",
+      "date": "2026-07-08",
+      "entry_score": 0.06282500000000002,
+      "is_r3b_candidate": false,
+      "fwd_5d_sma_proxy_return": -0.013932940643407332
+    },
+    {
+      "code": "holding_profile_earliest_reentry_guard",
+      "symbol": "001680",
+      "date": "2026-07-10",
+      "entry_score": 0.08595749999999999,
+      "is_r3b_candidate": false,
+      "fwd_5d_sma_proxy_return": null
+    },
+    {
+      "code": "holding_profile_earliest_reentry_guard",
+      "symbol": "002380",
+      "date": "2026-07-10",
+      "entry_score": 0.0,
+      "is_r3b_candidate": false,
+      "fwd_5d_sma_proxy_return": null
+    }
+  ]
+}

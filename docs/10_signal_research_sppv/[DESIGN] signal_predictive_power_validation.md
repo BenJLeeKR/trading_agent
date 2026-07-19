@@ -1606,6 +1606,23 @@ entry 설계 검토로 전환**을 확정했다. 별도 문서
   Go를 유지한다. 상세: `plans/[DESIGN] regime_conditional_entry_
   signal_v1.md` §63.
 
+- 작성자: Codex
+- 수정일자: 2026-07-19 (75차, 보유기간/Churn 제어가 R3b BUY 빈도를
+  얼마나 깎는지 정량 검증 — canonical 문서 경로가 `docs/` 하위
+  구조로 재배치된 이후 첫 턴)
+- 수정내용: churn guard가 R3b BUY_CANDIDATE 빈도를 실제로 얼마나
+  억제하는지 운영 함수(`_build_entry_score`/`classify_market_
+  regime`)와 실제 운영 DB(`guardrail_evaluations`/`signal_feature_
+  snapshots`/`trade_decisions`)로 정량 분해했다(SPPV-2.75). 실제
+  운영 창(2026-05-13~07-16)에서 churn 관련 guard가 차단한 144
+  episode를 entry_score로 재계산한 결과 **전부 0.65 미만**(candidate
+  0건) — R3b 고품질 BUY를 과잉 억제한다는 증거는 없었으나, 표본이
+  작고 일부 guard(reduce_guard/reentry_cooldown)가 미발동 상태라
+  판정은 Watch로 확정했다. R3b 자체 판정(Conditional Go)은 이
+  검증의 영향을 받지 않는다. 코드 변경 없음(신규 검증 스크립트만
+  추가), 신규 KIS 호출 0건. 상세: `docs/10_signal_research_sppv/
+  [DESIGN] regime_conditional_entry_signal_v1.md` §64.
+
 ---
 
 ## 진행 체크리스트
@@ -3979,6 +3996,48 @@ canonical),
     percentile` reason_code 실제 관측; 다음 정기 signal feature
     배치 사이클에서 벤치마크 자동 반영 재확인; `trigger_status`
     자동화(낮은 우선순위); T+5; `portfolio_allocation` gap.
+- [x] **SPPV-2.75(신설)** 보유기간/Churn 제어가 R3b BUY 빈도를
+  얼마나 깎는지 정량 검증 (완료, 2026-07-19, 작성자: Codex)
+  - **목적**: churn guard(`holding_profile_earliest_reentry_
+    guard`/`held_position_recent_hold_no_change`/`held_position_
+    recent_risk_sell_cooldown` 등)가 R3b BUY_CANDIDATE(entry_
+    score>=0.65) 빈도를 실제로 얼마나 억제하는지, 운영 함수·운영
+    DB 기준으로 정량 분해.
+  - **표본 범위 결정**: churn guard는 실제 거래 이력(`symbol_
+    trade_states`)에 의존하는 stateful guard라 3년 합성 표본
+    구성이 불가능 — 실제 운영 창(2026-05-13~07-16, guardrail_
+    evaluations 실제 존재 구간 2026-06-14~07-16)을 그대로 사용.
+  - **표 A**: `guardrail_evaluations`(`pre_ai_gate_v1`) 6,027건
+    원시 이벤트 중 churn 관련 3개 사유(`held_position_recent_
+    hold_no_change`=911, `holding_profile_earliest_reentry_
+    guard`=442, `held_position_recent_risk_sell_cooldown`=72)를
+    `(symbol, 날짜)` 단위로 dedupe해 distinct episode 94/31/19건
+    확인. `same_symbol_reentry_cooldown`/`holding_profile_
+    earliest_reduce_guard`는 이 창에서 한 번도 발동하지 않음.
+  - **표 B(핵심 발견)**: 각 episode의 차단 시점 직전 실제
+    `signal_feature_snapshot`으로 운영 함수 `_build_entry_score()`
+    를 재계산한 결과, **churn guard가 차단한 144건 전부 entry_
+    score<0.65**(평균 0.095~0.332, 최댓값 0.594) — R3b BUY_
+    CANDIDATE 문턱을 넘는 표본이 **0건**. candidate가 0건이라
+    forward return(T+5/T+20) 계산 대상 자체가 없음(공집합 자체가
+    실측 결과). 표본 기간(일봉 이력 ~1개월)도 T+20 관측에
+    구조적으로 짧음을 확인.
+  - **표 C**: 같은 창 실제 `trade_decisions.decision_type='buy'`
+    =49건. churn guard 완화 시 추가 BUY는 0건(candidate 0건이므로)
+    — 차단 완화가 R3b 기회를 늘려주는 효과가 이번 창에서는 관측
+    안 됨.
+  - **판정**: **Watch** — "churn guard가 R3b 고품질 BUY를 과잉
+    억제한다"는 가설은 기각(entry_score>=0.65 차단 사례 0건, 공격형
+    목표에 유리한 방향)되나, 표본이 작고(144 episode, 2개월) reduce_
+    guard/reentry_cooldown이 미발동 상태라 Go 격상은 시기상조. R3b
+    자체는 Conditional Go를 유지한다(이 축의 판정과 별개). 신규
+    KIS 호출 0건(전부 기존 DB read-only). 코드 변경 없음(검증
+    스크립트 신규 추가만). 상세: `docs/10_signal_research_sppv/
+    [DESIGN] regime_conditional_entry_signal_v1.md` §64.
+  - 다음 과제: paper 운영 표본 누적 후 재검증(가장 우선);
+    `probe_churn_single_share_blocked` 등 execution_service 레벨
+    guard 분석 추가(guardrail_evaluations 밖 별도 경로); 미발동
+    축(reduce_guard/reentry_cooldown) 실제 발동 시 재검증.
 - [~] **SPPV-3** `entry_score` point-in-time 재현 및 중복 penalty ablation
   - **보류 유지, 형태 재정의 — 우선순위 재조정**: §12(1년, 자기참조
     포함) 당시 "알파 근거 강화"로 낙관했던 것이 §14(3년, 자기참조

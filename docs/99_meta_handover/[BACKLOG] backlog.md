@@ -1143,6 +1143,22 @@
   프로세스에 도달. R3b는 Conditional Go를 유지한다. 상세: `plans/
   [DESIGN] regime_conditional_entry_signal_v1.md` §63.
 
+- 작성자: Codex
+- 수정일자: 2026-07-19 (canonical 문서 `docs/` 하위 재배치 이후
+  첫 턴 — 보유기간/Churn 제어가 R3b BUY 빈도를 얼마나 깎는지 정량
+  검증)
+- 수정내용: churn guard가 R3b BUY_CANDIDATE 빈도를 실제로 얼마나
+  억제하는지 운영 함수·실제 운영 DB로 정량 분해했다(SPPV-2.75).
+  실제 운영 창(2026-05-13~07-16)의 churn 관련 guard 차단 144
+  episode를 `_build_entry_score()`로 재계산한 결과 전부 entry_
+  score<0.65(candidate 0건) — R3b 고품질 BUY 과잉 억제 증거 없음,
+  다만 표본이 작고 일부 guard 미발동이라 판정은 Watch. 이 축은
+  현행 유지 권고(완화·강화 모두 이번 근거로는 미정당화). R3b
+  자체 판정(Conditional Go)은 이 검증과 무관하게 유지. 코드 변경
+  없음(신규 검증 스크립트만), 신규 KIS 호출 0건. 상세: `docs/
+  10_signal_research_sppv/[DESIGN] regime_conditional_entry_
+  signal_v1.md` §64.
+
 ---
 
 ## 관리 원칙
@@ -2709,9 +2725,19 @@
     이제 실제 paper 운영 프로세스에 도달. R3b는 Conditional Go를
     유지한다. 상세: `plans/[DESIGN] regime_conditional_entry_
     signal_v1.md` §63.
+  - **SPPV-2.75(완료, 2026-07-19, 보유기간/Churn 제어가 R3b BUY
+    빈도를 얼마나 깎는지 정량 검증, 작성자: Codex — Watch, R3b
+    Conditional Go 유지)**: churn guard 3종이 실제 운영 창
+    (2026-05-13~07-16)에서 차단한 144 episode를 운영 함수(`_build_
+    entry_score`)로 재계산한 결과 전부 entry_score<0.65(candidate
+    0건) — R3b 고품질 BUY 과잉 억제 증거 없음. 표본이 작고 일부
+    guard 미발동이라 판정은 Watch. 이 축은 현행 유지 권고. 코드
+    변경 없음, 신규 KIS 호출 0건. 상세: `docs/10_signal_research_
+    sppv/[DESIGN] regime_conditional_entry_signal_v1.md` §64.
   - **SPPV-3(다음 착수: 다음 실제 거래일(2026-07-20 예정) cycle에서
     `trigger_r3b_alpha_percentile` reason_code 실제 관측(다음
-    거래일 관측 과제, 실제 차단 요소 아님) +
+    거래일 관측 과제, 실제 차단 요소 아님) + churn guard paper
+    운영 표본 누적 후 재검증(§64 후속) +
     `trigger_status` 공급원 자동화/배치화(cron/배치 설계,
     override=true인 동안 낮은 우선순위) + 포지션 사이징 등 exit
     외 리스크 관리 수단 검토(신규, 낮은 우선순위, 실거래 계좌

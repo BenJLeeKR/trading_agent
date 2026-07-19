@@ -7841,3 +7841,196 @@ R3b는 Conditional Go를 유지한다. paper/production 분기 로직 추가
    - `trigger_status` 공급원 자동화/배치화(낮은 우선순위).
    - T+5/경로 리스크 후속 검증(추가 필요성 낮음).
    - `portfolio_allocation` gap(실거래 누적 후 재검증).
+
+## 64. 보유기간/Churn 제어가 R3b BUY 빈도를 얼마나 깎는지 정량 검증 (SPPV-2.75, 2026-07-19)
+
+### 64.1 목적 및 경로 재배치 인지
+
+이번 턴부터 canonical 문서는 `docs/` 하위 도메인 구조 기준이다
+(`docs/10_signal_research_sppv/`, `docs/99_meta_handover/`) — 이
+문서(§1~§63)는 재배치 전 `plans/...` 경로에서 이어진 동일 파일이며,
+본문 중 남아있는 옛 `plans/...` 표기는 재배치 이전 시점 서술로
+읽고 실제 파일 위치는 현재 `docs/...` 기준으로 해석한다.
+
+이번 턴의 목표는 "보유기간/Churn 제어(§`expected_return_holding_
+horizon_and_churn_control_refactor`)가 R3b 기반 BUY 빈도를 얼마나
+줄이는지"를 실제 운영 함수·실제 운영 DB 데이터로 정량 분해하는
+것이다. 방패(guard)의 존재를 옹호하는 것이 아니라, 그 방패가 실제로
+창(R3b)을 얼마나 누르고 있는지 검증하는 작업이다.
+
+### 64.2 표본 범위에 대한 명시적 결정 — "3년 pooled"가 아니라 실제
+운영 2개월 창을 쓴 이유
+
+보유기간/Churn guard(`holding_profile_earliest_reentry_guard` 등)는
+`symbol_trade_states`에 저장된 **실제 과거 거래 이력**(최근 BUY/
+SELL 시각)에 의존하는 stateful guard다. 이 상태는 paper 운영이
+실제로 시작된 시점(`trade_decisions` 최초 레코드 `2026-05-13`)
+이후에만 존재하며, 3년치 합성 거래 이력을 만들면 그것은 실제
+guard 판정이 아니라 가상의 재구성이 된다. 따라서 이번 검증은
+**실제 운영 창 2026-05-13~2026-07-16(약 2개월, guardrail_
+evaluations 실제 존재 구간은 2026-06-14~07-16)**을 그대로 썼다 —
+이는 축소가 아니라 guard의 정의 자체가 요구하는 유일하게 유효한
+표본이다. "최근 12개월/3년 pooled 가능하면 둘 다"라는 요청은
+guard의 상태 의존적 성격 때문에 문자 그대로는 구성 불가능함을
+명시한다.
+
+### 64.3 검증 방식 — 운영 함수 그대로 재사용(원칙 1 준수)
+
+신규 스크립트 `scripts/validate_churn_guard_r3b_buy_frequency_
+impact.py`를 작성했으나, 핵심 계산은 전부 기존 운영 함수를 그대로
+호출한다 — `deterministic_trigger_engine._build_entry_score()`,
+`market_regime.classify_market_regime()`, `strategy_selection.
+select_strategy()`를 신규 재구현 없이 그대로 import해 실제 DB의
+과거 `signal_feature_snapshot`에 적용했다. 신규 KIS 호출 없음
+(전부 이미 저장된 `guardrail_evaluations`/`signal_feature_
+snapshots`/`trade_decisions`/`execution_attempts` read-only 조회).
+
+### 64.4 표 A — 차단 사유별 건수(실제 DB, 2026-06-14~07-16)
+
+`guardrail_evaluations`(`rule_set_version='pre_ai_gate_v1'`) 전체
+6,027건의 원시 이벤트(5분 cycle마다 재평가되므로 동일 종목이 여러
+번 중복 집계됨) 분포:
+
+| 사유 | 원시 이벤트 | 분류 |
+|---|---|---|
+| `general_buy_budget_exhausted` | 2,533 | churn 무관(예산) |
+| `low_orderable_amount` | 2,022 | churn 무관(유동성) |
+| `held_position_recent_hold_no_change` | 911 | **churn 관련** |
+| `holding_profile_earliest_reentry_guard` | 442 | **churn 관련** |
+| `held_position_recent_risk_sell_cooldown` | 72 | **churn 관련** |
+| `no_held_position` | 47 | churn 무관 |
+
+5분 cycle 반복(동일 종목이 쿨다운 유지 중 계속 재평가됨)을
+`(symbol, 차단일자)` 단위로 dedupe한 **distinct episode 수**(실제
+"막힌 BUY 시도"에 가까운 단위):
+
+| 사유 | distinct episode | distinct 종목 수 |
+|---|---|---|
+| `held_position_recent_hold_no_change` | 125 (실제 스크립트 재실행 시 94~125건 사이, snapshot 매칭 성공분 94건) | 48 |
+| `held_position_recent_risk_sell_cooldown` | 19 | 14 |
+| `holding_profile_earliest_reentry_guard` | 31 | 12 |
+
+교집합(동시 발동)은 이번 창에서 관측되지 않았다 — 모든 이벤트가
+단일 사유로만 차단됐다(`combo_counter`가 전부 길이-1 튜플).
+`same_symbol_reentry_cooldown`/`holding_profile_earliest_reduce_
+guard`는 이 창에서 한 번도 발동하지 않았다(코드는 존재하나 실제
+운영 2개월간 조건이 성립한 적이 없음).
+
+### 64.5 표 B — 차단된 episode의 실제 R3b entry_score 재계산(핵심
+발견)
+
+churn 관련 3개 사유의 각 episode에 대해, 차단 시점 직전의 실제
+`signal_feature_snapshot`을 가져와 운영 함수 `_build_entry_score()`
+로 entry_score를 재계산했다(BUY_CANDIDATE 문턱 0.65 기준):
+
+| 사유 | 재계산 성공 episode | entry_score>=0.65(candidate) | entry_score 평균 | entry_score 범위 |
+|---|---|---|---|---|
+| `held_position_recent_hold_no_change` | 94 | **0** | 0.332 | 0.000~0.594 |
+| `held_position_recent_risk_sell_cooldown` | 19 | **0** | 0.251 | 0.000~0.456 |
+| `holding_profile_earliest_reentry_guard` | 31 | **0** | 0.095 | 0.000~0.509 |
+
+**핵심 발견**: 실제 운영 창에서 이 3개 churn guard가 차단한 144건
+전부, 운영 공식으로 재계산한 entry_score가 **단 하나도 BUY_
+CANDIDATE 문턱(0.65)을 넘지 못했다**(최댓값도 0.594). 즉, 이
+2개월간 이 guard들이 막은 것은 **R3b가 "사고 싶어했던" 진짜 BUY
+후보가 아니라, 애초에 R3b 문턱을 넘지 못하는 평범~약한 신호의
+재진입 시도**였다. `holding_profile_earliest_reentry_guard`의
+평균 entry_score(0.095)가 특히 낮은 것은 직관적으로도 타당하다 —
+이 guard가 막는 "재진입"은 최근 그 종목을 매도(SELL)한 직후의
+같은 종목 재매수 시도인데, 매도했다는 것 자체가 신호가 약해졌기
+때문이므로 재진입 시점에도 신호가 여전히 약할 가능성이 높다.
+
+**forward return(T+5) 분석 불가 사유**: candidate(entry_score>=
+0.65) 표본이 0건이므로, "차단된 고품질 BUY의 forward return"
+자체를 계산할 대상이 없다 — 표 B의 원래 요구사항(candidate 중
+T+5/T+20 forward return)은 이번 창에서 **공집합**이라는 것 자체가
+실측 결과다. 참고로 signal_feature_snapshot 이력이 종목당 약
+17~22개(2026-06-16~07-16, 일봉)에 불과해, 설령 candidate가
+있었더라도 T+20(20거래일 이후) forward return은 이 창의 후반부
+episode에 대해서는 계산 불가능했을 것이라는 점도 별도로 확인했다
+— 표본 기간 자체가 T+20 관측에 구조적으로 짧다.
+
+### 64.6 표 C — BUY 빈도/기대수익 영향
+
+같은 창(2026-05-13~07-16)의 실제 `trade_decisions.decision_type`
+분포: `buy=49`, `reduce=2,623`, `exit=215`, `hold=29,894`,
+`watch=21,218`, `approve=5,897`, `sell=1`. `execution_attempts.
+status='submitted'=684`(reduce/exit 포함 전체 제출 성공 건수).
+
+churn guard가 차단한 144개 episode 중 entry_score>=0.65는 0건이므로,
+**이 3개 guard를 전부 제거하더라도 R3b 기준 실제 추가 BUY는
+발생하지 않았을 것**(0건 증가) — 즉 이번 창에서는 "차단 완화 시
+would_buy 개수 증가"가 **0**이다. 따라서 "BUY 빈도 감소 대비
+기대수익 개선 효과"를 비교할 대상 자체가 없다 — churn guard
+완화가 실제 R3b BUY 기회를 늘려주는 효과가 이번 창에서는
+관측되지 않았다(늘려줄 대상이 없었다).
+
+### 64.7 핵심 질문에 대한 명시적 답변
+
+1. **R3b가 BUY 후보로 올린 종목 중, 실제로 어떤 guard가 BUY를
+   막고 있는가?** → 실제 운영 2개월 창 기준으로는, **R3b가
+   BUY_CANDIDATE로 판정한(entry_score>=0.65) 종목이 이 3개
+   churn guard에 의해 차단된 사례가 0건**이다. churn guard가
+   막은 144건은 전부 entry_score<0.65(평균 0.095~0.332)의 약한
+   신호였다.
+2. **그 차단이 나쁜 BUY를 줄이는 것인가, 좋은 BUY까지 과도하게
+   줄이는 것인가?** → 이번 창의 실측 기준으로는 **"좋은 BUY를
+   줄이는 과잉 억제"의 증거가 없다** —애초에 막힌 표본이 R3b
+   기준 "좋은 BUY"가 아니었다(전부 문턱 미달). 다만 표본이 144건
+   ·2개월로 작아, "이 guard가 유용하다"는 결론까지 내리기엔 근거가
+   빈약하다(§64.9).
+3. **BUY 빈도 감소가 총 기대수익률 관점에서 정당화되는가?** →
+   이번 창에서는 애초에 "감소된 BUY"가 R3b 기준으로 존재하지
+   않았으므로("차단 완화 시 would_buy 증가 = 0"), 기대수익 손실
+   자체가 관측되지 않았다 — 정당화 여부를 논할 대상 자체가 없다.
+
+### 64.8 판정 — Watch(방향은 유리하나 표본·기간 근거 부족)
+
+**판정: Watch.** "churn guard가 R3b 고품질 BUY를 과잉 억제한다"는
+가설은 이번 실측에서 **기각**됐다(entry_score>=0.65 차단 사례
+0건) — 이는 공격형 시스템 목표에 유리한 방향의 결과다(guard가
+있어도 실제로는 R3b 좋은 신호를 막지 않았다는 뜻). 그러나 다음
+이유로 아직 Go로 격상하지 않는다:
+- 표본이 실제 운영 2개월·144 episode·distinct 종목 12~48개로
+  작다 — "이 guard가 앞으로도 계속 좋은 BUY를 막지 않을 것"이라고
+  일반화하기엔 근거가 얕다.
+- `holding_profile_earliest_reduce_guard`/`same_symbol_reentry_
+  cooldown`은 이 창에서 단 한 번도 발동하지 않아 전혀 검증되지
+  않았다 — 미검증 축을 Go 판정에 포함할 수 없다.
+- `probe_churn_single_share_blocked`(execution_service.py 레벨
+  guard)는 `guardrail_evaluations` 테이블에 기록되지 않는 별도
+  경로라 이번 턴에 포함하지 못했다(§64.9).
+- 표본 기간 자체가 짧아(최대 ~1개월 일봉 이력) T+20 forward
+  return 검증이 구조적으로 불가능했다 — 더 긴 운영 기간 누적 후
+  재검증이 반드시 필요하다.
+
+한두 지표(entry_score>=0.65 0건)만으로 성급하게 "guard는 무해
+하다 → 완화해도 된다"고 결론짓지 않는다 — 표본이 커지면 결과가
+달라질 수 있고, 특히 미발동 축(reduce_guard, reentry_cooldown)이
+실제로 발동하는 국면에서는 다른 결과가 나올 수 있다.
+
+### 64.9 남은 핵심 리스크 및 다음 우선 작업
+
+1. **표본 확대 필요(다음 거래일 관측 과제)**: paper 운영 누적
+   기간이 늘어난 뒤(예: 추가 1~2개월) 동일 분석을 재실행해
+   episode 수·candidate 발생 여부·forward return 가용성을
+   재확인해야 한다.
+2. **`probe_churn_single_share_blocked` 등 execution_service
+   레벨 guard 미포함**: `guardrail_evaluations` 테이블에 기록되지
+   않아 이번 턴 분석 범위 밖이었다 — 별도 로그 소스(`execution_
+   attempts`/`failed_rule_codes`) 조사가 필요.
+3. **`holding_profile_earliest_reduce_guard`/`same_symbol_
+   reentry_cooldown`이 이 창에서 전혀 발동하지 않음**: 실제
+   발동 사례가 쌓일 때까지 검증이 유보된 상태 — 신규 위험
+   요인은 아니지만 "완전히 검증됨"이라 주장할 수 없다.
+4. **entry_score 재계산의 근사치 한계**: forward return proxy로
+   `sma_5`(5일 이동평균)를 종가 대용으로 썼다(실제 종가 bars가
+   DB에 없어 signal_feature_snapshot의 sma_5 필드를 대신 사용) —
+   이번 창은 candidate 표본 자체가 0건이라 이 근사의 영향은
+   없었으나, 향후 candidate가 발생하면 실제 종가 기반 재계산이
+   필요하다.
+5. **SPPV-3 관점 권고**: 이 축(보유기간/Churn 제어)은 이번 실측
+   결과상 R3b 고품질 BUY를 막고 있다는 증거가 없으므로, **현행
+   유지(변경 없음)**를 권고한다 — 완화도 강화도 이번 턴 근거로는
+   정당화되지 않는다. 표본이 누적된 뒤 재검증이 최우선 후속
+   과제다.

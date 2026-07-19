@@ -1,0 +1,35 @@
+[표 A] pre_ai_gate_v1 원시 이벤트 총 6027건 (2026-05-13~2026-07-16 실제 운영 창)
+  개별 사유별 원시 이벤트 건수(중복 카운트 가능):
+    general_buy_budget_exhausted: 2533  [churn 무관(budget/유동성 등)]
+    low_orderable_amount: 2022  [churn 무관(budget/유동성 등)]
+    held_position_recent_hold_no_change: 911  [churn 관련]
+    holding_profile_earliest_reentry_guard: 442  [churn 관련]
+    held_position_recent_risk_sell_cooldown: 72  [churn 관련]
+    no_held_position: 47  [churn 무관(budget/유동성 등)]
+  조합(교집합) 분포:
+    ('general_buy_budget_exhausted',): 2533
+    ('low_orderable_amount',): 2022
+    ('held_position_recent_hold_no_change',): 911
+    ('holding_profile_earliest_reentry_guard',): 442
+    ('held_position_recent_risk_sell_cooldown',): 72
+    ('no_held_position',): 47
+
+[표 A-보정] churn 관련 사유별 distinct (symbol, date) episode 수:
+  held_position_recent_hold_no_change: 125건, distinct symbols=48
+  held_position_recent_risk_sell_cooldown: 19건, distinct symbols=14
+  holding_profile_earliest_reentry_guard: 31건, distinct symbols=12
+
+[표 B] churn 관련 차단 episode의 R3b entry_score 재계산(운영 함수 재사용)
+  [held_position_recent_hold_no_change] episode=94, entry_score>=0.65(candidate)=0
+    entry_score 분포: min=0.000 max=0.594 avg=0.332
+    candidate 중 T+5 근사 수익률 계산 가능 표본: 0/0
+  [held_position_recent_risk_sell_cooldown] episode=19, entry_score>=0.65(candidate)=0
+    entry_score 분포: min=0.000 max=0.456 avg=0.251
+    candidate 중 T+5 근사 수익률 계산 가능 표본: 0/0
+  [holding_profile_earliest_reentry_guard] episode=31, entry_score>=0.65(candidate)=0
+    entry_score 분포: min=0.000 max=0.509 avg=0.095
+    candidate 중 T+5 근사 수익률 계산 가능 표본: 0/0
+
+[표 C 참고] 같은 창(2026-05-13~07-16) 실제 trade_decisions BUY 건수: 0
+
+[산출물] tmp/churn_guard_r3b_impact_summary.json 저장

@@ -1654,6 +1654,20 @@ value/compliance/broker가 아니라 `entry_score < 0.65`다.
   paper 운영 프로세스에 도달. R3b는 Conditional Go를 유지한다.
   상세: `plans/[DESIGN] regime_conditional_entry_signal_v1.md`
   §63.
+
+- 작성자: Codex
+- 수정일자: 2026-07-19 (2.77순위, 보유기간/Churn 제어가 R3b BUY
+  빈도를 얼마나 깎는지 정량 검증 — canonical 문서 `docs/` 재배치
+  이후 첫 턴)
+- 수정내용: churn guard가 R3b BUY_CANDIDATE 빈도를 실제로 얼마나
+  억제하는지 운영 함수·실제 운영 DB로 정량 분해했다(SPPV-2.75).
+  실제 운영 창(2026-05-13~07-16)의 churn 관련 guard 차단 144
+  episode를 `_build_entry_score()`로 재계산한 결과 전부 entry_
+  score<0.65(candidate 0건) — R3b 고품질 BUY 과잉 억제 증거 없음,
+  다만 표본이 작고 일부 guard 미발동이라 판정은 Watch. R3b 자체
+  판정(Conditional Go)은 이 검증과 무관하게 유지. 코드 변경 없음,
+  신규 KIS 호출 0건. 상세: `docs/10_signal_research_sppv/[DESIGN]
+  regime_conditional_entry_signal_v1.md` §64.
 - **3순위(보류 유지, 형태 재정의 — 우선순위 재조정)**: **`entry_
   score`와 BUY funnel 재현** — §2.7 확장 검증에서 하락장 안정성이
   확인되지 않아 단순 재현으로는 착수하지 않는다. §2.16~§2.21에서
