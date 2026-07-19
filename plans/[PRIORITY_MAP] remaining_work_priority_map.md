@@ -974,6 +974,22 @@
   상세: `plans/[DESIGN] regime_conditional_entry_signal_v1.md` §55.
 
 - 작성자: Codex
+- 수정일자: 2026-07-19 (66차, entry_score R3b alpha 교체 — 2단계
+  순수 계산 모듈 + orchestrator 배선 실제 코드 적용)
+- 수정내용: §54.5 설계 중 "2단계"를 실제 코드로 전환했다(SPPV-2.67).
+  신규 `services/r3b_alpha_percentile.py`(shadow 로직 이식, 200회
+  무작위 trial 전부 일치), `decision_orchestrator.py` config·
+  metadata 추출·배선, `run_decision_loop.py` 두 지점 config 전달.
+  cycle당 1회 실제 계산·주입("3단계")은 범위 밖 — 현재는 활성화해도
+  alpha 교체가 실제 발동하지 않는다. 이번 턴 직접 재실행 근거만
+  사용: `test_deterministic_trigger_engine.py`+`test_decision_
+  orchestrator.py` 83 passed/0 failed; `test_run_decision_loop.py`
+  10 failed/109 passed(§53 확정 실패와 동일); DB 연동 테스트 6건
+  실패는 `TooManyColumnsError` 사전 존재 환경 이슈로 확인(코드
+  배선과 무관). `.env` 미변경. R3b는 Conditional Go를 유지한다.
+  상세: `plans/[DESIGN] regime_conditional_entry_signal_v1.md` §56.
+
+- 작성자: Codex
 - 수정일자: 2026-07-19 (64차, entry_score 코드 변경 PR 초안 설계 —
   R3b alpha 교체 실제 파이프라인 연결 방안)
 - 수정내용: "R3b alpha 전체 경로 재현 검증"은 §45(non-alpha 100%
@@ -994,8 +1010,56 @@
 
 ## 최근 메모
 
+> **📌 2026-07-19 entry_score R3b alpha 교체 — 2단계(순수 계산 모듈
+> + orchestrator 배선) 실제 코드 적용 (최신, 작성자: Codex)**:
+> §54.5 설계 중 "2단계"(순수 계산 모듈 + orchestrator 배선)를
+> 실제 코드로 전환했다(SPPV-2.67). 신규 `services/r3b_alpha_
+> percentile.py`가 이 세션의 모든 R3b shadow 스크립트가 반복
+> 사용해 온 `_attach_candidate_only_percentile` 로직을 그대로
+> 이식했다 — `compute_regime_conditional_signal()`(시장 공통 국면
+> 라벨에 따라 risk-adjusted 3개월 모멘텀/1개월 역추세 계산),
+> `build_candidate_percentiles()`(당일 상위 20% quintile candidate
+> pool 내부에서만 percentile 부여). `decision_orchestrator.py`에는
+> `r3b_alpha_enabled: bool = False`(mode-agnostic config) 생성자
+> 파라미터, `_extract_r3b_alpha_percentile(request)` static
+> helper(`request.metadata["r3b_alpha_percentile"]`를 읽음 —
+> `deterministic_trigger_override`의 metadata 채널과 동일 패턴),
+> `_derive_deterministic_context_components`의 `r3b_alpha_
+> percentile` 배선을 추가했다(두 호출 지점 모두). `run_decision_
+> loop.py`의 두 `DecisionOrchestratorService(...)` 인스턴스화
+> 지점 모두에 `r3b_alpha_enabled=settings.entry_score_r3b_alpha_
+> enabled` 전달을 추가했다. **범위 밖(명확히 유보)**: cycle당 1회
+> `universe` 전체를 순회해 실제 percentile 값을 계산하고 `request.
+> metadata["r3b_alpha_percentile"]`에 주입하는 precompute
+> 함수("3단계", `_build_core_risk_off_apply_overrides_for_cycle`과
+> 거의 동일 구조가 될 것)는 아직 작성하지 않았다 — 즉 현재
+> 상태는 "배선은 됐지만 아직 전원이 꽂히지 않은" 상태다: `r3b_
+> alpha_enabled`를 켜도 `r3b_alpha_percentile`이 항상 `None`이라
+> alpha 교체가 실제로 발동하지 않는다. **실측(이번 턴 직접
+> 재실행, 지시에 따라 재인용 금지)**: (1) 신규 모듈 parity 검증
+> (`scripts/validate_r3b_alpha_percentile_precompute.py`, 신규
+> 작성) — 무작위 종목 수(3~40) 200회 trial 전부 기존 shadow
+> 스크립트와 candidate pool·percentile 완전 일치(오차 <1e-9,
+> 불일치 0건); (2) `test_deterministic_trigger_engine.py`(20건)
+> + `test_decision_orchestrator.py` 포함 **83 passed, 0 failed**;
+> (3) `test_run_decision_loop.py` **10 failed, 109 passed** —
+> 실패 이름·개수가 §53에서 확정한 기존 10건과 동일(재논의 없음);
+> (4) `AppSettings().entry_score_r3b_alpha_enabled` → `False`
+> 확인(`.env` 미변경); (5) `tests/ -k "orchestrator or
+> deterministic_trigger"` **118 passed, 6 failed** — 실패
+> stack trace가 `asyncpg.exceptions.InvalidColumnReferenceError`
+> /`TooManyColumnsError: tables can have at most 1600 columns`로,
+> DB 마이그레이션 상태 문제임이 에러 메시지 자체로 확인됨(이번
+> 턴 파라미터 배선과 무관한 사전 존재 환경 이슈). **판정**: R3b
+> alpha 배선이 "1단계(엔진 내부)"에서 "2단계(orchestrator까지
+> 배선 완료, config로 활성화 가능하나 아직 미발동)"로 진전했다.
+> R3b는 Conditional Go를 유지한다. `.env` 미변경, BUY/SELL gate
+> 로직 강화 없음, 환경 분기 코드 없음, compliance/VaR/broker
+> submit 경계 미변경, 신규 KIS 호출 0건. 상세: `plans/[DESIGN]
+> regime_conditional_entry_signal_v1.md` §56.
+
 > **📌 2026-07-19 entry_score R3b alpha 교체 — 1단계(엔진 파라미터
-> 배선) 실제 코드 적용 (최신, 작성자: Codex)**: §54(SPPV-2.65)의
+> 배선) 실제 코드 적용 (작성자: Codex)**: §54(SPPV-2.65)의
 > 미적용 설계 중 "방패 보강"(trigger_status 자동화)보다 실전진에
 > 직접 기여하는 "1단계: 엔진 파라미터 배선"만 선택해 실제 코드로
 > 적용했다(SPPV-2.66) — cycle 단위 candidate_percentile 사전 계산
@@ -8104,9 +8168,30 @@ agent 설계 문서 기준으로도 순서는 다음이 맞다.
      일치(오차 <1e-9) 확인. `.env` 미변경, gate 로직 강화 없음, 환경
      분기 없음. R3b는 Conditional Go를 유지한다. 상세: `plans/
      [DESIGN] regime_conditional_entry_signal_v1.md` §55.
-   - **SPPV-3(다음 착수: cycle 단위 candidate_percentile 사전 계산
-     배선(§54.5의 2단계, `run_decision_loop.py`/`decision_
-     orchestrator.py` 수정 필요·별도 승인 필요) +
+   - **SPPV-2.67(완료, 2026-07-19, entry_score R3b alpha 교체 —
+     2단계 순수 계산 모듈 + orchestrator 배선 실제 코드 적용,
+     작성자: Codex — Conditional Go 유지)**: §54.5 설계 중 "2단계"
+     를 실제 코드로 전환했다. 신규 `services/r3b_alpha_percentile.
+     py`(shadow 스크립트 로직 이식, 200회 무작위 trial 전부 일치
+     검증) + `decision_orchestrator.py`에 `r3b_alpha_enabled`
+     config·`request.metadata["r3b_alpha_percentile"]` 추출
+     헬퍼·배선 + `run_decision_loop.py` 두 인스턴스화 지점 config
+     전달. **범위 밖(유보)**: cycle당 1회 universe 순회 percentile
+     실제 계산·주입("3단계")은 미작성 — 현재는 `r3b_alpha_enabled`
+     을 켜도 `r3b_alpha_percentile`이 항상 `None`이라 alpha 교체가
+     실제로 발동하지 않는다. **실측(이번 턴 직접 재실행, 재인용
+     아님)**: 신규 모듈 parity 200회 trial 불일치 0건;
+     `test_deterministic_trigger_engine.py`+`test_decision_
+     orchestrator.py` 83 passed/0 failed; `test_run_decision_
+     loop.py` 10 failed/109 passed(§53 확정 실패와 이름·개수 동일);
+     `-k "orchestrator or deterministic_trigger"` 118 passed/6
+     failed(DB `TooManyColumnsError` 관련 사전 존재 환경 이슈,
+     에러 메시지로 코드 배선과 무관함 확인). `.env` 미변경, gate
+     로직 강화 없음. R3b는 Conditional Go를 유지한다. 상세: `plans/
+     [DESIGN] regime_conditional_entry_signal_v1.md` §56.
+   - **SPPV-3(다음 착수: cycle당 1회 precompute 함수("3단계",
+     `run_decision_loop.py`에 실제 percentile 계산·metadata 주입
+     함수 추가·별도 승인 필요) +
      `trigger_status` 공급원 자동화/배치화(cron/배치 설계,
      override=true인 동안 낮은 우선순위) + 포지션 사이징 등 exit
      외 리스크 관리 수단 검토(신규, 낮은 우선순위, 실거래 계좌

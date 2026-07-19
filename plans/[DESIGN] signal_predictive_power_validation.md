@@ -1453,6 +1453,28 @@ entry 설계 검토로 전환**을 확정했다. 별도 문서
   강화 없음, 환경 분기 없음. R3b는 Conditional Go를 유지한다. 상세:
   `plans/[DESIGN] regime_conditional_entry_signal_v1.md` §55.
 
+- 작성자: Codex
+- 수정일자: 2026-07-19 (67차, entry_score R3b alpha 교체 — 2단계
+  순수 계산 모듈 + orchestrator 배선 실제 코드 적용)
+- 수정내용: §54.5 설계 중 "2단계"(순수 계산 모듈 + orchestrator
+  배선)를 실제 코드로 전환했다(SPPV-2.67). 신규 `services/r3b_
+  alpha_percentile.py`(shadow 스크립트 로직 이식, 200회 무작위
+  trial 전부 일치), `decision_orchestrator.py`에 `r3b_alpha_
+  enabled` config·`request.metadata` 추출 헬퍼·배선 추가,
+  `run_decision_loop.py` 두 인스턴스화 지점 config 전달 추가.
+  cycle당 1회 실제 percentile 계산·주입("3단계")은 범위 밖 —
+  현재 `r3b_alpha_percentile`은 항상 `None`이라 활성화해도 alpha
+  교체가 실제로 발동하지 않는다. **이번 턴 직접 재실행 근거만
+  사용**(재인용 금지 지시 반영): 신규 모듈 parity 200/200 일치;
+  `test_deterministic_trigger_engine.py`+`test_decision_
+  orchestrator.py` 83 passed/0 failed; `test_run_decision_loop.py`
+  10 failed/109 passed(§53 확정 실패와 이름·개수 동일, 재논의
+  없음); `-k "orchestrator or deterministic_trigger"` 118
+  passed/6 failed(DB `TooManyColumnsError` 관련 사전 존재 환경
+  이슈, 코드 배선과 무관함을 에러 메시지로 확인). `.env` 미변경,
+  gate 로직 강화 없음. R3b는 Conditional Go를 유지한다. 상세:
+  `plans/[DESIGN] regime_conditional_entry_signal_v1.md` §56.
+
 ---
 
 ## 진행 체크리스트
@@ -3566,6 +3588,32 @@ canonical),
     entry_signal_v1.md` §55.
   - 다음 과제: cycle 단위 candidate_percentile 사전 계산 배선(2단계,
     별도 승인 필요), `trigger_status` 자동화(낮은 우선순위).
+- [x] **SPPV-2.67(신설)** entry_score R3b alpha 교체 — 2단계(순수
+  계산 모듈 + orchestrator 배선) 실제 코드 적용 (완료, 2026-07-19,
+  작성자: Codex)
+  - 신규 `services/r3b_alpha_percentile.py`(shadow 스크립트 로직
+    그대로 이식, 200회 무작위 trial 전부 일치 검증) + `decision_
+    orchestrator.py`에 `r3b_alpha_enabled` config·`request.metadata
+    ["r3b_alpha_percentile"]` 추출 헬퍼·`_derive_deterministic_
+    context_components` 배선 + `run_decision_loop.py` 두 인스턴스화
+    지점 config 전달.
+  - **범위 밖(유보)**: cycle당 1회 universe 순회 percentile 실제
+    계산·`request.metadata`에 주입하는 precompute 함수("3단계")는
+    미작성 — 현재 `r3b_alpha_percentile`은 항상 `None`이라 활성화
+    스위치를 켜도 alpha 교체가 실제로 발동하지 않는다.
+  - **실측(이번 턴 직접 재실행, 재인용 아님)**: 신규 모듈 parity
+    검증 200회 trial 불일치 0건; `test_deterministic_trigger_
+    engine.py`+`test_decision_orchestrator.py` 83 passed, 0 failed;
+    `test_run_decision_loop.py` 10 failed/109 passed(기존 §53
+    확정 실패와 이름·개수 동일); `tests/ -k "orchestrator or
+    deterministic_trigger"` 118 passed/6 failed(DB 마이그레이션
+    `TooManyColumnsError` 관련 사전 존재 환경 이슈, 파라미터 배선과
+    무관함을 에러 메시지로 확인).
+  - **판정**: Conditional Go 유지. `.env` 미변경, gate 로직 강화
+    없음, 환경 분기 없음. 상세: `plans/[DESIGN] regime_conditional_
+    entry_signal_v1.md` §56.
+  - 다음 과제: cycle당 1회 precompute 함수("3단계", 별도 승인
+    필요), `trigger_status` 자동화(낮은 우선순위).
 - [~] **SPPV-3** `entry_score` point-in-time 재현 및 중복 penalty ablation
   - **보류 유지, 형태 재정의 — 우선순위 재조정**: §12(1년, 자기참조
     포함) 당시 "알파 근거 강화"로 낙관했던 것이 §14(3년, 자기참조

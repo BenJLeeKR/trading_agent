@@ -1015,6 +1015,23 @@
   `.env` 미변경. R3b는 Conditional Go를 유지한다. 상세: `plans/
   [DESIGN] regime_conditional_entry_signal_v1.md` §55.
 
+- 작성자: Codex
+- 수정일자: 2026-07-19 (66차, entry_score R3b alpha 교체 — 2단계
+  순수 계산 모듈 + orchestrator 배선 실제 코드 적용)
+- 수정내용: §54.5 설계 중 "2단계"를 실제 코드로 전환했다(SPPV-2.67).
+  신규 `services/r3b_alpha_percentile.py`(shadow 로직 이식, 200회
+  무작위 trial 전부 일치), `decision_orchestrator.py` config·
+  metadata 추출·배선, `run_decision_loop.py` 두 지점 config 전달.
+  cycle당 1회 실제 계산·주입("3단계")은 범위 밖 — 현재는 활성화해도
+  alpha 교체가 실제 발동하지 않는다. 이번 턴 직접 재실행 근거만
+  사용(재인용 금지): `test_deterministic_trigger_engine.py`+
+  `test_decision_orchestrator.py` 83 passed/0 failed; `test_run_
+  decision_loop.py` 10 failed/109 passed(§53 확정 실패와 동일);
+  DB 연동 테스트 6건 실패는 `TooManyColumnsError` 사전 존재 환경
+  이슈로 확인(코드 배선과 무관). `.env` 미변경. R3b는 Conditional
+  Go를 유지한다. 상세: `plans/[DESIGN] regime_conditional_entry_
+  signal_v1.md` §56.
+
 ---
 
 ## 관리 원칙
@@ -2456,9 +2473,30 @@
     일치(오차 <1e-9) 확인. `.env` 미변경, gate 로직 강화 없음, 환경
     분기 없음. R3b는 Conditional Go를 유지한다. 상세: `plans/
     [DESIGN] regime_conditional_entry_signal_v1.md` §55.
-  - **SPPV-3(다음 착수: cycle 단위 candidate_percentile 사전 계산
-    배선(§54.5의 2단계, `run_decision_loop.py`/`decision_
-    orchestrator.py` 수정 필요·별도 승인 필요) +
+  - **SPPV-2.67(완료, 2026-07-19, entry_score R3b alpha 교체 —
+    2단계 순수 계산 모듈 + orchestrator 배선 실제 코드 적용,
+    작성자: Codex — Conditional Go 유지)**: §54.5 설계 중 "2단계"
+    를 실제 코드로 전환했다. 신규 `services/r3b_alpha_percentile.
+    py`(shadow 스크립트 로직 이식, 200회 무작위 trial 전부 일치
+    검증) + `decision_orchestrator.py`에 `r3b_alpha_enabled`
+    config·`request.metadata["r3b_alpha_percentile"]` 추출
+    헬퍼·배선 + `run_decision_loop.py` 두 인스턴스화 지점 config
+    전달. **범위 밖(유보)**: cycle당 1회 universe 순회 percentile
+    실제 계산·주입("3단계")은 미작성 — 현재는 `r3b_alpha_enabled`
+    을 켜도 `r3b_alpha_percentile`이 항상 `None`이라 alpha 교체가
+    실제로 발동하지 않는다. **실측(이번 턴 직접 재실행, 재인용
+    아님)**: 신규 모듈 parity 200회 trial 불일치 0건;
+    `test_deterministic_trigger_engine.py`+`test_decision_
+    orchestrator.py` 83 passed/0 failed; `test_run_decision_
+    loop.py` 10 failed/109 passed(§53 확정 실패와 이름·개수 동일);
+    `-k "orchestrator or deterministic_trigger"` 118 passed/6
+    failed(DB `TooManyColumnsError` 관련 사전 존재 환경 이슈,
+    에러 메시지로 코드 배선과 무관함 확인). `.env` 미변경, gate
+    로직 강화 없음. R3b는 Conditional Go를 유지한다. 상세: `plans/
+    [DESIGN] regime_conditional_entry_signal_v1.md` §56.
+  - **SPPV-3(다음 착수: cycle당 1회 precompute 함수("3단계",
+    `run_decision_loop.py`에 실제 percentile 계산·metadata 주입
+    함수 추가·별도 승인 필요) +
     `trigger_status` 공급원 자동화/배치화(cron/배치 설계,
     override=true인 동안 낮은 우선순위) + 포지션 사이징 등 exit
     외 리스크 관리 수단 검토(신규, 낮은 우선순위, 실거래 계좌

@@ -6785,3 +6785,113 @@ orchestrator.py` 수정 필요)뿐이며, 이는 §48→§49와 동일하게 별
 3. T+5/경로 리스크 후속 검증 — 추가 필요성 낮음(유보 유지).
 4. `portfolio_allocation` gap — 실거래 누적 이후 재검증 대상으로
    계속 유보.
+
+## 56. entry_score R3b alpha 교체 — 2단계(순수 계산 모듈 + orchestrator 배선) 실제 코드 적용 (SPPV-2.67, 2026-07-19)
+
+### 56.1 최신 truth 재확인
+
+`aa10caee`~`1f6e3875`(SPPV-2.66, 1단계 엔진 파라미터 배선)까지 모두
+`origin/main`에 push 완료 상태를 재확인했다(`git log origin/main..
+HEAD` 결과 없음). SPPV-2.66은 "83건 테스트 전부 통과"를 보고했으나
+이번 턴 지시에 따라 그 수치를 재인용하지 않고, 이번 턴 자체에서
+직접 재실행한 결과만을 아래 §56.4에 근거로 삼는다.
+
+### 56.2 선택 근거
+
+`trigger_status` 자동화(override=true인 동안 실질 영향 없음, "방패
+보강")보다 R3b alpha 교체 2단계(cycle 단위 candidate_percentile
+precompute 배선)가 창 교체 이후 실전진에 직접 기여하고 SPPV-3
+착수 준비를 실제로 줄인다고 판단해 선택했다. mixedness 축 반복
+작업은 하지 않았다.
+
+### 56.3 실제 적용 내용
+
+1. **신규 순수 계산 모듈** `src/agent_trading/services/r3b_alpha_
+   percentile.py`: 이 세션의 모든 R3b shadow 스크립트가 반복
+   사용해 온 `_attach_candidate_only_percentile` 로직을 그대로
+   이식 — `compute_regime_conditional_signal()`(시장 공통 국면
+   라벨에 따라 risk-adjusted 3개월 모멘텀/1개월 역추세 계산),
+   `build_candidate_percentiles()`(당일 상위 20% quintile
+   candidate pool 내부에서만 0~1 percentile 부여). 신규 알고리즘
+   없음 — 순수 이식.
+2. **`decision_orchestrator.py` 배선**: `DecisionOrchestratorService.
+   __init__`에 `r3b_alpha_enabled: bool = False`(mode-agnostic
+   config, `AppSettings.entry_score_r3b_alpha_enabled` 그대로
+   보존) 추가; 신규 `_extract_r3b_alpha_percentile(request)` static
+   helper(`request.metadata["r3b_alpha_percentile"]`를 읽음 —
+   `deterministic_trigger_override`의 metadata 채널과 동일 패턴);
+   `_derive_deterministic_context_components`에 `r3b_alpha_
+   percentile: float | None = None` 파라미터 추가, `assess_
+   deterministic_triggers` 호출부에 `r3b_alpha_percentile`/
+   `r3b_alpha_enabled=self._r3b_alpha_enabled` 그대로 전달. 두
+   호출 지점(`derive_deterministic_trigger_for_request`, 실제
+   주문 조립 경로) 모두 동일하게 배선.
+3. **`run_decision_loop.py` config 전달**: 두 `DecisionOrchestrator
+   Service(...)` 인스턴스화 지점 모두에 `r3b_alpha_enabled=settings.
+   entry_score_r3b_alpha_enabled` 추가.
+
+**이번 턴에 하지 않은 것(범위 밖, 명확히 유보)**: cycle당 1회
+`universe` 전체를 순회해 실제 `r3b_alpha_percentile` 값을 계산하고
+`request.metadata["r3b_alpha_percentile"]`에 주입하는 precompute
+함수(§54.5가 원래 지목한 "신규 cycle당 1회 precompute 함수") 자체는
+아직 작성하지 않았다 — `_extract_r3b_alpha_percentile`은 지금 항상
+metadata가 비어 있어 `None`을 반환한다. 즉 이번 턴은 "엔진→
+orchestrator→config 전달"까지의 배선을 완성했을 뿐, 실제 percentile
+계산·주입 파이프라인("3단계")은 여전히 다음 과제다.
+
+### 56.4 실측 결과(수치 + 해석, 전부 이번 턴 직접 재실행)
+
+1. **신규 모듈 parity 검증**(`scripts/validate_r3b_alpha_percentile_
+   precompute.py`, 신규 작성): 무작위 종목 수(3~40) 200회 trial 전부
+   기존 shadow 스크립트의 `_attach_candidate_only_percentile`과
+   candidate pool 구성·percentile 값이 정확히 일치(오차 <1e-9) —
+   **총 200회 trial 중 불일치: 0**. → 이식이 정확함을 확인.
+2. **핵심 회귀 테스트**(이번 턴 직접 재실행): `tests/services/
+   test_deterministic_trigger_engine.py`(20건) + `test_decision_
+   orchestrator.py` 포함 **83 passed, 0 failed**. → orchestrator
+   생성자/헬퍼 추가가 기존 호출부에 영향 없음을 확인.
+3. **`tests/scripts/test_run_decision_loop.py`**(이번 턴 직접
+   재실행): **10 failed, 109 passed** — 실패 이름·개수가 §53에서
+   확정한 기존 10건과 동일(`universe_selection.py`/AsyncMock 타입
+   불일치 관련 사전 존재 결함). 재논의 없이 참고만 함.
+4. **`AppSettings().entry_score_r3b_alpha_enabled`** 직접 조회 →
+   `False` — `.env` 미변경 상태에서 기본 비활성 확인.
+5. **`tests/ -k "orchestrator or deterministic_trigger"`**(이번 턴
+   직접 재실행): 118 passed, 6 failed(`test_orchestrator_
+   entrypoint.py`/`test_runtime_event_interpretation_smoke.py`) —
+   실패 stack trace가 `asyncpg.exceptions.InvalidColumnReferenceError`
+   /`TooManyColumnsError: tables can have at most 1600 columns`로,
+   DB 마이그레이션 상태 문제임이 에러 메시지 자체로 확인됨(파라미터
+   배선과 무관한 사전 존재 환경 이슈).
+
+### 56.5 결과 해석
+
+R3b alpha 교체 파이프라인은 "1단계(엔진 내부 공식 교체)"에서
+"2단계(orchestrator까지 배선 완료, config로 활성화 가능)"로
+진전했다. 다만 실제 percentile 값을 계산해 주입하는 cycle
+precompute("3단계")가 없는 한 `r3b_alpha_enabled=True`로 설정해도
+`r3b_alpha_percentile`은 항상 `None`이라 alpha 교체가 실제로
+발동하지 않는다 — 즉 현재 상태는 "배선은 됐지만 아직 전원이
+꽂히지 않은" 상태다.
+
+### 56.6 판정 — Conditional Go 유지, entry_score R3b alpha 배선이 "1단계" → "2단계(orchestrator 배선 완료)"로 진전
+
+**R3b는 Conditional Go를 유지한다.** `.env` 미변경, BUY/SELL gate
+로직 강화 없음, 환경 분기 코드 없음, compliance/VaR/broker submit
+경계 미변경, 신규 KIS 호출 0건.
+
+### 56.7 다음 우선 작업
+
+1. cycle당 1회 precompute 함수("3단계") — `run_decision_loop.py`에
+   신규 함수(당일 universe 전체 순회, 벤치마크 시장 공통 국면
+   라벨 산출 + 종목별 `signal_feature_snapshot`에서 `return_1m_
+   pct`/`return_3m_pct`/`volatility_20d_pct` 조회 → `r3b_alpha_
+   percentile.build_candidate_percentiles()` 호출 → 결과를 각
+   `SubmitOrderRequest.metadata["r3b_alpha_percentile"]`에 주입)
+   작성 — `_build_core_risk_off_apply_overrides_for_cycle`과 거의
+   동일한 구조. 별도 명시적 사용자 승인 필요(operational 코드
+   추가 수정).
+2. `trigger_status` 공급원 자동화/배치화(낮은 우선순위).
+3. T+5/경로 리스크 후속 검증 — 추가 필요성 낮음(유보 유지).
+4. `portfolio_allocation` gap — 실거래 누적 이후 재검증 대상으로
+   계속 유보.

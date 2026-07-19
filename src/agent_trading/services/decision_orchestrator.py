@@ -255,6 +255,8 @@ class DecisionOrchestratorService:
         # --- `§21 게이트`(regime_switch_v1) config 기반 gate (SPPV-2.60) ---
         regime_switch_v1_trigger_status: str | None = None,
         regime_switch_v1_gate_override_enabled: bool = False,
+        # --- entry_score R3b alpha 교체 config 기반 스위치 (SPPV-2.67) ---
+        r3b_alpha_enabled: bool = False,
     ) -> None:
         self._repos = repos
         self._decision_context_service = DecisionContextService(repos)
@@ -291,6 +293,15 @@ class DecisionOrchestratorService:
         self._regime_switch_v1_gate_override_enabled = (
             regime_switch_v1_gate_override_enabled
         )
+        # --- entry_score R3b alpha 교체 config 기반 스위치 (SPPV-2.67) ---
+        # `r3b_alpha_percentile` 자체는 종목별 값이라 요청
+        # metadata(`request.metadata["r3b_alpha_percentile"]`)로 개별
+        # 전달되고(§_extract_r3b_alpha_percentile), 이 스위치는
+        # `AppSettings.entry_score_r3b_alpha_enabled`(기본값 False)를
+        # 그대로 보존하는 mode-agnostic config다. 기본값이면 percentile이
+        # 전달돼도 무시되어(§_build_entry_score의 and 조건) 기존 동작이
+        # 100% 그대로 유지된다.
+        self._r3b_alpha_enabled = r3b_alpha_enabled
         # --- Execution Service (execution pipeline state: sell guard, quote CB, fresh check) ---
         self._execution_service = ExecutionService(
             repos=repos,
@@ -1086,6 +1097,7 @@ class DecisionOrchestratorService:
         cash_balance_snapshot: CashBalanceSnapshotEntity | None,
         risk_limit_snapshot: RiskLimitSnapshotEntity | None,
         deterministic_trigger_override: dict[str, object] | None = None,
+        r3b_alpha_percentile: float | None = None,
     ) -> DeterministicDerivationBundle:
         """assemble()의 deterministic 파생 계산 단계를 별도 helper로 분리한다."""
         signal_feature_snapshot: SignalFeatureSnapshotEntity | None = None
@@ -1136,6 +1148,8 @@ class DecisionOrchestratorService:
             regime_switch_v1_gate_override_enabled=(
                 self._regime_switch_v1_gate_override_enabled
             ),
+            r3b_alpha_percentile=r3b_alpha_percentile,
+            r3b_alpha_enabled=self._r3b_alpha_enabled,
         )
         return DeterministicDerivationBundle(
             source_type=source_type,
@@ -1155,6 +1169,21 @@ class DecisionOrchestratorService:
         if not isinstance(raw, dict):
             return None
         return dict(raw)
+
+    @staticmethod
+    def _extract_r3b_alpha_percentile(
+        request: SubmitOrderRequest,
+    ) -> float | None:
+        """cycle precompute 호출부가 `request.metadata["r3b_alpha_
+        percentile"]`로 미리 주입한 당일 candidate_percentile을 꺼낸다
+        (SPPV-2.67). 아직 이 값을 채우는 cycle precompute 배선은 별도
+        단계(§54.5)로 남아 있어, 현재는 metadata에 값이 없으면 항상
+        ``None``을 반환하고 기존 동작이 100% 유지된다."""
+        metadata = request.metadata if isinstance(request.metadata, dict) else {}
+        raw = metadata.get("r3b_alpha_percentile")
+        if not isinstance(raw, (int, float)):
+            return None
+        return float(raw)
 
     async def _attach_signal_feature_snapshot_to_context(
         self,
@@ -1291,6 +1320,7 @@ class DecisionOrchestratorService:
             deterministic_trigger_override=self._extract_deterministic_trigger_override(
                 request
             ),
+            r3b_alpha_percentile=self._extract_r3b_alpha_percentile(request),
         )
 
     def _build_ai_policy_context_view(
@@ -1914,6 +1944,7 @@ class DecisionOrchestratorService:
             deterministic_trigger_override=self._extract_deterministic_trigger_override(
                 request
             ),
+            r3b_alpha_percentile=self._extract_r3b_alpha_percentile(request),
         )
         decision_context = await self._attach_signal_feature_snapshot_to_context(
             decision_context,
