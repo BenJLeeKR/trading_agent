@@ -990,6 +990,23 @@
   상세: `plans/[DESIGN] regime_conditional_entry_signal_v1.md` §56.
 
 - 작성자: Codex
+- 수정일자: 2026-07-19 (67차, SPPV-2.67 보고 정정 — "2단계 완료"
+  표현의 과장 부분 확정)
+- 수정내용: 새 기능 구현 없이 §56(SPPV-2.67)의 서술을 코드 기준으로
+  재검증했다(SPPV-2.68). 3개 파일(`r3b_alpha_percentile.py`/
+  `decision_orchestrator.py`/`run_decision_loop.py`) 직접 확인 —
+  순수 계산 모듈은 존재하나 production 코드 어디서도 import되지
+  않는 고립 모듈; orchestrator의 metadata 읽기·엔진 전달 배선은
+  실제로 존재(사실); `run_decision_loop.py`에는 config 전달 두 줄
+  뿐이고 `r3b_alpha_percentile`을 계산·주입하는 코드는 전무(grep
+  확인, 짝이 되는 precompute 함수 자체가 없음). "2단계 선택·
+  실행"/"orchestrator까지 배선 완료"/"전원이 꽂히지 않은 상태"
+  표현은 과장으로 확정 — cycle 단위 precompute는 이 세션 전체에서
+  production 코드로 옮겨진 적이 없다. R3b 판정(Conditional Go)은
+  코드 변경 없어 불변. 이력 보존형 정정. 상세: `plans/[DESIGN]
+  regime_conditional_entry_signal_v1.md` §57.
+
+- 작성자: Codex
 - 수정일자: 2026-07-19 (64차, entry_score 코드 변경 PR 초안 설계 —
   R3b alpha 교체 실제 파이프라인 연결 방안)
 - 수정내용: "R3b alpha 전체 경로 재현 검증"은 §45(non-alpha 100%
@@ -1010,8 +1027,49 @@
 
 ## 최근 메모
 
+> **📌 2026-07-19 SPPV-2.67 보고 정정 — "2단계 완료" 표현의 과장
+> 부분 확정 (최신, 작성자: Codex)**: 새 기능을 구현하지 않고,
+> 아래 SPPV-2.67 배너/보고의 서술을 코드 기준으로 재검증했다
+> (SPPV-2.68). **코드 확인 결과(추측 없음)**: (1) `src/agent_
+> trading/services/r3b_alpha_percentile.py`의 `compute_regime_
+> conditional_signal()`/`build_candidate_percentiles()`는 실제로
+> 존재하지만, `grep -rn "r3b_alpha_percentile import\|build_
+> candidate_percentiles("` 결과 이 모듈을 import하는 곳은 자기
+> 자신의 검증 스크립트(`scripts/validate_r3b_alpha_percentile_
+> precompute.py`) **단 한 곳뿐** — production 코드(`run_decision_
+> loop.py`, `decision_orchestrator.py`)는 이 모듈을 전혀 참조하지
+> 않는다. (2) `decision_orchestrator.py`의 `_extract_r3b_alpha_
+> percentile(request)`가 `request.metadata.get("r3b_alpha_
+> percentile")`을 실제로 읽어 `_derive_deterministic_context_
+> components`를 거쳐 `assess_deterministic_triggers`까지 전달하는
+> 코드는 실제로 존재한다(두 호출 지점 모두, 1323·1947행) — 이
+> 부분은 **사실**. (3) `scripts/run_decision_loop.py`에서 `grep -n
+> "r3b_alpha"` 결과는 두 인스턴스화 지점의 `r3b_alpha_enabled=
+> settings.entry_score_r3b_alpha_enabled` 전달 두 줄이 전부다 —
+> `r3b_alpha_percentile`이라는 키를 어떤 `request.metadata`에도
+> 써넣는 코드는 **단 한 줄도 없다**. `_build_core_risk_off_apply_
+> overrides_for_cycle()`과 짝이 되는 cycle precompute 함수 자체가
+> 존재하지 않는다. **판정**: "2단계(cycle 단위 candidate_
+> percentile precompute 배선) 선택·실행"은 **과장** — 실제로는
+> "orchestrator 통로 준비 + 계산 모듈 독립 구현"만 이뤄졌고, "cycle
+> 단위 precompute 배선"(값을 계산해 실제로 주입하는 코드) 자체는
+> 이 세션 전체를 통틀어 단 한 번도 작성된 적이 없다. "orchestrator
+> 까지 배선 완료"는 orchestrator 자체의 통로 준비 사실은 맞지만,
+> 파이프라인 앞부분(cycle precompute)이 아예 없다는 사실을 가리는
+> 표현이라 과장으로 확정한다. "배선은 됐지만 전원이 꽂히지 않은
+> 상태"라는 비유도 과장 — 정확히는 "값을 흘려보낼 지점(코드
+> 위치) 자체가 아직 없다"에 가깝다. **분리 확정**: 이미 구현된
+> 것(순수 계산 모듈 독립 구현, orchestrator metadata 읽기·전달
+> 배선, config 전달) / 아직 미구현인 것(cycle precompute 함수
+> 자체, `request.metadata` 주입 코드) / 문서 표현이 앞선 것(§56의
+> "2단계 완료"라는 제목·"orchestrator까지 배선 완료"·"전원이 꽂히지
+> 않은 상태" 표현). **R3b 판정(Conditional Go)은 코드 변경이 없어
+> 불변**이다 — 이번 정정은 순수 문서·표현 교정이다. §56 원문은
+> 삭제하지 않고 그대로 보존한다. 상세: `plans/[DESIGN] regime_
+> conditional_entry_signal_v1.md` §57.
+
 > **📌 2026-07-19 entry_score R3b alpha 교체 — 2단계(순수 계산 모듈
-> + orchestrator 배선) 실제 코드 적용 (최신, 작성자: Codex)**:
+> + orchestrator 배선) 실제 코드 적용 (작성자: Codex)**:
 > §54.5 설계 중 "2단계"(순수 계산 모듈 + orchestrator 배선)를
 > 실제 코드로 전환했다(SPPV-2.67). 신규 `services/r3b_alpha_
 > percentile.py`가 이 세션의 모든 R3b shadow 스크립트가 반복
@@ -8189,9 +8247,22 @@ agent 설계 문서 기준으로도 순서는 다음이 맞다.
      에러 메시지로 코드 배선과 무관함 확인). `.env` 미변경, gate
      로직 강화 없음. R3b는 Conditional Go를 유지한다. 상세: `plans/
      [DESIGN] regime_conditional_entry_signal_v1.md` §56.
-   - **SPPV-3(다음 착수: cycle당 1회 precompute 함수("3단계",
+   - **SPPV-2.68(완료, 2026-07-19, SPPV-2.67 보고 정정 — "2단계
+     완료" 표현의 과장 부분 확정, 작성자: Codex — R3b Conditional
+     Go 불변, 코드 미변경)**: 새 기능 구현 없이 §56의 서술을 코드
+     기준으로 재검증했다. 3개 파일 직접 확인 — 순수 계산 모듈은
+     production 코드 어디서도 import되지 않는 고립 모듈; orchestrator
+     의 metadata 읽기·엔진 전달 배선은 실제로 존재(사실); `run_
+     decision_loop.py`에는 config 전달 두 줄뿐이고 `r3b_alpha_
+     percentile` 계산·주입 코드는 전무(grep 확인, 짝이 되는
+     precompute 함수 자체가 없음). "2단계 선택·실행"/"orchestrator
+     까지 배선 완료"/"전원이 꽂히지 않은 상태" 표현은 과장으로
+     확정 — cycle 단위 precompute는 이 세션 전체에서 production
+     코드로 옮겨진 적이 없다. §56 원문은 삭제하지 않고 보존. 상세:
+     `plans/[DESIGN] regime_conditional_entry_signal_v1.md` §57.
+   - **SPPV-3(다음 착수: cycle당 1회 precompute 함수(코드 0줄,
      `run_decision_loop.py`에 실제 percentile 계산·metadata 주입
-     함수 추가·별도 승인 필요) +
+     함수 추가·별도 승인 필요 — 여전히 유일한 실행 단계) +
      `trigger_status` 공급원 자동화/배치화(cron/배치 설계,
      override=true인 동안 낮은 우선순위) + 포지션 사이징 등 exit
      외 리스크 관리 수단 검토(신규, 낮은 우선순위, 실거래 계좌

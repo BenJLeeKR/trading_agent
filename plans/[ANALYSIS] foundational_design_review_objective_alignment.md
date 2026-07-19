@@ -1548,6 +1548,22 @@ value/compliance/broker가 아니라 `entry_score < 0.65`다.
   이슈로 확인(코드 배선과 무관). `.env` 미변경. R3b는 Conditional
   Go를 유지한다. 상세: `plans/[DESIGN] regime_conditional_entry_
   signal_v1.md` §56.
+
+- 작성자: Codex
+- 수정일자: 2026-07-19 (2.70순위, SPPV-2.67 보고 정정 — "2단계
+  완료" 표현의 과장 부분 확정)
+- 수정내용: 새 기능 구현 없이 §56(SPPV-2.67)의 서술을 코드 기준
+  으로 재검증했다(SPPV-2.68). 3개 파일(`r3b_alpha_percentile.py`/
+  `decision_orchestrator.py`/`run_decision_loop.py`) 직접 확인 결과
+  — 순수 계산 모듈은 존재하나 production 코드 어디서도 import되지
+  않는 고립 모듈; orchestrator의 metadata 읽기·엔진 전달 배선은
+  실제로 존재(사실); `run_decision_loop.py`에는 config 전달 두 줄
+  뿐이고 `r3b_alpha_percentile`을 계산·주입하는 코드는 전무(grep
+  확인). "2단계 선택·실행"/"orchestrator까지 배선 완료"/"전원이
+  꽂히지 않은 상태" 표현은 과장으로 확정 — cycle 단위 precompute는
+  이 세션 전체에서 production 코드로 옮겨진 적이 없다. R3b 판정은
+  코드 변경이 없어 불변(Conditional Go). 이력 보존형 정정. 상세:
+  `plans/[DESIGN] regime_conditional_entry_signal_v1.md` §57.
 - **3순위(보류 유지, 형태 재정의 — 우선순위 재조정)**: **`entry_
   score`와 BUY funnel 재현** — §2.7 확장 검증에서 하락장 안정성이
   확인되지 않아 단순 재현으로는 착수하지 않는다. §2.16~§2.21에서

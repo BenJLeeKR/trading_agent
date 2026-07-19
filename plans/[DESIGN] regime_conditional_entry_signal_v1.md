@@ -6895,3 +6895,142 @@ precompute("3단계")가 없는 한 `r3b_alpha_enabled=True`로 설정해도
 3. T+5/경로 리스크 후속 검증 — 추가 필요성 낮음(유보 유지).
 4. `portfolio_allocation` gap — 실거래 누적 이후 재검증 대상으로
    계속 유보.
+
+## 57. SPPV-2.67 보고 정정 — "2단계 완료" 표현의 과장 부분 확정 (SPPV-2.68, 2026-07-19)
+
+### 57.1 정정 배경
+
+§56(SPPV-2.67)의 보고 문구 중 다음 3개를 코드 기준으로 재검증하라는
+지시를 받았다:
+
+1. "2단계(cycle 단위 candidate_percentile precompute 배선) 선택·
+   실행"
+2. "orchestrator까지 배선 완료"
+3. "cycle precompute('3단계')가 아직 없어, 지금은 배선은 됐지만
+   전원이 꽂히지 않은 상태"
+
+이번 턴은 새 기능을 구현하지 않는다 — §56이 실제로 무엇을 했고
+무엇을 하지 않았는지를 코드 3개 파일(`r3b_alpha_percentile.py`,
+`decision_orchestrator.py`, `run_decision_loop.py`)을 직접 열어
+한 줄 단위로 재확인한 결과만을 근거로 삼는다. §56 텍스트 자체는
+삭제하지 않고 이 섹션을 추가하는 방식으로 이력을 보존한다.
+
+### 57.2 코드 확인 결과(추측 없음, grep/직접 읽기 결과만)
+
+- **`src/agent_trading/services/r3b_alpha_percentile.py`**: `compute_
+  regime_conditional_signal()`/`build_candidate_percentiles()` 순수
+  함수가 실제로 존재한다 — **사실**. 이 파일을 import하는 곳은
+  `scripts/validate_r3b_alpha_percentile_precompute.py`(자기 자신의
+  검증 스크립트) **단 한 곳뿐**이다(`grep -rn "r3b_alpha_percentile
+  import\|build_candidate_percentiles("` 결과 확인). `run_decision_
+  loop.py`/`decision_orchestrator.py` 어디에서도 이 모듈을 import하지
+  않는다.
+- **`src/agent_trading/services/decision_orchestrator.py`**: `__init__`
+  에 `r3b_alpha_enabled: bool = False` 생성자 파라미터가 실제로
+  존재하고(1259행), `_extract_r3b_alpha_percentile(request)` static
+  helper가 `request.metadata.get("r3b_alpha_percentile")`을 실제로
+  읽으며(1174~1186행), `_derive_deterministic_context_components`가
+  이 값을 `assess_deterministic_triggers`에 실제로 전달한다(1100,
+  1151~1152행) — **사실**. 두 호출 지점(`derive_deterministic_
+  trigger_for_request`용 1323행, 실제 주문 조립 경로용 1947행) 모두
+  `r3b_alpha_percentile=self._extract_r3b_alpha_percentile(request)`
+  를 호출한다 — **사실**.
+- **`scripts/run_decision_loop.py`**: `r3b_alpha_enabled=settings.
+  entry_score_r3b_alpha_enabled` 전달이 두 `DecisionOrchestrator
+  Service(...)` 인스턴스화 지점(1278, 1615행)에 실제로 존재한다 —
+  **사실**. 그러나 `grep -n "r3b_alpha"` 결과 이 두 줄이 **전부**다
+  — `r3b_alpha_percentile`이라는 키를 어떤 `request.metadata`에도
+  써넣는 코드가 **단 한 줄도 없다**. `_build_core_risk_off_apply_
+  overrides_for_cycle()`과 짝을 이루는 `_build_r3b_alpha_percentile_
+  overrides_for_cycle()` 같은 함수는 **존재하지 않는다**(정의도,
+  호출도 없음).
+
+### 57.3 3개 문구에 대한 개별 판정
+
+1. **"2단계(cycle 단위 candidate_percentile precompute 배선)
+   선택·실행"** → **과장(오표현)**. "cycle 단위 precompute 배선"
+   이라는 표현은 "cycle마다 universe를 순회해 실제 percentile 값을
+   계산하고 그 값을 주문 요청에 주입하는 코드"를 뜻하는데, 그런
+   코드는 §56에서도, 그 이전에도 작성된 적이 없다. §56이 실제로
+   한 일은 (a) 그 계산 로직을 담을 **독립 순수 함수 모듈 작성** +
+   (b) orchestrator가 "누군가 값을 넣어주면 엔진까지 전달할 수
+   있는" **통로(plumbing) 준비**뿐이다. "cycle 단위 precompute
+   배선"이라는 제목은 이 둘을 실제 precompute 실행과 혼동하게
+   만든다.
+2. **"orchestrator까지 배선 완료"** → **사실에 부합, 다만 범위를
+   명확히 좁혀야 함**. `decision_orchestrator.py`가 `request.
+   metadata["r3b_alpha_percentile"]`을 읽어 엔진에 전달하는 코드는
+   실제로 존재하고 정확히 동작한다(§56.4의 83건 회귀 테스트가 이를
+   뒷받침). 다만 이 문구가 "orchestrator까지"라는 단어로 진행
+   단계를 표현하면서, 마치 "cycle precompute → orchestrator"라는
+   파이프라인의 뒷부분(orchestrator 쪽)이 완성됐다는 인상을 주지만,
+   실제로는 파이프라인의 **앞부분(cycle precompute 자체)이 아예
+   존재하지 않는다** — "orchestrator까지"라는 표현이 마치 전체
+   경로 중 일부가 이미 진행됐다는 뉘앙스를 풍기는 것이 과장이다.
+   정확히는 "orchestrator는 (아직 아무도 채우지 않는) metadata
+   채널을 받아 엔진에 전달할 준비가 되어 있다"로 좁혀 말해야 한다.
+3. **"cycle precompute('3단계')가 아직 없어, 지금은 배선은 됐지만
+   전원이 꽂히지 않은 상태"** → **과장(비유가 실제보다 낙관적)**.
+   "배선은 됐다"는 비유는 "물리적 연결(코드 경로)은 전부 존재하고
+   값 하나만 흘려보내면 된다"는 인상을 준다. 그러나 실제로는
+   "값을 흘려보낼 지점(코드 위치) 자체가 `run_decision_loop.py`에
+   없다" — 즉 콘센트가 벽에 뚫려 있지 않은 상태에 더 가깝다.
+   engine↔orchestrator 구간은 실제로 배선돼 있지만(사실), cycle↔
+   orchestrator 구간(실제 percentile 계산 후 `request.metadata`에
+   주입하는 지점)은 **아직 설계조차 코드로 옮겨지지 않은 빈
+   공간**이다.
+
+### 57.4 최종 확정 — 3개 구간 분리 판정
+
+- **이미 구현된 것(사실, 코드로 확인됨)**:
+  1. 순수 계산 모듈 `r3b_alpha_percentile.py`(`compute_regime_
+     conditional_signal`/`build_candidate_percentiles`) — 독립
+     동작, 200회 무작위 trial parity 검증 완료. **다만 production
+     코드 어디에서도 import되지 않는 고립된 모듈**이다.
+  2. `decision_orchestrator.py`의 `r3b_alpha_enabled` config
+     보존 + `_extract_r3b_alpha_percentile` metadata 읽기 + 엔진
+     전달 배선(두 호출 지점 모두).
+  3. `run_decision_loop.py`의 `r3b_alpha_enabled=settings.entry_
+     score_r3b_alpha_enabled` config 전달(두 인스턴스화 지점).
+- **아직 미구현인 것(코드 자체가 존재하지 않음)**:
+  1. `run_decision_loop.py`에서 cycle마다 universe 전체를 순회해
+     `r3b_alpha_percentile.build_candidate_percentiles()`를 실제로
+     호출하는 코드.
+  2. 그 결과를 `SubmitOrderRequest.metadata["r3b_alpha_percentile"]`
+     에 실제로 주입하는 코드.
+  3. 위 둘을 묶는 `_build_r3b_alpha_percentile_overrides_for_cycle()`
+     류의 신규 함수 자체.
+  → 이 세 가지가 없는 한 `ENTRY_SCORE_R3B_ALPHA_ENABLED=true`로
+  설정해도 `r3b_alpha_percentile`은 항상 `None`이며 alpha 교체는
+  **어떤 조건에서도 실제로 발동하지 않는다**(§56.4가 이미 이
+  사실 자체는 정확히 밝혔다 — 사실관계 자체의 은폐는 없었다).
+- **문서 표현이 앞서간 것**: §56의 섹션 제목("2단계: 순수 계산
+  모듈 + orchestrator 배선")과 최종 보고의 "orchestrator까지 배선
+  완료"/"배선은 됐지만 전원이 꽂히지 않은 상태" 표현 — 위 §57.3의
+  근거로 과장으로 확정한다. **"cycle 단위 precompute" 자체는
+  이번 세션 전체를 통틀어 단 한 번도 production 코드로 옮겨진 적이
+  없다** — §54(설계)~§56(orchestrator 통로 준비)은 모두 그 앞
+  단계 준비 작업이었을 뿐이다.
+
+### 57.5 판정 정정 — "완료" 단계 재명명, R3b 자체 판정은 불변
+
+**R3b는 Conditional Go를 유지한다** — 이번 정정은 R3b의 통계적
+근거나 gate 로직에 영향을 주지 않는다(코드 변경 없음, 순수 문서
+정정). 다만 **"entry_score R3b alpha 교체" 진행 단계 명칭을
+아래와 같이 재정의**한다:
+
+| 기존 표현(§56) | 정정 표현(§57) |
+|---|---|
+| 1단계: 엔진 파라미터 배선 | (변경 없음, 실제로 완료됨 — §55) |
+| 2단계: 순수 계산 모듈 + orchestrator 배선 | **"orchestrator 통로 준비 + 계산 모듈 독립 구현"**(cycle precompute 자체는 미포함) |
+| (3단계로 지칭됐던) cycle precompute | **여전히 미착수 — 코드 0줄**. 이것이야말로 §54.5가 원래 지목한 "신규 cycle당 1회 precompute 함수"의 실체이며, 아직 실행되지 않았다. |
+
+### 57.6 SPPV-3까지 남은 조건 재조정
+
+기존 "다음 과제" 목록의 "cycle당 1회 precompute 함수(3단계)" 항목
+표현 자체는 이미 정확했다(§56.7 원문 그대로 유지). 이번 정정으로
+바뀌는 것은 **그 항목의 우선순위 표현**이다 — "2단계가 이미
+끝났으니 3단계만 남았다"는 인상 대신, "R3b alpha 교체 전체
+파이프라인은 여전히 준비 단계(설계+통로만 존재)이고, 실질적인
+cycle precompute 구현이 유일하게 남은 실행 단계"로 명확히
+재확정한다. 남은 항목 자체(개수·내용)는 변경 없음.

@@ -1032,6 +1032,22 @@
   Go를 유지한다. 상세: `plans/[DESIGN] regime_conditional_entry_
   signal_v1.md` §56.
 
+- 작성자: Codex
+- 수정일자: 2026-07-19 (67차, SPPV-2.67 보고 정정 — "2단계 완료"
+  표현의 과장 부분 확정)
+- 수정내용: 새 기능 구현 없이 §56(SPPV-2.67)의 서술을 코드 기준으로
+  재검증했다(SPPV-2.68). 3개 파일 직접 확인 — 순수 계산 모듈은
+  production 코드 어디서도 import되지 않는 고립 모듈; orchestrator
+  의 metadata 읽기·엔진 전달 배선은 실제로 존재(사실); `run_
+  decision_loop.py`에는 config 전달 두 줄뿐이고 `r3b_alpha_
+  percentile` 계산·주입 코드는 전무(grep 확인, 짝이 되는 precompute
+  함수 자체가 없음). "2단계 선택·실행"/"orchestrator까지 배선
+  완료"/"전원이 꽂히지 않은 상태" 표현은 과장으로 확정 — cycle
+  단위 precompute는 이 세션 전체에서 production 코드로 옮겨진 적이
+  없다. R3b 판정(Conditional Go)은 코드 변경 없어 불변. 이력 보존형
+  정정 — §56 원문은 삭제하지 않음. 상세: `plans/[DESIGN] regime_
+  conditional_entry_signal_v1.md` §57.
+
 ---
 
 ## 관리 원칙
@@ -2494,9 +2510,21 @@
     에러 메시지로 코드 배선과 무관함 확인). `.env` 미변경, gate
     로직 강화 없음. R3b는 Conditional Go를 유지한다. 상세: `plans/
     [DESIGN] regime_conditional_entry_signal_v1.md` §56.
-  - **SPPV-3(다음 착수: cycle당 1회 precompute 함수("3단계",
+  - **SPPV-2.68(완료, 2026-07-19, SPPV-2.67 보고 정정 — "2단계
+    완료" 표현의 과장 부분 확정, 작성자: Codex — R3b Conditional
+    Go 불변, 코드 미변경)**: 새 기능 구현 없이 §56의 서술을 코드
+    기준으로 재검증했다. 순수 계산 모듈은 production 코드 어디서도
+    import되지 않는 고립 모듈; orchestrator의 metadata 읽기·엔진
+    전달 배선은 실제로 존재(사실); `run_decision_loop.py`에는
+    config 전달 두 줄뿐이고 `r3b_alpha_percentile` 계산·주입 코드는
+    전무(grep 확인). "2단계 선택·실행"/"orchestrator까지 배선
+    완료"/"전원이 꽂히지 않은 상태" 표현은 과장으로 확정 — cycle
+    단위 precompute는 이 세션 전체에서 production 코드로 옮겨진 적이
+    없다. §56 원문은 삭제하지 않고 보존. 상세: `plans/[DESIGN]
+    regime_conditional_entry_signal_v1.md` §57.
+  - **SPPV-3(다음 착수: cycle당 1회 precompute 함수(코드 0줄,
     `run_decision_loop.py`에 실제 percentile 계산·metadata 주입
-    함수 추가·별도 승인 필요) +
+    함수 추가·별도 승인 필요 — 여전히 유일한 실행 단계) +
     `trigger_status` 공급원 자동화/배치화(cron/배치 설계,
     override=true인 동안 낮은 우선순위) + 포지션 사이징 등 exit
     외 리스크 관리 수단 검토(신규, 낮은 우선순위, 실거래 계좌

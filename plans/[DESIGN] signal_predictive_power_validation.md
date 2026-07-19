@@ -1475,6 +1475,24 @@ entry 설계 검토로 전환**을 확정했다. 별도 문서
   gate 로직 강화 없음. R3b는 Conditional Go를 유지한다. 상세:
   `plans/[DESIGN] regime_conditional_entry_signal_v1.md` §56.
 
+- 작성자: Codex
+- 수정일자: 2026-07-19 (68차, SPPV-2.67 보고 정정 — "2단계 완료"
+  표현의 과장 부분 확정)
+- 수정내용: 새 기능 구현 없이 §56(SPPV-2.67)의 서술을 코드 기준으로
+  재검증했다(SPPV-2.68). `r3b_alpha_percentile.py`/`decision_
+  orchestrator.py`/`run_decision_loop.py` 직접 확인 결과: 순수 계산
+  모듈은 존재하나 production 코드 어디서도 import되지 않는 고립
+  모듈; orchestrator의 metadata 읽기·엔진 전달 배선은 실제로 존재
+  (사실); `run_decision_loop.py`에는 `r3b_alpha_enabled` config
+  전달 두 줄만 있고 `r3b_alpha_percentile`을 계산·주입하는 코드는
+  전무(grep 확인, 함수 자체 없음). "2단계 선택·실행"/"orchestrator
+  까지 배선 완료"/"전원이 꽂히지 않은 상태" 표현은 과장으로
+  확정 — "cycle 단위 precompute"는 이 세션 전체에서 단 한 번도
+  production 코드로 옮겨진 적이 없다. R3b 판정(Conditional Go)은
+  코드 변경이 없어 불변. 이력 보존형 정정 — 기존 §56 서술은 삭제하지
+  않음. 상세: `plans/[DESIGN] regime_conditional_entry_signal_v1.md`
+  §57.
+
 ---
 
 ## 진행 체크리스트
@@ -3614,6 +3632,38 @@ canonical),
     entry_signal_v1.md` §56.
   - 다음 과제: cycle당 1회 precompute 함수("3단계", 별도 승인
     필요), `trigger_status` 자동화(낮은 우선순위).
+  - **[SPPV-2.68에서 정정] "2단계 완료"/"orchestrator까지 배선
+    완료"/"전원이 꽂히지 않은 상태" 표현이 과장이었음이 확인됨 —
+    아래 SPPV-2.68 참고. 이 항목의 텍스트 자체는 삭제하지 않고
+    보존한다.**
+- [x] **SPPV-2.68(신설)** SPPV-2.67 보고 정정 — "2단계 완료" 표현의
+  과장 부분 확정 (완료, 2026-07-19, 작성자: Codex)
+  - **목적**: 새 기능 구현이 아니라 §56(SPPV-2.67)의 서술과 실제
+    코드 상태를 일치시키는 정정 턴. `r3b_alpha_percentile.py`/
+    `decision_orchestrator.py`/`run_decision_loop.py` 3개 파일을
+    직접 읽어 재확인했다.
+  - **확인된 사실**: 순수 계산 모듈은 실제로 존재하나 production
+    코드 어디에서도 import되지 않는 고립 모듈(자기 검증 스크립트만
+    사용); `decision_orchestrator.py`는 `request.metadata["r3b_
+    alpha_percentile"]`을 실제로 읽어 엔진까지 전달(두 호출 지점
+    모두 실제 코드로 확인); `run_decision_loop.py`에는 `r3b_alpha_
+    enabled=settings...` config 전달 두 줄만 존재하고, `r3b_alpha_
+    percentile`이라는 키를 어떤 `request.metadata`에도 써넣는 코드는
+    **단 한 줄도 없음**(grep으로 확인, `_build_core_risk_off_apply_
+    overrides_for_cycle()`과 짝을 이루는 함수 자체가 없음).
+  - **판정**: "2단계(cycle 단위 candidate_percentile precompute
+    배선) 선택·실행"은 **과장** — 실제로는 "orchestrator 통로 준비
+    + 계산 모듈 독립 구현"만 이뤄졌고 "cycle 단위 precompute 배선"
+    자체(값을 계산해 실제로 주입하는 코드)는 이 세션 전체를 통틀어
+    단 한 번도 작성된 적이 없다. "orchestrator까지 배선 완료"는
+    orchestrator 자체의 통로 준비는 사실이나, 파이프라인 앞부분
+    (cycle precompute)이 존재하지 않는다는 사실을 가리는 표현이라
+    과장으로 확정. R3b 자체 판정(Conditional Go)은 코드 변경이
+    없으므로 불변. 상세: `plans/[DESIGN] regime_conditional_entry_
+    signal_v1.md` §57.
+  - 다음 과제: 변경 없음(§56.7과 동일) — cycle당 1회 precompute
+    함수(코드 0줄, 여전히 유일한 실제 실행 단계로 남은 과제),
+    `trigger_status` 자동화(낮은 우선순위).
 - [~] **SPPV-3** `entry_score` point-in-time 재현 및 중복 penalty ablation
   - **보류 유지, 형태 재정의 — 우선순위 재조정**: §12(1년, 자기참조
     포함) 당시 "알파 근거 강화"로 낙관했던 것이 §14(3년, 자기참조
