@@ -1174,6 +1174,22 @@
   `docs/10_signal_research_sppv/[DESIGN] regime_conditional_entry_
   signal_v1.md` §65.
 
+- 작성자: Codex
+- 수정일자: 2026-07-20 (SPPV-2.76 해석 정밀 보정 — "BUY 부재"
+  원인의 3층 분리 정량화)
+- 수정내용: §65의 "downgrade가 BUY 부재 직접 원인"이라는 서술은
+  000810 1개 종목 사례를 전체로 일반화한 과장이었음을 정정했다
+  (SPPV-2.77 — R3b 작동 여부 재검증이 아니라 원인 분해 정밀화).
+  실제 `trade_decisions` 재조회(24시간, R3b reason code 66건)로
+  층1(downgrade, 33건 전부 000810)/층2(애초 비후보, 33건 전부
+  000660)를 정확히 절반씩 분리 확인. 운영 로그 재확인 결과 층3
+  (pre-AI core_risk_off_ranking 차단)이 universe 12종목 중 11
+  종목(91.7%)에 영향 — R3b 후보 풀(2종목)보다 훨씬 넓은 범위.
+  판정: **복합 병목** — 세 층을 같은 원인으로 묶지 않음. R3b 작동
+  자체 판정(작동하나 체감 무효)은 불변. 코드 변경 없음, 신규 KIS
+  호출 0건. 상세: `docs/10_signal_research_sppv/[DESIGN] regime_
+  conditional_entry_signal_v1.md` §66.
+
 ---
 
 ## 관리 원칙
@@ -2760,9 +2776,22 @@
     판정: 작동하나 체감 무효. 코드 변경 없음, 신규 KIS 호출 0건.
     상세: `docs/10_signal_research_sppv/[DESIGN] regime_
     conditional_entry_signal_v1.md` §65.
-  - **SPPV-3(다음 착수: AI 최종 결정 합성기의 downgrade 로직
-    조사(신규 최우선) + candidate pool 국면별 변화 관측 + churn
-    guard paper 운영 표본 누적 후 재검증(§64 후속) +
+  - **SPPV-2.77(완료, 2026-07-20, SPPV-2.76 해석 정밀 보정 —
+    "BUY 부재" 원인의 3층 분리 정량화, 작성자: Codex — 복합
+    병목, R3b Conditional Go 유지)**: §65의 "downgrade가 BUY
+    부재 직접 원인"이 000810 1개 종목 사례의 과잉 일반화였음을
+    정정. 실제 `trade_decisions`(24시간, R3b reason code 66건)
+    재조회로 층1(downgrade, 33건 전부 000810)/층2(애초 비후보,
+    33건 전부 000660) 절반씩 분리 확인, 운영 로그로 층3(pre-AI
+    core_risk_off_ranking 차단, universe 12종목 중 11개=91.7%)이
+    R3b 후보 풀보다 훨씬 넓게 작동함을 확인. 판정: 복합 병목 —
+    세 층을 같은 원인으로 묶지 않음. R3b 작동 판정 불변. 코드
+    변경 없음, 신규 KIS 호출 0건. 상세: `docs/10_signal_research_
+    sppv/[DESIGN] regime_conditional_entry_signal_v1.md` §66.
+  - **SPPV-3(다음 착수: core risk-off pre-AI 차단(층3, 최우선,
+    universe 91.7% 영향) 정밀 조사 + AI 최종 결정 합성기 downgrade
+    (층1, 000810 한정) 조사 + R3b 후보 풀 협소함(층2 무관) 재관측
+    + churn guard paper 운영 표본 누적 후 재검증(§64 후속) +
     `trigger_status` 공급원 자동화/배치화(cron/배치 설계,
     override=true인 동안 낮은 우선순위) + 포지션 사이징 등 exit
     외 리스크 관리 수단 검토(신규, 낮은 우선순위, 실거래 계좌

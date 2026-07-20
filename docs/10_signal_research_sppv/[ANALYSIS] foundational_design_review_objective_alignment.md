@@ -1683,6 +1683,21 @@ value/compliance/broker가 아니라 `entry_score < 0.65`다.
   Go) 불변. 코드 변경 없음, 신규 KIS 호출 0건. 상세: `docs/10_
   signal_research_sppv/[DESIGN] regime_conditional_entry_signal_
   v1.md` §65.
+
+- 작성자: Codex
+- 수정일자: 2026-07-20 (2.79순위, SPPV-2.76 해석 정밀 보정 — "BUY
+  부재" 원인의 3층 분리 정량화)
+- 수정내용: §65의 "downgrade가 BUY 부재의 직접 원인"이라는 서술은
+  000810 1개 종목에만 적용되는 설명을 전체로 일반화한 과장이었음을
+  정정했다(SPPV-2.77). 실제 `trade_decisions` 재조회(24시간, R3b
+  reason code 66건)로 층1(downgrade, 33건 전부 000810)/층2(애초
+  비후보, 33건 전부 000660)를 정확히 절반씩 분리 확인. 운영 로그
+  재확인 결과 층3(pre-AI core_risk_off_ranking 차단)이 universe
+  12종목 중 11종목(91.7%)에 영향 — R3b 후보 풀(2종목)보다 훨씬
+  넓은 범위. 판정: **복합 병목** — 세 층을 같은 원인으로 묶으면
+  안 됨. R3b 작동 자체 판정(작동하나 체감 무효) 불변. 코드 변경
+  없음, 신규 KIS 호출 0건. 상세: `docs/10_signal_research_sppv/
+  [DESIGN] regime_conditional_entry_signal_v1.md` §66.
 - **3순위(보류 유지, 형태 재정의 — 우선순위 재조정)**: **`entry_
   score`와 BUY funnel 재현** — §2.7 확장 검증에서 하락장 안정성이
   확인되지 않아 단순 재현으로는 착수하지 않는다. §2.16~§2.21에서

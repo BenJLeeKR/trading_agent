@@ -1125,8 +1125,62 @@
 
 ## 최근 메모
 
+> **📌 2026-07-20 SPPV-2.76 해석 정밀 보정 — "BUY 부재" 원인의
+> 3층 분리 정량화 (최신, 작성자: Codex)**: R3b 작동 여부를 다시
+> 뒤집는 턴이 아니라, §65가 남긴 "BUY 미발생의 직접 원인은 AI
+> 최종 결정 합성기의 downgrade다"라는 문장이 **000810 1개 종목의
+> 사례를 전체 BUY 부재 원인으로 일반화한 과장**이었음을 정정하는
+> 턴(SPPV-2.77). **실측(조회 시각 2026-07-20 02:54 UTC, 최근 24
+> 시간 — 이후 cycle 누적에 따라 절대 건수는 변할 수 있음)**: 실제
+> `trade_decisions.decision_json`을 `trigger_r3b_alpha_percentile`
+> 포함 조건으로 재조회한 결과 총 **66건**이 정확히 절반씩 분리됐다
+> — **층1**(`buy_candidate=True` AND `candidate_vs_final.alignment_
+> status=downgraded`) **33건, 전부 000810** — 최종 `decision_type`
+> 은 WATCH 또는 HOLD; **층2**(`buy_candidate=False` 또는 `primary_
+> candidate=NO_ACTION`, `alignment_status=matched`) **33건, 전부
+> 000660** — 이 종목은 percentile 낮음+risk_off 감점으로 entry_
+> score=0.0, **R3b 자신이 애초에 이 종목을 사고 싶어한 적이 없다**
+> (downgrade가 아니라 R3b의 1차 판단 자체가 no_action). 운영
+> 로그(`docker logs --since 24h`)에서 **층3**(`"Pre-agent short-
+> circuit applied"` + `"eligibility_core_risk_off_ranking_
+> blocked"`)을 별도 집계 — 원시 로그 **297건**, distinct `symbol=`
+> **11개**(오늘 SYMBOL_START가 찍힌 universe 12종목 중 11개 —
+> R3b 후보였던 000810만 유일하게 이 short-circuit에 전혀 걸리지
+> 않음; 000660은 단 1회만 걸렸고 그 사유는 `core_risk_off_
+> ranking_blocked`가 아닌 `pre_ai_no_action_no_event`로 달랐음).
+> 코드 확인: `deterministic_trigger_engine.py:618`에서 이 reason_
+> code가 발생하면 `decision_orchestrator.py`가 AI 에이전트
+> 파이프라인 호출 자체를 건너뛰고 결정론적 결과를 바로 `decision_
+> type`으로 확정한다 — 즉 층3은 `candidate_vs_final`/AI 최종
+> 합성기가 관여하기 **이전** 단계이며, R3b 후보 풀(2종목)에
+> 들어오기도 전에 나머지 종목 대부분을 걸러내는 별개의 축이다.
+> **000810과 000660을 같은 원인으로 묶지 말 것**: 000810은 R3b가
+> 실제로 BUY_CANDIDATE로 올렸고 그 뒤 downgrade됐다(층1이 정확한
+> 설명). 000660은 R3b reason code는 붙지만 R3b 자신이 처음부터
+> "사지 말라"고 판단한 것이고 AI는 그 판단을 그대로 따랐을 뿐이다
+> (층2, downgrade 아님). **"AI가 다 막는다"는 단일 원인 서술은
+> 부정확**하다 — universe 전체 관점에서는 R3b 후보 풀 자체가
+> 12종목 중 2종목뿐이고, 나머지 10종목은 R3b 관여 이전에 이미
+> pre-AI 층3에서 걸러지고 있다(universe의 91.7%에 영향, R3b 후보
+> 풀보다 훨씬 넓은 범위). **핵심 판정**: **복합 병목** — "R3b
+> 미작동"도, "R3b는 작동하나 downgrade가 주 병목"도 전체 그림을
+> 다 설명하지 못한다. R3b 후보 풀 내부에서는 층1·층2가 정확히
+> 절반씩이고, universe 전체로는 층3(pre-AI core risk-off 차단)이
+> 훨씬 넓게 작동하는 복합 구조다. R3b 자체 작동 판정("작동하나
+> 체감 무효")은 이번 정정과 무관하게 유지된다. 코드 변경 없음
+> (순수 재조사), 신규 KIS 호출 0건. **다음 우선 작업**(직접적
+> 병목 우선순위): (1) core risk-off pre-AI 차단(층3) 정밀 조사
+> — universe 91.7%에 영향을 미치는 가장 넓은 병목, `deterministic_
+> trigger_engine.py:618`의 판정 문턱값이 현재 국면에서 과도하게
+> 넓게 걸리는지 확인 필요; (2) AI 최종 합성기 downgrade(층1) 조사
+> — §65 과제 유효하나 영향 범위는 R3b 후보 풀 1종목(000810)으로
+> 한정됨을 명확히 인지; (3) R3b 후보 풀 자체의 협소함(candidate
+> pool이 2종목뿐인 이유, 국면 전환 시 pool 변화 재관측). 상세:
+> `docs/10_signal_research_sppv/[DESIGN] regime_conditional_
+> entry_signal_v1.md` §66.
+
 > **📌 2026-07-20 R3b alpha가 실제 paper 운영 경로에서 정말
-> 발동하는지 최종 실증 (최신, 작성자: Codex)**: env/config →
+> 발동하는지 최종 실증 (작성자: Codex)**: env/config →
 > 코드 경로 → percentile 계산·주입 → 실제 decision 영향 4단계로
 > 분리해 실측했다(SPPV-2.76). **(1) env/config**: 실행 중
 > `ops-scheduler` 컨테이너의 `env`와 `AppSettings()` 둘 다 `entry_
@@ -8895,10 +8949,22 @@ agent 설계 문서 기준으로도 순서는 다음이 맞다.
      후속 축). 판정: 작동하나 체감 무효. R3b 구현 판정 불변. 코드
      변경 없음, 신규 KIS 호출 0건. 상세: `docs/10_signal_research_
      sppv/[DESIGN] regime_conditional_entry_signal_v1.md` §65.
-   - **SPPV-3(다음 착수: AI 최종 결정 합성기의 downgrade 로직
-     조사(신규 최우선, `candidate_vs_final.alignment_status=
-     downgraded` 원인 코드 추적) + candidate pool 국면별 변화
-     관측 + churn guard paper 운영 표본 누적 후 재검증(§64 후속) +
+   - **SPPV-2.77(완료, 2026-07-20, SPPV-2.76 해석 정밀 보정 —
+     "BUY 부재" 원인의 3층 분리 정량화, 작성자: Codex — 복합
+     병목, R3b Conditional Go 유지)**: §65의 "downgrade가 BUY
+     부재 직접 원인"이 000810 1개 종목 사례의 과잉 일반화였음을
+     정정. 실제 `trade_decisions`(24시간, R3b reason code 66건)
+     재조회로 층1(downgrade, 33건 전부 000810)/층2(애초 비후보,
+     33건 전부 000660) 절반씩 분리 확인, 운영 로그로 층3(pre-AI
+     core_risk_off_ranking 차단, universe 12종목 중 11개=91.7%)이
+     R3b 후보 풀보다 훨씬 넓게 작동함을 확인. 판정: 복합 병목 —
+     세 층을 같은 원인으로 묶지 않음. R3b 작동 판정 불변. 코드
+     변경 없음, 신규 KIS 호출 0건. 상세: `docs/10_signal_research_
+     sppv/[DESIGN] regime_conditional_entry_signal_v1.md` §66.
+   - **SPPV-3(다음 착수: core risk-off pre-AI 차단(층3, 최우선,
+     universe 91.7% 영향) 정밀 조사 + AI 최종 결정 합성기 downgrade
+     (층1, 000810 한정) 조사 + R3b 후보 풀 협소함(층2 무관) 재관측
+     + churn guard paper 운영 표본 누적 후 재검증(§64 후속) +
      `trigger_status` 공급원 자동화/배치화(cron/배치 설계,
      override=true인 동안 낮은 우선순위) + 포지션 사이징 등 exit
      외 리스크 관리 수단 검토(신규, 낮은 우선순위, 실거래 계좌

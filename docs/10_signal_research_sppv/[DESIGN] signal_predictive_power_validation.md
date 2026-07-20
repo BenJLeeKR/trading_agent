@@ -1645,6 +1645,30 @@ entry 설계 검토로 전환**을 확정했다. 별도 문서
   호출 0건. 상세: `docs/10_signal_research_sppv/[DESIGN] regime_
   conditional_entry_signal_v1.md` §65.
 
+- 작성자: Codex
+- 수정일자: 2026-07-20 (77차, SPPV-2.76 해석 정밀 보정 — "BUY
+  부재" 원인의 3층 분리 정량화)
+- 수정내용: §65의 "BUY 미발생의 직접 원인은 AI 최종 결정 합성기의
+  downgrade다"는 과장이었음을 정정했다(SPPV-2.77 — R3b 작동 여부
+  재검증이 아니라 원인 분해 정밀화). 실제 `trade_decisions`를
+  직접 재조회(조회 시각 2026-07-20 02:54 UTC, 최근 24시간)한 결과
+  R3b reason code가 붙은 66건이 정확히 절반씩 분리됨: **층 1**
+  (`buy_candidate=True`+`downgraded`) 33건 전부 000810; **층 2**
+  (`buy_candidate=False`/`NO_ACTION`, `alignment=matched`) 33건
+  전부 000660 — 이 종목은 애초에 R3b가 사고 싶어한 적이 없다.
+  운영 로그에서 **층 3**(`Pre-agent short-circuit` + `eligibility_
+  core_risk_off_ranking_blocked`)을 별도 집계한 결과 원시 297건,
+  distinct 11/12 종목(오늘 universe 12종목 중 11개, R3b 후보인
+  000810만 유일하게 미해당) — `deterministic_trigger_engine.
+  py:618`에서 발생해 `decision_orchestrator.py`가 AI 파이프라인
+  호출 자체를 건너뛰는, candidate_vs_final보다 앞선 단계임을 코드로
+  확인. 판정: **복합 병목** — 000810(층1)/000660(층2)/나머지
+  universe 대다수(층3)를 같은 원인으로 묶으면 안 됨. universe
+  전체 관점에서는 층 3(91.7%)이 가장 넓은 병목. R3b 작동 자체
+  판정(작동하나 체감 무효)은 불변. 코드 변경 없음, 신규 KIS 호출
+  0건. 상세: `docs/10_signal_research_sppv/[DESIGN] regime_
+  conditional_entry_signal_v1.md` §66.
+
 ---
 
 ## 진행 체크리스트
@@ -4081,6 +4105,35 @@ canonical),
     signal_v1.md` §65.
   - 다음 과제: AI 최종 결정 합성기의 downgrade 로직 조사(신규
     최우선); candidate pool 국면별 변화 관측.
+  - **[SPPV-2.77에서 정정] 위 "AI 최종 합성기가 매번 눌러..." 표현이
+    000810 1개 종목에만 적용되는 설명을 전체 BUY 부재 원인으로
+    일반화한 과장이었음이 확인됨 — 아래 SPPV-2.77 참고. 이 항목의
+    텍스트는 삭제하지 않고 보존한다.**
+- [x] **SPPV-2.77(신설)** SPPV-2.76 해석 정밀 보정 — "BUY 부재"
+  원인의 3층 분리 정량화 (완료, 2026-07-20, 작성자: Codex)
+  - **목적**: R3b 작동 여부 재검증이 아니라, "BUY가 왜 아직 안
+    나오느냐"의 원인 분해를 정밀화.
+  - **실측(조회 시각 2026-07-20 02:54 UTC, 최근 24시간)**: R3b
+    reason code가 붙은 `trade_decisions` 66건을 재조회한 결과 정확히
+    절반씩 분리 — 층1(`buy_candidate=True`+`downgraded`) 33건 전부
+    000810; 층2(`buy_candidate=False`/`NO_ACTION`, `alignment=
+    matched`) 33건 전부 000660(애초에 R3b 비후보). 운영 로그에서
+    층3(`Pre-agent short-circuit`+`eligibility_core_risk_off_
+    ranking_blocked`)을 별도 집계 — 원시 297건, distinct 11/12
+    종목(오늘 universe 12종목 중 R3b 후보 000810만 유일하게
+    미해당). 코드로 층3이 `deterministic_trigger_engine.py:618`→
+    `decision_orchestrator.py`의 AI 파이프라인 사전 차단이며
+    `candidate_vs_final`보다 앞선 단계임을 확인.
+  - **판정**: **복합 병목** — 000810(층1)/000660(층2)/나머지
+    universe 대다수(층3, 91.7%)를 같은 원인으로 묶으면 안 됨.
+    universe 전체 관점에서는 층3이 가장 넓은 병목. R3b 작동 자체
+    판정(작동하나 체감 무효)은 불변. 코드 변경 없음, 신규 KIS
+    호출 0건. 상세: `docs/10_signal_research_sppv/[DESIGN] regime_
+    conditional_entry_signal_v1.md` §66.
+  - 다음 과제: core risk-off pre-AI 차단(층3, 최우선, universe
+    91.7% 영향) 정밀 조사; AI 최종 합성기 downgrade(층1, 000810
+    한정) 조사; R3b 후보 풀 협소함(층2 무관, candidate pool 2종목
+    뿐인 이유) 재관측.
 - [~] **SPPV-3** `entry_score` point-in-time 재현 및 중복 penalty ablation
   - **보류 유지, 형태 재정의 — 우선순위 재조정**: §12(1년, 자기참조
     포함) 당시 "알파 근거 강화"로 낙관했던 것이 §14(3년, 자기참조
