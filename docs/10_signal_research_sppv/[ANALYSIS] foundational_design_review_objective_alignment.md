@@ -1752,6 +1752,26 @@ value/compliance/broker가 아니라 `entry_score < 0.65`다.
   코드 변경 없음, 신규 KIS 호출 0건. 상세: `docs/10_signal_
   research_sppv/[DESIGN] regime_conditional_entry_signal_v1.md`
   §69.
+
+- 작성자: Codex
+- 수정일자: 2026-07-20 (2.83순위, "APPROVE + expected_value_gate.
+  passed=false"가 저장되는 이유 — 코드 경로 완전 추적)
+- 수정내용: §69의 발견을 코드 끝까지 닫아 추적했다(SPPV-2.81,
+  원인 추적 턴). `decision_orchestrator.py:538`의 `_check_ai_buy_
+  override_gate()`가 `:565-566`에서 `buy_candidate=True`면 즉시
+  반환 — `:634`의 expected_value_gate downgrade 체크에 도달조차
+  못함. 저장 시점(`decision_factory.py`)에는 `decision_type=
+  'APPROVE'`가 그대로 저장되고, 실제 차단은 이후 `translation.py:
+  74-178`의 `_has_required_expected_value_anchor()`가 독립적으로
+  재확인해 발생(`submit_request=None`). 재조회(24h, 04:42 UTC)
+  결과 APPROVE 7건 전부 edge=8.56/min_required=10.00 완전 동일값
+  반복. 로그 대조로 000240(다른 종목)은 override gate가 실제
+  발동해 로그를 남기나 000810 7건은 로그 없음을 확인(조기 반환
+  검증). 판정: 계층 간 불일치(저장/번역/제출의 책임 분리) — 저장은
+  정상, 주문은 EV gate에서 차단. docstring 약속과 실제 동작의
+  괴리는 완전 의도 여부 단정 불가. 코드 변경 없음, 신규 KIS 호출
+  0건. 상세: `docs/10_signal_research_sppv/[DESIGN] regime_
+  conditional_entry_signal_v1.md` §70.
 - **3순위(보류 유지, 형태 재정의 — 우선순위 재조정)**: **`entry_
   score`와 BUY funnel 재현** — §2.7 확장 검증에서 하락장 안정성이
   확인되지 않아 단순 재현으로는 착수하지 않는다. §2.16~§2.21에서

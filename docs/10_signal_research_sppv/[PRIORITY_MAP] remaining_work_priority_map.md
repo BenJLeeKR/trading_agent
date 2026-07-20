@@ -1125,8 +1125,104 @@
 
 ## 최근 메모
 
+> **📌 2026-07-20 "APPROVE + expected_value_gate.passed=false"가
+> 저장되는 이유 — 코드 경로 완전 추적 (최신, 작성자: Codex)**:
+> §69(SPPV-2.80)가 발견한 "decision_type='APPROVE'인데 expected_
+> value_gate.passed=false이고 실제 order request는 0건"인 현상을
+> 코드 끝까지 닫아 추적했다(SPPV-2.81, 원인 추적 턴, 완화/수정
+> 없음). **닫힌 경로**: (1) `expected_value_gate_passed` 계산 —
+> `decision_orchestrator.py:1437` `evaluate_expected_value_gate()`
+> → `:1454`에서 `AIDecisionInputs.expected_value_gate_passed`에
+> 주입(같은 패턴이 `decision_agent_runner.py:648`/`:825`에도 존재).
+> (2) downgrade 체크 — `decision_orchestrator.py:538` `_check_ai_
+> buy_override_gate()`, docstring은 "BUY/APPROVE override는
+> eligibility + EV + state 통과 시에만 허용한다"고 명시하나,
+> **함수 진입 직후(:565-566)**에 `if bool(getattr(deterministic_
+> trigger, "buy_candidate", False)): return None`이 있어 R3b가
+> 이미 BUY_CANDIDATE로 판정한 경우(000810) **`:634`의 expected_
+> value_gate_passed 체크에 도달조차 못하고 즉시 반환**된다. (3)
+> DB 저장 — 호출부(`:2376-2385`)에서 `ai_override_gate is None`
+> 이면 downgrade 블록 전체(override 적용·로그 출력) 스킵 →
+> `agent_bundle.ai_inputs.decision_type`은 AI(FDC)가 실제 출력한
+> `'APPROVE'` 그대로 유지 → `decision_factory.py`가 이 값을 그대로
+> `trade_decisions.decision_type`에 저장(`:164-171`은 별도로
+> `failed_rule_codes` 컬럼에 gate 실패 사유만 기록 — decision_
+> type 자체는 불변, 순수 annotation). (4) submit 차단 —
+> `src/agent_trading/services/translation.py:74-178` `build_
+> submit_order_request_from_decision()` → `_has_required_
+> expected_value_anchor()`(`:148-178`)가 **다시 독립적으로**
+> `if not ai_inputs.expected_value_gate_passed: return False`
+> (`:156-157`)를 체크해 이번엔 실제로 `False`를 반환, `submit_
+> request=None`이 됨 → `execution_service.py:2442-2499`가 "Decision
+> type 'APPROVE' produced no order request" 로그와 함께 SKIPPED
+> 처리. **최근 24시간 재조회(조회 시각 2026-07-20 04:42 UTC)**:
+> `decision_type='APPROVE'` 총 **7건**(§69의 2건에서 자연 증가),
+> 전부 000810, 전부 `edge_after_cost_bps=8.56`/`minimum_required_
+> edge_bps=10.00`로 **완전히 동일한 값이 7 cycle 연속 반복**(같은
+> 거래일 내 signal_feature_snapshot이 하루 단위로만 갱신되므로
+> 우연한 근소 미달이 아니라 그 거래일 내내 지속되는 안정적 상태로
+> 보임). `execution_attempts`(24h) 633건 전부 `status=non_trade`
+> — 실제 주문 제출 0건 재확인. **로그 대조 검증**: 같은 시간대
+> **000240**(다른 종목, eligibility 미통과)에서는 `"AI override
+> gate blocked: ... FDC=APPROVE -> HOLD"` 로그가 정상적으로 남지만,
+> **000810의 7건 어디에도 이 로그가 없다** — `_check_ai_buy_
+> override_gate()`가 `:566`에서 조용히 `None`을 반환했기 때문에
+> (로그는 `if ai_override_gate is not None` 분기 안에서만 출력됨)
+> 아무 흔적도 남기지 않는다. 이는 코드 추적과 로그가 정확히
+> 일치함을 재확인한다. **핵심 질문 답변**: (질문1) downgrade
+> 경로는 "실행되지 않은 것"이 맞다 — 다만 버그로 안 된 것이 아니라
+> "그 경로 자체가 `buy_candidate=True`인 경우에는 애초에 적용되지
+> 않도록 설계돼 있어서" 실행되지 않는다. "다른 경로에서 다시
+> APPROVE로 덮인 것"이 아니라 애초에 덮인 적이 없다(다운그레이드
+> 블록에 진입조차 못 함). (질문2) `decision_type='APPROVE'` +
+> `candidate_vs_final.final_intent='buy'` + `expected_value_
+> gate.passed=false` + `order_requests=0` 조합은 **"계층 간
+> 불일치(저장/번역/제출의 책임 분리 문제)"에 가장 가깝다** — 저장
+> 계층(`decision_orchestrator.py`/`decision_factory.py`)과 제출
+> 계층(`translation.py`)이 서로 다른 시점에 독립적으로 expected_
+> value_gate를 참조한다. 저장 계층은 `buy_candidate=True`인
+> legitimate candidate에 대해서는 이 값을 아예 확인하지 않고
+> 통과시키고, 제출 계층은 항상 확인해서 막는다. 이것이 "완전히
+> 의도된 설계"인지는 `_check_ai_buy_override_gate()`의 docstring
+> ("EV 통과 시에만 허용한다")과 실제 동작(EV 체크가 candidate인
+> 경우 전혀 적용되지 않음) 사이에 뚜렷한 괴리가 있어 단정하기
+> 어렵다 — 다만 번역/제출 계층이 최종적으로 EV를 다시 확인해
+> 실제 주문은 막았으므로 "주문이 잘못 나간 사고"는 없었다. **닫힌
+> 결론**: 실제 분기 순서는 `evaluate_expected_value_gate()`(계산)
+> → `_check_ai_buy_override_gate()`(buy_candidate=True라서 조기
+> 반환, downgrade 미적용) → `decision_factory.py`(APPROVE 그대로
+> 저장 + failed_rule_codes에 gate 실패 사유만 별도 기록) →
+> `translation.py::_has_required_expected_value_anchor()`(EV
+> 재확인, 실패) → `submit_request=None` → `execution_service.py`
+> (SKIPPED). DB 저장 의미: `trade_decisions.decision_type`은
+> "AI 최종 합성기가 무엇을 원했는가"를 저장하는 필드이지 "실제로
+> 제출 가능했는가"를 보장하는 필드가 아니다 — 이 둘은 설계상
+> 분리된 개념으로 보인다. 주문 미생성 직접 원인: `translation.py`
+> 의 `_has_required_expected_value_anchor()`가 `expected_value_
+> gate.passed=False`를 이유로 `submit_request=None`을 반환한 것
+> — 이것이 유일한 직접 원인이며 `decision_orchestrator.py`의
+> override-gate는 이 사례에 관여하지 않았다. **핵심 판정**: 계층
+> 간 불일치(저장/번역/제출의 책임 분리 문제). 한 줄 결론: "APPROVE
+> 저장은 정상이나 주문은 expected value gate에서 차단". R3b 작동
+> 자체 판정(작동하나 체감 무효)은 이번 턴과 무관하게 유지된다.
+> 코드 변경 없음(순수 조사 턴), 신규 KIS 호출 0건. **다음 우선
+> 작업**(원인 추적 후속, 완화안 아님): (1) `_check_ai_buy_
+> override_gate()`의 `buy_candidate=True` 조기 반환이 의도된
+> 설계(candidate는 이미 deterministic 층에서 검증됐으므로 override
+> gate가 불필요)인지, 아니면 EV 체크를 candidate 경우에도 적용해야
+> 하는데 누락된 것인지 설계자 확인(코드만으로는 의도 여부를 확정할
+> 수 없음 — 이번 턴의 한계); (2) `decision_type='APPROVE'`가
+> 실제로는 제출 불가능한 상태로 DB에 반복 저장되는 것이 리포팅/
+> 모니터링 관점에서 오해를 유발하는지(예: "APPROVE 건수"를 성과
+> 지표로 볼 때 실제 제출 가능 여부와 혼동될 위험) 별도 검토; (3)
+> edge_after_cost_bps=8.56/min_required=10.00의 7 cycle 연속
+> 동일값 반복이 signal_feature_snapshot의 일 단위 갱신 주기와
+> 일치하는지 재확인(§69에서 제기한 margin 반복 관측의 연장선).
+> 상세: `docs/10_signal_research_sppv/[DESIGN] regime_conditional_
+> entry_signal_v1.md` §70.
+
 > **📌 2026-07-20 R3b 최종 병목의 조건 민감도 검증 + 신규 발견
-> (expected_value_gate 정량 게이트) (최신, 작성자: Codex)**: §68
+> (expected_value_gate 정량 게이트) (작성자: Codex)**: §68
 > (SPPV-2.79)의 watch/no_action 분기를 구간 분포·조합 빈도·극단값
 > 사례로 정밀 재검증했다(SPPV-2.80, 완화 결론 아님, 000810만
 > 대상). **표본(조회 시각 2026-07-20 04:11 UTC, §68 대비 자연
@@ -9182,12 +9278,33 @@ agent 설계 문서 기준으로도 순서는 다음이 맞다.
      (신뢰도+규제 조합 유력). 코드 변경 없음, 신규 KIS 호출 0건.
      상세: `docs/10_signal_research_sppv/[DESIGN] regime_
      conditional_entry_signal_v1.md` §69.
-   - **SPPV-3(다음 착수: evidence_strength/regulatory 조합 재현
-     검증(최우선) + expected_value_gate margin 반복 관측(신규,
-     중요도 상승) + 규제/이벤트 리스크 감지 파이프라인 데이터 근거
-     확인 + core risk-off pre-AI 차단(층3, universe 91.7% 영향,
-     별도 트랙) 정밀 조사 + R3b 후보 풀 협소함 재관측 + churn
-     guard paper 운영 표본 누적 후
+   - **SPPV-2.81(완료, 2026-07-20, "APPROVE + expected_value_gate.
+     passed=false"가 저장되는 이유 — 코드 경로 완전 추적, 작성자:
+     Codex — 계층 간 불일치, R3b Conditional Go 유지)**:
+     `decision_orchestrator.py:538`의 `_check_ai_buy_override_
+     gate()`가 `:565-566`에서 `buy_candidate=True`면 즉시 반환 —
+     `:634`의 expected_value_gate downgrade 체크에 도달조차 못함.
+     저장 시점엔 `decision_type='APPROVE'`가 그대로 저장되고,
+     실제 차단은 `translation.py:74-178`의 `_has_required_
+     expected_value_anchor()`가 독립적으로 재확인해 발생. 재조회
+     (24h, 04:42 UTC) 결과 APPROVE 7건 전부 edge=8.56/min_
+     required=10.00 완전 동일값 반복. 로그 대조로 000240(다른
+     종목)은 override gate가 실제 발동해 로그 남기나 000810 7건은
+     로그 없음(조기 반환 확인). 판정: 계층 간 불일치(저장/번역/
+     제출의 책임 분리) — 저장은 정상, 주문은 EV gate에서 차단.
+     docstring 약속과 실제 동작의 괴리는 완전 의도 여부 단정 불가.
+     코드 변경 없음, 신규 KIS 호출 0건. 상세: `docs/10_signal_
+     research_sppv/[DESIGN] regime_conditional_entry_signal_v1.md`
+     §70.
+   - **SPPV-3(다음 착수: `buy_candidate=True` 조기 반환이 의도된
+     설계인지 설계자 확인 + APPROVE 저장이 모니터링 지표 해석에
+     혼동 유발하는지 검토 + edge=8.56/min_required=10.00 7 cycle
+     연속 동일값이 snapshot 갱신 주기와 일치하는지 재확인 +
+     evidence_strength/regulatory 조합 재현 검증 + expected_
+     value_gate margin 반복 관측 + 규제/이벤트 리스크 감지
+     파이프라인 데이터 근거 확인 + core risk-off pre-AI 차단(층3,
+     universe 91.7% 영향, 별도 트랙) 정밀 조사 + R3b 후보 풀
+     협소함 재관측 + churn guard paper 운영 표본 누적 후
      재검증(§64 후속) +
      `trigger_status` 공급원 자동화/배치화(cron/배치 설계,
      override=true인 동안 낮은 우선순위) + 포지션 사이징 등 exit

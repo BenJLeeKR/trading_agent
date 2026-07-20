@@ -1742,6 +1742,34 @@ entry 설계 검토로 전환**을 확정했다. 별도 문서
   research_sppv/[DESIGN] regime_conditional_entry_signal_v1.md`
   §69.
 
+- 작성자: Codex
+- 수정일자: 2026-07-20 (81차, "APPROVE + expected_value_gate.
+  passed=false"가 저장되는 이유 — 코드 경로 완전 추적)
+- 수정내용: §69의 발견을 코드 끝까지 닫아 추적했다(SPPV-2.81,
+  원인 추적 턴, 완화 없음). `decision_orchestrator.py:538`의
+  `_check_ai_buy_override_gate()`가 `:565-566`에서 `if buy_
+  candidate: return None`으로 즉시 반환 — `:634`의 `expected_
+  value_gate_passed` downgrade 체크에 도달조차 못함(R3b가 이미
+  candidate로 판정한 경우는 이 override-gate의 점검 대상이 아님).
+  호출부(`:2376-2385`)에서 `ai_override_gate is None`이면 downgrade
+  블록 전체 스킵 → `decision_type='APPROVE'` 그대로 `decision_
+  factory.py`에 저장(`failed_rule_codes`엔 gate 실패 사유만 별도
+  기록, decision_type은 불변). 실제 차단은 이후 `translation.py:
+  74-178`의 `_has_required_expected_value_anchor()`가 독립적으로
+  재확인해 `submit_request=None` 반환 — `execution_service.py`가
+  "produced no order request"로 스킵. 재조회(24h, 조회 시각
+  04:42 UTC) 결과 APPROVE 7건 전부 `edge_after_cost_bps=8.56`/
+  `minimum_required_edge_bps=10.00` 완전 동일값 반복. 로그로 대조
+  확인: 같은 시간대 000240은 override gate가 실제 발동해 로그를
+  남기나 000810 7건은 로그 없음(조기 반환 확인). 판정: **계층
+  간 불일치(저장/번역/제출의 책임 분리)** — APPROVE 저장은 코드
+  설계대로 정상 동작(버그 아님), 다만 함수 docstring의 "EV 통과
+  시에만 허용" 약속과 실제 동작(candidate엔 미적용) 사이 괴리는
+  완전 의도 여부 단정 불가. 한 줄 결론: "APPROVE 저장은 정상이나
+  주문은 expected value gate에서 차단". 코드 변경 없음, 신규 KIS
+  호출 0건. 상세: `docs/10_signal_research_sppv/[DESIGN] regime_
+  conditional_entry_signal_v1.md` §70.
+
 ---
 
 ## 진행 체크리스트
@@ -4293,6 +4321,37 @@ canonical),
   - 다음 과제: evidence_strength/regulatory 조합 재현 검증(최우선)
     + expected_value_gate margin 반복 관측(신규, 중요도 상승) +
     규제/이벤트 리스크 감지 파이프라인 데이터 근거 확인.
+- [x] **SPPV-2.81(신설)** "APPROVE + expected_value_gate.passed=
+  false"가 저장되는 이유 — 코드 경로 완전 추적 (완료, 2026-07-20,
+  작성자: Codex)
+  - **목적**: §69의 발견을 코드 끝까지 닫아 추적(원인 추적 턴,
+    완화 없음).
+  - **핵심 발견**: `decision_orchestrator.py:538`의 `_check_ai_
+    buy_override_gate()`가 `:565-566`에서 `if deterministic_
+    trigger.buy_candidate: return None`으로 즉시 반환 — `:634`의
+    `expected_value_gate_passed` downgrade 체크에 도달조차 못함.
+    호출부(`:2376-2385`)가 `None`을 받으면 downgrade 블록 전체를
+    스킵해 `decision_type='APPROVE'`가 그대로 저장된다. 실제 차단은
+    이후 `translation.py:74-178`의 `_has_required_expected_value_
+    anchor()`가 독립적으로 재확인해 발생 — `submit_request=None`
+    → `execution_service.py`가 "produced no order request"로
+    스킵. 재조회(24h, 04:42 UTC) 결과 APPROVE 7건 전부 edge=8.56/
+    min_required=10.00 완전 동일값 반복. 로그 대조: 같은 시간대
+    000240은 override gate 실제 발동해 로그 남기나 000810 7건은
+    로그 없음(조기 반환 확인).
+  - **판정**: 계층 간 불일치(저장/번역/제출의 책임 분리) — APPROVE
+    저장은 코드 설계대로 정상 동작(버그 아님), 다만 `_check_ai_
+    buy_override_gate()` docstring("EV 통과 시에만 허용")과 실제
+    동작(candidate엔 미적용) 사이 괴리는 완전 의도 여부 단정 불가.
+    한 줄 결론: "APPROVE 저장은 정상이나 주문은 expected value
+    gate에서 차단". 코드 변경 없음, 신규 KIS 호출 0건. 상세:
+    `docs/10_signal_research_sppv/[DESIGN] regime_conditional_
+    entry_signal_v1.md` §70.
+  - 다음 과제: `buy_candidate=True` 조기 반환이 의도된 설계인지
+    설계자 확인 필요(코드만으로 단정 불가); APPROVE 저장이 모니터링
+    지표 해석에 혼동을 유발하는지 검토; edge=8.56/min_required=
+    10.00 7 cycle 연속 동일값이 signal_feature_snapshot 일 단위
+    갱신 주기와 일치하는지 재확인.
 - [~] **SPPV-3** `entry_score` point-in-time 재현 및 중복 penalty ablation
   - **보류 유지, 형태 재정의 — 우선순위 재조정**: §12(1년, 자기참조
     포함) 당시 "알파 근거 강화"로 낙관했던 것이 §14(3년, 자기참조

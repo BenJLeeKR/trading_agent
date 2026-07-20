@@ -1242,6 +1242,25 @@
   10_signal_research_sppv/[DESIGN] regime_conditional_entry_
   signal_v1.md` §69.
 
+- 작성자: Codex
+- 수정일자: 2026-07-20 ("APPROVE + expected_value_gate.passed=
+  false"가 저장되는 이유 — 코드 경로 완전 추적)
+- 수정내용: §69의 발견을 코드 끝까지 닫아 추적했다(SPPV-2.81,
+  원인 추적 턴). `decision_orchestrator.py:538`의 `_check_ai_buy_
+  override_gate()`가 `:565-566`에서 `buy_candidate=True`면 즉시
+  반환 — `:634`의 expected_value_gate downgrade 체크에 도달조차
+  못함. 저장 시점엔 `decision_type='APPROVE'`가 그대로 저장되고,
+  실제 차단은 `translation.py:74-178`의 `_has_required_expected_
+  value_anchor()`가 독립적으로 재확인해 발생. 재조회(24h, 04:42
+  UTC) 결과 APPROVE 7건 전부 edge=8.56/min_required=10.00 완전
+  동일값 반복. 로그 대조로 다른 종목은 override gate가 실제
+  발동해 로그 남기나 000810 7건은 로그 없음(조기 반환 확인).
+  판정: 계층 간 불일치(저장/번역/제출의 책임 분리) — 저장은 정상,
+  주문은 EV gate에서 차단. docstring 약속과 실제 동작의 괴리는
+  완전 의도 여부 단정 불가. 코드 변경 없음, 신규 KIS 호출 0건.
+  상세: `docs/10_signal_research_sppv/[DESIGN] regime_conditional_
+  entry_signal_v1.md` §70.
+
 ---
 
 ## 관리 원칙
@@ -2884,9 +2903,27 @@
     코드 변경 없음, 신규 KIS 호출 0건. 상세: `docs/10_signal_
     research_sppv/[DESIGN] regime_conditional_entry_signal_v1.md`
     §69.
-  - **SPPV-3(다음 착수: evidence_strength/regulatory 조합 재현
-    검증(최우선) + expected_value_gate margin 반복 관측(신규,
-    중요도 상승) + 규제/이벤트 리스크 감지 파이프라인 데이터 근거
+  - **SPPV-2.81(완료, 2026-07-20, "APPROVE + expected_value_gate.
+    passed=false"가 저장되는 이유 — 코드 경로 완전 추적, 작성자:
+    Codex — 계층 간 불일치, R3b Conditional Go 유지)**:
+    `decision_orchestrator.py:538`의 `_check_ai_buy_override_
+    gate()`가 `:565-566`에서 `buy_candidate=True`면 즉시 반환 —
+    `:634`의 expected_value_gate downgrade 체크에 도달조차 못함.
+    저장 시점엔 APPROVE 그대로 저장, 실제 차단은 `translation.py:
+    74-178`의 `_has_required_expected_value_anchor()`가 독립적으로
+    재확인해 발생. 재조회(24h, 04:42 UTC) 결과 APPROVE 7건 전부
+    edge=8.56/min_required=10.00 완전 동일값 반복. 로그로 다른
+    종목은 override gate가 실제 발동해 로그 남기나 000810 7건은
+    로그 없음(조기 반환 확인). 판정: 계층 간 불일치(저장/번역/제출
+    책임 분리) — 저장은 정상, 주문은 EV gate에서 차단. 코드 변경
+    없음, 신규 KIS 호출 0건. 상세: `docs/10_signal_research_sppv/
+    [DESIGN] regime_conditional_entry_signal_v1.md` §70.
+  - **SPPV-3(다음 착수: `buy_candidate=True` 조기 반환이 의도된
+    설계인지 설계자 확인 + APPROVE 저장이 모니터링 지표 해석에
+    혼동 유발하는지 검토 + edge/min_required 동일값 반복이 snapshot
+    갱신 주기와 일치하는지 재확인 + evidence_strength/regulatory
+    조합 재현 검증(최우선) + expected_value_gate margin 반복 관측
+    + 규제/이벤트 리스크 감지 파이프라인 데이터 근거
     확인 + core risk-off pre-AI 차단(층3, universe 91.7% 영향,
     별도 트랙) 정밀 조사 + R3b 후보 풀 협소함 재관측 +
     churn guard paper 운영 표본 누적 후 재검증(§64 후속) +
