@@ -1125,8 +1125,57 @@
 
 ## 최근 메모
 
+> **📌 2026-07-20 R3b alpha가 실제 paper 운영 경로에서 정말
+> 발동하는지 최종 실증 (최신, 작성자: Codex)**: env/config →
+> 코드 경로 → percentile 계산·주입 → 실제 decision 영향 4단계로
+> 분리해 실측했다(SPPV-2.76). **(1) env/config**: 실행 중
+> `ops-scheduler` 컨테이너의 `env`와 `AppSettings()` 둘 다 `entry_
+> score_r3b_alpha_enabled=True`/`regime_switch_v1_gate_override_
+> enabled=True` 확인. **(2)+(3) 코드 경로·percentile 계산**: 오늘
+> (2026-07-20) 실제 운영 로그에 `"R3b alpha precompute: market_
+> common_label=range_bound candidates=2 symbols=000660,000810"`
+> 이 00시~11시(KST) 사이 **26회** 반복 확인. **(4) 실제 decision
+> 영향(핵심 실증)**: 실제 `trade_decisions.decision_json`을 직접
+> 조회한 결과 **000810이 `entry_score=0.7856, buy_candidate=True`**
+> 로 R3b에 의해 실제 BUY_CANDIDATE 판정됨(`reason_codes`에 `trigger_
+> r3b_alpha_percentile` 포함, 24시간 내 52건 중 26건이 이 패턴으로
+> 재현 — 1회성 아님). 000660은 같은 시각 percentile=0.0(2종목 중
+> 하위)+risk_off 감점 겹쳐 `entry_score=0.0`으로 clamp. **핵심 상위
+> 차단축 신규 발견**: 이 26건 전부 `deterministic_trigger` 층에서
+> `buy_candidate=True`로 확정됐음에도 **최종 `decision_type`은
+> 26건 전부 WATCH/HOLD**(BUY 0건) — `decision_json.candidate_vs_
+> final` 필드가 원인을 명시적으로 기록: `{"candidate_intent":
+> "buy", "final_intent": "watch", "alignment_status": "downgraded",
+> "override_applied": true}`. `risk_opinion=allow`(risk 통과),
+> `expected_value_gate.passed=true`(기대값 게이트도 통과) — 즉
+> **R3b가 만든 BUY_CANDIDATE를 막은 것은 pre_ai_gate/risk/
+> compliance/expected_value_gate가 아니라, 그 이후 AI 최종 결정
+> 합성기 단계의 별도 downgrade**다 — §60~§64에서 조사한 어떤
+> 차단축과도 다른 새로운 축. **핵심 질문 답변**: (1) ops-scheduler
+> 가 진짜 env를 읽는가 → 예; (2) 실제 cycle에서 계산/주입 흔적이
+> 있는가 → 예(26회 반복 로그); (3) `trigger_r3b_alpha_percentile`
+> 이 실제 관측되는가 → 예(52건, 실제 DB 레코드); (4) 관측 시 종목·
+> 시각·entry_score·decision_type → 000810, 2026-07-20 00~11시,
+> entry_score 0.7856·buy_candidate=True 확정, 최종 decision_type은
+> WATCH/HOLD(26/26). **"BUY가 안 나온다" vs "R3b 미작동" 분리**:
+> R3b는 명확히 작동한다(entry_score/buy_candidate를 실제로 바꿈).
+> BUY가 안 나오는 직접 원인은 R3b가 아니라 AI 최종 결정 합성기의
+> downgrade다. **판정**: **작동하나 체감 무효** — R3b는 실제
+> 운영 경로에서 발동하고 실제 decision 결과에 영향을 주지만,
+> 그 영향이 최종 decision_type까지 이어지지 못하고 매번 downgrade
+> 되어 운영상 체감되는 BUY 빈도 개선 효과는 아직 0이다. R3b 구현·
+> 배선 자체의 판정(Conditional Go)은 불변 — 이번 발견은 R3b
+> 이후 파이프라인 단계(AI 최종 합성기)의 별도 조사 필요성을 새로
+> 제기한다. 코드 변경 없음(순수 조사 턴), 신규 KIS 호출 0건.
+> **다음 우선 작업**: AI 최종 결정 합성기의 downgrade 로직 조사
+> (신규 최우선) — risk_off 국면 규칙인지 AI 에이전트 판단인지
+> 별도 hard guard인지 코드 추적 필요; candidate pool 국면별
+> (bullish/bearish 전환 시) 변화 관측. 상세: `docs/10_signal_
+> research_sppv/[DESIGN] regime_conditional_entry_signal_v1.md`
+> §65.
+
 > **📌 2026-07-19 보유기간/Churn 제어가 R3b BUY 빈도를 얼마나
-> 깎는지 정량 검증 (최신, 작성자: Codex — canonical 문서 `docs/`
+> 깎는지 정량 검증 (작성자: Codex — canonical 문서 `docs/`
 > 하위 재배치 이후 첫 턴)**: churn guard(`holding_profile_
 > earliest_reentry_guard`/`held_position_recent_hold_no_change`/
 > `held_position_recent_risk_sell_cooldown`)가 R3b BUY_CANDIDATE
@@ -8835,10 +8884,21 @@ agent 설계 문서 기준으로도 순서는 다음이 맞다.
      미발동이라 판정은 **Watch**. 이 축은 현행 유지 권고. 코드
      변경 없음, 신규 KIS 호출 0건. 상세: `docs/10_signal_research_
      sppv/[DESIGN] regime_conditional_entry_signal_v1.md` §64.
-   - **SPPV-3(다음 착수: 다음 실제 거래일(2026-07-20 예정) cycle
-     에서 `trigger_r3b_alpha_percentile` reason_code 실제 관측
-     (다음 거래일 관측 과제, 실제 차단 요소 아님) + churn guard
-     paper 운영 표본 누적 후 재검증(§64 후속) +
+   - **SPPV-2.76(완료, 2026-07-20, R3b alpha가 실제 paper 운영
+     경로에서 정말 발동하는지 최종 실증, 작성자: Codex — 작동하나
+     체감 무효, R3b Conditional Go 유지)**: 오늘 실제 운영 로그에
+     R3b alpha precompute 26회 반복 확인, 실제 `trade_decisions`
+     에서 000810이 `entry_score=0.7856, buy_candidate=True`로
+     24시간 26/26회 재현됐으나 `candidate_vs_final.alignment_
+     status=downgraded`로 AI 최종 결정 합성기가 매번 WATCH/HOLD로
+     하향(risk/compliance/expected_value_gate는 통과 상태 — 별도
+     후속 축). 판정: 작동하나 체감 무효. R3b 구현 판정 불변. 코드
+     변경 없음, 신규 KIS 호출 0건. 상세: `docs/10_signal_research_
+     sppv/[DESIGN] regime_conditional_entry_signal_v1.md` §65.
+   - **SPPV-3(다음 착수: AI 최종 결정 합성기의 downgrade 로직
+     조사(신규 최우선, `candidate_vs_final.alignment_status=
+     downgraded` 원인 코드 추적) + candidate pool 국면별 변화
+     관측 + churn guard paper 운영 표본 누적 후 재검증(§64 후속) +
      `trigger_status` 공급원 자동화/배치화(cron/배치 설계,
      override=true인 동안 낮은 우선순위) + 포지션 사이징 등 exit
      외 리스크 관리 수단 검토(신규, 낮은 우선순위, 실거래 계좌

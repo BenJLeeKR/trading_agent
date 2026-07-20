@@ -1668,6 +1668,21 @@ value/compliance/broker가 아니라 `entry_score < 0.65`다.
   판정(Conditional Go)은 이 검증과 무관하게 유지. 코드 변경 없음,
   신규 KIS 호출 0건. 상세: `docs/10_signal_research_sppv/[DESIGN]
   regime_conditional_entry_signal_v1.md` §64.
+
+- 작성자: Codex
+- 수정일자: 2026-07-20 (2.78순위, R3b alpha가 실제 paper 운영
+  경로에서 정말 발동하는지 최종 실증)
+- 수정내용: env/config→코드 경로→percentile 계산·주입→실제
+  decision 영향 4단계로 분리 실측했다(SPPV-2.76). 오늘 실제 운영
+  로그에 R3b alpha precompute 26회 반복 확인, 실제 `trade_
+  decisions`에서 000810이 `entry_score=0.7856, buy_candidate=
+  True`로 24시간 26/26회 재현됐으나 `candidate_vs_final.alignment_
+  status=downgraded`로 AI 최종 결정 합성기가 매번 WATCH/HOLD로
+  하향(risk/compliance/expected_value_gate 통과 상태였음 — 별도
+  후속 축). 판정: **작동하나 체감 무효**. R3b 구현 판정(Conditional
+  Go) 불변. 코드 변경 없음, 신규 KIS 호출 0건. 상세: `docs/10_
+  signal_research_sppv/[DESIGN] regime_conditional_entry_signal_
+  v1.md` §65.
 - **3순위(보류 유지, 형태 재정의 — 우선순위 재조정)**: **`entry_
   score`와 BUY funnel 재현** — §2.7 확장 검증에서 하락장 안정성이
   확인되지 않아 단순 재현으로는 착수하지 않는다. §2.16~§2.21에서

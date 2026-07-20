@@ -1159,6 +1159,21 @@
   10_signal_research_sppv/[DESIGN] regime_conditional_entry_
   signal_v1.md` §64.
 
+- 작성자: Codex
+- 수정일자: 2026-07-20 (R3b alpha가 실제 paper 운영 경로에서 정말
+  발동하는지 최종 실증)
+- 수정내용: env/config→코드 경로→percentile 계산·주입→실제
+  decision 영향 4단계로 분리 실측했다(SPPV-2.76). 오늘 실제 운영
+  로그에 R3b alpha precompute 26회 반복 확인, 실제 `trade_
+  decisions`에서 000810이 `entry_score=0.7856, buy_candidate=
+  True`로 24시간 26/26회 재현됐으나 `candidate_vs_final.alignment_
+  status=downgraded`로 AI 최종 결정 합성기가 매번 WATCH/HOLD로
+  하향(risk/compliance/expected_value_gate 통과 상태 — 별도
+  후속 축). 판정: **작동하나 체감 무효**. R3b 구현 판정
+  (Conditional Go) 불변. 코드 변경 없음, 신규 KIS 호출 0건. 상세:
+  `docs/10_signal_research_sppv/[DESIGN] regime_conditional_entry_
+  signal_v1.md` §65.
+
 ---
 
 ## 관리 원칙
@@ -2734,10 +2749,20 @@
     guard 미발동이라 판정은 Watch. 이 축은 현행 유지 권고. 코드
     변경 없음, 신규 KIS 호출 0건. 상세: `docs/10_signal_research_
     sppv/[DESIGN] regime_conditional_entry_signal_v1.md` §64.
-  - **SPPV-3(다음 착수: 다음 실제 거래일(2026-07-20 예정) cycle에서
-    `trigger_r3b_alpha_percentile` reason_code 실제 관측(다음
-    거래일 관측 과제, 실제 차단 요소 아님) + churn guard paper
-    운영 표본 누적 후 재검증(§64 후속) +
+  - **SPPV-2.76(완료, 2026-07-20, R3b alpha가 실제 paper 운영
+    경로에서 정말 발동하는지 최종 실증, 작성자: Codex — 작동하나
+    체감 무효, R3b Conditional Go 유지)**: 실제 운영 로그에 R3b
+    alpha precompute 26회 반복 확인, 실제 `trade_decisions`에서
+    000810이 `entry_score=0.7856, buy_candidate=True`로 24시간
+    26/26회 재현됐으나 `candidate_vs_final.alignment_status=
+    downgraded`로 AI 최종 결정 합성기가 매번 WATCH/HOLD로 하향
+    (risk/compliance/expected_value_gate는 통과 — 별도 후속 축).
+    판정: 작동하나 체감 무효. 코드 변경 없음, 신규 KIS 호출 0건.
+    상세: `docs/10_signal_research_sppv/[DESIGN] regime_
+    conditional_entry_signal_v1.md` §65.
+  - **SPPV-3(다음 착수: AI 최종 결정 합성기의 downgrade 로직
+    조사(신규 최우선) + candidate pool 국면별 변화 관측 + churn
+    guard paper 운영 표본 누적 후 재검증(§64 후속) +
     `trigger_status` 공급원 자동화/배치화(cron/배치 설계,
     override=true인 동안 낮은 우선순위) + 포지션 사이징 등 exit
     외 리스크 관리 수단 검토(신규, 낮은 우선순위, 실거래 계좌

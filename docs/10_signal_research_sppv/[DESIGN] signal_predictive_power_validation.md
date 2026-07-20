@@ -1623,6 +1623,28 @@ entry 설계 검토로 전환**을 확정했다. 별도 문서
   추가), 신규 KIS 호출 0건. 상세: `docs/10_signal_research_sppv/
   [DESIGN] regime_conditional_entry_signal_v1.md` §64.
 
+- 작성자: Codex
+- 수정일자: 2026-07-20 (76차, R3b alpha가 실제 paper 운영 경로에서
+  정말 발동하는지 최종 실증)
+- 수정내용: env/config→코드 경로→percentile 계산·주입→실제
+  decision 영향까지 4단계로 분리해 실측했다(SPPV-2.76). 실제
+  운영 컨테이너 env·`AppSettings()` 재확인(둘 다 True), 오늘
+  (2026-07-20) 실제 운영 로그에 "R3b alpha precompute: ...
+  candidates=2 symbols=000660,000810"가 26회 반복 확인. 실제
+  `trade_decisions.decision_json`을 직접 조회한 결과 000810이
+  `entry_score=0.7856, buy_candidate=True`로 R3b에 의해 실제
+  BUY_CANDIDATE 판정됨(24시간 26/26 재현), 그러나 `candidate_vs_
+  final.alignment_status=downgraded`로 AI 최종 결정 합성기가
+  매번 WATCH/HOLD로 하향 조정 — risk_opinion=allow, expected_
+  value_gate.passed=true였으므로 이 downgrade는 pre_ai_gate/risk/
+  compliance/expected_value_gate가 아닌 별도의 후속 축임을 확인.
+  판정: **작동하나 체감 무효** — R3b는 실제로 작동하고 entry_score/
+  buy_candidate를 바꾸지만, AI 최종 합성기 단계가 매번 눌러
+  BUY 빈도 개선이 운영상 보이지 않는다. R3b 구현 자체 판정
+  (Conditional Go)은 불변. 코드 변경 없음(순수 조사), 신규 KIS
+  호출 0건. 상세: `docs/10_signal_research_sppv/[DESIGN] regime_
+  conditional_entry_signal_v1.md` §65.
+
 ---
 
 ## 진행 체크리스트
@@ -4038,6 +4060,27 @@ canonical),
     `probe_churn_single_share_blocked` 등 execution_service 레벨
     guard 분석 추가(guardrail_evaluations 밖 별도 경로); 미발동
     축(reduce_guard/reentry_cooldown) 실제 발동 시 재검증.
+- [x] **SPPV-2.76(신설)** R3b alpha가 실제 paper 운영 경로에서
+  정말 발동하는지 최종 실증 (완료, 2026-07-20, 작성자: Codex)
+  - **목적**: env/config→코드 경로→percentile 계산·주입→실제
+    decision 영향 4단계 분리 실측.
+  - **실측**: 오늘 실제 운영 로그에 "R3b alpha precompute:
+    candidates=2 symbols=000660,000810" 26회 반복 확인; 실제
+    `trade_decisions`에서 000810 `entry_score=0.7856, buy_
+    candidate=True`(reason_codes에 `trigger_r3b_alpha_percentile`)
+    를 24시간 26/26회 재현 확인. 그러나 `candidate_vs_final.
+    alignment_status=downgraded`로 AI 최종 결정 합성기가 매번
+    WATCH/HOLD로 하향(risk_opinion=allow, expected_value_gate
+    통과 — pre_ai_gate/risk/compliance/expected_value_gate가
+    아닌 별도 후속 축).
+  - **판정**: **작동하나 체감 무효** — R3b는 실제 작동·실제
+    decision 영향을 주지만, AI 최종 합성기가 매번 눌러 BUY 빈도
+    개선이 운영상 보이지 않는다. R3b 구현 판정(Conditional Go)
+    불변. 코드 변경 없음, 신규 KIS 호출 0건. 상세: `docs/10_
+    signal_research_sppv/[DESIGN] regime_conditional_entry_
+    signal_v1.md` §65.
+  - 다음 과제: AI 최종 결정 합성기의 downgrade 로직 조사(신규
+    최우선); candidate pool 국면별 변화 관측.
 - [~] **SPPV-3** `entry_score` point-in-time 재현 및 중복 penalty ablation
   - **보류 유지, 형태 재정의 — 우선순위 재조정**: §12(1년, 자기참조
     포함) 당시 "알파 근거 강화"로 낙관했던 것이 §14(3년, 자기참조

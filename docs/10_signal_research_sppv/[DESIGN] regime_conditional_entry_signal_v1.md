@@ -8034,3 +8034,143 @@ would_buy 개수 증가"가 **0**이다. 따라서 "BUY 빈도 감소 대비
    유지(변경 없음)**를 권고한다 — 완화도 강화도 이번 턴 근거로는
    정당화되지 않는다. 표본이 누적된 뒤 재검증이 최우선 후속
    과제다.
+
+## 65. R3b alpha가 실제 paper 운영 경로에서 정말 발동하는지 최종 실증 (SPPV-2.76, 2026-07-20)
+
+### 65.1 목적
+
+"설정이 켜져 있다"/"reason_code가 한 번 보였다"를 넘어, **R3b가
+실제 운영 decision 결과에 실질적 영향을 주고 있는지**를 4단계로
+분리해 실측했다: (1) env/config 활성화 (2) 코드 경로 실행 (3)
+r3b_alpha_percentile 계산·주입 (4) 실제 entry_score/reason_codes/
+decision_type 변화. 전부 실제 운영 컨테이너·실제 운영 로그·실제
+DB(`trade_decisions`)를 직접 조회해 확인했다 — 재구현·추정 없음.
+
+### 65.2 (1) env/config — 확인됨(사실)
+
+`docker exec agent_trading-ops-scheduler env`와 컨테이너 안에서
+직접 실행한 `AppSettings()` 둘 다 `entry_score_r3b_alpha_
+enabled=True`, `regime_switch_v1_gate_override_enabled=True`를
+반환 — §63(SPPV-2.74)에서 반영한 배선이 오늘(2026-07-20)도
+그대로 유지되고 있음을 재확인(컨테이너는 어제 재생성 이후 재시작
+없이 계속 `Up 18시간+ (healthy)`).
+
+### 65.3 (2)+(3) 코드 경로 실행 + percentile 계산/주입 — 확인됨
+(실제 운영 로그)
+
+`docker logs agent_trading-ops-scheduler --since 24h`에서 실제
+운영 로그 라인을 직접 확인:
+
+```
+2026-07-20 08:50:34 [INFO] paper-decision-loop: R3b alpha precompute:
+  market_common_label=range_bound candidates=2 symbols=000660,000810
+```
+
+이 로그가 2026-07-20 00시~11시 사이 **26회** 반복 등장한다(cycle마다
+약 5.5분 간격) — `_build_r3b_alpha_percentile_overrides_for_cycle()`
+(§58)이 오늘 하루 종일 실제로 호출되고 있고, 매번 동일한 2종목
+(000660, 000810)이 candidate pool로 선정됨을 확인. 이는 §61에서
+해소한 벤치마크(069500) snapshot 결측 문제가 실제로 해소된 상태로
+계속 유지되고 있다는 방증이기도 하다(벤치마크 snapshot이 없었다면
+이 로그 자체가 찍히지 않는다).
+
+### 65.4 (4) 실제 entry_score/reason_codes/decision_type 변화 —
+확인됨(핵심 실증)
+
+실제 `trade_decisions.decision_json`을 직접 조회한 결과(재구현
+없이 실제 저장된 값 그대로):
+
+- **000810**(2026-07-20 11:11 KST 등, 24시간 내 26회 관측):
+  `deterministic_trigger.entry_score=0.7856`,
+  `deterministic_trigger.buy_candidate=True`,
+  `reason_codes`에 `"trigger_r3b_alpha_percentile"` 포함(percentile
+  =1.0, 2종목 candidate pool 중 상위) — **실제로 BUY_CANDIDATE
+  판정을 뒤집은 사례**.
+- **000660**(같은 시각): `entry_score=0.0`, `buy_candidate=False`
+  — 같은 reason_code(`trigger_r3b_alpha_percentile`)가 붙어 있지만
+  percentile=0.0(2종목 중 하위) + `trigger_risk_off_penalty` 등
+  감점 요인이 겹쳐 clamp(0) — R3b가 적용됐지만 이 종목에서는 낮은
+  쪽으로 작용.
+- 24시간 내 `trigger_r3b_alpha_percentile`이 포함된 `trade_
+  decisions`는 총 **52건**, 그중 `buy_candidate=True`는 **26건**
+  (전부 000810, entry_score=0.7856로 일관) — R3b가 우연한 1회성
+  관측이 아니라 **반복적으로 재현되는 실제 영향**임을 확인.
+
+**핵심 상위 차단축 발견**: 이 26건 전부, `deterministic_trigger`
+층에서는 `buy_candidate=True`로 확정됐음에도 **최종 `decision_
+type`은 26건 전부 `WATCH` 또는 `HOLD`였다(BUY 0건)**. 원인을
+`decision_json.candidate_vs_final` 필드에서 직접 확인:
+
+```json
+"candidate_vs_final": {
+  "candidate_intent": "buy", "primary_candidate": "BUY_CANDIDATE",
+  "candidate_confidence": 0.7856,
+  "final_intent": "watch", "final_decision_type": "WATCH",
+  "alignment_status": "downgraded", "override_applied": true,
+  "final_actionable": false
+}
+```
+
+`risk_opinion=allow`(risk 축은 통과), `expected_value_gate.
+passed=true`(기대값 게이트도 통과) — 즉 **R3b가 만든 BUY_CANDIDATE
+판정을 막은 것은 pre_ai_gate도, risk도, compliance도, expected_
+value_gate도 아니라, 그 이후 단계의 AI 최종 결정 합성기(final
+decision composer)가 `alignment_status=downgraded`로 명시적으로
+하향 조정한 것**이다. 이는 §60~§64에서 조사한 어떤 차단축
+(`eligibility_core_risk_off_ranking_blocked`, pre_ai_gate, churn
+guard)과도 다른, 파이프라인의 더 뒤쪽(AI 합성 단계)에 있는 별개의
+축이다.
+
+### 65.5 핵심 질문에 대한 명시적 답변
+
+1. **ops-scheduler가 진짜 `ENTRY_SCORE_R3B_ALPHA_ENABLED=true`를
+   읽는가?** → **예**(실제 프로세스 env + `AppSettings()` 확인).
+2. **최근 실제 cycle에서 r3b_alpha_percentile 계산/주입 흔적이
+   있는가?** → **예**(오늘 26회 반복된 실제 로그 라인).
+3. **실제 `trade_decisions`/로그에서 `trigger_r3b_alpha_
+   percentile`이 관측되는가?** → **예**(24시간 내 52건, 실제 DB
+   레코드).
+4. **관측된다면 어떤 종목·시각·entry_score 변화·최종 decision_
+   type**? → 000810, 2026-07-20 00~11시(KST) 반복, entry_score=
+   0.7856·buy_candidate=True로 확정됐으나 최종 decision_type은
+   26건 전부 WATCH/HOLD(AI 최종 합성기가 downgrade).
+5. **(관측 안 됐다면의 분해는 해당 없음 — 실제로 관측됐다.)**
+
+### 65.6 "BUY가 안 나온다"와 "R3b가 작동하지 않는다"의 명확한 분리
+
+- **R3b는 작동한다**: entry_score/buy_candidate 판정을 실제로
+  바꾸고 있다(0.7856, True) — 이것은 §58~§61에서 구현·배선한
+  코드가 의도대로 정확히 동작하고 있다는 뜻이다.
+- **BUY가 안 나오는 직접 원인은 R3b 미작동이 아니라, AI 최종
+  결정 합성기의 downgrade다** — `candidate_vs_final.override_
+  applied=true`가 이를 명시적으로 기록한다. risk_off 국면·high_
+  volatility 등 규정(regime) 판단이 이 downgrade의 배경으로
+  보이나(메타데이터에 `risk_off`/`high_volatility`/`exit_risk_off`
+  reason_code가 동반), 정확한 downgrade 로직 자체(AI 에이전트
+  판단 vs 규칙 기반 override)는 이번 턴 범위 밖이며 별도 추적이
+  필요하다(§65.8).
+
+### 65.7 판정 — 작동하나 체감 무효
+
+**작동하나 체감 무효.** R3b alpha는 실제 paper 운영 경로에서 명확히
+발동하고, entry_score/buy_candidate 판정을 실제로 바꾸는 실질적
+영향을 준다(24시간 26/26 재현). 그러나 그 영향이 최종 decision_
+type까지 이어지지 못하고 AI 최종 결정 합성기 단계에서 매번
+downgrade되어, 운영상 체감되는 BUY 빈도 개선 효과는 아직 0이다.
+R3b 구현·배선 자체의 판정(Conditional Go)은 불변 — 이번 발견은
+R3b 이후 파이프라인 단계(AI 최종 합성기)의 별도 조사 필요성을
+새로 제기한다.
+
+### 65.8 남은 핵심 리스크 및 다음 우선 작업
+
+1. **AI 최종 결정 합성기의 downgrade 로직 조사(신규 최우선)**:
+   `candidate_vs_final.alignment_status=downgraded`가 어떤 조건
+   (risk_off 국면 규칙? AI 에이전트 판단? 별도 hard guard?)으로
+   BUY_CANDIDATE를 WATCH/HOLD로 내리는지 코드 추적 필요 — R3b가
+   실제 BUY로 이어지려면 이 축을 먼저 이해해야 한다.
+2. **candidate pool 확대 관측**: 오늘은 candidates=2(000660,
+   000810)로 고정 — 국면(`market_common_label`)이 bullish_trend/
+   bearish_trend로 바뀔 때 candidate pool과 percentile 분포가
+   어떻게 달라지는지 추가 거래일 관측 필요.
+3. §64에서 남긴 churn guard 관련 후속 과제(표본 누적 재검증 등)는
+   변경 없이 유지.
