@@ -1347,6 +1347,25 @@
   신규 KIS 호출 0건. 상세: `docs/10_signal_research_sppv/[DESIGN]
   regime_conditional_entry_signal_v1.md` §76.
 
+- 작성자: Codex
+- 수정일자: 2026-07-20 (EV gate near-miss(<=2.0bps) 조건부 완화 —
+  제한적 코드 구현 + 실측 검증)
+- 수정내용: "전역 EV gate 완화"가 아니라 "R3b core BUY의 근소
+  부족(<=2.0bps) 예외 통과를 paper에서 제한 검증"하기 위해 실제
+  코드를 제한적으로 수정(SPPV-2.88). config 스위치
+  `EV_GATE_NEAR_MISS_OVERRIDE_ENABLED`(기본값 false) 신설,
+  `decision_orchestrator.py`에 순수 함수로 5개 AND 조건 판정, 원 EV
+  판정값 보존, `translation.py`는 순수성 원칙 유지하며 boolean
+  필드 하나만 추가로 읽음. 신규 단위 테스트 13개 통과, 관련 기존
+  테스트 151개 회귀 없음(전체 스윕 170건 실패는 pre-existing
+  repositories 이슈로 git stash 대조 확정). 000810 실제 DB 레코드
+  end-to-end 재현: deficit=1.44bps는 switch on 시 submit_request
+  생성, deficit=3.44bps는 여전히 차단. 실제 라이브 paper 배포는
+  사용자 승인 필요 사안으로 미실행. 코드 변경 있음(신규 파일 1개,
+  기존 파일 6개 수정), 신규 KIS 호출 0건. 상세: `docs/10_signal_
+  research_sppv/[DESIGN] regime_conditional_entry_signal_v1.md`
+  §77.
+
 ---
 
 ## 관리 원칙

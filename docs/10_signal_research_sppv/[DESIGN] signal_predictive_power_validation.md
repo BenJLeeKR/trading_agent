@@ -1891,6 +1891,30 @@ entry 설계 검토로 전환**을 확정했다. 별도 문서
   상세: `docs/10_signal_research_sppv/[DESIGN] regime_conditional_
   entry_signal_v1.md` §76.
 
+- 작성자: Codex
+- 수정일자: 2026-07-20 (88차, EV gate near-miss(<=2.0bps) 조건부
+  완화 — 제한적 코드 구현 + 실측 검증)
+- 수정내용: "전역 EV gate 완화"가 아니라 "R3b core BUY의 근소
+  부족(<=2.0bps) 예외 통과를 paper에서 제한 검증"하기 위해 실제
+  코드를 제한적으로 수정했다(SPPV-2.88). config 스위치
+  `EV_GATE_NEAR_MISS_OVERRIDE_ENABLED`(기본값 false)를 신설하고,
+  `decision_orchestrator.py`에 순수 함수 `resolve_ev_gate_near_
+  miss_override()`로 5개 AND 조건(decision_type/expected_value_
+  gate_passed/부족분<=2.0bps/source_type=core/trigger_r3b_alpha_
+  percentile 포함)을 판정, 원 `expected_value_gate_passed` 값은
+  보존한 채 별도 필드(`ev_gate_near_miss_override_applied` 등)로만
+  기록. `translation.py`는 "no settings" 순수성 원칙을 지켜 이미
+  결정된 boolean 필드 하나만 추가로 읽도록 최소 수정. 신규 단위
+  테스트 13개 전체 통과, 관련 기존 테스트 151개 회귀 없음, 전체
+  회귀 스윕에서 발견된 170건 실패는 전부 `tests/repositories/*`의
+  pre-existing 이벤트 루프/컬럼 한도 이슈로 확정(git stash로 무관함
+  직접 확인). 000810 실제 DB 레코드로 end-to-end 재현: deficit=
+  1.44bps는 switch on 시 submit_request 생성, deficit=3.44bps는
+  switch on에도 여전히 차단 — 의도대로 동작 확인. 실제 라이브 paper
+  배포(스위치 on)는 사용자 승인 필요 사안으로 이번 턴에는 미실행.
+  상세: `docs/10_signal_research_sppv/[DESIGN] regime_conditional_
+  entry_signal_v1.md` §77.
+
 ---
 
 ## 진행 체크리스트

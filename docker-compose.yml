@@ -350,6 +350,10 @@ services:
       # 모듈의 기본값(False)과 동일하게 유지해 하위 호환을 보존한다.
       REGIME_SWITCH_V1_GATE_OVERRIDE_ENABLED: "${REGIME_SWITCH_V1_GATE_OVERRIDE_ENABLED:-false}"
       ENTRY_SCORE_R3B_ALPHA_ENABLED: "${ENTRY_SCORE_R3B_ALPHA_ENABLED:-false}"
+      # expected_value_gate near-miss 조건부 완화(SPPV-2.87/2.88) — 기본값
+      # false로 하위 호환 보존, 명시적으로 true로 설정해야만 §5개 조건을
+      # 모두 만족하는 매우 좁은 근소부족 사례에 한해 예외 통과 적용.
+      EV_GATE_NEAR_MISS_OVERRIDE_ENABLED: "${EV_GATE_NEAR_MISS_OVERRIDE_ENABLED:-false}"
       # Scheduler Specific
       SCHEDULER_AFTER_HOURS_WINDOW: "${SCHEDULER_AFTER_HOURS_WINDOW:-3600}"
       SCHEDULER_INSTANCE_ID: "${SCHEDULER_INSTANCE_ID:-default}"

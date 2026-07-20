@@ -520,6 +520,34 @@ def _resolve_entry_score_r3b_alpha_enabled() -> bool:
     return raw.strip().lower() == "true"
 
 
+def _resolve_ev_gate_near_miss_override_enabled() -> bool:
+    """`expected_value_gate`의 근소 부족(near-miss) 조건부 예외 통과
+    스위치를 ``EV_GATE_NEAR_MISS_OVERRIDE_ENABLED`` env에서 읽는다.
+
+    SPPV-2.87/2.88 설계에서 도출된 신규 항목 — `deterministic_trigger_
+    engine.py`가 아니라 `decision_orchestrator.py`의 EV gate 결과 후처리
+    단계가 참조하는 mode-agnostic config 스위치다. 다른 config 스위치와
+    동일한 패턴: paper/real/production 같은 environment 값은 절대 보지
+    않는다.
+
+    기본값 ``False``(비활성) — 명시적으로 ``"true"``로 설정해야만, 아래
+    조건을 **모두** 만족하는 매우 좁은 경우에 한해 `expected_value_gate_
+    passed=false`를 예외적으로 통과 처리한다. 전역 threshold(`minimum_
+    required_edge_bps`)나 EV 계산 로직 자체는 전혀 바꾸지 않는다 —
+    오직 이 near-miss override 플래그 하나만 별도로 저장된다.
+
+    적용 조건(전부 AND):
+    1. ``decision_type in {"APPROVE", "BUY"}``
+    2. ``expected_value_gate_passed == False``
+    3. ``minimum_required_edge_bps - edge_after_cost_bps <= 2.0bps``
+    4. ``source_type == "core"``
+    5. ``deterministic_trigger.reason_codes``에
+       ``trigger_r3b_alpha_percentile`` 포함
+    """
+    raw = os.getenv("EV_GATE_NEAR_MISS_OVERRIDE_ENABLED", "false")
+    return raw.strip().lower() == "true"
+
+
 # ---------------------------------------------------------------------------
 # Application settings
 # ---------------------------------------------------------------------------
@@ -743,4 +771,17 @@ class AppSettings:
     percentile로 교체된다. cycle 단위 candidate_percentile 사전 계산
     배선(§54.5의 2단계)은 아직 완료되지 않았다 — 이 스위치와 엔진
     파라미터만 존재하는 1단계 상태다.
+    """
+
+    # ---- expected_value_gate near-miss 조건부 완화 (SPPV-2.87/2.88) -------
+    ev_gate_near_miss_override_enabled: bool = field(
+        default_factory=_resolve_ev_gate_near_miss_override_enabled
+    )
+    """`EV_GATE_NEAR_MISS_OVERRIDE_ENABLED` env로 제어하는 mode-agnostic
+    config 스위치. 기본값 ``False`` — 명시적으로 ``"true"``로 설정해야만
+    `decision_orchestrator.py`가 `expected_value_gate_passed=false`이면서
+    부족분이 2.0bps 이내인 매우 좁은 경우(§_resolve_ev_gate_near_miss_
+    override_enabled의 5개 AND 조건)에 한해 예외 통과를 적용한다. 전역
+    threshold나 EV 계산 로직은 전혀 바꾸지 않으며, paper/real/production
+    environment 값을 참조하지 않는다.
     """

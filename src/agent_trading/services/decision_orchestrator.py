@@ -168,6 +168,45 @@ _USE_SUBPROCESS_ISOLATION: bool = (
     os.environ.get("AGENT_SUBPROCESS_ISOLATION", "1") == "1"
 )
 
+# EV gate near-miss 조건부 완화(SPPV-2.87/2.88) — 근소부족 허용 폭(bps).
+# 전역 minimum_required_edge_bps 자체는 절대 바꾸지 않는다.
+_EV_GATE_NEAR_MISS_THRESHOLD_BPS = Decimal("2.0")
+
+
+def resolve_ev_gate_near_miss_override(
+    *,
+    enabled: bool,
+    decision_type: str,
+    expected_value_gate_passed: bool,
+    source_type: str,
+    minimum_required_edge_bps: Decimal | None,
+    edge_after_cost_bps: Decimal | None,
+    deterministic_trigger_reason_codes: tuple[str, ...],
+) -> tuple[bool, Decimal | None, Decimal | None]:
+    """EV gate near-miss 조건부 완화 적용 여부를 순수하게 판정한다.
+
+    5개 조건(모두 AND)을 만족할 때만 ``(True, deficit_bps, threshold_bps)``
+    를 반환한다. 전역 threshold나 EV 계산 로직은 건드리지 않으며, 이
+    함수는 판정만 하고 부작용(mutation/로깅)은 호출부에서 처리한다.
+    기본값 ``enabled=False``이면 항상 ``(False, None, None)``.
+    """
+    if not enabled:
+        return False, None, None
+    if (decision_type or "").strip().upper() not in {"APPROVE", "BUY"}:
+        return False, None, None
+    if expected_value_gate_passed is not False:
+        return False, None, None
+    if source_type != "core":
+        return False, None, None
+    if minimum_required_edge_bps is None or edge_after_cost_bps is None:
+        return False, None, None
+    if "trigger_r3b_alpha_percentile" not in deterministic_trigger_reason_codes:
+        return False, None, None
+    deficit_bps = minimum_required_edge_bps - edge_after_cost_bps
+    if deficit_bps > _EV_GATE_NEAR_MISS_THRESHOLD_BPS:
+        return False, None, None
+    return True, deficit_bps, _EV_GATE_NEAR_MISS_THRESHOLD_BPS
+
 
 @dataclass(slots=True, frozen=True)
 class DeterministicDerivationBundle:
@@ -257,6 +296,8 @@ class DecisionOrchestratorService:
         regime_switch_v1_gate_override_enabled: bool = False,
         # --- entry_score R3b alpha 교체 config 기반 스위치 (SPPV-2.67) ---
         r3b_alpha_enabled: bool = False,
+        # --- EV gate near-miss 조건부 완화 config 기반 스위치 (SPPV-2.87/2.88) ---
+        ev_gate_near_miss_override_enabled: bool = False,
     ) -> None:
         self._repos = repos
         self._decision_context_service = DecisionContextService(repos)
@@ -302,6 +343,11 @@ class DecisionOrchestratorService:
         # 전달돼도 무시되어(§_build_entry_score의 and 조건) 기존 동작이
         # 100% 그대로 유지된다.
         self._r3b_alpha_enabled = r3b_alpha_enabled
+        # --- EV gate near-miss 조건부 완화 (SPPV-2.87/2.88) ---
+        # 기본값 False — 전역 threshold/EV 계산 로직은 그대로 두고,
+        # 아래 5개 조건을 모두 만족하는 매우 좁은 경우에만 예외 통과를
+        # 적용한다(§_check_ai_buy_override_gate 이후 적용 지점 참고).
+        self._ev_gate_near_miss_override_enabled = ev_gate_near_miss_override_enabled
         # --- Execution Service (execution pipeline state: sell guard, quote CB, fresh check) ---
         self._execution_service = ExecutionService(
             repos=repos,
@@ -2429,6 +2475,49 @@ class DecisionOrchestratorService:
                 request.symbol,
                 derivation.source_type,
                 guard_rationale,
+            )
+
+        # --- EV gate near-miss 조건부 완화 (SPPV-2.87/2.88, 기본값 False) ---
+        # 전역 threshold나 EV 계산 로직은 전혀 바꾸지 않는다. 판정 자체는
+        # 순수 함수 resolve_ev_gate_near_miss_override()에 위임한다.
+        _deterministic_reason_codes = tuple(
+            getattr(derivation.deterministic_trigger, "reason_codes", ()) or ()
+        )
+        (
+            _near_miss_applied,
+            _near_miss_deficit_bps,
+            _near_miss_threshold_bps,
+        ) = resolve_ev_gate_near_miss_override(
+            enabled=self._ev_gate_near_miss_override_enabled,
+            decision_type=agent_bundle.ai_inputs.decision_type,
+            expected_value_gate_passed=agent_bundle.ai_inputs.expected_value_gate_passed,
+            source_type=derivation.source_type,
+            minimum_required_edge_bps=agent_bundle.ai_inputs.minimum_required_edge_bps,
+            edge_after_cost_bps=agent_bundle.ai_inputs.edge_after_cost_bps,
+            deterministic_trigger_reason_codes=_deterministic_reason_codes,
+        )
+        if _near_miss_applied:
+            object.__setattr__(
+                agent_bundle.ai_inputs,
+                "ev_gate_near_miss_override_applied",
+                True,
+            )
+            object.__setattr__(
+                agent_bundle.ai_inputs,
+                "ev_gate_near_miss_deficit_bps",
+                _near_miss_deficit_bps,
+            )
+            object.__setattr__(
+                agent_bundle.ai_inputs,
+                "ev_gate_near_miss_threshold_bps",
+                _near_miss_threshold_bps,
+            )
+            logger.info(
+                "EV gate near-miss override applied: symbol=%s "
+                "deficit_bps=%s threshold_bps=%s",
+                request.symbol,
+                _near_miss_deficit_bps,
+                _near_miss_threshold_bps,
             )
 
         # --- Persist or reuse trade decision when a concrete context exists ---

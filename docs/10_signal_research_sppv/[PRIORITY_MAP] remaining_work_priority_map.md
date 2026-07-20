@@ -9467,8 +9467,26 @@ agent 설계 문서 기준으로도 순서는 다음이 맞다.
      독립. 다음 우선 작업: 며칠 더 누적 관찰 후 재판정. 코드 변경
      없음, 신규 KIS 호출 0건. 상세: `docs/10_signal_research_sppv/
      [DESIGN] regime_conditional_entry_signal_v1.md` §76.
-   - **SPPV-3(다음 착수: margin 근소부족 조건부 완화 누적 관찰
-     연장(며칠 더 지켜본 뒤 Watch→Conditional Go 재판정) +
+   - **SPPV-2.88(완료, 2026-07-20, EV gate near-miss(<=2.0bps) 조건부
+     완화 — 제한적 코드 구현 + 실측 검증, 작성자: Codex — Conditional
+     Go(코드 확보), 실제 라이브 배포는 승인 대기)**: config 스위치
+     `EV_GATE_NEAR_MISS_OVERRIDE_ENABLED`(기본값 false) 신설,
+     `decision_orchestrator.py`에 순수 함수 `resolve_ev_gate_near_
+     miss_override()`로 5개 AND 조건(decision_type/expected_value_
+     gate_passed/부족분<=2.0bps/source_type=core/trigger_r3b_alpha_
+     percentile) 판정, 원 EV 판정값 보존, `translation.py`는 "no
+     settings" 순수성 원칙 유지하며 boolean 필드 하나만 추가로 읽음.
+     신규 단위 테스트 13개 통과, 관련 기존 테스트 151개 회귀 없음,
+     전체 스윕의 170건 실패는 pre-existing `tests/repositories/*`
+     이슈로 확정(git stash 대조 검증). 000810 실제 DB 레코드 end-to-
+     end 재현: deficit=1.44bps는 switch on 시 submit_request 생성,
+     deficit=3.44bps는 여전히 차단 — 의도대로 동작. 실제 라이브
+     paper 배포(스위치 on)는 사용자 승인 필요 사안으로 미실행. 코드
+     변경 있음(신규 파일 1개, 기존 파일 6개 수정), 신규 KIS 호출
+     0건. 상세: `docs/10_signal_research_sppv/[DESIGN] regime_
+     conditional_entry_signal_v1.md` §77.
+   - **SPPV-3(다음 착수: 사용자 승인 시 EV_GATE_NEAR_MISS_OVERRIDE_
+     ENABLED=true 실제 배포 + 배포 후 order_request 생성 추이 관찰 +
      pre-AI 차단(층3, risk_off ranking blocked)
      축 재검증(11/12종목 영향, 병행 검토) +
      candidate_vs_final downgrade 축 재검증 +

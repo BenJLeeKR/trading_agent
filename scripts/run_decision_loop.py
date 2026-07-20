@@ -1276,6 +1276,9 @@ async def _build_core_risk_off_apply_overrides_for_cycle(
                 settings.regime_switch_v1_gate_override_enabled
             ),
             r3b_alpha_enabled=settings.entry_score_r3b_alpha_enabled,
+            ev_gate_near_miss_override_enabled=(
+                settings.ev_gate_near_miss_override_enabled
+            ),
         )
         for item in universe:
             if item.source_type != "core":
@@ -1723,6 +1726,9 @@ async def _run_one_cycle(
                     settings.regime_switch_v1_gate_override_enabled
                 ),
                 r3b_alpha_enabled=settings.entry_score_r3b_alpha_enabled,
+                ev_gate_near_miss_override_enabled=(
+                    settings.ev_gate_near_miss_override_enabled
+                ),
             )
             reconciliation_service = ReconciliationService(repos=repos)
             order_manager = OrderManager(

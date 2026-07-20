@@ -153,7 +153,10 @@ def _has_required_expected_value_anchor(
     decision_type = (ai_inputs.decision_type or "").strip().upper()
     if decision_type not in {"APPROVE", "BUY", "SELL", "EXIT", "REDUCE"}:
         return True
-    if not ai_inputs.expected_value_gate_passed:
+    if (
+        not ai_inputs.expected_value_gate_passed
+        and not ai_inputs.ev_gate_near_miss_override_applied
+    ):
         return False
     required_values = (
         ai_inputs.expected_return_bps,

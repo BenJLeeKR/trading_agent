@@ -426,6 +426,19 @@ def build_trade_decision_entity(
                     if ai_inputs.slippage_buffer_bps is not None
                     else None
                 ),
+                "ev_gate_near_miss_override_applied": (
+                    ai_inputs.ev_gate_near_miss_override_applied
+                ),
+                "ev_gate_near_miss_deficit_bps": (
+                    str(ai_inputs.ev_gate_near_miss_deficit_bps)
+                    if ai_inputs.ev_gate_near_miss_deficit_bps is not None
+                    else None
+                ),
+                "ev_gate_near_miss_threshold_bps": (
+                    str(ai_inputs.ev_gate_near_miss_threshold_bps)
+                    if ai_inputs.ev_gate_near_miss_threshold_bps is not None
+                    else None
+                ),
             },
             "expected_value_anchor": (
                 dict(request.metadata.get("expected_value_anchor"))

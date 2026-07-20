@@ -134,6 +134,14 @@ class AIDecisionInputs:
     validator_stop_reason: str | None = None
     validator_blocking_rule_codes: tuple[str, ...] = ()
 
+    # ── EV gate near-miss 조건부 완화 (SPPV-2.87/2.88) ──────────────────
+    ev_gate_near_miss_override_applied: bool = False
+    """원 `expected_value_gate_passed`는 보존한 채, near-miss 조건(모두
+    충족 시)에서만 별도로 True — `translation.py`는 이 값이 True이면
+    `expected_value_gate_passed=False`여도 제출을 허용한다."""
+    ev_gate_near_miss_deficit_bps: Decimal | None = None
+    ev_gate_near_miss_threshold_bps: Decimal | None = None
+
 
 # ---------------------------------------------------------------------------
 # Assembled context

@@ -1858,6 +1858,22 @@ value/compliance/broker가 아니라 `entry_score < 0.65`다.
   표본이 단일 종목·단일일에 압도적으로 집중돼 **판정: Watch**.
   A안과 독립적. 상세: `docs/10_signal_research_sppv/[DESIGN]
   regime_conditional_entry_signal_v1.md` §76.
+
+- 작성자: Codex
+- 수정일자: 2026-07-20 (2.90순위, EV gate near-miss(<=2.0bps)
+  조건부 완화 — 제한적 코드 구현 + 실측 검증)
+- 수정내용: "전역 EV gate 완화"가 아니라 "R3b core BUY의 근소
+  부족(<=2.0bps) 예외 통과를 paper에서 제한 검증"하기 위해 실제
+  코드를 제한적으로 수정(SPPV-2.88). config 스위치
+  `EV_GATE_NEAR_MISS_OVERRIDE_ENABLED`(기본값 false) 신설, 순수
+  함수로 5개 AND 조건 판정, 원 EV 판정값은 보존한 채 별도 필드로만
+  기록. 신규 단위 테스트 13개 통과, 관련 기존 테스트 151개 회귀
+  없음(전체 스윕의 170건 실패는 pre-existing repositories 이슈로
+  확정, git stash로 검증). 000810 실제 DB 레코드로 end-to-end
+  재현: deficit=1.44bps는 switch on 시 submit_request 생성,
+  deficit=3.44bps는 여전히 차단. 실제 라이브 paper 배포는 사용자
+  승인 필요 사안으로 미실행. 상세: `docs/10_signal_research_sppv/
+  [DESIGN] regime_conditional_entry_signal_v1.md` §77.
 - **3순위(보류 유지, 형태 재정의 — 우선순위 재조정)**: **`entry_
   score`와 BUY funnel 재현** — §2.7 확장 검증에서 하락장 안정성이
   확인되지 않아 단순 재현으로는 착수하지 않는다. §2.16~§2.21에서
