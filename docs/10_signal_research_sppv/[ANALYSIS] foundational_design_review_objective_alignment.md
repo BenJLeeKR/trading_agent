@@ -1808,6 +1808,20 @@ value/compliance/broker가 아니라 `entry_score < 0.65`다.
   threshold 민감도 검증보다 우선 채택. 코드 변경 없음, 신규 KIS
   호출 0건. 상세: `docs/10_signal_research_sppv/[DESIGN] regime_
   conditional_entry_signal_v1.md` §72.
+
+- 작성자: Codex
+- 수정일자: 2026-07-20 (2.86순위, `expected_value_gate` 계산 구조
+  보정안 후보 비교 설계 검토)
+- 수정내용: threshold 완화 없이 구조 보정안 4개 후보(same-snapshot
+  재평가 억제 / snapshot 갱신 시점 캐시 재계산 / 입력 신선도 분리 /
+  현 구조 유지+모니터링)를 비교했다(SPPV-2.84, 코드 수정 없음).
+  reverse_trade_hysteresis.py의 기존 same-snapshot 억제 인프라를
+  최초 BUY 경로로 확장하는 **후보(same-snapshot 재평가 억제)를
+  1순위로 추천** — 판정 로직 불변, 반복 재계산/재저장만 감소,
+  기존 hysteresis 원칙과 정합적. SPPV 목표와 충돌하지 않음을
+  확인(판정 기준을 낮추지 않으므로 방어 약화 아님). 상세: `docs/10_
+  signal_research_sppv/[DESIGN] regime_conditional_entry_signal_
+  v1.md` §73.
 - **3순위(보류 유지, 형태 재정의 — 우선순위 재조정)**: **`entry_
   score`와 BUY funnel 재현** — §2.7 확장 검증에서 하락장 안정성이
   확인되지 않아 단순 재현으로는 착수하지 않는다. §2.16~§2.21에서

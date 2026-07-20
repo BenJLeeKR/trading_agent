@@ -1814,6 +1814,28 @@ entry 설계 검토로 전환**을 확정했다. 별도 문서
   코드 변경 없음, 신규 KIS 호출 0건. 상세: `docs/10_signal_research_
   sppv/[DESIGN] regime_conditional_entry_signal_v1.md` §72.
 
+- 작성자: Codex
+- 수정일자: 2026-07-20 (84차, `expected_value_gate` 계산 구조
+  보정안 후보 비교 설계 검토)
+- 수정내용: §72의 설계 미스매치 판정을 전제로, threshold 완화 없이
+  구조 보정안 4개 후보(A. same-snapshot 재평가 억제 / B. snapshot
+  갱신 시점에만 EV 재계산·캐시 / C. 입력 신선도별 분리 / D. 현 구조
+  유지+모니터링 강화)를 정의·비교했다(SPPV-2.84, 코드 수정/diff
+  없음). reverse_trade_hysteresis.py가 이미 `symbol_trade_states.
+  last_signal_feature_snapshot_id`로 same-snapshot 재판단 억제를
+  구현한 기존 인프라를 확인, 이를 최초 BUY 경로로 확장하는 **후보
+  A를 1순위로 추천** — 판정 로직(threshold/계산식)은 전혀 바꾸지
+  않고 동일 정보에 대한 반복 재계산/재저장만 줄이므로 방어 약화
+  위험이 가장 낮고 기존 hysteresis 원칙과 정합적. 후보 C(입력
+  신선도 분리)는 실시간 데이터 소스 부재로 지금 실행 불가능한
+  후속 고도화 단계로 분류. SPPV 목표("방패 전부 제거 아님, BUY
+  0건 상태 해소")와 충돌하지 않음을 확인 — 후보 A는 판정 기준을
+  낮추지 않고 반복 생성만 줄이므로 새 BUY 기회를 늘리지도, 방어를
+  약화시키지도 않는다. 다음 턴 착수용 설계 메모(보정 계층 후보,
+  상태 저장소 재사용안, shadow 비교축, paper 관측 지표)를 기록.
+  코드 변경 없음, 신규 KIS 호출 0건. 상세: `docs/10_signal_research_
+  sppv/[DESIGN] regime_conditional_entry_signal_v1.md` §73.
+
 ---
 
 ## 진행 체크리스트

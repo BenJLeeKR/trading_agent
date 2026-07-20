@@ -9407,8 +9407,25 @@ agent 설계 문서 기준으로도 순서는 다음이 맞다.
      설계 검토(threshold 민감도 검증보다 우선). 코드 변경 없음,
      신규 KIS 호출 0건. 상세: `docs/10_signal_research_sppv/[DESIGN]
      regime_conditional_entry_signal_v1.md` §72.
-   - **SPPV-3(다음 착수: EV gate 계산 구조 보정안 설계 검토(same-
-     snapshot 재평가 스킵/재사용 등, threshold 민감도보다 우선) +
+   - **SPPV-2.84(완료, 2026-07-20, `expected_value_gate` 계산 구조
+     보정안 후보 비교 설계 검토, 작성자: Codex — 후보 A(same-
+     snapshot 재평가 억제) 1순위 추천, 코드/diff 없음)**: threshold
+     완화 없이 구조 보정안 4개(A. same-snapshot 재평가 억제 / B.
+     snapshot 갱신 시점 캐시 재계산 / C. 입력 신선도별 분리 / D.
+     현 구조 유지+모니터링) 정의·비교. `reverse_trade_hysteresis.
+     py`의 기존 same-snapshot 억제 인프라(`symbol_trade_states.
+     last_signal_feature_snapshot_id`)를 최초 BUY 경로로 확장하는
+     후보 A를 1순위 추천 — 판정 로직 불변, 반복 재계산/재저장만
+     감소, 기존 원칙과 정합적, 부작용 표면 최소. 후보 C는 실시간
+     데이터 소스 부재로 후속 고도화 단계로 분류. SPPV 목표("방패
+     전부 제거 아님, BUY 0건 상태 해소")와 충돌 없음 확인. 다음
+     턴 착수용 설계 메모(보정 계층, 상태 저장소 재사용안, shadow
+     비교축, paper 관측 지표) 기록 완료. 코드 변경 없음, 신규 KIS
+     호출 0건. 상세: `docs/10_signal_research_sppv/[DESIGN] regime_
+     conditional_entry_signal_v1.md` §73.
+   - **SPPV-3(다음 착수: 후보 A(same-snapshot 재평가 억제, 최초
+     BUY 경로 확장) 실제 설계/코드 검토 착수(보정 계층·상태 저장소
+     재사용안 확정) +
      SPPV 계열 문서의 APPROVE 관련 서술을 GUIDE §8-1/§9 기준으로
      정합화(후속 문서 정리) + 모니터링/리포팅 지표 정의 정리(BUY_
      CANDIDATE/APPROVE/order_request 3분리 지표, 운영팀 결정 필요) +

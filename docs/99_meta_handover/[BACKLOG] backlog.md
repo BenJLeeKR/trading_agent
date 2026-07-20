@@ -1295,6 +1295,20 @@
   변경 없음, 신규 KIS 호출 0건. 상세: `docs/10_signal_research_
   sppv/[DESIGN] regime_conditional_entry_signal_v1.md` §72.
 
+- 작성자: Codex
+- 수정일자: 2026-07-20 (`expected_value_gate` 계산 구조 보정안
+  후보 비교 설계 검토)
+- 수정내용: threshold 완화 없이 구조 보정안 4개 후보(A. same-
+  snapshot 재평가 억제 / B. snapshot 갱신 시점 캐시 재계산 / C.
+  입력 신선도별 분리 / D. 현 구조 유지+모니터링) 정의·비교
+  (SPPV-2.84, 코드/diff 없음). `reverse_trade_hysteresis.py`의
+  기존 same-snapshot 억제 인프라를 최초 BUY 경로로 확장하는 **후보
+  A를 1순위로 추천** — 판정 로직 불변, 반복 재계산/재저장만 감소.
+  SPPV 목표와 충돌 없음 확인. 다음 턴 착수용 설계 메모(보정 계층,
+  상태 저장소 재사용안, shadow 비교축, paper 관측 지표) 기록. 코드
+  변경 없음, 신규 KIS 호출 0건. 상세: `docs/10_signal_research_
+  sppv/[DESIGN] regime_conditional_entry_signal_v1.md` §73.
+
 ---
 
 ## 관리 원칙
