@@ -1261,6 +1261,23 @@
   상세: `docs/10_signal_research_sppv/[DESIGN] regime_conditional_
   entry_signal_v1.md` §70.
 
+- 작성자: Codex
+- 수정일자: 2026-07-20 ("APPROVE 저장 vs 실제 주문 미생성" 구조에
+  대한 설계 해석 정리)
+- 수정내용: §70의 인과 경로를 재검증하지 않고 설계 해석을
+  닫았다(SPPV-2.82, 코드 수정안 없음). `docs/10_signal_research_
+  sppv/[GUIDE] end_to_end_order_flow_guide.md` §8-1/§8-4/§9가
+  §70의 경로를 이미 사전에 문서화해 놓았음을 확인 — `APPROVE`는
+  "AI/정량 기준상 진입 승인 제안"으로 정의되고 "AI가 BUY를 말해도
+  EV gate 실패면 실제 주문으로 번역되지 않는다"고 명시돼 있다.
+  §70의 "완전 의도 여부 단정 불가"를 이 근거로 좁혔다. 판정:
+  **의도된 계층 분리이며 문서/지표 해석만 보정하면 됨**. BUY_
+  CANDIDATE 발생/APPROVE 저장/order_request 생성 3지표 분리
+  트래킹을 권장했다. 재확인(24h, 05:18 UTC): APPROVE 14건, 동일
+  패턴 유지. 코드 변경 없음, 신규 KIS 호출 0건. 상세: `docs/10_
+  signal_research_sppv/[DESIGN] regime_conditional_entry_signal_
+  v1.md` §71.
+
 ---
 
 ## 관리 원칙

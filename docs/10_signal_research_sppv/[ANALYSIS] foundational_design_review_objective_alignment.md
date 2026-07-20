@@ -1772,6 +1772,26 @@ value/compliance/broker가 아니라 `entry_score < 0.65`다.
   괴리는 완전 의도 여부 단정 불가. 코드 변경 없음, 신규 KIS 호출
   0건. 상세: `docs/10_signal_research_sppv/[DESIGN] regime_
   conditional_entry_signal_v1.md` §70.
+
+- 작성자: Codex
+- 수정일자: 2026-07-20 (2.84순위, "APPROVE 저장 vs 실제 주문
+  미생성" 구조에 대한 설계 해석 정리)
+- 수정내용: §70의 인과 경로를 재검증하지 않고 설계 해석을
+  닫았다(SPPV-2.82, 코드 수정안 없음). `docs/10_signal_research_
+  sppv/[GUIDE] end_to_end_order_flow_guide.md` §8-1/§8-4/§9가
+  §70의 경로를 이미 사전에 문서화해 놓았음을 확인 — `APPROVE`는
+  "AI/정량 기준상 진입 승인 **제안**"으로 정의돼 있고, "AI가 BUY를
+  말해도 expected value gate 실패면 실제 주문으로 번역되지
+  않는다"고 명시돼 있다. §70의 "완전 의도 여부 단정 불가"를 이
+  근거로 좁혔다 — docstring 괴리는 함수의 좁은 책임 범위(override
+  방어만)를 문구가 정확히 표현 못한 문서화 정밀도 문제이지 실제
+  로직 결함이 아니다. 판정: **의도된 계층 분리이며 문서/지표
+  해석만 보정하면 됨**. BUY_CANDIDATE 발생/APPROVE 저장/order_
+  request 생성 3지표의 의미를 각각 정의하고 분리 트래킹을
+  권장했다. 재확인(24h, 05:18 UTC): APPROVE 14건, 동일 패턴 유지.
+  코드 변경 없음, 신규 KIS 호출 0건. 상세: `docs/10_signal_
+  research_sppv/[DESIGN] regime_conditional_entry_signal_v1.md`
+  §71.
 - **3순위(보류 유지, 형태 재정의 — 우선순위 재조정)**: **`entry_
   score`와 BUY funnel 재현** — §2.7 확장 검증에서 하락장 안정성이
   확인되지 않아 단순 재현으로는 착수하지 않는다. §2.16~§2.21에서

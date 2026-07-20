@@ -1770,6 +1770,31 @@ entry 설계 검토로 전환**을 확정했다. 별도 문서
   호출 0건. 상세: `docs/10_signal_research_sppv/[DESIGN] regime_
   conditional_entry_signal_v1.md` §70.
 
+- 작성자: Codex
+- 수정일자: 2026-07-20 (82차, "APPROVE 저장 vs 실제 주문 미생성"
+  구조에 대한 설계 해석 정리)
+- 수정내용: §70의 인과 경로를 재검증하지 않고, 이 구조가 의도된
+  계층 분리인지 설계 해석을 닫았다(SPPV-2.82, 코드 수정안 없음).
+  `docs/10_signal_research_sppv/[GUIDE] end_to_end_order_flow_
+  guide.md`를 확인한 결과, §8-1(`APPROVE`="AI/정량 기준상 진입
+  승인 **제안**")·§8-4("R3b는 더 잘 고르는 장치이지 비용 문제를
+  없애는 장치는 아니다")·§9("AI가 BUY를 말해도 expected value
+  gate 실패면 실제 주문으로 번역되지 않는다")가 §70이 코드로
+  재구성한 경로를 **이미 사전에 명시적으로 문서화**해 놓았음을
+  확인했다 — §70의 "완전 의도 여부 단정 불가"를 이 근거로 좁혔다.
+  `_check_ai_buy_override_gate()`의 docstring 괴리도 "override
+  방어"라는 좁은 책임 범위를 문구가 정확히 표현하지 못한
+  문서화 정밀도 문제로 재해석(실제 로직 결함 아님) — EV gate의
+  최종 강제 지점은 처음부터 `translation.py`. 세 지표(BUY_
+  CANDIDATE 발생/APPROVE 저장/order_request 생성)의 의미를
+  각각 정의하고 분리 트래킹을 권장했다. 재확인(24h, 05:18 UTC):
+  APPROVE 14건(7→14 자연 증가), 전부 동일 evg 실패, execution_
+  attempts 708건 전부 non_trade — §70과 일치, 새 수치 해석
+  불필요. 판정: **의도된 계층 분리이며 문서/지표 해석만 보정하면
+  됨**. 코드 변경 없음, 신규 KIS 호출 0건. 상세: `docs/10_signal_
+  research_sppv/[DESIGN] regime_conditional_entry_signal_v1.md`
+  §71.
+
 ---
 
 ## 진행 체크리스트
@@ -4352,6 +4377,40 @@ canonical),
     지표 해석에 혼동을 유발하는지 검토; edge=8.56/min_required=
     10.00 7 cycle 연속 동일값이 signal_feature_snapshot 일 단위
     갱신 주기와 일치하는지 재확인.
+  - **[SPPV-2.82에서 정정] 위 "docstring 괴리, 완전 의도 여부
+    단정 불가"는 GUIDE 문서 재확인으로 해소됨 — 아래 SPPV-2.82
+    참고. 이 항목의 텍스트는 삭제하지 않고 보존한다.**
+- [x] **SPPV-2.82(신설)** "APPROVE 저장 vs 실제 주문 미생성" 구조에
+  대한 설계 해석 정리 (완료, 2026-07-20, 작성자: Codex)
+  - **목적**: §70의 인과 경로를 재검증하지 않고, 이 구조가 의도된
+    계층 분리인지 설계 해석을 닫음(코드 수정안 없음).
+  - **핵심 발견**: `docs/10_signal_research_sppv/[GUIDE] end_to_
+    end_order_flow_guide.md` §8-1(`APPROVE`="AI/정량 기준상 진입
+    승인 **제안**")·§8-4("R3b는 더 잘 고르는 장치이지 비용 문제를
+    없애는 장치는 아니다")·§9("AI가 BUY를 말해도 expected value
+    gate 실패면 실제 주문으로 번역되지 않는다")가 §70의 경로를
+    **이미 사전에 문서화**해 놓았음을 확인 — §70의 "완전 의도
+    여부 단정 불가"를 이 근거로 좁힘. `_check_ai_buy_override_
+    gate()`의 docstring 괴리도 "override 방어"라는 좁은 책임
+    범위를 문구가 정확히 표현 못한 문서화 정밀도 문제로 재해석
+    (실제 로직 결함 아님) — EV gate 최종 강제 지점은 처음부터
+    `translation.py`.
+  - **판정**: **의도된 계층 분리이며 문서/지표 해석만 보정하면
+    됨.** 세 지표(BUY_CANDIDATE 발생/APPROVE 저장/order_request
+    생성)의 의미를 각각 정의 — "BUY_CANDIDATE 있음"이 "APPROVE"를,
+    "APPROVE"가 "order_request"를 보장하지 않는다. 코드 변경 없음,
+    신규 KIS 호출 0건. 재확인(24h, 05:18 UTC): APPROVE 14건, 동일
+    evg 실패 패턴 유지 — §70과 일치. 상세: `docs/10_signal_
+    research_sppv/[DESIGN] regime_conditional_entry_signal_v1.md`
+    §71.
+  - **문서/운영 표현 보정안(코드 아님)**: "APPROVE=주문 생성"으로
+    해석 금지; "APPROVE는 AI 판단 승인(제안), 실제 제출은 expected
+    value gate 재검증 후 별도"를 표준 문구로 사용; 향후 리포트에
+    BUY_CANDIDATE/APPROVE/order_request 3지표 분리 병기 권장.
+  - 다음 과제: SPPV 계열 문서의 APPROVE 관련 서술을 GUIDE 기준으로
+    정합화(후속 문서 정리); 모니터링/리포팅 지표 정의 정리(운영팀
+    결정 필요); edge_after_cost_bps=8.56 반복이 여러 날짜에도
+    지속되는지 후속 거래일 누적 관찰.
 - [~] **SPPV-3** `entry_score` point-in-time 재현 및 중복 penalty ablation
   - **보류 유지, 형태 재정의 — 우선순위 재조정**: §12(1년, 자기참조
     포함) 당시 "알파 근거 강화"로 낙관했던 것이 §14(3년, 자기참조

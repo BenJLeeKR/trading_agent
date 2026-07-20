@@ -1125,8 +1125,86 @@
 
 ## 최근 메모
 
+> **📌 2026-07-20 "APPROVE 저장 vs 실제 주문 미생성" 구조에 대한
+> 설계 해석 정리 (최신, 작성자: Codex)**: §70(SPPV-2.81)이 코드로
+> 닫은 인과 경로("APPROVE 저장은 정상이나 주문은 expected value
+> gate에서 차단")를 재검증하지 않고, 이 구조가 (a) 의도된 계층
+> 분리인지 (b) 문서화가 못 따라간 것인지 (c) 설계 재정렬이
+> 필요한지를 판단하는 턴이다(SPPV-2.82, 코드 수정안 없음). **핵심
+> 발견**: `docs/10_signal_research_sppv/[GUIDE] end_to_end_order_
+> flow_guide.md`를 확인한 결과, §70이 코드로 재구성한 경로가
+> **이미 이 문서에 명시적으로 서술돼 있음**을 확인했다 — §8-1
+> (Expected Value Gate 적용 대상)은 `APPROVE`를 "AI/정량 기준상
+> 진입 승인 **제안**"으로 정의하고, `APPROVE`/`BUY`/`SELL`/
+> `EXIT`/`REDUCE`에만 EV gate가 "강제 적용"됨을 명시한다. §9(AI
+> 4단 체인)의 핵심 원칙은 "AI는 계산기가 아니다. 계산과 차단의
+> authoritative source는 deterministic backend다"이며, "AI가
+> `BUY`를 말해도 아래 중 하나면 실제 주문으로 번역되지 않는다"는
+> 목록에 **"expected value gate 실패"가 명시적으로 포함**돼
+> 있다. §8-4는 "R3b는 더 잘 고르는 장치이지, 거래 비용이나
+> 슬리피지 문제를 없애는 장치는 아니다... 후보를 더 잘 골라도
+> 비용 대비 edge가 약하면 실제 주문으로 보내지지 않는다"고
+> 명시한다. **이는 §70이 발견한 "APPROVE + expected_value_gate.
+> passed=false + order_request=0" 조합이 코드 레벨의 우연한
+> 부작용이 아니라, 이 세션이 이미 명시적으로 문서화해 둔 설계
+> 의도와 정확히 일치함을 뜻한다** — §70의 "완전 의도 여부 단정
+> 불가"를 이번 턴은 이 사전 문서 근거로 좁혔다. **§70의 docstring
+> 괴리 재해석**: `_check_ai_buy_override_gate()`가 "EV 통과
+> 시에만 허용한다"고 말하면서도 `buy_candidate=True`면 EV 체크를
+> 건너뛰는 것은, 이 함수가 **"AI가 deterministic이 인정하지 않은
+> 것을 독단적으로 override하려는 경우"만 방어하는 좁은 책임의
+> 함수**이고, **EV gate 자체의 최종 강제 지점은 처음부터
+> `translation.py`**(GUIDE §8-1이 말하는 "강제 적용" 지점)이기
+> 때문으로 재해석된다 — 실제 로직 결함이 아니라 문서화(docstring)
+> 정밀도 문제다. **핵심 질문 답변**: (질문1) `decision_type=
+> 'APPROVE'`의 시스템적 의미는 "AI/판단 계층에서 매수 의사가
+> 있다는 뜻일 뿐, 제출 가능 여부는 별도"다 — "실제 주문 가능
+> 상태"를 뜻하지 않는다. (질문2) 현재 상태(APPROVE + order_
+> request=0)는 **의도된 계층 분리의 자연스러운 결과**다 — 다만
+> 동시에 "운영 지표 해석상 혼동을 만들 수 있는 상태"이기도 하다
+> (이 둘은 배타적이지 않다). (질문3) override gate의 조기 반환 +
+> translation의 뒤늦은 EV 재확인 구조는 **"후보 신호는 살리되
+> 실제 주문은 마지막에 걸러낸다"는 설계**에 가깝다(GUIDE §8-4의
+> 취지와 정확히 일치) — "같은 판단이 비일관되게 뒤늦게 적용되는
+> 구조"가 아니다. (질문4) 세 지표의 의미: **`BUY_CANDIDATE` 발생**
+> = deterministic trigger 엔진(R3b 포함)이 "신호 강도가 문턱을
+> 넘는 후보"라고 판정한 순수 신호 품질 지표; **`APPROVE` 저장**
+> = AI 4단 체인이 "나도 동의한다, 사고 싶다"고 판단했다는 기록
+> (AI 판단 동의 여부 지표, 비용 검증 전); **`order_request` 생성**
+> = `translation.py`가 EV gate 등 모든 하드 게이트를 통과한 뒤
+> 실제로 broker 제출 가능한 요청을 만든 것(실행 가능성 지표,
+> 이것만이 "실제 매수 시도"를 의미). 세 지표는 서로 다른 게이트를
+> 통과했는지를 나타내며 하나가 다른 것을 함의하지 않는다. **핵심
+> 판정**: **"현재 구조는 의도된 계층 분리이며 문서/지표 해석만
+> 보정하면 된다."** 근거: (1) GUIDE §8-1/§8-4/§9가 이 시나리오를
+> 이미 사전 문서화; (2) docstring 괴리는 함수 책임 범위 서술
+> 정밀도 문제이지 로직 결함 아님; (3) 실제로 "주문이 잘못 나간
+> 사고"는 한 번도 없었다 — EV gate가 `translation.py`에서 매번
+> 정확히 작동해 부적격 주문을 막았다. **문서/운영 표현 보정안
+> (코드 수정 아님)**: "APPROVE=주문 생성"으로 해석·보고 금지;
+> "R3b가 APPROVE를 N건 만들었다"를 "N건의 실제 매수 기회"로
+> 환산 금지; 권장 표현 "APPROVE는 AI 판단 승인(제안)이며, 실제
+> 제출은 expected value gate 재검증을 통과해야 한다"를 SPPV 계열
+> 문서·운영 리포트 표준 문구로 사용; 향후 성과 리포트에 BUY_
+> CANDIDATE 발생/APPROVE 저장/실제 order_request 생성을 별개의
+> 3개 지표로 병기하고 전환율을 추적 권장. **재확인(참고, 조회
+> 시각 2026-07-20 05:18 UTC)**: `decision_type='APPROVE'` 14건
+> (§70의 7건에서 자연 증가), 전부 동일하게 `evg.passed=False,
+> edge=8.56, min_req=10.00`, `execution_attempts` 708건 전부
+> `status=non_trade` — §70과 완전히 일치, 새로운 수치 해석은
+> 필요 없다(이번 턴은 숫자 재확인이 아니라 설계 해석 정리가
+> 핵심). 코드 변경 없음(순수 조사 턴), 신규 KIS 호출 0건.
+> **다음 우선 작업**(설계 재정렬 여부 판단 관점, 코드 수정 아님):
+> (1) canonical 문서(SPPV 계열)의 "APPROVE" 관련 서술을 GUIDE
+> §8-1/§9 기준으로 정합화(후속 문서 정리, 기계적 작업); (2)
+> 모니터링/리포팅 지표 정의 정리(BUY_CANDIDATE/APPROVE/order_
+> request 3분리 지표 도입 여부는 운영팀 결정 필요); (3) `edge_
+> after_cost_bps=8.56`이 여러 날짜에 걸쳐서도 계속 반복되는지
+> 후속 거래일 누적 관찰 유지. 상세: `docs/10_signal_research_
+> sppv/[DESIGN] regime_conditional_entry_signal_v1.md` §71.
+
 > **📌 2026-07-20 "APPROVE + expected_value_gate.passed=false"가
-> 저장되는 이유 — 코드 경로 완전 추적 (최신, 작성자: Codex)**:
+> 저장되는 이유 — 코드 경로 완전 추적 (작성자: Codex)**:
 > §69(SPPV-2.80)가 발견한 "decision_type='APPROVE'인데 expected_
 > value_gate.passed=false이고 실제 order request는 0건"인 현상을
 > 코드 끝까지 닫아 추적했다(SPPV-2.81, 원인 추적 턴, 완화/수정
@@ -9296,11 +9374,27 @@ agent 설계 문서 기준으로도 순서는 다음이 맞다.
      코드 변경 없음, 신규 KIS 호출 0건. 상세: `docs/10_signal_
      research_sppv/[DESIGN] regime_conditional_entry_signal_v1.md`
      §70.
-   - **SPPV-3(다음 착수: `buy_candidate=True` 조기 반환이 의도된
-     설계인지 설계자 확인 + APPROVE 저장이 모니터링 지표 해석에
-     혼동 유발하는지 검토 + edge=8.56/min_required=10.00 7 cycle
-     연속 동일값이 snapshot 갱신 주기와 일치하는지 재확인 +
-     evidence_strength/regulatory 조합 재현 검증 + expected_
+   - **SPPV-2.82(완료, 2026-07-20, "APPROVE 저장 vs 실제 주문
+     미생성" 구조에 대한 설계 해석 정리, 작성자: Codex — 의도된
+     계층 분리, R3b Conditional Go 유지)**: `docs/10_signal_
+     research_sppv/[GUIDE] end_to_end_order_flow_guide.md`의
+     §8-1/§8-4/§9가 §70의 경로를 이미 사전 문서화해 놓았음을 확인
+     — `APPROVE`는 "AI/정량 기준상 진입 승인 제안"으로 정의되고
+     "AI가 BUY를 말해도 EV gate 실패면 실제 주문으로 번역되지
+     않는다"고 명시돼 있다. §70의 "완전 의도 여부 단정 불가"를
+     이 근거로 좁혔다 — docstring 괴리는 함수의 좁은 책임 범위를
+     문구가 정확히 표현 못한 문서화 정밀도 문제. 판정: **의도된
+     계층 분리이며 문서/지표 해석만 보정하면 됨**. BUY_CANDIDATE
+     발생/APPROVE 저장/order_request 생성 3지표 분리 트래킹 권장.
+     재확인(24h, 05:18 UTC): APPROVE 14건, 동일 패턴 유지. 코드
+     변경 없음, 신규 KIS 호출 0건. 상세: `docs/10_signal_research_
+     sppv/[DESIGN] regime_conditional_entry_signal_v1.md` §71.
+   - **SPPV-3(다음 착수: SPPV 계열 문서의 APPROVE 관련 서술을
+     GUIDE §8-1/§9 기준으로 정합화(후속 문서 정리) + 모니터링/
+     리포팅 지표 정의 정리(BUY_CANDIDATE/APPROVE/order_request
+     3분리 지표, 운영팀 결정 필요) + edge_after_cost_bps=8.56이
+     여러 날짜에도 반복되는지 후속 누적 관찰 + evidence_strength/
+     regulatory 조합 재현 검증 + expected_
      value_gate margin 반복 관측 + 규제/이벤트 리스크 감지
      파이프라인 데이터 근거 확인 + core risk-off pre-AI 차단(층3,
      universe 91.7% 영향, 별도 트랙) 정밀 조사 + R3b 후보 풀
