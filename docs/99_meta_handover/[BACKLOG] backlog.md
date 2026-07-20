@@ -1190,6 +1190,24 @@
   호출 0건. 상세: `docs/10_signal_research_sppv/[DESIGN] regime_
   conditional_entry_signal_v1.md` §66.
 
+- 작성자: Codex
+- 수정일자: 2026-07-20 (BUY_CANDIDATE 최종 통과 0건의 직접 병목
+  정밀 분해)
+- 수정내용: "차단 장치 전면 완화"가 아니라 000810 BUY_CANDIDATE
+  (24h 36건)이 최종 BUY 0건으로 귀결되는 정확한 지점을 funnel로
+  특정했다(SPPV-2.78). candidate→eligibility→candidate_intent=
+  buy까지 무손실(36→36→36), `candidate_vs_final`에서 100% 손실
+  (final_intent=buy 0, decision_type=BUY 0, order request 0).
+  universe 전체 24h decision_type도 BUY=SELL=REDUCE=EXIT=0(더
+  넓은 맥락). 000810의 AI 최종 합성기 실제 호출(`fdc_skipped=
+  False`)과 `opposing_evidence`(risk_off/전략 충돌/weak evidence)
+  가 36회 거의 동일 문구 반복 확인 — 정당한 방어 논리일 수 있으나
+  국면 라벨 고착 가능성도 배제 못 함. 판정: 층3·층2=유지, 층1
+  (downgrade)=**정밀 보정 필요**(우선 완화 아님). R3b 작동 판정
+  불변. 코드 변경 없음, 신규 KIS 호출 0건. 상세: `docs/10_signal_
+  research_sppv/[DESIGN] regime_conditional_entry_signal_v1.md`
+  §67.
+
 ---
 
 ## 관리 원칙
@@ -2788,10 +2806,24 @@
     세 층을 같은 원인으로 묶지 않음. R3b 작동 판정 불변. 코드
     변경 없음, 신규 KIS 호출 0건. 상세: `docs/10_signal_research_
     sppv/[DESIGN] regime_conditional_entry_signal_v1.md` §66.
-  - **SPPV-3(다음 착수: core risk-off pre-AI 차단(층3, 최우선,
-    universe 91.7% 영향) 정밀 조사 + AI 최종 결정 합성기 downgrade
-    (층1, 000810 한정) 조사 + R3b 후보 풀 협소함(층2 무관) 재관측
-    + churn guard paper 운영 표본 누적 후 재검증(§64 후속) +
+  - **SPPV-2.78(완료, 2026-07-20, BUY_CANDIDATE 최종 통과 0건의
+    직접 병목 정밀 분해, 작성자: Codex — 층1만 정밀 보정 필요,
+    R3b Conditional Go 유지)**: 000810 BUY_CANDIDATE(24h 36건)의
+    candidate→eligibility→candidate_intent=buy까지 무손실(36→
+    36→36), `candidate_vs_final`에서 100% 손실(final_intent=buy
+    0, decision_type=BUY 0, order request 0). universe 전체 24h
+    decision_type도 BUY=SELL=REDUCE=EXIT=0. AI 최종 합성기 실제
+    호출(`fdc_skipped=False`)과 `opposing_evidence`가 36회 거의
+    동일 문구 반복 — 정당한 방어 논리일 수 있으나 국면 라벨 고착
+    가능성도 배제 못 함. 판정: "BUY 후보는 생성되지만 마지막 단계
+    병목 때문에 0건 통과". 층3·층2=유지, 층1=**정밀 보정 필요**
+    (우선 완화 아님). R3b 작동 판정 불변. 코드 변경 없음, 신규
+    KIS 호출 0건. 상세: `docs/10_signal_research_sppv/[DESIGN]
+    regime_conditional_entry_signal_v1.md` §67.
+  - **SPPV-3(다음 착수: AI 최종 결정 합성기 판단의 조건 민감도
+    확인(최우선) + core risk-off pre-AI 차단(층3, universe 91.7%
+    영향, 별도 트랙) 정밀 조사 + R3b 후보 풀 협소함 재관측 +
+    churn guard paper 운영 표본 누적 후 재검증(§64 후속) +
     `trigger_status` 공급원 자동화/배치화(cron/배치 설계,
     override=true인 동안 낮은 우선순위) + 포지션 사이징 등 exit
     외 리스크 관리 수단 검토(신규, 낮은 우선순위, 실거래 계좌

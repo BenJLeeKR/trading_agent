@@ -1698,6 +1698,23 @@ value/compliance/broker가 아니라 `entry_score < 0.65`다.
   안 됨. R3b 작동 자체 판정(작동하나 체감 무효) 불변. 코드 변경
   없음, 신규 KIS 호출 0건. 상세: `docs/10_signal_research_sppv/
   [DESIGN] regime_conditional_entry_signal_v1.md` §66.
+
+- 작성자: Codex
+- 수정일자: 2026-07-20 (2.80순위, BUY_CANDIDATE 최종 통과 0건의
+  직접 병목 정밀 분해)
+- 수정내용: "차단 장치 전면 완화"가 아니라 000810 BUY_CANDIDATE
+  (24h 36건)이 최종 BUY 0건으로 귀결되는 정확한 지점을 funnel로
+  특정했다(SPPV-2.78). candidate→eligibility→candidate_intent=
+  buy까지 무손실(36→36→36), `candidate_vs_final`에서 100% 손실
+  (final_intent=buy 0, decision_type=BUY 0, order request 0).
+  universe 전체 24h decision_type도 BUY=SELL=REDUCE=EXIT=0(더 넓은
+  맥락). 000810의 AI 최종 합성기 실제 호출(`fdc_skipped=False`)과
+  `opposing_evidence`(risk_off/전략 충돌/weak evidence)가 36회
+  거의 동일 문구 반복 — 정당한 방어 논리일 수 있으나 국면 라벨
+  고착 가능성도 배제 못 함. 판정: 층1(downgrade)만 **정밀 보정
+  필요**(우선 완화 아님), 층2·층3은 유지. R3b 작동 판정 불변. 코드
+  변경 없음, 신규 KIS 호출 0건. 상세: `docs/10_signal_research_
+  sppv/[DESIGN] regime_conditional_entry_signal_v1.md` §67.
 - **3순위(보류 유지, 형태 재정의 — 우선순위 재조정)**: **`entry_
   score`와 BUY funnel 재현** — §2.7 확장 검증에서 하락장 안정성이
   확인되지 않아 단순 재현으로는 착수하지 않는다. §2.16~§2.21에서

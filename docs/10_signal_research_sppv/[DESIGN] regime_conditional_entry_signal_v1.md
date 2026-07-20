@@ -8310,3 +8310,127 @@ risk-off 국면 판정에 의한 pre-AI 차단)**다.
    2종목뿐인 이유 — universe 크기(12종목) 대비 20% quintile
    규칙이 실제로 적용되고 있는지, 국면(market_common_label) 전환
    시 pool이 어떻게 달라지는지 재관측).
+
+## 67. BUY_CANDIDATE 최종 통과 0건의 직접 병목 정밀 분해 (SPPV-2.78, 2026-07-20)
+
+### 67.1 최상위 원칙 재확인
+
+이번 턴은 "차단 장치 전면 완화"가 목적이 아니다. **이미 생성된
+BUY_CANDIDATE가 최종적으로 1건도 통과하지 못하는 상태**를 문제로
+보고, 그 병목을 정확히 어느 단계에서 발생하는지 funnel로 분해한
+뒤, 각 축을 "유지/정밀 보정 필요/우선 완화 후보"로 분리 판정한다.
+§66(SPPV-2.77)이 확정한 3층 구조(층1 downgrade·층2 비후보·층3
+pre-AI 차단)를 다시 뒤집지 않고, 그 위에 order request 단계까지
+포함한 완전한 funnel과 AI 최종 합성기 판단의 실제 근거를 추가로
+확인한다.
+
+### 67.2 BUY funnel 정량화(조회 시각: 2026-07-20 03:xx UTC, 최근
+24시간 — R3b reason code 보유 trade_decisions 기준, §66 대비 66→72
+건으로 cycle 누적에 따라 자연 증가, 비율 구조는 동일)
+
+| 단계 | 정의 | 건수 | 근거 |
+|---|---|---|---|
+| R3B 관여 | `reason_codes`에 `trigger_r3b_alpha_percentile` 포함 | 72 | DB 직접 조회 |
+| BUY_CANDIDATE | `deterministic_trigger.buy_candidate=True` | 36(전부 000810) | DB 직접 조회 |
+| eligibility 통과 | `deterministic_trigger.eligibility_passed=True` | 36(손실 없음) | DB 직접 조회 |
+| candidate_intent=buy | `candidate_vs_final.candidate_intent='buy'` | 36(손실 없음) | DB 직접 조회 |
+| **final_intent=buy** | `candidate_vs_final.final_intent='buy'` | **0** | DB 직접 조회 |
+| decision_type=BUY | `decision_json.decision_type='BUY'` | **0** | DB 직접 조회 |
+| order request 생성 | 실제 주문 요청 발생 | **0** | `execution_attempts` 24시간 432건 전부 `status=non_trade` |
+
+**funnel 해석**: candidate(36)→eligibility(36, 무손실)→candidate_
+intent=buy(36, 무손실)까지는 손실이 전혀 없다. 손실은 **정확히 한
+지점**에서 발생한다 — `candidate_intent=buy`(36) → `final_intent=
+buy`(0). 즉 "여러 축에 걸쳐 조금씩 깎이는" 구조가 아니라, **AI
+최종 결정 합성기 단계 단 한 곳에서 100% 손실**이 발생하는 날카로운
+단일 병목이다(000810 한정).
+
+**참고(universe 전체 맥락)**: 같은 24시간 전체 `trade_decisions`
+432건의 `decision_type` 분포는 `WATCH=276, HOLD=156, BUY=0,
+SELL=0, REDUCE=0, EXIT=0` — **R3b 관여 여부와 무관하게 universe
+전체에서 지난 24시간 동안 BUY/SELL/REDUCE/EXIT가 단 1건도 발생하지
+않았다.** 이는 "R3b만의 문제"가 아니라 시스템 전체가 이 기간
+동안 완전히 WATCH/HOLD 상태였다는 더 넓은 맥락이다 — 다만 이번
+턴의 분석 대상은 명확히 "R3b가 실제로 만든 BUY_CANDIDATE"이므로,
+그 좁은 표본(000810, 36건)에 한정해 병목을 분해한다.
+
+### 67.3 0건 통과의 직접 차단 축 분해 — "넓은 병목" vs. "마지막에
+누르는 병목"의 명확한 분리
+
+**넓은 병목(candidate 자체가 되기 전에 대량으로 걸러내는 축)**:
+층3 — `eligibility_core_risk_off_ranking_blocked` + `pre_ai_
+short_circuit`(§66에서 확인, 이번 턴 재확인 결과 원시 로그 326건,
+distinct 11/12 종목). 이 축은 **000810에는 적용되지 않는다** —
+000810은 이 short-circuit을 한 번도 겪지 않고 매번 eligibility를
+통과해 candidate까지 도달한다. 즉 이 축은 "R3b 후보 풀 자체를
+좁히는" 병목이지, "이미 만들어진 000810 candidate를 마지막에
+누르는" 병목이 아니다 — 서로 다른 층이다.
+
+**마지막에 누르는 병목(candidate까지 도달한 것을 최종 단계에서
+막는 축)**: `candidate_vs_final.alignment_status='downgraded'`
+단 하나. 000810의 실제 `ai_call_path`를 확인한 결과 `fdc_
+skipped=False`(final decision composer가 실제로 호출됐다 — stub
+placeholder가 아니라 실제 AI 판단 경로) — 즉 이것은 하드코딩된
+차단이 아니라 **매 cycle 실제로 실행되는 AI 판단**이다.
+
+### 67.4 AI 최종 결정 합성기 판단의 실제 근거(코드/DB로 확인,
+추정 아님)
+
+000810의 실제 `decision_json`을 여러 시각에 걸쳐 확인한 결과:
+`conviction=0.5`, `confidence=0.6`, `evidence_strength='weak'`,
+`risk_flags=['high_volatility', 'risk_off_tone', 'event_conflict']`,
+`opposing_evidence`에 "시장 전반의 위험 회피 분위기", "고변동성
+환경으로 단기 손실 가능성", "상충되는 이벤트로 방향성 불확실",
+**"선호 전략(방어적 저변동성 회전)과 모멘텀 매수 신호 간 상충"**,
+"이벤트 해석 중립 및 약한 증거"가 **거의 동일한 문구로 36회
+반복** 관측됐다.
+
+**해석**: 이 downgrade는 임의의 버그가 아니라, 실제 AI 에이전트가
+매 cycle 재실행하며 내리는 판단이다 — "국면이 risk_off/고변동성인데
+전략 선택기(strategy_selection)는 방어적 회전을 권고하고 있고,
+그 상태에서 R3b가 모멘텀 매수 신호를 올리니 서로 충돌한다"는
+논리는 그 자체로는 정당한 방어 논리다. 다만 **36회 전부 거의
+동일한 텍스트·동일한 conviction/confidence 값이 반복**된다는
+것은, 이 AI 판단이 매 cycle 새로운 시장 데이터에 실질적으로
+반응하며 재평가되고 있다기보다는, **국면 라벨(risk_off_tone)이
+고정된 동안 사실상 같은 결론을 기계적으로 재생산**하고 있을
+가능성을 시사한다 — 이는 "정당한 방어"와 "국면 라벨에 과도하게
+고착된 정적 판단"의 경계에 있는 소견이며, 이번 턴 근거만으로는
+어느 쪽인지 확정할 수 없다(§67.7의 후속 과제).
+
+### 67.5 보정 우선순위 판정
+
+| 축 | 성격 | 판정 |
+|---|---|---|
+| 층3: `eligibility_core_risk_off_ranking_blocked`(pre-AI, universe 91.7%) | 넓은 병목, 000810에는 미적용 | **유지** — R3b candidate 형성 이전 단계이며 이번 턴 대상(000810 0건 통과)과 인과관계가 없다. 다만 §66이 이미 별도 조사 필요성을 제기했으므로 그 후속은 유효(이 턴의 대상은 아님). |
+| 층2: 000660 애초 비후보(`primary_candidate=NO_ACTION`) | R3b 자신의 1차 판단 | **유지** — R3b가 스스로 "사지 말라"고 판단한 것으로, 차단 장치의 과잉 억제가 아니다. |
+| 층1: `candidate_vs_final.alignment_status=downgraded`(000810, 36/36) | candidate까지 도달한 것을 마지막에 누르는 유일한 축 | **정밀 보정 필요** — 완전 제거(우선 완화)는 시기상조다. 실제 AI 판단(evidence_strength=weak, conviction=0.5)에 근거하므로 "명백한 과잉 억제"로 단정할 근거는 아직 부족하다. 다만 36/36(100%) 통과율 0%와 거의 동일한 텍스트 반복은 "국면 라벨 고착" 가능성을 시사하므로, 이 AI 판단이 실제로 조건별로 달라지는지(예: risk_off_tone이 해제되면 실제로 buy로 바뀌는지) 확인이 필요하다. |
+
+### 67.6 기대 산출물 — 한 줄 결론
+
+**"BUY 후보는 생성되지만 마지막 단계 병목 때문에 0건 통과"** —
+000810 한정으로 정확히 이 설명이 맞다. candidate(36)→eligibility
+(36)→candidate_intent=buy(36)까지 무손실로 도달한 뒤, `candidate_
+vs_final` 단계에서 100% downgrade된다. 이는 "BUY 후보 자체가
+너무 적어서"도 아니고(36건이나 생성됐다), "복합 원인이라 특정
+불가"도 아니다(단일 지점에서 100% 손실). **우선 조사해야 할 직접
+병목은 AI 최종 결정 합성기 단 하나로 명확히 좁혀진다** — 다만
+그것을 "제거해야 할 결함"으로 단정하지 않고, 실제 근거(risk_off_
+tone·strategy_selection 충돌·weak evidence)가 정당한 방어인지
+국면 라벨 고착에 의한 기계적 반복인지를 먼저 가려야 한다.
+
+### 67.7 남은 핵심 리스크 및 다음 우선 작업(부분 보정 원칙 유지)
+
+1. **최우선 — AI 최종 결정 합성기 판단의 조건 민감도 확인**:
+   `risk_off_tone`/`strategy_selection` 충돌 로직이 R3b 신호
+   강도(entry_score)나 conviction 자체와 무관하게 항상 같은
+   결론을 내는지, 아니면 실제로 조건이 바뀌면(국면 전환·entry_score
+   상승) final_intent가 buy로 바뀔 수 있는지 재현 검증 — "우선
+   완화"가 아니라 "이 AI 판단이 실제로 조건에 반응하는가"를 먼저
+   확인하는 정밀 진단.
+2. **§66이 남긴 층3(core risk-off pre-AI 차단) 조사는 별도 트랙
+   으로 유지** — 이번 턴 대상(000810 downgrade)과는 인과관계가
+   없으므로 우선순위를 재조정하지 않는다.
+3. **R3b 후보 풀 협소함(2종목)** — 이번 턴 대상 밖이나, candidate
+   자체가 늘어나면 "downgrade 병목"의 표본도 늘어 판단이 정밀해질
+   것.

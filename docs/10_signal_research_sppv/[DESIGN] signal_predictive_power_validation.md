@@ -1669,6 +1669,32 @@ entry 설계 검토로 전환**을 확정했다. 별도 문서
   0건. 상세: `docs/10_signal_research_sppv/[DESIGN] regime_
   conditional_entry_signal_v1.md` §66.
 
+- 작성자: Codex
+- 수정일자: 2026-07-20 (78차, BUY_CANDIDATE 최종 통과 0건의 직접
+  병목 정밀 분해 — "차단 장치 전면 완화"가 아니라 "0건 통과"를
+  만드는 병목을 좁히는 턴)
+- 수정내용: R3b가 만든 BUY_CANDIDATE(000810, 24시간 36건)의 전체
+  funnel을 candidate→eligibility→candidate_intent=buy→final_
+  intent=buy→decision_type=BUY→order request까지 손실 없이 추적
+  (SPPV-2.78). candidate(36)→eligibility(36)→candidate_intent=
+  buy(36)까지 무손실, `candidate_vs_final` 단계에서 100% 손실
+  (final_intent=buy 0건, decision_type=BUY 0건, order request 0건
+  — execution_attempts 24h 432건 전부 non_trade). universe 전체
+  24시간 `decision_type` 분포도 WATCH=276/HOLD=156/BUY=SELL=
+  REDUCE=EXIT=0으로 확인(R3b 국한 문제가 아닌 더 넓은 맥락).
+  000810의 `ai_call_path.fdc_skipped=False`(실제 AI 최종 합성기
+  호출 확인) + `opposing_evidence`(risk_off/고변동성/전략 충돌/
+  weak evidence)가 36회 거의 동일 문구로 반복됨을 확인 — 정당한
+  방어 논리일 수 있으나 국면 라벨 고착 가능성도 배제 못 함.
+  판정: candidate까지는 무손실, `candidate_vs_final`(층1) 단일
+  지점에서 100% 손실 — "BUY 후보는 생성되지만 마지막 단계 병목
+  때문에 0건 통과". 보정 판정: 층3(pre-AI, universe 91.7%)=유지
+  (000810과 인과관계 없음), 층2(000660 비후보)=유지(R3b 자신의
+  판단), 층1(downgrade)=**정밀 보정 필요**(우선 완화 아님 — AI
+  판단의 조건 민감도 확인이 먼저). R3b 작동 판정 불변. 코드 변경
+  없음, 신규 KIS 호출 0건. 상세: `docs/10_signal_research_sppv/
+  [DESIGN] regime_conditional_entry_signal_v1.md` §67.
+
 ---
 
 ## 진행 체크리스트
@@ -4134,6 +4160,33 @@ canonical),
     91.7% 영향) 정밀 조사; AI 최종 합성기 downgrade(층1, 000810
     한정) 조사; R3b 후보 풀 협소함(층2 무관, candidate pool 2종목
     뿐인 이유) 재관측.
+- [x] **SPPV-2.78(신설)** BUY_CANDIDATE 최종 통과 0건의 직접 병목
+  정밀 분해 (완료, 2026-07-20, 작성자: Codex)
+  - **목적**: "차단 장치 전면 완화"가 아니라, 000810 BUY_CANDIDATE
+    (24h 36건)이 최종 BUY 0건으로 귀결되는 정확한 지점을 funnel로
+    특정.
+  - **실측**: candidate(36)→eligibility(36)→candidate_intent=
+    buy(36) 전 구간 무손실. `candidate_vs_final` 단계에서 **100%
+    손실**(final_intent=buy 0건, decision_type=BUY 0건, order
+    request 0건 — `execution_attempts` 24h 432건 전부 non_trade).
+    universe 전체 24h `decision_type`도 WATCH=276/HOLD=156/
+    BUY=SELL=REDUCE=EXIT=0(더 넓은 맥락, R3b 국한 아님). 000810의
+    `ai_call_path.fdc_skipped=False`(실제 AI 호출 확인) +
+    `opposing_evidence`(risk_off/고변동성/전략 충돌/weak evidence)
+    가 36회 거의 동일 문구 반복 — 정당한 방어 논리일 수 있으나
+    국면 라벨 고착 가능성도 배제 못 함.
+  - **판정**: "BUY 후보는 생성되지만 마지막 단계 병목 때문에 0건
+    통과"(000810 한정, 단일 지점 100% 손실). 보정 판정: 층3(pre-AI,
+    universe 91.7%)=유지(인과관계 없음), 층2(000660 비후보)=유지
+    (R3b 자신의 판단), 층1(downgrade)=**정밀 보정 필요**(우선
+    완화 아님 — AI 판단의 조건 민감도 확인 선행). R3b 작동 판정
+    불변. 코드 변경 없음, 신규 KIS 호출 0건. 상세: `docs/10_
+    signal_research_sppv/[DESIGN] regime_conditional_entry_signal_
+    v1.md` §67.
+  - 다음 과제: AI 최종 결정 합성기 판단의 조건 민감도 확인(최우선
+    — risk_off_tone 해제·entry_score 변화 시 실제로 final_intent가
+    바뀌는지 재현 검증); 층3(core risk-off pre-AI 차단) 조사는
+    별도 트랙 유지.
 - [~] **SPPV-3** `entry_score` point-in-time 재현 및 중복 penalty ablation
   - **보류 유지, 형태 재정의 — 우선순위 재조정**: §12(1년, 자기참조
     포함) 당시 "알파 근거 강화"로 낙관했던 것이 §14(3년, 자기참조
