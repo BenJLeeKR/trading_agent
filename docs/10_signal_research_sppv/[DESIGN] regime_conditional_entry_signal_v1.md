@@ -8434,3 +8434,114 @@ tone·strategy_selection 충돌·weak evidence)가 정당한 방어인지
 3. **R3b 후보 풀 협소함(2종목)** — 이번 턴 대상 밖이나, candidate
    자체가 늘어나면 "downgrade 병목"의 표본도 늘어 판단이 정밀해질
    것.
+
+## 68. "마지막 단계" 내부 재분해 — watch/no_action 두 갈래와 그 입력 패턴 차이 (SPPV-2.79, 2026-07-20)
+
+### 68.1 목적 — §67의 결론을 뒤집지 않고 그 내부를 재분해
+
+§67(SPPV-2.78)이 확정한 "candidate까지는 무손실, `candidate_vs_
+final` 단계에서 100% 손실"이라는 결론은 그대로 유지한다. 이번 턴은
+그 마지막 단계 **내부**에서 `final_intent`가 `watch`로 가는 경우와
+`no_action`으로 가는 경우를 분리하고, 그 분기를 만드는 실제 입력
+조건을 DB 직접 조회로 특정한다. `000810`(실제 BUY_CANDIDATE 도달
+사례)만을 중심 분석 대상으로 하며, `000660`은 이번 턴 분석 대상이
+아니다.
+
+### 68.2 마지막 단계 세분화(조회 시각: 2026-07-20 03:23 UTC, 최근
+24시간 — §67 대비 R3b reason code 66→78건, candidate_intent=buy
+36→39건으로 자연 증가, 비율 구조 확인 목적)
+
+`buy_candidate=True AND candidate_vs_final.candidate_intent='buy'`
+표본 **39건**(전부 000810)에 대해:
+
+| 최종 결과 | 건수 | decision_type |
+|---|---|---|
+| `final_intent=watch` | **31** | WATCH 31 |
+| `final_intent=no_action` | **8** | HOLD 8 |
+| `final_intent=buy` | **0** | BUY 0 |
+
+**정정**: §67에서 "36회 거의 동일한 문구로 반복"이라고 서술한
+부분을 이번 턴에서 더 큰 표본(39건)으로 재확인한 결과, **`opposing_
+evidence` 텍스트는 39건 전부 서로 다른(distinct) 문장**이었다 —
+매 cycle 새로 생성되는 실제 LLM 출력이지, 캐시된 고정 문자열이
+반복되는 것이 아니다. 다만 **주제(theme)는 일관되게 반복**된다
+(risk_off_tone·고변동성·전략-신호 불일치·규제 이슈) — "문구가
+고착"이 아니라 "주제가 고착"으로 정정한다.
+
+### 68.3 watch(31) vs no_action(8) 입력 조건 비교
+
+| 항목 | watch 그룹(n=31) | no_action 그룹(n=8) | 구분력 |
+|---|---|---|---|
+| `risk_opinion` | review 25 / allow 6 | review 7 / allow 1 | 낮음(비율 유사) |
+| `compliance_opinion` | allow 31(100%) | allow 8(100%) | **없음**(전부 동일) |
+| `expected_value_gate.passed` | True 31(100%) | True 8(100%) | **없음**(전부 동일) |
+| `evidence_strength` | moderate 11 / weak 20 | weak 7 / **none 1** | **있음** — no_action에만 `none` 등장, `moderate`는 watch에만 있음 |
+| `event_conflict` | True 31(100%) | True 7 / False 1 | 낮음 |
+| `risk_flags`(비율) | `regulatory_risk` 13/31(42%) | `regulatory_risk` 6/8(75%) + 고유 `regulatory_crackdown` 1건 | **있음** — no_action이 규제 관련 flag 비중이 뚜렷이 높음 |
+| `strategy_selection.preferred_strategy` | defensive_low_volatility_rotation 100% | defensive_low_volatility_rotation 100% | **없음**(양쪽 다 downgrade의 공통 원인일 뿐, watch/no_action을 가르지 않음) |
+| `conviction` 범위 | 0.3~0.6 | **0.0~0.5** | **있음** — no_action이 하한선이 0까지 내려감 |
+| `confidence` 범위 | 0.35~0.78 | **0.0~0.65** | **있음** — 동일하게 no_action 하한이 0 |
+| `ai_call_path.fdc_skipped` | False 100% | False 100% | **없음**(둘 다 실제 AI 호출) |
+| `opposing_evidence` 문구 | 31건 전부 distinct | 8건 전부 distinct | 문구 자체는 매번 다름(§68.2 정정 참고) |
+
+**구분력 있는 축 3개로 좁혀짐**:
+1. **`evidence_strength`/`conviction`/`confidence`의 심각도** —
+   no_action 그룹은 `evidence_strength='none'`, `conviction=0.0`,
+   `confidence=0.0`까지 내려가는 극단적으로 약한 사례를 포함한다
+   (watch 그룹은 이 정도로 내려가지 않음, 최저 conviction=0.3).
+2. **규제/이벤트 리스크 강도(`regulatory_risk`/`regulatory_
+   crackdown`/`legal_risk`)** — no_action 그룹에서 `regulatory_risk`
+   비중이 42%→75%로 뚜렷이 높고, `regulatory_crackdown`은 no_action
+   그룹에만 등장한다.
+3. **`strategy_policy_mismatch`(방어적 전략 vs 모멘텀 신호 불일치)**
+   는 watch/no_action **양쪽 모두에서 100% 동일하게 나타나 두 그룹을
+   가르는 축이 아니다** — 이것은 애초에 downgrade 자체(BUY→비BUY)를
+   일으키는 공통 원인이지, watch와 no_action을 가르는 원인이
+   아니다.
+
+### 68.4 핵심 판정 — 마지막 단계 병목이지만 watch/no_action 두
+갈래로 명확히 분기
+
+**"마지막 단계 병목이지만 watch/no_action 두 갈래로 분기"**한다.
+`candidate_vs_final` 단계 전체를 하나의 뭉뚱그린 "AI가 막는다"로
+설명할 수 없다 — 내부에 명확한 구조가 있다: (a) 모든 downgrade의
+공통 원인은 `strategy_policy_mismatch`(방어적 전략 선택 vs R3b의
+모멘텀 매수 신호 충돌, 39/39 100%); (b) 그 downgrade가 `watch`에서
+멈추는지 `no_action`까지 내려가는지는 **evidence_strength/
+conviction/confidence의 심각도**와 **규제·이벤트 리스크 강도**에
+따라 갈린다. "더 앞선 숨은 축이 의심된다"는 근거는 이번 턴에서
+발견되지 않았다 — §67의 candidate_vs_final 단일 병목 결론은
+유효하며, 다만 그 내부 구조가 이번 턴으로 명확해졌다.
+
+### 68.5 "조건 민감도 확인이 필요한 축" 우선순위(완화 결론 아님,
+검증 대상 좁히기)
+
+1. **`evidence_strength`/`conviction`/`confidence` 계열(최우선)**
+   — no_action까지 내려가는 8건이 왜 유독 conviction=0.0/
+   confidence=0.0/evidence='none'까지 도달하는지, 이것이 실제
+   데이터 근거 부족(정당) 때문인지 AI 추론 자체의 변동성(불안정)
+   때문인지 재현 검증 필요.
+2. **`event_conflict`/`regulatory_action`/`legal_risk` 계열** —
+   no_action 그룹에서 유독 규제 관련 flag 비중이 높다(42%→75%,
+   고유 `regulatory_crackdown`). 이 규제 이벤트 감지 자체가 실제
+   근거 있는 것인지, 이벤트 해석 파이프라인이 특정 뉴스 소스에
+   과민 반응하는지 확인 필요.
+3. **`strategy_policy_mismatch`/`defensive_strategy_selected` 계열**
+   — watch/no_action을 가르지는 않지만, downgrade 자체(BUY→비BUY,
+   39/39 100%)의 유일한 공통 원인이므로 별도로 최우선 검증 대상
+   이다(§67에서 이미 지목한 축과 동일선상, 이번 턴이 그 비중을
+   100%로 재확인).
+
+**이번 턴은 완화·삭제 여부를 결정하지 않는다** — 위 3개 축이 "실제
+근거 있는 방어"인지 "조건 고착에 의한 기계적 하향"인지 구분하는
+것이 다음 턴의 과제다.
+
+### 68.6 다음 우선 작업
+
+1. `strategy_policy_mismatch` 축의 조건 민감도 재현 검증(최우선,
+   downgrade 자체의 유일한 공통 원인) — 방어적 전략이 실제로
+   선택되는 조건(시장 국면 판정 로직)이 R3b 신호 강도와 무관하게
+   고정돼 있는지 확인.
+2. `evidence_strength`/`conviction` 계열의 no_action 임계 조건
+   재현 검증.
+3. 규제/이벤트 리스크 감지 파이프라인의 실제 데이터 근거 확인.

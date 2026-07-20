@@ -1208,6 +1208,23 @@
   research_sppv/[DESIGN] regime_conditional_entry_signal_v1.md`
   §67.
 
+- 작성자: Codex
+- 수정일자: 2026-07-20 ("마지막 단계" 내부 재분해 — watch/no_action
+  두 갈래와 그 입력 패턴 차이)
+- 수정내용: §67 결론(candidate_vs_final 단일 병목)을 유지한 채
+  내부를 재분해했다(SPPV-2.79). `candidate_intent=buy` 39건이
+  `final_intent=watch`(31)/`no_action`(8)/`buy`(0)로 갈림.
+  `compliance_opinion`/`expected_value_gate.passed`/`strategy_
+  selection`(100% 동일)은 구분력 없음 — `strategy_policy_mismatch`
+  는 downgrade 공통 원인이지 두 그룹을 가르지 않음. 구분력 있는
+  축: `evidence_strength`/`conviction`/`confidence`(no_action만
+  0.0/'none'까지 하락), `regulatory_risk` 비중(42%→75%). §67의
+  "36회 거의 동일 문구 반복"은 정정 — 39건 전부 distinct 텍스트,
+  주제만 반복. 판정: 마지막 단계 병목이지만 watch/no_action 두
+  갈래로 명확히 분기. 코드 변경 없음, 신규 KIS 호출 0건. 상세:
+  `docs/10_signal_research_sppv/[DESIGN] regime_conditional_entry_
+  signal_v1.md` §68.
+
 ---
 
 ## 관리 원칙
@@ -2820,8 +2837,25 @@
     (우선 완화 아님). R3b 작동 판정 불변. 코드 변경 없음, 신규
     KIS 호출 0건. 상세: `docs/10_signal_research_sppv/[DESIGN]
     regime_conditional_entry_signal_v1.md` §67.
-  - **SPPV-3(다음 착수: AI 최종 결정 합성기 판단의 조건 민감도
-    확인(최우선) + core risk-off pre-AI 차단(층3, universe 91.7%
+  - **SPPV-2.79(완료, 2026-07-20, "마지막 단계" 내부 재분해 —
+    watch/no_action 두 갈래와 그 입력 패턴 차이, 작성자: Codex —
+    마지막 단계 병목이지만 두 갈래 분기, R3b Conditional Go
+    유지)**: `candidate_intent=buy` 39건이 `final_intent=watch`
+    (31)/`no_action`(8)/`buy`(0)로 갈림. `compliance_opinion`/
+    `expected_value_gate.passed`/`strategy_selection`(100% 동일)
+    은 구분력 없음 — `strategy_policy_mismatch`는 downgrade 공통
+    원인이지 두 그룹을 가르지 않음. 구분력 있는 축: `evidence_
+    strength`/`conviction`/`confidence`(no_action만 0.0/'none'까지
+    하락), `regulatory_risk` 비중(42%→75%). §67의 "36회 거의
+    동일 문구 반복"은 정정 — 39건 전부 distinct 텍스트, 주제만
+    반복. 판정: 마지막 단계 병목이지만 watch/no_action 두 갈래로
+    명확히 분기. 코드 변경 없음, 신규 KIS 호출 0건. 상세: `docs/
+    10_signal_research_sppv/[DESIGN] regime_conditional_entry_
+    signal_v1.md` §68.
+  - **SPPV-3(다음 착수: `strategy_policy_mismatch` 축 조건 민감도
+    재현 검증(최우선) + `evidence_strength`/`conviction` 계열
+    no_action 임계 조건 확인 + 규제/이벤트 리스크 감지 파이프라인
+    실제 근거 확인 + core risk-off pre-AI 차단(층3, universe 91.7%
     영향, 별도 트랙) 정밀 조사 + R3b 후보 풀 협소함 재관측 +
     churn guard paper 운영 표본 누적 후 재검증(§64 후속) +
     `trigger_status` 공급원 자동화/배치화(cron/배치 설계,

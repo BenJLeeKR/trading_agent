@@ -1695,6 +1695,28 @@ entry 설계 검토로 전환**을 확정했다. 별도 문서
   없음, 신규 KIS 호출 0건. 상세: `docs/10_signal_research_sppv/
   [DESIGN] regime_conditional_entry_signal_v1.md` §67.
 
+- 작성자: Codex
+- 수정일자: 2026-07-20 (79차, "마지막 단계" 내부 재분해 — watch/
+  no_action 두 갈래와 그 입력 패턴 차이)
+- 수정내용: §67의 "candidate까지 무손실, candidate_vs_final에서
+  100% 손실"을 유지하되, 그 내부를 `final_intent=watch`(31)와
+  `final_intent=no_action`(8)으로 재분해했다(SPPV-2.79, 000810만
+  대상). `compliance_opinion`/`expected_value_gate.passed`/
+  `strategy_selection.preferred_strategy`(전부 defensive_low_
+  volatility_rotation, 39/39 100%)는 두 그룹에서 완전히 동일해
+  구분력이 없음을 확인 — `strategy_policy_mismatch`는 downgrade
+  자체의 공통 원인이지 watch/no_action을 가르는 축이 아니다.
+  구분력 있는 축 3개: `evidence_strength`/`conviction`/`confidence`
+  (no_action만 0.0/'none'까지 하락), `regulatory_risk` 비중
+  (42%→75%, `regulatory_crackdown`은 no_action 전용). §67의 "36회
+  거의 동일 문구 반복"은 정정 — 39건 재확인 결과 `opposing_
+  evidence` 텍스트는 전부 distinct(매 cycle 실제 LLM 생성), 주제
+  (theme)만 일관되게 반복된다. 판정: 마지막 단계 병목이지만 watch/
+  no_action 두 갈래로 명확히 분기 — "더 앞선 숨은 축" 의심 근거는
+  발견되지 않음. 코드 변경 없음, 신규 KIS 호출 0건. 상세: `docs/
+  10_signal_research_sppv/[DESIGN] regime_conditional_entry_
+  signal_v1.md` §68.
+
 ---
 
 ## 진행 체크리스트
@@ -4187,6 +4209,35 @@ canonical),
     — risk_off_tone 해제·entry_score 변화 시 실제로 final_intent가
     바뀌는지 재현 검증); 층3(core risk-off pre-AI 차단) 조사는
     별도 트랙 유지.
+  - **[SPPV-2.79에서 정정] 위 "opposing_evidence가 36회 거의
+    동일 문구 반복"은 부정확했음 — 39건 재확인 결과 문구는 전부
+    distinct, 반복되는 것은 주제(theme)뿐이었다. 아래 SPPV-2.79
+    참고.**
+- [x] **SPPV-2.79(신설)** "마지막 단계" 내부 재분해 — watch/
+  no_action 두 갈래와 그 입력 패턴 차이 (완료, 2026-07-20, 작성자:
+  Codex)
+  - **목적**: §67의 결론을 유지하되, `candidate_vs_final` 단계
+    내부에서 `final_intent=watch`/`no_action`을 가르는 실제 조건
+    분해(000810만 대상, 000660은 비교 대상 아님).
+  - **실측**: `candidate_intent=buy` 39건 → `final_intent=watch`
+    31건, `final_intent=no_action` 8건, `final_intent=buy` 0건.
+    `compliance_opinion`/`expected_value_gate.passed`/`strategy_
+    selection.preferred_strategy`(100% defensive_low_volatility_
+    rotation)는 두 그룹에서 완전히 동일 — 구분력 없음(다만
+    strategy_policy_mismatch는 downgrade 자체의 공통 원인).
+    구분력 있는 축: `evidence_strength`/`conviction`/`confidence`
+    (no_action만 0.0/'none'까지 하락), `regulatory_risk` 비중
+    (42%→75%, `regulatory_crackdown`은 no_action 전용).
+    `opposing_evidence` 39건 전부 distinct(매 cycle 실제 LLM
+    생성, 캐시 아님) — §67의 "거의 동일 문구 반복" 서술 정정.
+  - **판정**: 마지막 단계 병목이지만 watch/no_action 두 갈래로
+    명확히 분기. "더 앞선 숨은 축" 의심 근거 없음. 코드 변경 없음,
+    신규 KIS 호출 0건. 상세: `docs/10_signal_research_sppv/
+    [DESIGN] regime_conditional_entry_signal_v1.md` §68.
+  - 다음 과제(완화 결론 아님, 검증 대상 좁히기): `strategy_policy_
+    mismatch` 축 조건 민감도(최우선, downgrade 공통 원인) +
+    `evidence_strength`/`conviction` 계열 no_action 임계 조건 +
+    규제/이벤트 리스크 감지 파이프라인 실제 근거 확인.
 - [~] **SPPV-3** `entry_score` point-in-time 재현 및 중복 penalty ablation
   - **보류 유지, 형태 재정의 — 우선순위 재조정**: §12(1년, 자기참조
     포함) 당시 "알파 근거 강화"로 낙관했던 것이 §14(3년, 자기참조

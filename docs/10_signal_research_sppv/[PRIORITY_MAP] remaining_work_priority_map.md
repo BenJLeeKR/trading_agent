@@ -1125,8 +1125,54 @@
 
 ## 최근 메모
 
+> **📌 2026-07-20 "마지막 단계" 내부 재분해 — watch/no_action
+> 두 갈래와 그 입력 패턴 차이 (최신, 작성자: Codex)**: §67
+> (SPPV-2.78)의 "candidate까지는 무손실, `candidate_vs_final`에서
+> 100% 손실"이라는 결론은 유지한 채, 그 마지막 단계 **내부**를
+> 재분해했다(SPPV-2.79, 000810만 대상 — 000660은 비교 대상 아님).
+> **실측(조회 시각 2026-07-20 03:23 UTC, 최근 24시간, §67 대비
+> R3b reason code 66→78건·candidate_intent=buy 36→39건으로
+> cycle 누적에 따른 자연 증가)**: `candidate_intent=buy` 39건이
+> `final_intent=watch`(**31건**, decision_type=WATCH)와 `final_
+> intent=no_action`(**8건**, decision_type=HOLD)으로 갈리고,
+> `final_intent=buy`는 여전히 0건. **입력 조건 비교**: `compliance_
+> opinion`(양쪽 100% allow), `expected_value_gate.passed`(양쪽
+> 100% True), `strategy_selection.preferred_strategy`(양쪽 100%
+> `defensive_low_volatility_rotation`)는 두 그룹에서 **완전히
+> 동일** — 구분력이 없다. 이는 `strategy_policy_mismatch`(방어적
+> 전략 선택 vs R3b 모멘텀 매수 신호 충돌)가 watch/no_action을
+> 가르는 축이 **아니라, downgrade 자체(BUY→비BUY)를 일으키는
+> 공통 원인**임을 뜻한다(39/39 100%). 실제로 두 그룹을 가르는
+> 구분력 있는 축은 3개로 좁혀진다: (1) `evidence_strength`/
+> `conviction`/`confidence`의 심각도 — no_action 그룹만
+> `evidence_strength='none'`, `conviction=0.0`, `confidence=0.0`
+> 까지 하락(watch 그룹 최저 conviction=0.3, moderate 등급도
+> watch에만 존재); (2) `regulatory_risk` 계열 flag 비중 — watch
+> 42%(13/31)에서 no_action 75%(6/8)로 뚜렷이 상승, `regulatory_
+> crackdown`은 no_action 그룹에만 등장. **정정**: §67에서
+> "opposing_evidence가 36회 거의 동일 문구로 반복"이라고 서술한
+> 부분을 이번 턴 더 큰 표본(39건)으로 재확인한 결과 **문구는
+> 39건 전부 서로 다른(distinct) 문장**이었다 — 매 cycle 실제로
+> 새로 생성되는 LLM 출력이지 캐시된 고정 문자열 반복이 아니다.
+> 반복되는 것은 문구가 아니라 **주제(risk_off_tone·고변동성·
+> 전략-신호 불일치·규제 이슈)**다 — "문구 고착"이 아니라 "주제
+> 고착"으로 정정한다. **핵심 판정**: **"마지막 단계 병목이지만
+> watch/no_action 두 갈래로 명확히 분기"**한다 — `candidate_vs_
+> final` 전체를 하나로 뭉뚱그린 "AI가 다 막는다"는 설명은 부정확
+> 하다. "더 앞선 숨은 축이 다시 의심된다"는 근거는 이번 턴에서
+> 발견되지 않았다 — §67의 candidate_vs_final 단일 병목 결론은
+> 유효하며, 그 내부 구조만 명확해졌다. **다음 우선 작업**(완화
+> 결론 아님, 검증 대상 좁히기): (1) `strategy_policy_mismatch`
+> 축의 조건 민감도 재현 검증(최우선 — downgrade 자체의 유일한
+> 공통 원인, 방어적 전략 선택 로직이 R3b 신호 강도와 무관하게
+> 고정돼 있는지 확인); (2) `evidence_strength`/`conviction` 계열
+> no_action 임계 조건 재현 검증; (3) 규제/이벤트 리스크 감지
+> 파이프라인의 실제 데이터 근거 확인. 코드 변경 없음(순수 조사
+> 턴), 신규 KIS 호출 0건. 상세: `docs/10_signal_research_sppv/
+> [DESIGN] regime_conditional_entry_signal_v1.md` §68.
+
 > **📌 2026-07-20 BUY_CANDIDATE 최종 통과 0건의 직접 병목 정밀
-> 분해 (최신, 작성자: Codex)**: 이번 턴의 목표는 "차단 장치
+> 분해 (작성자: Codex)**: 이번 턴의 목표는 "차단 장치
 > 전면 완화"가 아니라 "이미 생성된 BUY_CANDIDATE가 왜 최종적으로
 > 1건도 통과하지 못하는가"를 funnel로 정확히 특정하는 것이다
 > (SPPV-2.78). **funnel 실측(24시간, R3b reason code 보유 `trade_
@@ -9040,11 +9086,29 @@ agent 설계 문서 기준으로도 순서는 다음이 맞다.
      =**정밀 보정 필요**(우선 완화 아님). R3b 작동 판정 불변. 코드
      변경 없음, 신규 KIS 호출 0건. 상세: `docs/10_signal_research_
      sppv/[DESIGN] regime_conditional_entry_signal_v1.md` §67.
-   - **SPPV-3(다음 착수: AI 최종 결정 합성기 판단의 조건 민감도
-     확인(최우선 — risk_off_tone 해제·entry_score 변화 시 실제로
-     final_intent가 바뀌는지 재현 검증) + core risk-off pre-AI
-     차단(층3, universe 91.7% 영향, 별도 트랙) 정밀 조사 + R3b
-     후보 풀 협소함 재관측 + churn guard paper 운영 표본 누적 후
+   - **SPPV-2.79(완료, 2026-07-20, "마지막 단계" 내부 재분해 —
+     watch/no_action 두 갈래와 그 입력 패턴 차이, 작성자: Codex —
+     마지막 단계 병목이지만 두 갈래 분기, R3b Conditional Go
+     유지)**: §67 결론(candidate_vs_final 단일 병목)을 유지한 채
+     내부를 재분해. `candidate_intent=buy` 39건이 `final_intent=
+     watch`(31)/`no_action`(8)/`buy`(0)로 갈림. `compliance_
+     opinion`/`expected_value_gate.passed`/`strategy_selection`
+     (100% 동일)은 구분력 없음 — `strategy_policy_mismatch`는
+     downgrade 자체의 공통 원인이지 두 그룹을 가르지 않음.
+     구분력 있는 축: `evidence_strength`/`conviction`/`confidence`
+     (no_action만 0.0/'none'까지 하락), `regulatory_risk` 비중
+     (42%→75%). §67의 "36회 거의 동일 문구 반복"은 정정 — 39건
+     전부 distinct 텍스트, 주제만 반복. 판정: 마지막 단계 병목이지만
+     watch/no_action 두 갈래로 명확히 분기, 더 앞선 숨은 축
+     의심 근거 없음. 코드 변경 없음, 신규 KIS 호출 0건. 상세:
+     `docs/10_signal_research_sppv/[DESIGN] regime_conditional_
+     entry_signal_v1.md` §68.
+   - **SPPV-3(다음 착수: `strategy_policy_mismatch` 축 조건
+     민감도 재현 검증(최우선, downgrade 공통 원인) + `evidence_
+     strength`/`conviction` 계열 no_action 임계 조건 확인 + 규제/
+     이벤트 리스크 감지 파이프라인 실제 근거 확인 + core risk-off
+     pre-AI 차단(층3, universe 91.7% 영향, 별도 트랙) 정밀 조사 +
+     R3b 후보 풀 협소함 재관측 + churn guard paper 운영 표본 누적 후
      재검증(§64 후속) +
      `trigger_status` 공급원 자동화/배치화(cron/배치 설계,
      override=true인 동안 낮은 우선순위) + 포지션 사이징 등 exit

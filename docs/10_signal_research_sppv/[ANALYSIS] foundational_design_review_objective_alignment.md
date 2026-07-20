@@ -1715,6 +1715,24 @@ value/compliance/broker가 아니라 `entry_score < 0.65`다.
   필요**(우선 완화 아님), 층2·층3은 유지. R3b 작동 판정 불변. 코드
   변경 없음, 신규 KIS 호출 0건. 상세: `docs/10_signal_research_
   sppv/[DESIGN] regime_conditional_entry_signal_v1.md` §67.
+
+- 작성자: Codex
+- 수정일자: 2026-07-20 (2.81순위, "마지막 단계" 내부 재분해 —
+  watch/no_action 두 갈래와 그 입력 패턴 차이)
+- 수정내용: §67 결론(candidate_vs_final 단일 병목)을 유지하되 그
+  내부를 재분해했다(SPPV-2.79). `candidate_intent=buy` 39건이
+  `final_intent=watch`(31)/`no_action`(8)/`buy`(0)로 갈림.
+  `compliance_opinion`/`expected_value_gate.passed`/`strategy_
+  selection`(100% 동일)은 구분력 없음 — `strategy_policy_mismatch`
+  는 downgrade 자체의 공통 원인이지 watch/no_action을 가르는
+  축이 아니다. 구분력 있는 축: `evidence_strength`/`conviction`/
+  `confidence`(no_action만 0.0/'none'까지 하락), `regulatory_risk`
+  비중(42%→75%). §67의 "36회 거의 동일 문구 반복" 서술은 정정 —
+  39건 전부 distinct 텍스트(매 cycle 실제 LLM 생성), 주제만
+  반복됨. 판정: 마지막 단계 병목이지만 watch/no_action 두 갈래로
+  명확히 분기, 더 앞선 숨은 축 의심 근거 없음. 코드 변경 없음,
+  신규 KIS 호출 0건. 상세: `docs/10_signal_research_sppv/[DESIGN]
+  regime_conditional_entry_signal_v1.md` §68.
 - **3순위(보류 유지, 형태 재정의 — 우선순위 재조정)**: **`entry_
   score`와 BUY funnel 재현** — §2.7 확장 검증에서 하락장 안정성이
   확인되지 않아 단순 재현으로는 착수하지 않는다. §2.16~§2.21에서
