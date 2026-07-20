@@ -1225,6 +1225,23 @@
   `docs/10_signal_research_sppv/[DESIGN] regime_conditional_entry_
   signal_v1.md` §68.
 
+- 작성자: Codex
+- 수정일자: 2026-07-20 (R3b 최종 병목의 조건 민감도 검증 + 신규
+  발견(expected_value_gate 정량 게이트))
+- 수정내용: watch/no_action 분기를 구간 분포·조합 빈도·극단값으로
+  재검증했다(SPPV-2.80). `candidate_intent=buy` 39→47건, **watch
+  36/no_action 9/buy 2**로 분해 — "buy 0건"이 이번 조회에서 처음
+  깨짐. 신뢰도 축은 명확한 threshold 아님, 규제flag 비율은
+  39%→89%로 상승하나 전용 축 아님. **신규 발견**: 실제 `decision_
+  type='APPROVE'` 2건이 `translation.py`의 `_has_required_
+  expected_value_anchor`에서 `expected_value_gate.passed=False`
+  (edge_after_cost_bps=8.56 < minimum_required_edge_bps=10.00,
+  1.44bps 차이)로 실제 주문 생성이 막힘 — 정성적 AI 판단과 별개인
+  정량 게이트가 새로운 최종 병목임을 코드로 확인. 판정: 아직 직접
+  분기축 단정 불가. 코드 변경 없음, 신규 KIS 호출 0건. 상세: `docs/
+  10_signal_research_sppv/[DESIGN] regime_conditional_entry_
+  signal_v1.md` §69.
+
 ---
 
 ## 관리 원칙
@@ -2852,11 +2869,26 @@
     명확히 분기. 코드 변경 없음, 신규 KIS 호출 0건. 상세: `docs/
     10_signal_research_sppv/[DESIGN] regime_conditional_entry_
     signal_v1.md` §68.
-  - **SPPV-3(다음 착수: `strategy_policy_mismatch` 축 조건 민감도
-    재현 검증(최우선) + `evidence_strength`/`conviction` 계열
-    no_action 임계 조건 확인 + 규제/이벤트 리스크 감지 파이프라인
-    실제 근거 확인 + core risk-off pre-AI 차단(층3, universe 91.7%
-    영향, 별도 트랙) 정밀 조사 + R3b 후보 풀 협소함 재관측 +
+  - **SPPV-2.80(완료, 2026-07-20, R3b 최종 병목의 조건 민감도 검증
+    + 신규 발견(expected_value_gate 정량 게이트), 작성자: Codex —
+    아직 직접 분기축 단정 불가, R3b Conditional Go 유지)**:
+    `candidate_intent=buy` 39→47건, watch 36/no_action 9/buy 2로
+    분해 — "buy 0건"이 이번 조회에서 처음 깨짐. 신뢰도 축은 명확한
+    threshold 아님, 규제flag 비율은 39%→89%로 상승하나 전용 축
+    아님. **신규 발견**: 실제 `decision_type='APPROVE'` 2건이
+    `translation.py`의 `_has_required_expected_value_anchor`에서
+    `expected_value_gate.passed=False`(edge_after_cost_bps=8.56
+    < minimum_required_edge_bps=10.00, 1.44bps 차이)로 실제 주문
+    생성이 막힘 — 정성적 AI 판단과 별개인 정량 게이트가 새로운
+    최종 병목임을 코드로 확인. 판정: 아직 직접 분기축 단정 불가.
+    코드 변경 없음, 신규 KIS 호출 0건. 상세: `docs/10_signal_
+    research_sppv/[DESIGN] regime_conditional_entry_signal_v1.md`
+    §69.
+  - **SPPV-3(다음 착수: evidence_strength/regulatory 조합 재현
+    검증(최우선) + expected_value_gate margin 반복 관측(신규,
+    중요도 상승) + 규제/이벤트 리스크 감지 파이프라인 데이터 근거
+    확인 + core risk-off pre-AI 차단(층3, universe 91.7% 영향,
+    별도 트랙) 정밀 조사 + R3b 후보 풀 협소함 재관측 +
     churn guard paper 운영 표본 누적 후 재검증(§64 후속) +
     `trigger_status` 공급원 자동화/배치화(cron/배치 설계,
     override=true인 동안 낮은 우선순위) + 포지션 사이징 등 exit

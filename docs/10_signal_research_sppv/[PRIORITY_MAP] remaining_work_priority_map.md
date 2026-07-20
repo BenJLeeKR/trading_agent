@@ -1125,8 +1125,70 @@
 
 ## 최근 메모
 
+> **📌 2026-07-20 R3b 최종 병목의 조건 민감도 검증 + 신규 발견
+> (expected_value_gate 정량 게이트) (최신, 작성자: Codex)**: §68
+> (SPPV-2.79)의 watch/no_action 분기를 구간 분포·조합 빈도·극단값
+> 사례로 정밀 재검증했다(SPPV-2.80, 완화 결론 아님, 000810만
+> 대상). **표본(조회 시각 2026-07-20 04:11 UTC, §68 대비 자연
+> 증가: candidate_intent=buy 39→47건)**: **watch 36 / no_action
+> 9 / buy 2**로 분해됐다 — §67~§68이 확정했던 "final_intent=buy
+> 0건"이 이번 조회에서 **처음으로 깨졌다**. **A. 신뢰도 축
+> (evidence_strength/conviction/confidence)**: conviction/
+> confidence 구간 분포를 보면 watch·no_action 대다수가 동일 구간
+> (conviction 0.50-0.59, confidence 0.60-0.69)에 겹쳐 있어 **뚜렷한
+> threshold는 확인되지 않는다** — no_action에서만 관측되는 진짜
+> 극단값은 `conviction=0.0, confidence=0.0, evidence_strength=
+> 'none', opposing_evidence=[]`인 **단 1건**뿐이다. **B. 규제/
+> 법률/이벤트 리스크 축**: 규제/법률 flag 보유 비율이 watch 39%
+> (14/36) → no_action 89%(8/9)로 뚜렷이 상승하나, watch 그룹에도
+> "weak evidence+규제flag" 조합이 14건 존재해 **전용 축은 아니고
+> "약한 증거+규제flag" 조합이 함께 작용하는 보조 강도 축**으로
+> 보인다. **C. 공통 배경 축**: `strategy_selection.preferred_
+> strategy`(양쪽 100% defensive_low_volatility_rotation), `compliance_
+> opinion`(양쪽 100% allow)은 표본 확대(47건)에서도 구분력이
+> 없음을 재확인 — 우선순위를 내려도 된다. **신규 발견(핵심,
+> 이번 턴 원래 질문 밖이지만 상위 질문에 직결)**: 실제 `decision_
+> type='APPROVE'` 2건(2026-07-20 04:03/04:09 UTC, 000810,
+> `conviction=0.7 confidence=0.78 evidence_strength='strong'` —
+> watch/no_action 어느 쪽보다도 신뢰도가 높음)을 코드로 직접
+> 추적한 결과, 운영 로그에 `"Decision type 'APPROVE' produced no
+> order request"`가 찍혀 있었다. `src/agent_trading/services/
+> translation.py:74-178`의 `build_submit_order_request_from_
+> decision`→`_has_required_expected_value_anchor`를 코드로 확인한
+> 결과, `expected_value_gate.passed=False`(reason_codes=
+> `["expected_value_anchor_present","expected_value_edge_below_
+> minimum_required"]`, **`edge_after_cost_bps(8.56) < minimum_
+> required_edge_bps(10.00)`, 단 1.44bps 차이**)로 인해 `submit_
+> request=None`이 반환되고, `execution_service.py`가 이를 "hold"로
+> 취급해 조용히 스킵함을 확인했다. **이것은 §67~§68이 다뤄온
+> 정성적 AI 최종 합성기(watch/no_action을 가르는 축)와 완전히
+> 별개의, 그 이후 단계에 있는 순수 정량 게이트**다 — AI가 실제로
+> "산다"고 결정해도(APPROVE) 사후 계산되는 edge_after_cost_bps
+> 기준 미달 시 조용히 무산된다. 단 1건의 실측 사례(margin
+> 1.44bps)이므로 이 게이트가 구조적으로 자주 근소하게 막는지,
+> 이번이 우연히 근접했을 뿐인지는 이번 턴 근거만으로는 확정할 수
+> 없다. **핵심 질문 답변**: (질문1) 단일 축으로 명확히 확정되지
+> 않는다 — "신뢰도(극단적으로 낮은 값)와 규제 리스크 강도가 함께
+> 작용할 때 no_action 쪽으로 기운다"는 것이 가장 근접한 답. (질문2)
+> 단순 임계값이 아니라 "evidence_strength=weak/none + regulatory
+> flag 보유"가 함께 나타날 때 no_action 비중이 높아지는 **상관관계
+> 수준**이며, 단일 값의 명확한 컷오프는 확인되지 않는다. **핵심
+> 판정**: **"아직 직접 분기축이라 단정 불가"** — 신뢰도+규제 조합이
+> 가장 유력한 후보로 좁혀졌고, `strategy_policy_mismatch`류
+> 공통 배경 축은 우선순위를 내려도 된다. 코드 변경 없음(순수 조사
+> 턴), 신규 KIS 호출 0건. **다음 우선 작업**(정밀 재현 검증 중심,
+> 완화안 아님): (1) evidence_strength/regulatory 조합의 재현 검증
+> (최우선 — "weak+규제flag" 조합의 조건부 no_action 비율을 표본
+> 누적 후 정량화); (2) expected_value_gate margin의 반복 관측
+> (신규, 중요도 상승 — edge_after_cost_bps가 minimum_required_
+> edge_bps에 근접하는 빈도·margin 분포 추적, 이번 1.44bps 근소
+> 미달이 우연인지 구조적 패턴인지 확인); (3) 규제/이벤트 리스크
+> 감지 파이프라인 자체의 데이터 근거 확인. 상세: `docs/10_signal_
+> research_sppv/[DESIGN] regime_conditional_entry_signal_v1.md`
+> §69.
+
 > **📌 2026-07-20 "마지막 단계" 내부 재분해 — watch/no_action
-> 두 갈래와 그 입력 패턴 차이 (최신, 작성자: Codex)**: §67
+> 두 갈래와 그 입력 패턴 차이 (작성자: Codex)**: §67
 > (SPPV-2.78)의 "candidate까지는 무손실, `candidate_vs_final`에서
 > 100% 손실"이라는 결론은 유지한 채, 그 마지막 단계 **내부**를
 > 재분해했다(SPPV-2.79, 000810만 대상 — 000660은 비교 대상 아님).
@@ -9103,12 +9165,29 @@ agent 설계 문서 기준으로도 순서는 다음이 맞다.
      의심 근거 없음. 코드 변경 없음, 신규 KIS 호출 0건. 상세:
      `docs/10_signal_research_sppv/[DESIGN] regime_conditional_
      entry_signal_v1.md` §68.
-   - **SPPV-3(다음 착수: `strategy_policy_mismatch` 축 조건
-     민감도 재현 검증(최우선, downgrade 공통 원인) + `evidence_
-     strength`/`conviction` 계열 no_action 임계 조건 확인 + 규제/
-     이벤트 리스크 감지 파이프라인 실제 근거 확인 + core risk-off
-     pre-AI 차단(층3, universe 91.7% 영향, 별도 트랙) 정밀 조사 +
-     R3b 후보 풀 협소함 재관측 + churn guard paper 운영 표본 누적 후
+   - **SPPV-2.80(완료, 2026-07-20, R3b 최종 병목의 조건 민감도
+     검증 + 신규 발견(expected_value_gate 정량 게이트), 작성자:
+     Codex — 아직 직접 분기축 단정 불가, R3b Conditional Go
+     유지)**: `candidate_intent=buy` 39→47건, **watch 36/no_
+     action 9/buy 2**로 분해 — "buy 0건"이 이번 조회에서 처음
+     깨짐. 신뢰도 축은 명확한 threshold 아님(no_action 극단값
+     1건뿐), 규제flag 비율은 39%→89%로 상승하나 전용 축 아님
+     ("weak+규제flag" 조합이 보조 강도 축). **신규 발견**: 실제
+     `decision_type='APPROVE'` 2건이 `translation.py`의
+     `_has_required_expected_value_anchor`에서 `expected_value_
+     gate.passed=False`(edge_after_cost_bps=8.56 <
+     minimum_required_edge_bps=10.00, 1.44bps 차이)로 실제 주문
+     생성이 막힘 — 정성적 AI 판단과 별개인 정량 게이트가 새로운
+     최종 병목임을 코드로 확인. 판정: 아직 직접 분기축 단정 불가
+     (신뢰도+규제 조합 유력). 코드 변경 없음, 신규 KIS 호출 0건.
+     상세: `docs/10_signal_research_sppv/[DESIGN] regime_
+     conditional_entry_signal_v1.md` §69.
+   - **SPPV-3(다음 착수: evidence_strength/regulatory 조합 재현
+     검증(최우선) + expected_value_gate margin 반복 관측(신규,
+     중요도 상승) + 규제/이벤트 리스크 감지 파이프라인 데이터 근거
+     확인 + core risk-off pre-AI 차단(층3, universe 91.7% 영향,
+     별도 트랙) 정밀 조사 + R3b 후보 풀 협소함 재관측 + churn
+     guard paper 운영 표본 누적 후
      재검증(§64 후속) +
      `trigger_status` 공급원 자동화/배치화(cron/배치 설계,
      override=true인 동안 낮은 우선순위) + 포지션 사이징 등 exit

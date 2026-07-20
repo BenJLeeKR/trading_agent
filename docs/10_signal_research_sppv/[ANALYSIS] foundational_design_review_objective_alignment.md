@@ -1733,6 +1733,25 @@ value/compliance/broker가 아니라 `entry_score < 0.65`다.
   명확히 분기, 더 앞선 숨은 축 의심 근거 없음. 코드 변경 없음,
   신규 KIS 호출 0건. 상세: `docs/10_signal_research_sppv/[DESIGN]
   regime_conditional_entry_signal_v1.md` §68.
+
+- 작성자: Codex
+- 수정일자: 2026-07-20 (2.82순위, R3b 최종 병목의 조건 민감도 검증
+  + 신규 발견(expected_value_gate 정량 게이트))
+- 수정내용: watch/no_action 분기를 구간 분포·조합 빈도·극단값으로
+  재검증했다(SPPV-2.80). `candidate_intent=buy` 39→47건, **watch
+  36/no_action 9/buy 2**로 분해 — §79의 "buy 0건"이 이번 조회에서
+  처음 깨짐. 신뢰도 축은 대부분 구간이 겹쳐 명확한 threshold가
+  아니고, no_action 유일 극단값 1건만 확인. 규제 flag 비율은
+  watch 39%→no_action 89%로 상승하나 전용 축 아님. **신규 발견**:
+  실제 `decision_type='APPROVE'` 2건이 `translation.py`의
+  `_has_required_expected_value_anchor`에서 `expected_value_gate.
+  passed=False`(edge_after_cost_bps=8.56 < minimum_required_
+  edge_bps=10.00, 1.44bps 차이)로 실제 주문 생성이 막힘 — AI 정성
+  판단과 별개인 정량 게이트가 새로운 최종 병목임을 코드로 확인.
+  판정: 아직 직접 분기축 단정 불가(신뢰도+규제 조합 유력 후보).
+  코드 변경 없음, 신규 KIS 호출 0건. 상세: `docs/10_signal_
+  research_sppv/[DESIGN] regime_conditional_entry_signal_v1.md`
+  §69.
 - **3순위(보류 유지, 형태 재정의 — 우선순위 재조정)**: **`entry_
   score`와 BUY funnel 재현** — §2.7 확장 검증에서 하락장 안정성이
   확인되지 않아 단순 재현으로는 착수하지 않는다. §2.16~§2.21에서
