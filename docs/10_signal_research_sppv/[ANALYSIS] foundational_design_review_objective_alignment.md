@@ -1836,6 +1836,17 @@ value/compliance/broker가 아니라 `entry_score < 0.65`다.
   EV threshold 민감도. SPPV와 가장 직접 연결되는 축은 1위로 판정.
   상세: `docs/10_signal_research_sppv/[DESIGN] regime_conditional_
   entry_signal_v1.md` §74.
+
+- 작성자: Codex
+- 수정일자: 2026-07-20 (2.88순위, EV gate/submit 차단 완화 후보
+  선정 — 최소 검증 후 즉시 전진)
+- 수정내용: A안이 완화 검토의 선행조건이 아님을 확인, 건너뛰고
+  완화 검토로 진행(SPPV-2.86, 코드 수정 없음). 완화 후보를 전역
+  threshold 완화 / margin 근소부족 조건부 완화 2개로 압축, 1순위
+  **margin 근소부족 조건부 완화** 선정(방어 약화 위험 최소, 현재
+  표본과 최직접 관련). 다음 턴 즉시 실행용 shadow 검증 프롬프트
+  작성 완료. 상세: `docs/10_signal_research_sppv/[DESIGN] regime_
+  conditional_entry_signal_v1.md` §75.
 - **3순위(보류 유지, 형태 재정의 — 우선순위 재조정)**: **`entry_
   score`와 BUY funnel 재현** — §2.7 확장 검증에서 하락장 안정성이
   확인되지 않아 단순 재현으로는 착수하지 않는다. §2.16~§2.21에서

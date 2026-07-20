@@ -9439,9 +9439,26 @@ agent 설계 문서 기준으로도 순서는 다음이 맞다.
      추천. 코드 변경 없음, 신규 KIS 호출 0건. 상세: `docs/10_signal_
      research_sppv/[DESIGN] regime_conditional_entry_signal_v1.md`
      §74.
-   - **SPPV-3(다음 착수: pre-AI 차단(층3, risk_off ranking blocked)
-     축 재검증(11/12종목 영향, 최우선) +
-     candidate_vs_final downgrade 축 재검증(2순위) +
+   - **SPPV-2.86(완료, 2026-07-20, EV gate/submit 차단 완화 후보
+     선정 — 최소 검증 후 즉시 전진, 작성자: Codex — margin
+     근소부족 조건부 완화 1순위 선정, 코드 수정 없음)**: A안이
+     완화 검토의 선행조건이 아님을 확인, 건너뛰고 완화 검토로
+     진행. 완화 후보를 전역 threshold 완화 / margin 근소부족
+     조건부 완화 2개로 압축("submit 차단 조건 자체 완화"는 방패
+     전부 걷어내기 위험으로 배제). 1순위: **margin 근소부족
+     조건부 완화**(부족분≤2bps 한정) — 방어 약화 위험 최소, 현재
+     표본(000810, 부족분 1.44bps)과 최직접 관련. 다음 턴 즉시
+     실행용 shadow 검증 프롬프트(전역 threshold/코드 변경 없이
+     조건부 통과 시뮬레이션 + 과잉 완화 여부 교차검증) 작성 완료.
+     코드 변경 없음, 신규 KIS 호출 0건. 상세: `docs/10_signal_
+     research_sppv/[DESIGN] regime_conditional_entry_signal_v1.md`
+     §75.
+   - **SPPV-3(다음 착수: margin 근소부족 조건부 완화(부족분≤2bps)
+     shadow 실측 검증(§75.5 프롬프트, 최우선 — 이번 턴 사용자
+     지시로 pre-AI 축보다 우선) +
+     pre-AI 차단(층3, risk_off ranking blocked)
+     축 재검증(11/12종목 영향, 차순위) +
+     candidate_vs_final downgrade 축 재검증 +
      후보 A(same-snapshot 재평가 억제, 최초
      BUY 경로 확장) 실제 설계/코드 검토 착수(보정 계층·상태 저장소
      재사용안 확정, 구조 정리 트랙) +

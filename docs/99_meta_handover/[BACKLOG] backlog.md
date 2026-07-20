@@ -1322,6 +1322,19 @@
   signal_research_sppv/[DESIGN] regime_conditional_entry_signal_
   v1.md` §74.
 
+- 작성자: Codex
+- 수정일자: 2026-07-20 (EV gate/submit 차단 완화 후보 선정 — 최소
+  검증 후 즉시 전진)
+- 수정내용: A안이 완화 검토의 선행조건이 아님을 확인, 건너뛰고
+  완화 검토로 진행(SPPV-2.86, 코드 수정 없음). 완화 후보를 전역
+  threshold 완화 / margin 근소부족 조건부 완화 2개로 압축. 1순위
+  **margin 근소부족 조건부 완화** 선정 — 방어 약화 위험 최소,
+  현재 표본과 최직접 관련. 다음 턴 즉시 실행용 shadow 검증
+  프롬프트 작성 완료(이번 턴 사용자 지시로 pre-AI 축보다 우선
+  순위 재조정). 코드 변경 없음, 신규 KIS 호출 0건. 상세: `docs/10_
+  signal_research_sppv/[DESIGN] regime_conditional_entry_signal_
+  v1.md` §75.
+
 ---
 
 ## 관리 원칙

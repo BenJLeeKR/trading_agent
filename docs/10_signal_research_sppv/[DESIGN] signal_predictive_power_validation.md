@@ -1857,6 +1857,21 @@ entry 설계 검토로 전환**을 확정했다. 별도 문서
   research_sppv/[DESIGN] regime_conditional_entry_signal_v1.md`
   §74.
 
+- 작성자: Codex
+- 수정일자: 2026-07-20 (86차, EV gate/submit 차단 완화 후보 선정
+  — 최소 검증 후 즉시 전진)
+- 수정내용: 구조 보정(A안)이 완화 검토의 선행조건이 아님을 확인 —
+  판정 로직 불변이라 완화 실험과 독립적이므로 건너뛰고 바로 완화
+  검토로 진행 가능(SPPV-2.86, 코드 수정 없음). 완화 후보를
+  전역 threshold 완화 / margin 근소부족 조건부 완화 2개로 압축(
+  "submit 차단 조건 자체 완화"는 방패 전부 걷어내기 위험으로 배제).
+  1순위: **margin 근소부족 조건부 완화** — 현재 표본과 가장
+  직접 관련되고 방어 약화 위험이 가장 낮음. 다음 턴 즉시 실행용
+  shadow 검증 프롬프트 작성(전역 threshold/코드 변경 없이 조건부
+  통과 시뮬레이션 + 과잉 완화 여부 교차검증). 코드 변경 없음, 신규
+  KIS 호출 0건. 상세: `docs/10_signal_research_sppv/[DESIGN]
+  regime_conditional_entry_signal_v1.md` §75.
+
 ---
 
 ## 진행 체크리스트
