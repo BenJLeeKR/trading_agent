@@ -9423,9 +9423,28 @@ agent 설계 문서 기준으로도 순서는 다음이 맞다.
      비교축, paper 관측 지표) 기록 완료. 코드 변경 없음, 신규 KIS
      호출 0건. 상세: `docs/10_signal_research_sppv/[DESIGN] regime_
      conditional_entry_signal_v1.md` §73.
-   - **SPPV-3(다음 착수: 후보 A(same-snapshot 재평가 억제, 최초
+   - **SPPV-2.85(완료, 2026-07-20, 구조 정리(후보 A) vs 실제 BUY
+     증가 병목 — 다음 검증 우선순위 정리, 작성자: Codex — pre-AI
+     차단 축 1순위 지정, 코드 수정 없음)**: 후보 A를 "BUY 차단
+     완화"/"판정 기준 완화"와 구분해 "동일 정보 반복 평가/저장
+     억제"로 재정의하고 구조 정리 트랙(위생 작업, 후순위)으로
+     확정. 병목을 구조 정리 vs 실제 BUY 증가로 재분류 — 다음 검증
+     **1위: pre-AI 차단(층3, `eligibility_core_risk_off_ranking_
+     blocked`, 유니버스 11/12종목 영향) 재검증**(지금까지 EV gate
+     분석이 이 축에서 유일하게 자유로운 000810 1개 종목에 국한됐음
+     을 근거), **2위: candidate_vs_final downgrade 축**, **3위:
+     EV threshold 민감도**(표본 협소로 후순위). SPPV와 가장 직접
+     연결되는 축은 1위로 판정, 충돌 없음 확인. 다음 턴 프롬프트
+     후보 2개(구조 정리용 A / 실제 BUY 증가 검증용 B) 제시, B 우선
+     추천. 코드 변경 없음, 신규 KIS 호출 0건. 상세: `docs/10_signal_
+     research_sppv/[DESIGN] regime_conditional_entry_signal_v1.md`
+     §74.
+   - **SPPV-3(다음 착수: pre-AI 차단(층3, risk_off ranking blocked)
+     축 재검증(11/12종목 영향, 최우선) +
+     candidate_vs_final downgrade 축 재검증(2순위) +
+     후보 A(same-snapshot 재평가 억제, 최초
      BUY 경로 확장) 실제 설계/코드 검토 착수(보정 계층·상태 저장소
-     재사용안 확정) +
+     재사용안 확정, 구조 정리 트랙) +
      SPPV 계열 문서의 APPROVE 관련 서술을 GUIDE §8-1/§9 기준으로
      정합화(후속 문서 정리) + 모니터링/리포팅 지표 정의 정리(BUY_
      CANDIDATE/APPROVE/order_request 3분리 지표, 운영팀 결정 필요) +

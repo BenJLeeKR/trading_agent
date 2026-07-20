@@ -1836,6 +1836,27 @@ entry 설계 검토로 전환**을 확정했다. 별도 문서
   코드 변경 없음, 신규 KIS 호출 0건. 상세: `docs/10_signal_research_
   sppv/[DESIGN] regime_conditional_entry_signal_v1.md` §73.
 
+- 작성자: Codex
+- 수정일자: 2026-07-20 (85차, 구조 정리(후보 A) vs 실제 BUY 증가
+  병목 — 다음 검증 우선순위 정리)
+- 수정내용: 후보 A(same-snapshot 재평가 억제)의 역할을 "BUY 차단
+  완화"/"판정 기준 완화"와 명확히 구분해 "동일 정보에 대한 반복
+  평가/저장 억제"로 재정의하고, "먼저 해둘 만한 위생 작업이나
+  실제 BUY 증가와는 독립적인 별개 축"으로 위치를 확정했다(SPPV-
+  2.85, 코드 수정 없음). 병목을 구조 정리(A안, EV gate 계산 구조
+  보정)와 실제 BUY 증가 병목(pre-AI 차단/candidate_vs_final
+  downgrade 축/EV threshold 민감도)으로 재분류. 다음 검증 우선순위:
+  **1위 pre-AI 차단(층3, risk_off ranking blocked, 유니버스
+  11/12종목 영향) 재검증** — 지금까지 EV gate 분석이 이 축에
+  걸리지 않는 유일한 예외인 000810 1개 종목에 국한돼 있었음을
+  근거로 최우선 지정. 2위 candidate_vs_final downgrade 축, 3위
+  EV threshold 민감도(표본 협소로 후순위). SPPV 목표와 가장
+  직접 연결되는 축은 1위(pre-AI 차단)로 판정. 다음 턴 프롬프트
+  후보 2개(구조 정리용 A, 실제 BUY 증가 검증용 B) 제시, B를 우선
+  추천. 코드 변경 없음, 신규 KIS 호출 0건. 상세: `docs/10_signal_
+  research_sppv/[DESIGN] regime_conditional_entry_signal_v1.md`
+  §74.
+
 ---
 
 ## 진행 체크리스트

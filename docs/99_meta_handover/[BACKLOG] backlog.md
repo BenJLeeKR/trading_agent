@@ -1309,6 +1309,19 @@
   변경 없음, 신규 KIS 호출 0건. 상세: `docs/10_signal_research_
   sppv/[DESIGN] regime_conditional_entry_signal_v1.md` §73.
 
+- 작성자: Codex
+- 수정일자: 2026-07-20 (구조 정리(후보 A) vs 실제 BUY 증가 병목 —
+  다음 검증 우선순위 정리)
+- 수정내용: 후보 A를 "동일 정보 반복 평가/저장 억제"로 재정의,
+  구조 정리 트랙(위생 작업, 후순위)으로 확정(SPPV-2.85, 코드 수정
+  없음). 다음 검증 1위 pre-AI 차단(층3, 유니버스 11/12종목 영향),
+  2위 candidate_vs_final downgrade 축, 3위 EV threshold 민감도로
+  우선순위 지정. SPPV와 가장 직접 연결되는 축은 1위. 다음 턴
+  프롬프트 후보 2개(구조 정리 A / 실제 BUY 증가 검증 B) 제시, B
+  우선 추천. 코드 변경 없음, 신규 KIS 호출 0건. 상세: `docs/10_
+  signal_research_sppv/[DESIGN] regime_conditional_entry_signal_
+  v1.md` §74.
+
 ---
 
 ## 관리 원칙

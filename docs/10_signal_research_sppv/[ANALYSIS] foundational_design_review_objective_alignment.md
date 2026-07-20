@@ -1822,6 +1822,20 @@ value/compliance/broker가 아니라 `entry_score < 0.65`다.
   확인(판정 기준을 낮추지 않으므로 방어 약화 아님). 상세: `docs/10_
   signal_research_sppv/[DESIGN] regime_conditional_entry_signal_
   v1.md` §73.
+
+- 작성자: Codex
+- 수정일자: 2026-07-20 (2.87순위, 구조 정리(후보 A) vs 실제 BUY
+  증가 병목 — 다음 검증 우선순위 정리)
+- 수정내용: 후보 A를 "BUY 차단 완화"가 아닌 "동일 정보 반복
+  평가/저장 억제"로 재정의하고 구조 정리 트랙(먼저 해둘 위생
+  작업이나 후순위)으로 확정했다(SPPV-2.85, 코드 수정 없음). 병목을
+  구조 정리 vs 실제 BUY 증가로 재분류하고, 다음 검증 1위로 **pre-AI
+  차단(층3, 유니버스 11/12종목 영향)**을 지정 — 지금까지의 EV gate
+  분석이 이 축에 걸리지 않는 유일한 예외 종목(000810) 1개에
+  국한됐음을 근거로 함. 2위 candidate_vs_final downgrade 축, 3위
+  EV threshold 민감도. SPPV와 가장 직접 연결되는 축은 1위로 판정.
+  상세: `docs/10_signal_research_sppv/[DESIGN] regime_conditional_
+  entry_signal_v1.md` §74.
 - **3순위(보류 유지, 형태 재정의 — 우선순위 재조정)**: **`entry_
   score`와 BUY funnel 재현** — §2.7 확장 검증에서 하락장 안정성이
   확인되지 않아 단순 재현으로는 착수하지 않는다. §2.16~§2.21에서
