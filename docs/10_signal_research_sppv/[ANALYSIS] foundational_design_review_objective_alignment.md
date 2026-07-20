@@ -1847,6 +1847,17 @@ value/compliance/broker가 아니라 `entry_score < 0.65`다.
   표본과 최직접 관련). 다음 턴 즉시 실행용 shadow 검증 프롬프트
   작성 완료. 상세: `docs/10_signal_research_sppv/[DESIGN] regime_
   conditional_entry_signal_v1.md` §75.
+
+- 작성자: Codex
+- 수정일자: 2026-07-20 (2.89순위, margin 근소부족 조건부 완화
+  shadow 실측 검증)
+- 수정내용: 완화안 1(≤2.0bps)/2(≤3.5bps)를 3~30일 창으로 실측
+  (SPPV-2.87, 코드 변경 없음). 현행 24건 중 23/24건 통과 가능,
+  전량 000810·전량 오늘 하루·전량 동일 snapshot 반복. 30일 전체
+  에서도 이 조건이 발생한 날이 오늘뿐. 과잉 완화 위험은 낮으나
+  표본이 단일 종목·단일일에 압도적으로 집중돼 **판정: Watch**.
+  A안과 독립적. 상세: `docs/10_signal_research_sppv/[DESIGN]
+  regime_conditional_entry_signal_v1.md` §76.
 - **3순위(보류 유지, 형태 재정의 — 우선순위 재조정)**: **`entry_
   score`와 BUY funnel 재현** — §2.7 확장 검증에서 하락장 안정성이
   확인되지 않아 단순 재현으로는 착수하지 않는다. §2.16~§2.21에서

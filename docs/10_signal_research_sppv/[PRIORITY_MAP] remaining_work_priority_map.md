@@ -9453,11 +9453,24 @@ agent 설계 문서 기준으로도 순서는 다음이 맞다.
      코드 변경 없음, 신규 KIS 호출 0건. 상세: `docs/10_signal_
      research_sppv/[DESIGN] regime_conditional_entry_signal_v1.md`
      §75.
-   - **SPPV-3(다음 착수: margin 근소부족 조건부 완화(부족분≤2bps)
-     shadow 실측 검증(§75.5 프롬프트, 최우선 — 이번 턴 사용자
-     지시로 pre-AI 축보다 우선) +
+   - **SPPV-2.87(완료, 2026-07-20, margin 근소부족 조건부 완화
+     shadow 실측 검증, 작성자: Codex — 판정 Watch, 코드 수정
+     없음)**: 완화안 1(부족분≤2.0bps)/2(≤3.5bps)를 3일/7일/30일
+     창으로 실측. 현행 APPROVE&EV-fail 24건 중 완화안1 23건,
+     완화안2 24건 통과 가능 — **전량 000810, 전량 2026-07-20
+     하루, 전량 동일 signal_feature_snapshot(07-16 배치) 반복**.
+     30일 전체를 봐도 이 조건 발생일이 오늘뿐임을 확인. 과잉 완화
+     위험은 낮으나(단일 종목·단일일 집중) 표본이 얇아 "의미 있는
+     BUY 증가"로 단정하기엔 이름. forward return 확인 불가(데이터
+     부재). **판정: Watch** — No-Go 아님(위험 낮음), Conditional
+     Go로 바로 승격하기엔 단일 종목·단일 거래일 편중 압도적. A안과
+     독립. 다음 우선 작업: 며칠 더 누적 관찰 후 재판정. 코드 변경
+     없음, 신규 KIS 호출 0건. 상세: `docs/10_signal_research_sppv/
+     [DESIGN] regime_conditional_entry_signal_v1.md` §76.
+   - **SPPV-3(다음 착수: margin 근소부족 조건부 완화 누적 관찰
+     연장(며칠 더 지켜본 뒤 Watch→Conditional Go 재판정) +
      pre-AI 차단(층3, risk_off ranking blocked)
-     축 재검증(11/12종목 영향, 차순위) +
+     축 재검증(11/12종목 영향, 병행 검토) +
      candidate_vs_final downgrade 축 재검증 +
      후보 A(same-snapshot 재평가 억제, 최초
      BUY 경로 확장) 실제 설계/코드 검토 착수(보정 계층·상태 저장소

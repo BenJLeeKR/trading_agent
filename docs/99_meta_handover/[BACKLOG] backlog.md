@@ -1335,6 +1335,18 @@
   signal_research_sppv/[DESIGN] regime_conditional_entry_signal_
   v1.md` §75.
 
+- 작성자: Codex
+- 수정일자: 2026-07-20 (margin 근소부족 조건부 완화 shadow 실측
+  검증)
+- 수정내용: 완화안 1(≤2.0bps)/2(≤3.5bps)를 3~30일 창으로 실측
+  (SPPV-2.87, 코드 변경 없음). 현행 24건 중 23/24건 통과 가능,
+  전량 000810·전량 오늘 하루·전량 동일 snapshot 반복. 30일
+  전체에서도 이 조건 발생일이 오늘뿐. 과잉 완화 위험 낮으나 표본이
+  단일 종목·단일일에 압도적 집중 — **판정: Watch**. A안과 독립적.
+  다음 우선 작업: 며칠 더 누적 관찰 후 재판정. 코드 변경 없음,
+  신규 KIS 호출 0건. 상세: `docs/10_signal_research_sppv/[DESIGN]
+  regime_conditional_entry_signal_v1.md` §76.
+
 ---
 
 ## 관리 원칙

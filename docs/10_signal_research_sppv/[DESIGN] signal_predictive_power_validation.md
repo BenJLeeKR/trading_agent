@@ -1872,6 +1872,25 @@ entry 설계 검토로 전환**을 확정했다. 별도 문서
   KIS 호출 0건. 상세: `docs/10_signal_research_sppv/[DESIGN]
   regime_conditional_entry_signal_v1.md` §75.
 
+- 작성자: Codex
+- 수정일자: 2026-07-20 (87차, margin 근소부족 조건부 완화 shadow
+  실측 검증)
+- 수정내용: 완화안 1(부족분≤2.0bps)/완화안 2(부족분≤3.5bps)를
+  3일/7일/30일 창으로 실측(SPPV-2.87, 코드 변경 없음). 현행
+  APPROVE&EV-fail 24건 중 완화안1 23건, 완화안2 24건 통과 가능 —
+  전량 000810, 전량 2026-07-20 하루, 전량 동일 signal_feature_
+  snapshot(2026-07-16 배치) 반복. 30일 전체를 봐도 이 조건이
+  발생한 날이 오늘뿐임을 확인 — 과잉 완화 위험은 낮으나(단일
+  종목·단일일 집중) 동시에 표본이 너무 얇아 "의미 있는 BUY 증가"
+  로 단정하기도 이르다. forward return은 확인 불가(데이터 부재,
+  전량 당일 결정이라 미래 데이터 자체가 없음). **판정: Watch** —
+  No-Go는 아니나(위험 낮음) Conditional Go로 바로 승격하기엔
+  단일 종목·단일 거래일 편중이 압도적. A안(same-snapshot 억제)
+  과는 독립적 — A안 없이도 이번 검증은 유효. 다음 우선 작업:
+  누적 관찰 연장 후 재판정. 코드 변경 없음, 신규 KIS 호출 0건.
+  상세: `docs/10_signal_research_sppv/[DESIGN] regime_conditional_
+  entry_signal_v1.md` §76.
+
 ---
 
 ## 진행 체크리스트
