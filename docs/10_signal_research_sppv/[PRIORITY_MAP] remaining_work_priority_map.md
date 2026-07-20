@@ -9389,11 +9389,31 @@ agent 설계 문서 기준으로도 순서는 다음이 맞다.
      재확인(24h, 05:18 UTC): APPROVE 14건, 동일 패턴 유지. 코드
      변경 없음, 신규 KIS 호출 0건. 상세: `docs/10_signal_research_
      sppv/[DESIGN] regime_conditional_entry_signal_v1.md` §71.
-   - **SPPV-3(다음 착수: SPPV 계열 문서의 APPROVE 관련 서술을
-     GUIDE §8-1/§9 기준으로 정합화(후속 문서 정리) + 모니터링/
-     리포팅 지표 정의 정리(BUY_CANDIDATE/APPROVE/order_request
-     3분리 지표, 운영팀 결정 필요) + edge_after_cost_bps=8.56이
-     여러 날짜에도 반복되는지 후속 누적 관찰 + evidence_strength/
+   - **SPPV-2.83(완료, 2026-07-20, `expected_value_gate` 계산 구조
+     자체의 설계 타당성 검증, 작성자: Codex — 설계 미스매치 판정,
+     구조 보정안 설계 검토를 다음 최우선으로)**: 원 설계 문서(`
+     [DESIGN] expected_return_holding_horizon_and_churn_control_
+     refactor.md` §6)가 입력 신선도(일봉/장중/실시간)를 규정한 적이
+     없는 공백임을 확인. 반면 `reverse_trade_hysteresis.py`는
+     reverse trade 재진입에 same-snapshot 재판단 억제 원칙을 이미
+     구현했으나, 최초 BUY 후보 평가에는 이 원칙이 적용되지 않는
+     비대칭 확인. `signal_feature_snapshots` 갱신 주기(1거래일 1회,
+     약 11:11 UTC) vs decision loop 재평가 주기(기본 300초) —
+     하루 최대 약 70~90회 동일 snapshot 재평가 가능. 판정: **입력
+     캐던스와 재평가 캐던스 사이의 설계 미스매치(문서화되지 않은
+     공백)** — 판단 정확성 왜곡 증거는 없으나 구조적 비효율. 구조적
+     메커니즘은 전 종목 일반화 가능, "1.44bps 부족" 수치는 종목
+     특수값으로 일반화 불가. 다음 최우선: EV gate 계산 구조 보정안
+     설계 검토(threshold 민감도 검증보다 우선). 코드 변경 없음,
+     신규 KIS 호출 0건. 상세: `docs/10_signal_research_sppv/[DESIGN]
+     regime_conditional_entry_signal_v1.md` §72.
+   - **SPPV-3(다음 착수: EV gate 계산 구조 보정안 설계 검토(same-
+     snapshot 재평가 스킵/재사용 등, threshold 민감도보다 우선) +
+     SPPV 계열 문서의 APPROVE 관련 서술을 GUIDE §8-1/§9 기준으로
+     정합화(후속 문서 정리) + 모니터링/리포팅 지표 정의 정리(BUY_
+     CANDIDATE/APPROVE/order_request 3분리 지표, 운영팀 결정 필요) +
+     edge_after_cost_bps=8.56이 여러 날짜에도 반복되는지 후속 누적
+     관찰 + evidence_strength/
      regulatory 조합 재현 검증 + expected_
      value_gate margin 반복 관측 + 규제/이벤트 리스크 감지
      파이프라인 데이터 근거 확인 + core risk-off pre-AI 차단(층3,

@@ -1792,6 +1792,22 @@ value/compliance/broker가 아니라 `entry_score < 0.65`다.
   코드 변경 없음, 신규 KIS 호출 0건. 상세: `docs/10_signal_
   research_sppv/[DESIGN] regime_conditional_entry_signal_v1.md`
   §71.
+
+- 작성자: Codex
+- 수정일자: 2026-07-20 (2.85순위, `expected_value_gate` 계산 구조
+  자체의 설계 타당성 검증)
+- 수정내용: threshold를 만지지 않고 "일봉 1회 snapshot 기반 입력을
+  분단위 decision loop가 반복 재평가하는 구조"의 설계 타당성만
+  검증했다(SPPV-2.83, 코드 수정안 없음). 원 설계 문서가 입력
+  신선도를 규정한 적이 없는 공백임을 확인했고, reverse trade
+  재진입에는 이미 same-snapshot 재판단 억제 원칙이 구현돼 있는데
+  최초 BUY 후보 평가에는 적용되지 않는 비대칭을 확인했다. 판정:
+  입력 캐던스(일봉)와 재평가 캐던스(분단위) 사이의 **설계
+  미스매치(문서화되지 않은 공백)** — threshold 문제가 아니라 구조
+  문제. 다음 최우선으로 EV gate 계산 구조 보정안 설계 검토를
+  threshold 민감도 검증보다 우선 채택. 코드 변경 없음, 신규 KIS
+  호출 0건. 상세: `docs/10_signal_research_sppv/[DESIGN] regime_
+  conditional_entry_signal_v1.md` §72.
 - **3순위(보류 유지, 형태 재정의 — 우선순위 재조정)**: **`entry_
   score`와 BUY funnel 재현** — §2.7 확장 검증에서 하락장 안정성이
   확인되지 않아 단순 재현으로는 착수하지 않는다. §2.16~§2.21에서

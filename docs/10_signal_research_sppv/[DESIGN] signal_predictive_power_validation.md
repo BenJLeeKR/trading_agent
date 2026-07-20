@@ -1795,6 +1795,25 @@ entry 설계 검토로 전환**을 확정했다. 별도 문서
   research_sppv/[DESIGN] regime_conditional_entry_signal_v1.md`
   §71.
 
+- 작성자: Codex
+- 수정일자: 2026-07-20 (83차, `expected_value_gate` 계산 구조
+  자체의 설계 타당성 검증)
+- 수정내용: threshold 조정이 아니라 "일봉 1회 snapshot 기반 입력을
+  분단위 decision loop가 반복 재평가하는 구조"가 설계상 타당한지
+  검증했다(SPPV-2.83, 코드 수정안 없음). EV gate 원 설계 문서
+  (`[DESIGN] expected_return_holding_horizon_and_churn_control_
+  refactor.md` §6)는 입력 신선도를 규정하지 않는 공백이며, 반면
+  같은 코드베이스는 reverse trade 재진입에는 이미 same-snapshot
+  재판단 억제 원칙을 채택·구현(`reverse_trade_hysteresis.py`)했으나
+  최초 BUY 후보 평가에는 적용하지 않는다는 비대칭을 확인했다.
+  판정: 입력 캐던스(일봉)와 재평가 캐던스(분단위, 기본 300초) 사이의
+  **설계 미스매치(문서화되지 않은 공백)**. 구조적 메커니즘(4개 EV
+  입력의 snapshot 결합)은 전 종목 일반화 가능하나 "1.44bps 부족"
+  수치 자체는 종목 특수값으로 일반화 불가. 다음 최우선으로 EV gate
+  계산 구조 보정안 설계 검토를 threshold 민감도 검증보다 우선 채택.
+  코드 변경 없음, 신규 KIS 호출 0건. 상세: `docs/10_signal_research_
+  sppv/[DESIGN] regime_conditional_entry_signal_v1.md` §72.
+
 ---
 
 ## 진행 체크리스트
@@ -4411,6 +4430,34 @@ canonical),
     정합화(후속 문서 정리); 모니터링/리포팅 지표 정의 정리(운영팀
     결정 필요); edge_after_cost_bps=8.56 반복이 여러 날짜에도
     지속되는지 후속 거래일 누적 관찰.
+- [x] **SPPV-2.83(신설)** `expected_value_gate` 계산 구조 자체의
+  설계 타당성 검증 (완료, 2026-07-20, 작성자: Codex)
+  - **목적**: threshold 조정이 아니라, "일봉 1회 snapshot 기반
+    입력을 분단위 decision loop가 반복 재평가하는 구조"가 설계상
+    타당한지 검증(코드 수정안 없음).
+  - **핵심 발견**: EV gate 원 설계 문서(`[DESIGN] expected_return_
+    holding_horizon_and_churn_control_refactor.md` §6, 2026-06-23)는
+    입력 신선도(일봉/장중/실시간)를 전혀 규정하지 않음 — "느린
+    필터"인지 "빠른 최종 게이트"인지 문서가 선택한 적이 없는 공백.
+    반면 같은 문서/코드베이스는 reverse trade 재진입에 대해서는
+    `signal_feature_snapshot_id` 불변 시 재판단을 억제하는 원칙을
+    이미 채택·구현(`reverse_trade_hysteresis.py`)했으나, 이 원칙이
+    최초 BUY 후보 평가 경로에는 적용되지 않음. `expected_return_bps`
+    /`expected_downside_bps`/`estimated_round_trip_cost_bps`/
+    `slippage_buffer_bps` 4개 입력이 전부 `signal_feature_snapshot`
+    에 직접·간접 결합되는데, decision loop는 기본 5분 간격(약
+    70~90회/거래일) 재평가 — 판단 정확성 왜곡 증거는 없으나 동일
+    결론의 불필요한 반복 생성이라는 구조적 비효율/미문서화 공백으로
+    판정.
+  - **판정**: 입력 캐던스(일봉)와 재평가 캐던스(분단위) 사이의
+    **설계 미스매치(문서화되지 않은 공백)**. 000810의 구조적 메커
+    니즘(신선도 결합)은 전 종목 일반화 가능하나, "1.44bps 부족"이라
+    는 구체 수치는 종목 특수값으로 일반화 불가. 코드 변경 없음,
+    신규 KIS 호출 0건. 상세: `docs/10_signal_research_sppv/[DESIGN]
+    regime_conditional_entry_signal_v1.md` §72.
+  - 다음 과제: EV gate 계산 구조 보정안(same-snapshot 재평가 스킵/
+    재사용 등)을 다음 턴 설계 검토 대상으로 채택(threshold 민감도
+    검증보다 우선).
 - [~] **SPPV-3** `entry_score` point-in-time 재현 및 중복 penalty ablation
   - **보류 유지, 형태 재정의 — 우선순위 재조정**: §12(1년, 자기참조
     포함) 당시 "알파 근거 강화"로 낙관했던 것이 §14(3년, 자기참조

@@ -1278,6 +1278,23 @@
   signal_research_sppv/[DESIGN] regime_conditional_entry_signal_
   v1.md` §71.
 
+- 작성자: Codex
+- 수정일자: 2026-07-20 (`expected_value_gate` 계산 구조 자체의
+  설계 타당성 검증)
+- 수정내용: threshold 조정이 아니라 구조 자체의 설계 타당성을
+  검증했다(SPPV-2.83, 코드 수정안 없음). 원 설계 문서가 EV gate
+  입력 신선도(일봉/장중/실시간)를 규정한 적이 없는 공백임을 확인.
+  reverse trade 재진입에는 same-snapshot 재판단 억제 원칙이 이미
+  구현돼 있으나 최초 BUY 후보 평가에는 적용되지 않는 비대칭 확인.
+  `signal_feature_snapshots` 1거래일 1회 갱신 vs decision loop
+  기본 300초 재평가 — 하루 최대 약 70~90회 동일 snapshot 재평가
+  가능. 판정: **입력 캐던스와 재평가 캐던스 사이의 설계 미스매치
+  (문서화되지 않은 공백)**. 구조 메커니즘은 전 종목 일반화 가능,
+  수치(1.44bps)는 종목 특수값으로 일반화 불가. 다음 최우선: EV
+  gate 계산 구조 보정안 설계 검토(threshold 민감도보다 우선). 코드
+  변경 없음, 신규 KIS 호출 0건. 상세: `docs/10_signal_research_
+  sppv/[DESIGN] regime_conditional_entry_signal_v1.md` §72.
+
 ---
 
 ## 관리 원칙
