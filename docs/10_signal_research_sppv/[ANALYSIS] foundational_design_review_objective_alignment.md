@@ -1947,6 +1947,14 @@ value/compliance/broker가 아니라 `entry_score < 0.65`다.
   완화안 코드 diff는 보류. 코드 변경 없음. 상세: `docs/10_signal_
   research_sppv/[DESIGN] regime_conditional_entry_signal_v1.md`
   §84.
+- 2026-07-21 KST(SPPV-2.97): C안 부작용 확인에 따라 floor 계열
+  (0.30/0.45/0.60)만 재검증. 확인된 유효 거래일(07-20/07-21) 2일
+  모두 최하위 종목은 floor 0.60까지도 threshold 근접 못 함. 최상위
+  후보는 모든 floor에서 무변화(max(raw,floor)의 단조증가 성질상
+  구조적으로 훼손 불가). 0.60은 참고 데이터에서 과잉 완화 조짐도
+  일부 관측. 판정: Watch. 코드 변경 없음. 상세: `docs/10_signal_
+  research_sppv/[DESIGN] regime_conditional_entry_signal_v1.md`
+  §85.
 - **3순위(보류 유지, 형태 재정의 — 우선순위 재조정)**: **`entry_
   score`와 BUY funnel 재현** — §2.7 확장 검증에서 하락장 안정성이
   확인되지 않아 단순 재현으로는 착수하지 않는다. §2.16~§2.21에서

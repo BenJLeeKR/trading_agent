@@ -2046,6 +2046,24 @@ entry 설계 검토로 전환**을 확정했다. 별도 문서
   호출 0건. 상세: `docs/10_signal_research_sppv/[DESIGN] regime_
   conditional_entry_signal_v1.md` §84.
 
+- 작성자: Codex
+- 수정일자: 2026-07-21 KST (96차, R3b candidate pool 최하위 floor
+  완화안(B1/B2/B3) 정밀 재검증)
+- 수정내용: §84의 C안(압축) 부작용 확인에 따라 floor 계열만 좁혀
+  0.30/0.45/0.60을 재검증했다(SPPV-2.97, 코드 변경 없음). 확인된
+  유효 거래일(07-20/07-21) 2일 모두 최하위 종목은 floor 0.60까지도
+  threshold(0.65)에 근접 못 함(최고 0.48) — base 자체가 매우
+  낮았기 때문. 참고(07-16, 근사) 데이터에서만 0.45/0.60에서 회복
+  관측되나 신뢰도 낮음. 최상위 후보(000810@07-20, 001450@07-21)는
+  모든 floor에서 entry_score/buy_candidate 무변화 — max(raw,floor)
+  의 단조증가 성질상 구조적으로 최상위를 건드릴 수 없음을 확정
+  (C안과 근본적으로 다름). 0.60은 참고 데이터에서 pool 꼴찌까지
+  자동 통과시켜 과잉 완화 조짐도 일부 관측. 판정: Watch(최상위
+  무손상 확실, 그러나 확인된 유효 거래일 회복 근거 아직 부족).
+  완화안 diff 착수는 보류, 표본 축적 우선. 코드 변경 없음, 신규
+  KIS 호출 0건. 상세: `docs/10_signal_research_sppv/[DESIGN]
+  regime_conditional_entry_signal_v1.md` §85.
+
 ---
 
 ## 진행 체크리스트
@@ -4890,6 +4908,30 @@ canonical),
     보류. 코드 변경 없음, 신규 KIS 호출 0건. 상세: `docs/10_signal_
     research_sppv/[DESIGN] regime_conditional_entry_signal_v1.md`
     §84.
+- [x] **SPPV-2.97(신설)** R3b candidate pool 최하위 floor 완화안
+  (B1/B2/B3) 정밀 재검증 (완료, 2026-07-21 KST, 작성자: Codex)
+  - **목적**: §84에서 C안(압축)이 최상위 후보까지 훼손하는 부작용이
+    확인됨에 따라, floor 계열만 좁혀 0.30/0.45/0.60 세 수준에서
+    최하위 복구 효과·최상위 무손상 여부를 재검증(코드 수정 없음,
+    Full pytest 미실행).
+  - **핵심 발견**: 확인된 유효 거래일(07-20 n=2, 07-21 n=3) 2일
+    모두, 최하위 종목(percentile=0.0, base가 이미 -0.8에 가까움)은
+    **floor 0.30/0.45/0.60 어느 수준으로도 threshold(0.65)에
+    전혀 근접하지 못함**(최고 0.48). 참고(07-16, 당일 snapshot
+    근사) 데이터에서만 0.45(1건)/0.60(2건) 회복이 관측되나 look-
+    ahead 가능성이 있어 신뢰도 낮음. 반면 **최상위 후보(000810@
+    07-20 0.7856, 001450@07-21 0.78)는 모든 floor에서 entry_score
+    /buy_candidate가 단 한 건도 변하지 않음** — `max(raw,floor)`가
+    raw≥floor일 때 항상 raw를 반환하는 단조증가 연산이라 구조적으로
+    최상위를 건드릴 수 없음을 확정(§84 C안과 근본적으로 다른 성질).
+    참고 데이터에서 0.60은 pool 내부 꼴찌(001800)까지 자동으로
+    buy_candidate 자격을 부여해 과잉 완화 조짐도 일부 관측.
+  - **판정**: **Watch** — 최상위 무손상은 확실하나(§84 No-Go보다
+    근거 우위), 확인된 유효 거래일에서 회복 근거가 아직 없어
+    Conditional Go 승격은 이름. 완화안 코드 diff 착수는 보류,
+    표본 축적을 최우선으로 함. 코드 변경 없음, 신규 KIS 호출 0건.
+    상세: `docs/10_signal_research_sppv/[DESIGN] regime_conditional_
+    entry_signal_v1.md` §85.
 - [~] **SPPV-3** `entry_score` point-in-time 재현 및 중복 penalty ablation
   - **보류 유지, 형태 재정의 — 우선순위 재조정**: §12(1년, 자기참조
     포함) 당시 "알파 근거 강화"로 낙관했던 것이 §14(3년, 자기참조

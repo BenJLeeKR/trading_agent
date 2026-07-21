@@ -1450,6 +1450,15 @@
   signal_research_sppv/[DESIGN] regime_conditional_entry_signal_
   v1.md` §84.
 
+- 2026-07-21 KST(SPPV-2.97): C안 부작용 확인에 따라 floor 계열
+  (0.30/0.45/0.60)만 재검증. 확인된 유효 거래일(07-20/07-21) 2일
+  모두 최하위 종목은 floor 0.60까지도 threshold 근접 못 함. 최상위
+  후보는 모든 floor에서 무변화(max(raw,floor)의 단조증가 성질상
+  구조적으로 훼손 불가). 0.60은 참고 데이터에서 과잉 완화 조짐도
+  일부 관측. 판정: Watch — 완화안 diff 착수 보류, 표본 축적 우선.
+  코드 변경 없음, 신규 KIS 호출 0건. 상세: `docs/10_signal_research_
+  sppv/[DESIGN] regime_conditional_entry_signal_v1.md` §85.
+
 ---
 
 ## 관리 원칙
