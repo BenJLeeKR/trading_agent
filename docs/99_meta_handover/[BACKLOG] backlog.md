@@ -1379,6 +1379,14 @@
   코드 변경 없음. 상세: `docs/10_signal_research_sppv/[DESIGN]
   regime_conditional_entry_signal_v1.md` §77.8.
 
+- 2026-07-21(SPPV-2.90): near-miss override 미발동 원인을 SPPV
+  BUY funnel 관점으로 닫음. 재기동 이후 buy_candidate=true/final_
+  intent=buy/APPROVE 전부 0건 확인 — funnel 최상류 병목이 근본
+  원인, override 로직 결함 아님. 근소부족 후보는 000810 단일
+  종목·특정 국면 의존으로 판정. 코드 변경 없음, 신규 KIS 호출
+  0건. 상세: `docs/10_signal_research_sppv/[DESIGN] regime_
+  conditional_entry_signal_v1.md` §78.
+
 ---
 
 ## 관리 원칙

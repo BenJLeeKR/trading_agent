@@ -1932,6 +1932,22 @@ entry 설계 검토로 전환**을 확정했다. 별도 문서
   코드 변경 없음. 상세: `docs/10_signal_research_sppv/[DESIGN]
   regime_conditional_entry_signal_v1.md` §77.8.
 
+- 작성자: Codex
+- 수정일자: 2026-07-21 (89차, EV gate near-miss override 미발동
+  원인 — SPPV BUY funnel 관점 재분해)
+- 수정내용: near-miss override가 paper runtime에 켜져 있는데도
+  적용/주문 생성 사례가 없는 직접 원인을 SPPV BUY funnel(candidate
+  → final_intent → APPROVE → submit_request) 단계별로 닫았다
+  (SPPV-2.90, threshold/코드 변경 없음, 전체 pytest 미실행). 재기동
+  이후 구간에서 `buy_candidate=true`/`final_intent='buy'`/`APPROVE`
+  전부 0건임을 확인 — funnel 최상류에서부터 막혀 EV gate/near-miss
+  가 평가될 기회 자체가 없었음. 근소부족 후보는 000810 1종목·특정
+  국면 의존이었고, 오늘은 그 종목의 entry_score마저 0.7856→0.0으로
+  급락. 판정: 단순 미발동/로직 결함이 아니라 표본 부족 + 더 상류
+  병목이 현재 지배적. 코드 변경 없음, 신규 KIS 호출 0건. 상세:
+  `docs/10_signal_research_sppv/[DESIGN] regime_conditional_entry_
+  signal_v1.md` §78.
+
 ---
 
 ## 진행 체크리스트
@@ -4576,6 +4592,47 @@ canonical),
   - 다음 과제: EV gate 계산 구조 보정안(same-snapshot 재평가 스킵/
     재사용 등)을 다음 턴 설계 검토 대상으로 채택(threshold 민감도
     검증보다 우선).
+- [x] **SPPV-2.84~2.89(신설, 요약)** EV gate/submit 차단 완화 후보
+  비교(2.84) → 구조 정리(A안) vs 실제 BUY 증가 병목 우선순위 정리
+  (2.85) → margin 근소부족 조건부 완화 후보 선정(2.86) → shadow
+  실측(Watch 판정, 2.87) → 근소부족(<=2.0bps) 조건부 완화 실제
+  코드 구현 + 신규 단위 테스트 13개(2.88) → 사용자 승인으로 실제
+  paper runtime 활성화(2.89, `EV_GATE_NEAR_MISS_OVERRIDE_ENABLED=
+  true`, `ops-scheduler`만 재기동, `AppSettings()` 확인). 상세는
+  각 턴 상세 기록 참고, 요약만 이 항목에 정리.
+  - **⚠️ 최신 상태(2026-07-21 기준)**: near-miss override는 **paper
+    runtime에 활성화되었으나, 아직 실제 적용 사례(`ev_gate_near_
+    miss_override_applied=true`)나 신규 `order_request` 생성 사례가
+    관측되지 않았다.** 직접 원인은 §78(SPPV-2.90) 참고 — override
+    로직 결함이 아니라, 재기동 이후 구간에서 `buy_candidate=true`
+    자체가 0건이라 BUY funnel 최상류에서부터 막혀 있기 때문.
+- [x] **SPPV-2.90(신설)** EV gate near-miss override 미발동 원인 —
+  SPPV BUY funnel 관점 재분해 (완료, 2026-07-21, 작성자: Codex)
+  - **목적**: near-miss override가 paper runtime에 켜져 있는데도
+    왜 아직 적용/주문 생성 사례가 없는지, SPPV BUY funnel(candidate
+    → final_intent → APPROVE → submit_request) 단계별로 원인을 닫음
+    (threshold/코드 변경 없음, 전체 pytest 미실행).
+  - **핵심 발견**: 최근 24시간 `buy_candidate=true` 48건/`final_
+    intent='buy'` 24건/`APPROVE` 24건 — **전량 재기동(2026-07-21
+    00:40:40 UTC) 이전** 시점이며, 재기동 이후(스위치 on 상태)
+    구간에서는 위 3개 지표 전부 **0건**. near-miss 미적용 23건은
+    "미발동 버그"가 아니라 "그 시점엔 스위치가 꺼져 있었다"는
+    사실로 완전히 설명됨(created_at과 재기동 시각 직접 대조 확인).
+    또한 근소부족 후보는 24시간 내내 000810 1종목에 100% 집중돼
+    있었고, 재기동 이후에는 000810의 `entry_score`마저 0.7856→0.0
+    으로 급락(`buy_candidate=False`로 전환) — near-miss 완화안이
+    실질적으로 000810 단일 종목·특정 국면(어제의 range_bound 국면)
+    의존임을 확인.
+  - **판정**: 단순 runtime 미발동도, 완화안 로직 결함도 아니다.
+    **표본 부족 + BUY funnel 상 더 상류 병목(오늘은 buy_candidate
+    생성 자체)이 현재 더 결정적**이며, near-miss 완화안은 "아직
+    실제 운영에서 실증되지 않은 상태"(조건이 다시 발생할 때까지
+    대기 필요)로 판정. 코드 변경 없음, 신규 KIS 호출 0건. 상세:
+    `docs/10_signal_research_sppv/[DESIGN] regime_conditional_
+    entry_signal_v1.md` §78.
+  - 다음 과제: near-miss 완화안 관찰 지속(코드 변경 없음) + R3b
+    후보 풀 일별 변동성 원인 확인(다음 턴) + pre-AI 차단/downgrade
+    축 재검증(연속성 유지).
 - [~] **SPPV-3** `entry_score` point-in-time 재현 및 중복 penalty ablation
   - **보류 유지, 형태 재정의 — 우선순위 재조정**: §12(1년, 자기참조
     포함) 당시 "알파 근거 강화"로 낙관했던 것이 §14(3년, 자기참조

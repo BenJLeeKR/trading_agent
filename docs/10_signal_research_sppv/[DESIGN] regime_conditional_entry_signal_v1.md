@@ -9772,3 +9772,101 @@ py` = **87 passed in 0.22s**(전체 repo pytest/`tests/` 전체 실행
   하지 않음 — 지침에 따름). 다음 번 000810(또는 다른 R3b 후보)이
   동일 근소부족 조건에 재진입하면, 그 사이클에서 실제로 override가
   적용되고 `order_request`가 생성되는지 추가 관찰이 필요하다.
+
+
+---
+
+## 78. EV gate near-miss override 미발동 원인 — SPPV BUY funnel 관점 재분해 (SPPV-2.90, 2026-07-21)
+
+### 78.1 목적
+
+§77.8에서 확인한 "준비 완료, 그러나 실제 적용/주문 생성 미확인"
+상태를 SPPV BUY funnel(candidate → final_intent → APPROVE →
+submit_request) 관점에서 직접 원인을 닫는다. threshold/코드 변경
+없음 — 실측+원인 분해만 수행.
+
+### 78.2 최근 24시간 BUY funnel 단계별 건수
+
+| 단계 | 24시간 전체 | 재기동(2026-07-21 00:40:40 UTC) 이전 | 재기동 이후 |
+|---|---|---|---|
+| 전체 trade_decisions | 960 | 576 | 384 |
+| `buy_candidate=true` | 48 | 48 | **0** |
+| `candidate_vs_final.final_intent='buy'` | 24 | 24 | **0** |
+| `decision_type='APPROVE'` | 24 | 24 | **0** |
+| 그중 `expected_value_gate.passed=false` | 24 | 24 | 0 |
+| 그중 `ev_gate_near_miss_override_applied=true` | 0 | 0(스위치 off) | 0(대상 자체 없음) |
+| `order_request` 신규 생성 | 0 | 0 | 0 |
+
+**핵심 발견**: near-miss override가 적용된 사례가 0건인 직접
+원인은 "override 로직 미발동/버그"가 아니라, **스위치가 켜진
+이후(재기동 이후) 구간에서는 `buy_candidate=true` 자체가 단 한
+건도 발생하지 않았기 때문**이다 — funnel의 최상류 단계에서부터
+막혀 있어 EV gate/near-miss override가 평가될 기회 자체가 없었다.
+
+### 78.3 near-miss 미발동 직접 원인 분해
+
+| 원인 분류 | 건수 | 설명 |
+|---|---|---|
+| `decision_type`이 `APPROVE/BUY`까지 못 감(재기동 이후) | 재기동 이후 R3b reason code 보유 케이스 전량(336건 중 APPROVE 0건) | 근본 원인 — funnel 최상류 단계 |
+| deficit > 2.0bps | 1건 | 2026-07-20 04:48 UTC, gap=3.44bps(설계대로 정상 차단) |
+| `source_type != core` | 0건 | 관측된 모든 후보가 core |
+| `trigger_r3b_alpha_percentile` 없음 | 0건 | 모든 근소부족 후보에 reason code 존재 |
+| `expected_value_gate.passed=true`(대상 아님) | 다수(WATCH/HOLD 대부분 `expected_value_not_required_non_actionable`) | override 대상 자체가 아닌 정상 케이스 |
+| 그 외(스위치 활성화 이전 시점 레코드) | 23건 | 2026-07-20 05:27~06:25 UTC, gap=1.44bps — **전부 재기동(스위치 on) 이전 시점**이라 near_miss_applied=False로 남은 것이 정상(당시 스위치는 off였음) |
+
+23건은 "미발동 버그"가 아니라 "그 시점에는 스위치가 꺼져 있었다"는
+사실로 완전히 설명된다(재기동 시각과 각 레코드의 `created_at`을
+직접 대조해 확인).
+
+### 78.4 000810 단일 종목/국면 의존성 판정
+
+- 최근 24시간 `trigger_r3b_alpha_percentile` reason code 보유
+  종목: `000810`, `000660`, `001450` 3종목.
+- 그러나 `decision_type='APPROVE'` + `expected_value_gate.passed=
+  false` 조합(=near-miss 후보)은 **전량 000810**(24/24) — 다른
+  두 종목은 이 기간 내내 `buy_candidate=false`(WATCH/HOLD)라
+  애초에 near-miss 후보 자체가 아니었다.
+- 재기동 이후(스위치 on 상태)에는 000810조차 `entry_score`가
+  0.7856(어제) → **0.0**(오늘)로 급락, `buy_candidate=false`로
+  전환됨(사실, `deterministic_trigger.entry_score` 직접 확인).
+- **판정: 현재 near-miss 완화안은 실질적으로 000810 단일 종목·
+  특정 국면(어제의 range_bound 국면에서 000810이 R3b 후보 풀
+  1위였던 상황) 의존이다.** 국면이 바뀌면(오늘처럼) 완화안이
+  적용될 대상 자체가 사라진다.
+
+### 78.5 SPPV 관점 핵심 판정
+
+**"단순 runtime 미발동"도 "완화안 로직 결함"도 아니다.** 아래 중
+가장 정확한 위치는:
+
+- **표본 부족 + BUY funnel 상 더 상류 병목이 현재는 더 결정적**이다.
+  스위치는 정확히 켜져 있고(§77.8) 로직도 §77에서 코드/단위테스트로
+  증명됐지만, 재기동 이후 구간에서는 `buy_candidate=true` 자체가
+  0건이므로 near-miss override는 "평가될 기회"조차 얻지 못했다.
+- near-miss 완화안 자체는 "아직 실제 운영에서 실증되지 않은
+  상태"다 — 이는 완화안이 틀렸다는 뜻이 아니라, 어제 관측된
+  적용 조건(000810·range_bound 국면)이 오늘은 재현되지 않았다는
+  뜻이다. 완화안의 유효성 검증은 그 조건이 다시 발생할 때까지
+  기다려야 한다.
+- pre-AI 차단(층3)이나 `candidate_vs_final` downgrade 축 같은
+  "더 상류의 구조적 병목"은 이전 세션에서 이미 별도 트랙으로
+  식별돼 있으며, 이번 턴의 발견(재기동 이후 buy_candidate 자체가
+  0건)은 그 상류 병목이 오늘 이 순간 실제로 더 지배적임을
+  뒷받침하는 추가 증거다(다만 오늘 급락의 정확한 원인 — R3b
+  랭킹 풀 재계산, market_common_label 변화 등 — 은 이번 턴에서
+  라인 단위로 확인하지 않았다. 추정: R3b 후보 풀의 상대 랭킹이
+  일별로 재계산되며 000810이 오늘은 최상위가 아니게 됐을 가능성).
+
+### 78.6 다음 우선 작업
+
+1. **near-miss 완화안 관찰 지속(코드 변경 없음)**: 스위치는 켜진
+   채로 두고, 향후 며칠간 000810 또는 다른 종목이 다시
+   근소부족(≤2.0bps) 조건으로 진입하는지 자연 관찰 — 이번 턴에서
+   추가로 조건을 넓히거나 코드를 바꾸지 않는다.
+2. **R3b 후보 풀의 일별 변동성 원인 확인**(다음 턴 후보): 오늘
+   000810의 `entry_score`가 0.7856→0.0으로 급락한 정확한 원인
+   (랭킹 풀 재계산/market_common_label 변화 등)을 라인 단위로
+   확인 — 이는 near-miss 완화안보다 상류의 구조적 질문이다.
+3. **pre-AI 차단(층3)/downgrade 축 재검증**: 이전 세션에서 식별된
+   상류 병목 트랙과의 연속성을 유지하며 후속 검증 우선순위로
+   유지한다.

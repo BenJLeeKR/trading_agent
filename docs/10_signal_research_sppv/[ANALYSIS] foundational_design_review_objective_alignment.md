@@ -1884,6 +1884,13 @@ value/compliance/broker가 아니라 `entry_score < 0.65`다.
   완료"이며 "실제 order_request 생성"은 미확인. 코드 변경 없음.
   상세: `docs/10_signal_research_sppv/[DESIGN] regime_conditional_
   entry_signal_v1.md` §77.8.
+- 2026-07-21(SPPV-2.90): near-miss override 미발동 원인을 SPPV BUY
+  funnel 관점(candidate→final_intent→APPROVE→submit_request)으로
+  닫음. 재기동 이후 buy_candidate=true/final_intent=buy/APPROVE
+  전부 0건 확인 — funnel 최상류 병목이 근본 원인, override 로직
+  결함 아님. 근소부족 후보는 000810 단일 종목·특정 국면 의존으로
+  판정. 상세: `docs/10_signal_research_sppv/[DESIGN] regime_
+  conditional_entry_signal_v1.md` §78.
 - **3순위(보류 유지, 형태 재정의 — 우선순위 재조정)**: **`entry_
   score`와 BUY funnel 재현** — §2.7 확장 검증에서 하락장 안정성이
   확인되지 않아 단순 재현으로는 착수하지 않는다. §2.16~§2.21에서

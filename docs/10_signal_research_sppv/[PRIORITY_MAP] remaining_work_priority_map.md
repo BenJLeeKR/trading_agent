@@ -9500,8 +9500,19 @@ agent 설계 문서 기준으로도 순서는 다음이 맞다.
      이라 시장 상황 자체가 재현되지 않음. 상세: `docs/10_signal_
      research_sppv/[DESIGN] regime_conditional_entry_signal_v1.md`
      §77.8.
-   - **SPPV-3(다음 착수: near-miss override 실제 적용/order_request
-     생성 사례가 나타나는지 후속 관찰 +
+   - **SPPV-2.90(완료, 2026-07-21, EV gate near-miss override
+     미발동 원인 — SPPV BUY funnel 관점 재분해, 작성자: Codex —
+     funnel 최상류 병목이 근본 원인으로 확정, 코드 변경 없음)**:
+     재기동 이후 구간에서 `buy_candidate=true`/`final_intent='buy'`/
+     `APPROVE` 전부 0건 확인 — near-miss override는 평가 기회 자체가
+     없었을 뿐 로직 결함 아님. 근소부족 후보(24h 24건)는 전량 재기동
+     이전 시점·000810 단일 종목 집중이었고, 재기동 이후 000810의
+     entry_score도 0.7856→0.0 급락. 판정: 표본 부족 + 더 상류
+     병목이 현재 지배적, 완화안은 아직 실증 불충분. 신규 KIS 호출
+     0건. 상세: `docs/10_signal_research_sppv/[DESIGN] regime_
+     conditional_entry_signal_v1.md` §78.
+   - **SPPV-3(다음 착수: near-miss override 관찰 지속(코드 변경 없음) +
+     R3b 후보 풀 일별 변동성 원인 확인(entry_score 급락 원인) +
      pre-AI 차단(층3, risk_off ranking blocked)
      축 재검증(11/12종목 영향, 병행 검토) +
      candidate_vs_final downgrade 축 재검증 +
