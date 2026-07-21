@@ -1891,6 +1891,13 @@ value/compliance/broker가 아니라 `entry_score < 0.65`다.
   결함 아님. 근소부족 후보는 000810 단일 종목·특정 국면 의존으로
   판정. 상세: `docs/10_signal_research_sppv/[DESIGN] regime_
   conditional_entry_signal_v1.md` §78.
+- 2026-07-21(SPPV-2.91): §78의 "entry_score 급락" 원인 해석을
+  정밀화. R3b는 계속 정상 작동(reason code 유지) 중이었고, 000810은
+  "후보군 밖 탈락"이 아니라 2026-07-20 11:52 UTC snapshot 정상
+  갱신 이후 3종목 candidate pool 내부 최하위(percentile=0.0)였음을
+  실측 재계산으로 확인. §78의 핵심 판정은 유지, 원인 설명만 정정.
+  코드 변경 없음. 상세: `docs/10_signal_research_sppv/[DESIGN]
+  regime_conditional_entry_signal_v1.md` §79.
 - **3순위(보류 유지, 형태 재정의 — 우선순위 재조정)**: **`entry_
   score`와 BUY funnel 재현** — §2.7 확장 검증에서 하락장 안정성이
   확인되지 않아 단순 재현으로는 착수하지 않는다. §2.16~§2.21에서

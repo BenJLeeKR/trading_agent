@@ -1948,6 +1948,20 @@ entry 설계 검토로 전환**을 확정했다. 별도 문서
   `docs/10_signal_research_sppv/[DESIGN] regime_conditional_entry_
   signal_v1.md` §78.
 
+- 작성자: Codex
+- 수정일자: 2026-07-21 (90차, §78 해석 보정 — 000810 entry_score
+  급락 원인 정밀화)
+- 수정내용: §78의 "entry_score 급락"/"buy_candidate 생성 자체가
+  사라졌다" 서술의 원인 해석을 정밀화했다(SPPV-2.91, 판정 변경
+  아님, 코드 변경 없음). signal_feature_snapshot이 2026-07-20
+  11:52 UTC에 정상 갱신됐음을 확인, 오늘 R3b candidate pool이
+  2→3종목으로 확장되고 000810이 그 안에서 최하위(percentile=0.0)
+  임을 실측 재계산으로 검증(001450 6.92 > 000660 6.39 > 000810
+  5.67). "R3b 미작동"이 아니라 "R3b 적용 + 후보군 내부 최하위"로
+  결론 정정. §78의 핵심 판정은 유지, 원인 해석만 보정. 코드 변경
+  없음, 신규 KIS 호출 0건. 상세: `docs/10_signal_research_sppv/
+  [DESIGN] regime_conditional_entry_signal_v1.md` §79.
+
 ---
 
 ## 진행 체크리스트
@@ -4633,6 +4647,37 @@ canonical),
   - 다음 과제: near-miss 완화안 관찰 지속(코드 변경 없음) + R3b
     후보 풀 일별 변동성 원인 확인(다음 턴) + pre-AI 차단/downgrade
     축 재검증(연속성 유지).
+  - **[SPPV-2.91에서 정정] 위 "entry_score마저 0.7856→0.0으로
+    급락" 서술은 원인 설명이 부정확했다 — R3b는 계속 정상 작동
+    중이었고(reason code 유지), 000810은 "후보군 밖 탈락"이 아니라
+    "2026-07-20 11:52 UTC snapshot 정상 갱신 이후 3종목 candidate
+    pool(000660/000810/001450) 내부 최하위(percentile=0.0)"였다.
+    핵심 판정(표본 부족 + 상류 병목 지배적)은 그대로 유지, 원인
+    해석만 정밀화. 상세: `docs/10_signal_research_sppv/[DESIGN]
+    regime_conditional_entry_signal_v1.md` §79. 이 항목의 원문은
+    삭제하지 않고 보존한다.**
+- [x] **SPPV-2.91(신설)** §78 해석 보정 — 000810 `entry_score`
+  급락 원인 정밀화 (완료, 2026-07-21, 작성자: Codex)
+  - **목적**: 판정 변경이 아니라, entry_score 0.7856→0.0의 원인을
+    "R3b 미작동"과 "R3b 적용됐지만 후보군 내부 최하위"로 명확히
+    구분(코드 변경 없음, 전체 pytest 미실행).
+  - **핵심 발견**: `signal_feature_snapshots`(000810)가 2026-07-20
+    11:52 UTC에 정상 갱신됨을 확인(`overall_score` 0.5146→0.162,
+    `return_3m_pct` 46.04→26.60 등) — 4일 정체가 아니라 정상 갱신
+    이후의 결과였다. 오늘 운영 로그 `R3b alpha precompute:`에서
+    candidate pool이 2종목→3종목(000660/000810/001450)으로 확장,
+    000810은 여전히 풀 내부에 존재. `regime_conditional_signal =
+    return_3m_pct/max(volatility_20d_pct,1.0)` 직접 재계산 결과
+    001450(6.92) > 000660(6.39) > 000810(5.67) — 000810이 3종목 중
+    최하위이며, `bisect_left` 공식대로 `percentile=0/(3-1)=0.0`이
+    정확히 재현됨(계산 오류 아님, clamp/하드블록 아님).
+  - **판정**: §78의 핵심 판정(표본 부족 + BUY funnel 상류 병목이
+    현재 지배적, near-miss 완화안 실증 불충분)은 그대로 유지. 다만
+    병목의 성격은 "R3b 정지"가 아니라 "R3b는 정상 작동하되 소수
+    종목(2~3개) candidate pool에서 일별 신호 갱신만으로 순위가
+    쉽게 요동치는 구조적 특성"으로 재규정. 코드 변경 없음, 신규
+    KIS 호출 0건. 상세: `docs/10_signal_research_sppv/[DESIGN]
+    regime_conditional_entry_signal_v1.md` §79.
 - [~] **SPPV-3** `entry_score` point-in-time 재현 및 중복 penalty ablation
   - **보류 유지, 형태 재정의 — 우선순위 재조정**: §12(1년, 자기참조
     포함) 당시 "알파 근거 강화"로 낙관했던 것이 §14(3년, 자기참조

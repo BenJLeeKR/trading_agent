@@ -9511,8 +9511,20 @@ agent 설계 문서 기준으로도 순서는 다음이 맞다.
      병목이 현재 지배적, 완화안은 아직 실증 불충분. 신규 KIS 호출
      0건. 상세: `docs/10_signal_research_sppv/[DESIGN] regime_
      conditional_entry_signal_v1.md` §78.
+   - **SPPV-2.91(완료, 2026-07-21, §78 해석 보정 — 000810 entry_
+     score 급락 원인 정밀화, 작성자: Codex — 판정 유지, 원인 해석만
+     정정, 코드 변경 없음)**: signal_feature_snapshot이 2026-07-20
+     11:52 UTC에 정상 갱신됐음을 확인(4일 정체가 아니라 정상 갱신
+     이후 결과). 오늘 R3b candidate pool이 2→3종목(000660/000810/
+     001450)으로 확장, 000810은 여전히 풀 내부 존재. 실측 재계산
+     결과 001450(6.92)>000660(6.39)>000810(5.67) — 000810이 최하위
+     이며 `percentile=0/(3-1)=0.0`이 공식대로 정확히 재현됨(계산
+     오류/clamp 아님). "R3b 미작동"이 아니라 "R3b 적용+후보군 내부
+     최하위"로 원인 정정, §78 핵심 판정은 유지. 신규 KIS 호출 0건.
+     상세: `docs/10_signal_research_sppv/[DESIGN] regime_
+     conditional_entry_signal_v1.md` §79.
    - **SPPV-3(다음 착수: near-miss override 관찰 지속(코드 변경 없음) +
-     R3b 후보 풀 일별 변동성 원인 확인(entry_score 급락 원인) +
+     R3b 후보 풀 규모(2~3종목)의 구조적 변동성 특성 추가 검토 +
      pre-AI 차단(층3, risk_off ranking blocked)
      축 재검증(11/12종목 영향, 병행 검토) +
      candidate_vs_final downgrade 축 재검증 +
