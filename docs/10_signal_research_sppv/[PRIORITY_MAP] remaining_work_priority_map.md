@@ -9489,8 +9489,19 @@ agent 설계 문서 기준으로도 순서는 다음이 맞다.
      범위(87개) + 단발성 000810 재현 스크립트로 §77 구현이 여전히
      의도대로 동작함을 재확인. 상세: `docs/10_signal_research_sppv/
      [DESIGN] regime_conditional_entry_signal_v1.md` §77.7.
-   - **SPPV-3(다음 착수: 사용자 승인 시 EV_GATE_NEAR_MISS_OVERRIDE_
-     ENABLED=true 실제 배포 + 배포 후 order_request 생성 추이 관찰 +
+   - **SPPV-2.89(완료, 2026-07-21, EV gate near-miss override 실제
+     runtime 활성화, 작성자: Codex — 준비 완료 확인, order_request
+     생성은 미확인, 코드 변경 없음)**: 사용자 승인으로 `.env`(이미
+     true로 반영돼 있었음, 직접 수정 안 함)/docker-compose 배선
+     재확인 후 `ops-scheduler`만 재기동. `AppSettings().ev_gate_
+     near_miss_override_enabled=True` 확인, 최소 테스트 13개 통과.
+     재기동 후 10분 관측(전 종목 32건)에서 near-miss 실제 적용
+     사례 0건 — 오늘 이 시점 000810이 근소부족 범위 밖(WATCH/HOLD)
+     이라 시장 상황 자체가 재현되지 않음. 상세: `docs/10_signal_
+     research_sppv/[DESIGN] regime_conditional_entry_signal_v1.md`
+     §77.8.
+   - **SPPV-3(다음 착수: near-miss override 실제 적용/order_request
+     생성 사례가 나타나는지 후속 관찰 +
      pre-AI 차단(층3, risk_off ranking blocked)
      축 재검증(11/12종목 영향, 병행 검토) +
      candidate_vs_final downgrade 축 재검증 +

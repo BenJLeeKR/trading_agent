@@ -9734,3 +9734,41 @@ py` = **87 passed in 0.22s**(전체 repo pytest/`tests/` 전체 실행
 시 submit_request 생성, deficit=3.44bps → 여전히 차단) 재확인.
 코드/설정 변경 없음(§77의 구현이 이미 완결 상태였음을 재확인하는
 턴) — 실제 라이브 paper 배포는 여전히 사용자 승인 대기.
+
+### 77.8 실제 runtime 활성화 (2026-07-21, SPPV-2.89)
+
+사용자 승인에 따라 실제 paper 운영 환경에서 스위치를 켰다. 코드
+수정은 없음(배선 누락도 발견되지 않음) — 순수 runtime 활성화 절차만
+수행했다.
+
+- **`.env`**: 확인 결과 `EV_GATE_NEAR_MISS_OVERRIDE_ENABLED=true`가
+  이미 반영돼 있었다(내가 직접 수정하지 않음 — `.env`는 절대 수정
+  하지 않는다는 원칙 유지).
+- **`docker-compose.yml`**: `EV_GATE_NEAR_MISS_OVERRIDE_ENABLED:
+  "${EV_GATE_NEAR_MISS_OVERRIDE_ENABLED:-false}"`로 `ops-scheduler`
+  서비스 환경변수 블록에 이미 배선돼 있음을 재확인.
+- **컨테이너 재기동**: `docker compose up -d --force-recreate
+  --no-deps ops-scheduler`로 **`ops-scheduler`만** 재생성(다른
+  서비스는 건드리지 않음).
+- **컨테이너 내부 확인**: `docker exec agent_trading-ops-scheduler
+  env`로 `EV_GATE_NEAR_MISS_OVERRIDE_ENABLED=true` 확인,
+  `AppSettings().ev_gate_near_miss_override_enabled` 직접 평가 결과
+  `True` 확인.
+- **최소 테스트**: `tests/services/test_ev_gate_near_miss_override.
+  py` 13개 재실행 — 13 passed(0.03s). 전체 스위트 미실행.
+- **실제 paper cycle 관측(재기동 후 약 10분, 짧은 1회성 확인)**:
+  재기동 직후 여러 사이클이 실행됐으나, 이 시점(2026-07-21 00:4x
+  UTC)의 000810은 어제와 조건이 달라져 `decision_type`이 WATCH/
+  HOLD로 나왔고(`edge_after_cost_bps=-80.00` 등 근소부족 범위
+  밖) — **오늘 이 시점 기준으로는 근소부족(≤2.0bps) 조건을 만족
+  하는 실제 APPROVE 사례가 아직 발생하지 않았다**(사실, DB 직접
+  조회). 최근 10분간 전 종목 32건 중 `ev_gate_near_miss_override_
+  applied=true` 사례는 **0건**.
+- **판정**: **"준비 완료" 확인됨(설정/코드 경로는 정확히 반영되어
+  작동할 준비가 된 상태) — "실제 order_request 생성까지 확인"은
+  아직 아님.** 이는 구현/배선의 문제가 아니라, 해당 조건(근소부족
+  ≤2.0bps + core + R3b + APPROVE/BUY)을 만족하는 실제 시장 상황이
+  이 시점에 아직 재현되지 않았기 때문이다(장시간 대기 관찰은
+  하지 않음 — 지침에 따름). 다음 번 000810(또는 다른 R3b 후보)이
+  동일 근소부족 조건에 재진입하면, 그 사이클에서 실제로 override가
+  적용되고 `order_request`가 생성되는지 추가 관찰이 필요하다.

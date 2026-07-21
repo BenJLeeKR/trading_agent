@@ -1878,6 +1878,12 @@ value/compliance/broker가 아니라 `entry_score < 0.65`다.
   87개 테스트 + 단발성 000810 재현 스크립트로 §77 구현이 여전히
   의도대로 동작함을 재확인. 상세: `docs/10_signal_research_sppv/
   [DESIGN] regime_conditional_entry_signal_v1.md` §77.7.
+- 2026-07-21(SPPV-2.89): 사용자 승인으로 실제 paper 환경 활성화
+  (.env는 이미 true, ops-scheduler만 재기동, AppSettings 확인).
+  재기동 후 10분 관측 결과 near-miss 실제 적용 사례 0건 — "준비
+  완료"이며 "실제 order_request 생성"은 미확인. 코드 변경 없음.
+  상세: `docs/10_signal_research_sppv/[DESIGN] regime_conditional_
+  entry_signal_v1.md` §77.8.
 - **3순위(보류 유지, 형태 재정의 — 우선순위 재조정)**: **`entry_
   score`와 BUY funnel 재현** — §2.7 확장 검증에서 하락장 안정성이
   확인되지 않아 단순 재현으로는 착수하지 않는다. §2.16~§2.21에서

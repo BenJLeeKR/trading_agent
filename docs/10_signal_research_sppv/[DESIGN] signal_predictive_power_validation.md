@@ -1922,6 +1922,16 @@ entry 설계 검토로 전환**을 확정했다. 별도 문서
   signal_research_sppv/[DESIGN] regime_conditional_entry_signal_
   v1.md` §77.7.
 
+- 2026-07-21(SPPV-2.89): 사용자 승인으로 실제 paper 환경에서
+  EV_GATE_NEAR_MISS_OVERRIDE_ENABLED=true 활성화. `.env`는 이미
+  true로 반영돼 있었음(직접 수정 안 함), docker-compose 배선 확인,
+  `ops-scheduler`만 재기동, AppSettings().ev_gate_near_miss_
+  override_enabled=True 확인. 재기동 후 10분간 관측한 결과 near-
+  miss 조건을 만족하는 실제 사례는 아직 발생하지 않음(0/32건) —
+  "준비 완료"이며 "실제 order_request 생성 확인"은 아직 아님.
+  코드 변경 없음. 상세: `docs/10_signal_research_sppv/[DESIGN]
+  regime_conditional_entry_signal_v1.md` §77.8.
+
 ---
 
 ## 진행 체크리스트

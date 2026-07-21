@@ -1371,6 +1371,14 @@
   동작함을 재확인. 상세: `docs/10_signal_research_sppv/[DESIGN]
   regime_conditional_entry_signal_v1.md` §77.7.
 
+- 2026-07-21(SPPV-2.89): 사용자 승인으로 실제 paper 환경에서
+  스위치 활성화. `.env`는 이미 true(직접 수정 안 함), docker-
+  compose 배선 확인, `ops-scheduler`만 재기동, AppSettings 확인.
+  재기동 후 10분 관측 결과 near-miss 실제 적용 사례 0건 — "준비
+  완료"이며 "실제 order_request 생성"은 미확인(시장 상황 미재현).
+  코드 변경 없음. 상세: `docs/10_signal_research_sppv/[DESIGN]
+  regime_conditional_entry_signal_v1.md` §77.8.
+
 ---
 
 ## 관리 원칙
