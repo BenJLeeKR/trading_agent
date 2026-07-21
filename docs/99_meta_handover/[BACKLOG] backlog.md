@@ -1366,6 +1366,11 @@
   research_sppv/[DESIGN] regime_conditional_entry_signal_v1.md`
   §77.
 
+- 2026-07-21 재검증(코드 변경 없음): 전체 pytest 대신 최소 범위
+  (87개) + 단발성 000810 재현 스크립트로 §77 구현이 여전히 의도대로
+  동작함을 재확인. 상세: `docs/10_signal_research_sppv/[DESIGN]
+  regime_conditional_entry_signal_v1.md` §77.7.
+
 ---
 
 ## 관리 원칙

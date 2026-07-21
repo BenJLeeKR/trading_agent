@@ -9485,6 +9485,10 @@ agent 설계 문서 기준으로도 순서는 다음이 맞다.
      변경 있음(신규 파일 1개, 기존 파일 6개 수정), 신규 KIS 호출
      0건. 상세: `docs/10_signal_research_sppv/[DESIGN] regime_
      conditional_entry_signal_v1.md` §77.
+   - 2026-07-21 재검증(코드 변경 없음): 전체 pytest 대신 최소
+     범위(87개) + 단발성 000810 재현 스크립트로 §77 구현이 여전히
+     의도대로 동작함을 재확인. 상세: `docs/10_signal_research_sppv/
+     [DESIGN] regime_conditional_entry_signal_v1.md` §77.7.
    - **SPPV-3(다음 착수: 사용자 승인 시 EV_GATE_NEAR_MISS_OVERRIDE_
      ENABLED=true 실제 배포 + 배포 후 order_request 생성 추이 관찰 +
      pre-AI 차단(층3, risk_off ranking blocked)

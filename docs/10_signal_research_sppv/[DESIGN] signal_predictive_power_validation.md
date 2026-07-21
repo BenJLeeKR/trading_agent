@@ -1915,6 +1915,13 @@ entry 설계 검토로 전환**을 확정했다. 별도 문서
   상세: `docs/10_signal_research_sppv/[DESIGN] regime_conditional_
   entry_signal_v1.md` §77.
 
+- 2026-07-21 재검증(코드/설정 변경 없음): 전체 테스트 스위트 재실행
+  없이 변경 직접 관련 최소 범위(신규 13개+관련 기존 74개=87개,
+  0.22s)만 재확인 + 000810 실제 DB 레코드 단발성 재현 스크립트로
+  동일 결과(1.44bps 통과/3.44bps 차단) 재확인. 상세: `docs/10_
+  signal_research_sppv/[DESIGN] regime_conditional_entry_signal_
+  v1.md` §77.7.
+
 ---
 
 ## 진행 체크리스트

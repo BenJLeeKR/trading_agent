@@ -1874,6 +1874,10 @@ value/compliance/broker가 아니라 `entry_score < 0.65`다.
   deficit=3.44bps는 여전히 차단. 실제 라이브 paper 배포는 사용자
   승인 필요 사안으로 미실행. 상세: `docs/10_signal_research_sppv/
   [DESIGN] regime_conditional_entry_signal_v1.md` §77.
+- 2026-07-21 재검증(코드 변경 없음): 전체 스위트 대신 최소 범위
+  87개 테스트 + 단발성 000810 재현 스크립트로 §77 구현이 여전히
+  의도대로 동작함을 재확인. 상세: `docs/10_signal_research_sppv/
+  [DESIGN] regime_conditional_entry_signal_v1.md` §77.7.
 - **3순위(보류 유지, 형태 재정의 — 우선순위 재조정)**: **`entry_
   score`와 BUY funnel 재현** — §2.7 확장 검증에서 하락장 안정성이
   확인되지 않아 단순 재현으로는 착수하지 않는다. §2.16~§2.21에서

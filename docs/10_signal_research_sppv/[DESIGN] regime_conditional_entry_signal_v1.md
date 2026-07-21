@@ -9720,3 +9720,17 @@ Go(제한적 조건부 완화 코드는 확보됨).** 다만 **실제 라이브 
    생성 건수를 별도 지표로 추적.
 3. `tests/repositories/*`의 pre-existing 이벤트 루프/컬럼 한도
    이슈는 이번 범위 밖(별도 트랙)으로 flag만 해둔다.
+
+### 77.7 재검증 메모(2026-07-21, 최소 범위 재실행)
+
+동일 구현(§77.2, commit `9ae700f1`)에 대해 **전체 테스트 스위트를
+다시 실행하지 않고**, 변경과 직접 관련된 최소 범위만 재확인했다:
+`tests/services/test_ev_gate_near_miss_override.py`(13개) +
+`test_submit_order_from_decision.py` + `test_decision_orchestrator.
+py` = **87 passed in 0.22s**(전체 repo pytest/`tests/` 전체 실행
+없음, 서버 부하 유발 소지가 있는 반복 scheduler/decision loop
+실행도 하지 않음). 000810 실제 DB 레코드 기반 단발성 재현 스크립트
+(1회 실행, DB read-only)도 동일 결과(deficit=1.44bps → switch on
+시 submit_request 생성, deficit=3.44bps → 여전히 차단) 재확인.
+코드/설정 변경 없음(§77의 구현이 이미 완결 상태였음을 재확인하는
+턴) — 실제 라이브 paper 배포는 여전히 사용자 승인 대기.
