@@ -2012,6 +2012,22 @@ entry 설계 검토로 전환**을 확정했다. 별도 문서
   KIS 호출 0건. 상세: `docs/10_signal_research_sppv/[DESIGN] regime_
   conditional_entry_signal_v1.md` §82.
 
+- 작성자: Codex
+- 수정일자: 2026-07-21 KST (94차, 20% quintile 공식의 구조적 결과
+  재구성 검증)
+- 수정내용: candidate pool 협소성(병목 B)을 완화안 적용 없이
+  `build_candidate_percentiles()`를 최근 거래일 데이터로 그대로
+  재실행해 재구성 검증했다(SPPV-2.95, 코드 변경 없음). 07-14/15는
+  벤치마크 snapshot 결측으로 pool=0(별도 문제). 07-16/20/21 3거래일
+  모두 신호 계산 가능 종목=core 유니버스 수(결측 없음)였음에도 20%
+  pool 크기는 4/2/3에 불과, 3종목 모두 3일 만에 percentile 극값을
+  최소 한 번씩 기록. shadow 비교(top 30%/고정 top-5)에서도 pool은
+  여전히 한 자릿수(2~6) — 문제 본질은 비율이 아니라 core 유니버스
+  규모(12~23종목) 자체. 병목 B 확정, 다음 검토 대상은 "비율 조정"
+  아닌 "유니버스 규모 재검토"로 재정의. 코드 변경 없음, 신규 KIS
+  호출 0건. 상세: `docs/10_signal_research_sppv/[DESIGN] regime_
+  conditional_entry_signal_v1.md` §83.
+
 ---
 
 ## 진행 체크리스트
@@ -4808,6 +4824,30 @@ canonical),
     있음. 코드 변경 없음, 신규 KIS 호출 0건. 상세: `docs/10_signal_
     research_sppv/[DESIGN] regime_conditional_entry_signal_v1.md`
     §82.
+- [x] **SPPV-2.95(신설)** 20% quintile 공식의 구조적 결과 재구성
+  검증 (완료, 2026-07-21 KST, 작성자: Codex)
+  - **목적**: candidate pool 협소성(병목 B)이 완화안 적용 없이
+    실제로 최상류 병목인지, `build_candidate_percentiles()`를 최근
+    거래일 데이터로 그대로 재실행해 재구성 검증(코드 변경 없음,
+    Full pytest 미실행).
+  - **핵심 발견**: 07-14/15는 벤치마크(069500) snapshot 결측으로
+    candidate pool 자체가 0(이미 해소된 별도 문제). 07-16(유니버스
+    23종목)/07-20(12종목)/07-21(18종목) 3거래일 모두 신호 계산
+    가능 종목 수=core 유니버스 수(결측 없음)였음에도 현행 20% pool
+    크기는 각 4/2/3에 불과. **단 3거래일 만에 000810/000660/001450
+    모두 percentile 극값(0.0 또는 1.0)을 최소 한 번씩 기록** —
+    000810은 이틀 연속 꼴찌(0.0), 001450은 07-20엔 core 유니버스
+    freeze에서 아예 빠졌다가 07-21엔 1위(1.0)로 복귀. shadow
+    비교(top 30%/고정 top-5)에서도 pool 크기는 여전히 2~6개
+    (한 자릿수)에 머물러, **비율을 넓혀도 근본 해소가 안 됨**을
+    확인 — 문제의 본질은 quintile 비율이 아니라 **core 유니버스
+    규모(12~23종목) 자체**.
+  - **판정**: candidate pool 협소성이 최상류 병목이라는 것을 확정,
+    다만 다음 검토 대상은 "20%→30% 등 비율 조정"이 아니라 "core
+    유니버스 규모 자체의 설계 재검토"로 재정의. 활동성 게이트(§82)
+    와의 우선순위는 그대로 유지(바꿀 근거 없음). 코드 변경 없음,
+    신규 KIS 호출 0건. 상세: `docs/10_signal_research_sppv/[DESIGN]
+    regime_conditional_entry_signal_v1.md` §83.
 - [~] **SPPV-3** `entry_score` point-in-time 재현 및 중복 penalty ablation
   - **보류 유지, 형태 재정의 — 우선순위 재조정**: §12(1년, 자기참조
     포함) 당시 "알파 근거 강화"로 낙관했던 것이 §14(3년, 자기참조

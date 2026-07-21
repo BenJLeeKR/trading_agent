@@ -1927,6 +1927,15 @@ value/compliance/broker가 아니라 `entry_score < 0.65`다.
   평균 거래량/거래대금이 2주간 추세적 감소 — 정당한 방어에 가까움.
   판정: Watch. 코드 변경 없음. 상세: `docs/10_signal_research_sppv/
   [DESIGN] regime_conditional_entry_signal_v1.md` §82.
+- 2026-07-21 KST(SPPV-2.95): 20% quintile 공식의 구조적 결과를
+  실제 코드로 재구성 검증. 07-16/20/21 3거래일 모두 신호 결측 없이
+  20% pool은 4/2/3에 불과했고, 000810/000660/001450 전부 3일 내
+  percentile 극값(0.0 또는 1.0)을 최소 한 번 기록. shadow 비교
+  (30%/고정 top-5)에서도 pool은 여전히 한 자릿수 — 문제는 quintile
+  비율이 아니라 core 유니버스 규모(12~23종목) 자체. 병목 B 확정,
+  다음 검토는 "비율 조정"이 아닌 "유니버스 규모 재검토". 코드 변경
+  없음. 상세: `docs/10_signal_research_sppv/[DESIGN] regime_
+  conditional_entry_signal_v1.md` §83.
 - **3순위(보류 유지, 형태 재정의 — 우선순위 재조정)**: **`entry_
   score`와 BUY funnel 재현** — §2.7 확장 검증에서 하락장 안정성이
   확인되지 않아 단순 재현으로는 착수하지 않는다. §2.16~§2.21에서

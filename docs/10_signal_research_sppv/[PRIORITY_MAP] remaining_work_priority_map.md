@@ -9560,8 +9560,23 @@ agent 설계 문서 기준으로도 순서는 다음이 맞다.
      차단은 아님). 판정: Watch. 신규 KIS 호출 0건. 상세: `docs/10_
      signal_research_sppv/[DESIGN] regime_conditional_entry_signal_
      v1.md` §82.
-   - **SPPV-3(다음 착수: core 유니버스 규모 대비 20% quintile 공식
-     적정성 설계 검토(코드 수정 아님, 검토 단계) +
+   - **SPPV-2.95(완료, 2026-07-21 KST, 20% quintile 공식의 구조적
+     결과 재구성 검증, 작성자: Codex — 병목 B 확정, 다음 검토
+     대상을 "유니버스 규모"로 재정의, 코드 변경 없음)**: 07-14/15는
+     벤치마크 snapshot 결측으로 pool=0(별도 문제). 07-16(23종목)/
+     07-20(12종목)/07-21(18종목) 3거래일 모두 신호 결측 없이 20%
+     pool은 4/2/3뿐 — 3종목 모두 3일 내 percentile 극값(0.0/1.0)을
+     최소 한 번 기록(000810 이틀 연속 꼴찌, 001450은 07-20 유니버스
+     제외→07-21 1위 복귀). shadow 비교(top 30%/고정 top-5)에서도
+     pool은 2~6개(한 자릿수)에 머물러 비율 조정으로는 근본 해소가
+     안 됨을 확인 — 문제 본질은 quintile 비율이 아니라 core 유니버스
+     규모(12~23종목) 자체. 활동성 게이트와의 우선순위는 그대로 유지.
+     신규 KIS 호출 0건. 상세: `docs/10_signal_research_sppv/[DESIGN]
+     regime_conditional_entry_signal_v1.md` §83.
+   - **SPPV-3(다음 착수: core 유니버스(decision_loop_intraday
+     freeze) 규모 자체의 설계 근거 확인(20% 비율 조정이 아닌 유니버스
+     확대 여지 검토) +
+     001450 활동성 게이트(§82) 관찰 지속 +
      001450 활동성 추세 관찰 지속(재반등 여부) +
      near-miss override 관찰 지속(코드 변경 없음) +
      pre-AI 차단(층3, risk_off ranking blocked)

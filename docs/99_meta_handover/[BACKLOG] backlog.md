@@ -1428,6 +1428,16 @@
   signal_research_sppv/[DESIGN] regime_conditional_entry_signal_
   v1.md` §82.
 
+- 2026-07-21 KST(SPPV-2.95): 20% quintile 공식의 구조적 결과를
+  실제 코드로 재구성 검증. 07-16/20/21 3거래일 모두 신호 결측 없이
+  20% pool은 4/2/3뿐이었고, 3종목 전부 3일 내 percentile 극값을
+  최소 한 번 기록. shadow 비교(30%/고정 top-5)에서도 pool은
+  한 자릿수에 머물러 비율 조정으로는 근본 해소가 안 됨 — 문제는
+  quintile 비율이 아니라 core 유니버스 규모(12~23종목) 자체. 병목
+  B 확정, 다음 검토는 "유니버스 규모 재검토"로 재정의. 코드 변경
+  없음, 신규 KIS 호출 0건. 상세: `docs/10_signal_research_sppv/
+  [DESIGN] regime_conditional_entry_signal_v1.md` §83.
+
 ---
 
 ## 관리 원칙
