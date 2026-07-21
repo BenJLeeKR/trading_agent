@@ -1395,6 +1395,17 @@
   KIS 호출 0건. 상세: `docs/10_signal_research_sppv/[DESIGN] regime_
   conditional_entry_signal_v1.md` §79.
 
+- 2026-07-21 KST(SPPV-2.92): R3b candidate pool 협소·순위 변동성
+  판정. 최근 48시간 000810/000660 entry_score가 각 정확히 2개
+  값만 관측(이분법적) — core 유니버스 약 18종목 중 candidate pool
+  2~3종목뿐이라 percentile 공식(n=2/3)상 태생적으로 이산값만 가능.
+  001450은 별도 유동성 eligibility 게이트로 차단(R3b 무관). 병목
+  3단계 중 B(candidate pool 협소)를 현재 주된 병목으로 확정, A(R3b
+  미작동)는 해당 없음. near-miss override는 paper runtime에 계속
+  켜져 있음. 코드 변경 없음, 신규 KIS 호출 0건. 상세: `docs/10_
+  signal_research_sppv/[DESIGN] regime_conditional_entry_signal_
+  v1.md` §80.
+
 ---
 
 ## 관리 원칙

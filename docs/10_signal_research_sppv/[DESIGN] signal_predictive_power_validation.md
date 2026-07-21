@@ -1962,6 +1962,25 @@ entry 설계 검토로 전환**을 확정했다. 별도 문서
   없음, 신규 KIS 호출 0건. 상세: `docs/10_signal_research_sppv/
   [DESIGN] regime_conditional_entry_signal_v1.md` §79.
 
+- 작성자: Codex
+- 수정일자: 2026-07-21 KST (91차, R3b candidate pool 협소·순위
+  변동성 판정)
+- 수정내용: near-miss override를 더 만지지 않고, R3b가 정상 작동
+  하는데도 BUY funnel 상류에서 0건에 수렴하는 이유를 "candidate
+  pool 협소성" 관점에서 실측 닫았다(SPPV-2.92, 코드 변경 없음).
+  최근 48시간(KST) 000810/000660의 entry_score가 각각 정확히 2개
+  값({0.0,0.7856}/{0.0,0.33})만 관측 — 000810 특이 사례가 아니라
+  반복 구조. core 유니버스 약 18종목 중 candidate pool은 2~3종목
+  뿐이며, `bisect_left/(n-1)` percentile 공식상 n=2/3이면 각각
+  {0.0,1.0}/{0.0,0.5,1.0}만 가능한 태생적 이산성이 원인. 001450은
+  entry_score=0.78로 임계 이상이나 별도 유동성 eligibility 게이트
+  로 차단(R3b와 무관). 병목 3단계(A.R3b 미작동/B.candidate pool
+  협소/C.candidate_vs_final·APPROVE·EV gate 이후) 중 **B를 현재
+  주된 병목으로 확정**. near-miss override는 paper runtime에 계속
+  켜져 있음. 코드 변경 없음, 신규 KIS 호출 0건. 상세: `docs/10_
+  signal_research_sppv/[DESIGN] regime_conditional_entry_signal_
+  v1.md` §80.
+
 ---
 
 ## 진행 체크리스트
@@ -4678,6 +4697,36 @@ canonical),
     쉽게 요동치는 구조적 특성"으로 재규정. 코드 변경 없음, 신규
     KIS 호출 0건. 상세: `docs/10_signal_research_sppv/[DESIGN]
     regime_conditional_entry_signal_v1.md` §79.
+- [x] **SPPV-2.92(신설)** R3b candidate pool 협소·순위 변동성 판정
+  (완료, 2026-07-21 KST, 작성자: Codex)
+  - **목적**: near-miss override를 더 만지지 않고, paper runtime에서
+    R3b가 정상 작동하고도 BUY funnel 상류에서 다시 0건에 수렴하는
+    이유를 "candidate pool 협소성" 관점으로 실측 판정(코드 변경
+    없음, Full pytest 미실행).
+  - **핵심 발견**: 최근 48시간(KST) 000810/000660의 `entry_score`
+    관측값이 각각 정확히 2개({0.0, 0.7856}, {0.0, 0.33})뿐 —
+    중간값 없이 이분법적으로 튐. 운영 로그 확인 결과 core 유니버스
+    약 18종목 중 R3b candidate pool은 2~3종목뿐(오늘 3종목:
+    000660/000810/001450). `build_candidate_percentiles()`의
+    `bisect_left/(n-1)` 공식상 `n=2`면 percentile은 {0.0,1.0}만,
+    `n=3`이면 {0.0,0.5,1.0}만 가능 — **작은 정수 n의 태생적 이산성**
+    으로, 이는 000810만의 특이 사례가 아니라 000660에도 동일하게
+    나타나는 **반복 구조**임을 확인. 001450은 entry_score=0.78(임계
+    0.65 이상)임에도 별도의 `eligibility_low_relative_activity`
+    게이트로 buy_candidate=False — R3b/후보풀과 무관한 독립 하류
+    게이트.
+  - **판정**: 병목 3단계(A. R3b 미작동/B. candidate pool 협소로
+    인한 구조적 순위 변동성/C. candidate_vs_final·APPROVE·EV gate
+    이후 병목) 중 **B가 현재 가장 상류이자 지배적인 병목**으로
+    확정. A(R3b 미작동)는 해당 없음 — reason code·precompute 로그
+    모두 정상. 코드 변경 없음, 신규 KIS 호출 0건. 상세: `docs/10_
+    signal_research_sppv/[DESIGN] regime_conditional_entry_signal_
+    v1.md` §80.
+  - **⚠️ 최신 상태(2026-07-21 KST 기준, 한눈에 요약)**: near-miss
+    override는 **paper runtime에 활성화돼 있음**(§77.8). 그러나
+    현재 더 상류의 구조적 병목은 **candidate pool 협소(2~3종목)로
+    인한 순위 변동성**일 가능성이 크다(B로 판정) — R3b 미작동이
+    아니며, EV gate/near-miss와는 별개의 상류 설계 특성이다.
 - [~] **SPPV-3** `entry_score` point-in-time 재현 및 중복 penalty ablation
   - **보류 유지, 형태 재정의 — 우선순위 재조정**: §12(1년, 자기참조
     포함) 당시 "알파 근거 강화"로 낙관했던 것이 §14(3년, 자기참조

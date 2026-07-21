@@ -9523,8 +9523,23 @@ agent 설계 문서 기준으로도 순서는 다음이 맞다.
      최하위"로 원인 정정, §78 핵심 판정은 유지. 신규 KIS 호출 0건.
      상세: `docs/10_signal_research_sppv/[DESIGN] regime_
      conditional_entry_signal_v1.md` §79.
-   - **SPPV-3(다음 착수: near-miss override 관찰 지속(코드 변경 없음) +
-     R3b 후보 풀 규모(2~3종목)의 구조적 변동성 특성 추가 검토 +
+   - **SPPV-2.92(완료, 2026-07-21 KST, R3b candidate pool 협소·순위
+     변동성 판정, 작성자: Codex — 병목 B 확정, 코드 변경 없음)**:
+     최근 48시간(KST) 000810/000660 entry_score가 각 정확히 2개
+     값만 관측(이분법적, 000810 특이 사례 아니라 반복 구조). core
+     유니버스 약 18종목 중 candidate pool 2~3종목뿐 — percentile
+     공식(bisect_left/(n-1))상 n=2/3이면 태생적으로 {0.0,1.0}/
+     {0.0,0.5,1.0}만 가능. 001450은 별도 유동성 eligibility 게이트
+     로 차단(R3b 무관). 병목 3단계(A.R3b 미작동/B.candidate pool
+     협소/C.candidate_vs_final·APPROVE·EV gate 이후) 중 **B를 현재
+     주된 병목으로 확정**, A는 해당 없음. near-miss override는
+     paper runtime에 계속 켜져 있음. 신규 KIS 호출 0건. 상세:
+     `docs/10_signal_research_sppv/[DESIGN] regime_conditional_
+     entry_signal_v1.md` §80.
+   - **SPPV-3(다음 착수: core 유니버스 규모 대비 20% quintile 공식
+     적정성 설계 검토(코드 수정 아님, 검토 단계) +
+     near-miss override 관찰 지속(코드 변경 없음) +
+     001450 eligibility_low_relative_activity 게이트 재검증 +
      pre-AI 차단(층3, risk_off ranking blocked)
      축 재검증(11/12종목 영향, 병행 검토) +
      candidate_vs_final downgrade 축 재검증 +
