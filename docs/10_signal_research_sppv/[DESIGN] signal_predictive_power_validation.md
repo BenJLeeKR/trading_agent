@@ -2028,6 +2028,24 @@ entry 설계 검토로 전환**을 확정했다. 별도 문서
   호출 0건. 상세: `docs/10_signal_research_sppv/[DESIGN] regime_
   conditional_entry_signal_v1.md` §83.
 
+- 작성자: Codex
+- 수정일자: 2026-07-21 KST (95차, R3b candidate pool 내부 percentile
+  주입 방식의 가혹성 실측)
+- 수정내용: "pool 내부 최하위=0.0 주입(A안)이 작은 pool에서 고득점
+  후보를 과도하게 0점 처리하는가"를 A/B(floor 0.30)/C(rank
+  compression (idx+1)/(n+1)) shadow 비교로 검증했다(SPPV-2.96,
+  코드 변경 없음). look-behind 보정(전일까지 snapshot만 사용) 후
+  07-20/07-21 2개 유효 거래일 5건 재구성 — 최하위 종목(percentile
+  =0.0) 3건 모두 B/C 적용해도 entry_score 0.20~0.27에 그쳐
+  threshold(0.65)에 근접 못 함(0.0 감점 폭이 아니라 alpha 항 외
+  나머지 base 자체가 낮았음). 반대로 이미 buy_candidate=True인
+  두 최상위 사례는 C안 적용 시 threshold 아래로 떨어지는 부작용
+  확인. 최하위 수령 종목이 거래일마다 다름 — 반복 구조 확정. 판정:
+  "현행 A안이 과도하다"는 가설은 이번 표본에서 뒷받침되지 않음
+  (No-Go), 완화안 코드 diff 착수는 보류. 코드 변경 없음, 신규 KIS
+  호출 0건. 상세: `docs/10_signal_research_sppv/[DESIGN] regime_
+  conditional_entry_signal_v1.md` §84.
+
 ---
 
 ## 진행 체크리스트
@@ -4848,6 +4866,30 @@ canonical),
     와의 우선순위는 그대로 유지(바꿀 근거 없음). 코드 변경 없음,
     신규 KIS 호출 0건. 상세: `docs/10_signal_research_sppv/[DESIGN]
     regime_conditional_entry_signal_v1.md` §83.
+- [x] **SPPV-2.96(신설)** R3b candidate pool 내부 percentile 주입
+  방식의 가혹성 실측 (완료, 2026-07-21 KST, 작성자: Codex)
+  - **목적**: "pool 내부 최하위=0.0 주입 방식(A안)이 작은 pool
+    (2~4종목)에서 고득점 후보를 과도하게 0점 처리하는가"를 A/B
+    (floor 0.30)/C(rank compression (idx+1)/(n+1)) shadow 비교로
+    검증(threshold 완화/코드 수정 없음, Full pytest 미실행).
+  - **핵심 발견**: look-behind 보정(전일까지 snapshot만 사용,
+    실제 decision loop와 동일 조건) 후 07-20/07-21 2개 유효
+    거래일 5건 재구성 결과, 최하위 종목(percentile=0.0) 3건
+    (000660@07-20, 000810@07-21, 참고 001800@07-16) 전부 B/C
+    적용해도 entry_score가 0.20~0.27에 그쳐 threshold(0.65)에
+    전혀 근접하지 못함 — **0.0 감점 폭이 아니라 alpha 항 외
+    나머지 항(base) 자체가 이미 매우 낮았기 때문**. 반대로 이미
+    `buy_candidate=True`를 얻은 두 최상위 사례(000810@07-20 0.7856,
+    001450@07-21 0.78)는 C안(압축) 적용 시 각 0.5189/0.58로
+    **threshold 아래로 떨어짐**(부작용 확인). 최하위 수령 종목이
+    거래일마다 다름(001800→000660→000810)을 확인해 000810 특이
+    사례가 아닌 반복 구조임을 확정.
+  - **판정**: 이번 표본(2개 유효 거래일) 기준 "현행 A안이 과도
+    하다"는 가설은 **뒷받침되지 않음**(No-Go, 완화 필요성 근거
+    부족) — 다만 표본이 작아 단정은 이름. 완화안 코드 diff 착수는
+    보류. 코드 변경 없음, 신규 KIS 호출 0건. 상세: `docs/10_signal_
+    research_sppv/[DESIGN] regime_conditional_entry_signal_v1.md`
+    §84.
 - [~] **SPPV-3** `entry_score` point-in-time 재현 및 중복 penalty ablation
   - **보류 유지, 형태 재정의 — 우선순위 재조정**: §12(1년, 자기참조
     포함) 당시 "알파 근거 강화"로 낙관했던 것이 §14(3년, 자기참조

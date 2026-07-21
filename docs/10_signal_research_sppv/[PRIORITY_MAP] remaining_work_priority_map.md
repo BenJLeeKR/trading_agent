@@ -9573,6 +9573,21 @@ agent 설계 문서 기준으로도 순서는 다음이 맞다.
      규모(12~23종목) 자체. 활동성 게이트와의 우선순위는 그대로 유지.
      신규 KIS 호출 0건. 상세: `docs/10_signal_research_sppv/[DESIGN]
      regime_conditional_entry_signal_v1.md` §83.
+   - **SPPV-2.96(완료, 2026-07-21 KST, R3b candidate pool 내부
+     percentile 주입 방식의 가혹성 실측, 작성자: Codex — 완화
+     필요성 근거 부족(No-Go), 코드 변경 없음)**: A(현행)/B(floor
+     0.30)/C(rank compression (idx+1)/(n+1)) shadow 비교. look-behind
+     보정(전일까지 snapshot만 사용) 후 07-20/07-21 2개 유효 거래일
+     5건 재구성 — 최하위 종목(percentile=0.0) 전부 B/C 적용해도
+     entry_score 0.20~0.27로 threshold(0.65) 근접 못 함(0.0 감점
+     폭이 아니라 alpha 항 외 base 자체가 낮았음). 반대로 이미
+     buy_candidate=True인 두 최상위 사례(000810@07-20, 001450@07-21)
+     는 C안 적용 시 threshold 아래로 떨어지는 부작용 확인. 최하위
+     수령 종목이 거래일마다 다름(001800→000660→000810) — 000810
+     특이 사례 아닌 반복 구조. 판정: 이번 표본에서 "A안이 과도
+     하다"는 가설 뒷받침 안 됨, 완화안 코드 diff 착수 보류. 신규
+     KIS 호출 0건. 상세: `docs/10_signal_research_sppv/[DESIGN]
+     regime_conditional_entry_signal_v1.md` §84.
    - **SPPV-3(다음 착수: core 유니버스(decision_loop_intraday
      freeze) 규모 자체의 설계 근거 확인(20% 비율 조정이 아닌 유니버스
      확대 여지 검토) +

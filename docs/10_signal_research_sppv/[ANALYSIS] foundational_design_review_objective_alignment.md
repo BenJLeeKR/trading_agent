@@ -1936,6 +1936,17 @@ value/compliance/broker가 아니라 `entry_score < 0.65`다.
   다음 검토는 "비율 조정"이 아닌 "유니버스 규모 재검토". 코드 변경
   없음. 상세: `docs/10_signal_research_sppv/[DESIGN] regime_
   conditional_entry_signal_v1.md` §83.
+- 2026-07-21 KST(SPPV-2.96): "pool 내부 최하위=0.0 주입 방식이
+  고득점 후보를 과도하게 0점 처리하는가"를 A/B(floor 0.30)/C(rank
+  compression) shadow 비교로 검증. look-behind 보정 후 2개 유효
+  거래일 5건 재구성 — 최하위 종목은 B/C 적용해도 threshold에
+  근접 못 함(0.0 감점 폭이 아니라 base 자체가 낮았음), 오히려 C안은
+  이미 buy_candidate=True인 상위 사례를 threshold 아래로 떨어뜨리는
+  부작용 확인. 반복 구조(최하위 수령 종목이 매번 다름) 확정. 판정:
+  "A안이 과도하다"는 가설은 이번 표본에서 뒷받침되지 않음(No-Go),
+  완화안 코드 diff는 보류. 코드 변경 없음. 상세: `docs/10_signal_
+  research_sppv/[DESIGN] regime_conditional_entry_signal_v1.md`
+  §84.
 - **3순위(보류 유지, 형태 재정의 — 우선순위 재조정)**: **`entry_
   score`와 BUY funnel 재현** — §2.7 확장 검증에서 하락장 안정성이
   확인되지 않아 단순 재현으로는 착수하지 않는다. §2.16~§2.21에서
