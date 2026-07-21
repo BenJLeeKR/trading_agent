@@ -1981,6 +1981,37 @@ entry 설계 검토로 전환**을 확정했다. 별도 문서
   signal_research_sppv/[DESIGN] regime_conditional_entry_signal_
   v1.md` §80.
 
+- 작성자: Codex
+- 수정일자: 2026-07-21 KST (92차, Codex 종합 판단 반영 — "창보다
+  방패 다층 구조" 해석 고정)
+- 수정내용: §70~§80의 실측을 하나의 운영 판단으로 묶었다(SPPV-2.93,
+  코드 변경 없음). 핵심 판단: 현재 BUY가 늘지 않는 이유는 R3b 미작동
+  이 아니라 "상류 candidate pool 협소 + 중류 eligibility 차단 +
+  하류 APPROVE/EV gate 차단"이 직렬로 겹친 다층 방패 구조. 001450은
+  entry_score=0.78로 threshold를 넘지만 eligibility_low_relative_
+  activity로 buy_candidate=false 유지되는 대표 사례. 다음 우선순위:
+  (1) 001450 활동성 게이트 재검증, (2) candidate pool quintile 공식
+  적정성 검토, (3) EV gate/submit 차단 재평가. 상세: `docs/10_
+  signal_research_sppv/[DESIGN] regime_conditional_entry_signal_
+  v1.md` §81.
+
+- 작성자: Codex
+- 수정일자: 2026-07-21 KST (93차, `001450 / eligibility_low_
+  relative_activity` 축 정밀 검증)
+- 수정내용: §81이 최우선으로 지정한 001450 활동성 게이트 축을 실제
+  운영 데이터로 정밀 검증했다(SPPV-2.94, 코드 변경 없음). 최근 7일
+  001450의 trade_decisions 188건 전량이 이 게이트로 차단(entry_
+  score 무관). 전 종목 중 entry_score>=0.65는 000810·001450 단
+  2종목뿐이며, 활동성 게이트 차단은 001450 100%, buy_candidate
+  통과는 000810 100% — 광범위 방패가 아니라 001450 단일 종목 반복
+  패턴. 직접 원인은 max(volume_surge_ratio, turnover_surge_ratio)
+  < 1.10 단일 조건(entry_score 무관, 코드로 확정). 001450의 20일
+  평균 거래량/거래대금이 2주간 각 약 -20%/-22% 추세적 감소 — 실제
+  유동성 저하 추세로 뒷받침되는 정당한 방어에 가까움. 판정: Watch
+  (No-Go도 Conditional Go도 아님, 계속 관찰). 코드 변경 없음, 신규
+  KIS 호출 0건. 상세: `docs/10_signal_research_sppv/[DESIGN] regime_
+  conditional_entry_signal_v1.md` §82.
+
 ---
 
 ## 진행 체크리스트
@@ -4727,6 +4758,56 @@ canonical),
     현재 더 상류의 구조적 병목은 **candidate pool 협소(2~3종목)로
     인한 순위 변동성**일 가능성이 크다(B로 판정) — R3b 미작동이
     아니며, EV gate/near-miss와는 별개의 상류 설계 특성이다.
+- [x] **SPPV-2.93(신설)** Codex 종합 판단 반영 — "창보다 방패 다층
+  구조" 해석 고정 (완료, 2026-07-21 KST, 작성자: Codex)
+  - **목적**: 최근 §70~§80의 실측 결과를 하나의 운영 판단으로
+    묶어, "창(R3b) 자체 문제"와 "창의 효과를 실제 BUY까지 전달하지
+    못하게 막는 방패 구조"를 구분해 문서에 고정.
+  - **핵심 판단**: 현재 체감상 BUY가 늘지 않는 이유는 `R3b` 미작동이
+    아니라 **상류 candidate pool 협소 + 중류 eligibility 차단 +
+    하류 APPROVE/EV gate 차단이 직렬로 겹친 다층 구조**에 있다.
+    특히 001450은 `entry_score=0.78`로 threshold를 넘지만
+    `eligibility_low_relative_activity` 때문에 `buy_candidate=false`
+    가 유지되는 대표 사례다 — "점수가 높다"와 "실제 매수 자격이 있다"
+    는 동일하지 않음을 명시적으로 확인.
+  - **다음 우선순위 재정렬**: (1) 001450 및 유사 고점수 종목의
+    `eligibility_low_relative_activity` 재검증, (2) core universe
+    규모 대비 20% quintile 공식 적정성 검토, (3) 그 다음에 EV gate
+    / submit 차단 재평가. 즉, 지금은 창 추가 개선보다 **방패 중 직접
+    병목을 순서대로 줄이는 작업**이 우선이다.
+  - **판정**: SPPV 방향성 유지. R3b 자체는 정상 작동 중이며,
+    현재 문제는 "창이 무딘가?"보다 **"좋아진 창의 효과가 실제 BUY까지
+    전달될 수 있는 구조인가?"**에 가깝다. 상세:
+    `docs/10_signal_research_sppv/[DESIGN] regime_conditional_entry_
+    signal_v1.md` §81.
+- [x] **SPPV-2.94(신설)** `001450 / eligibility_low_relative_
+  activity` 축 정밀 검증 (완료, 2026-07-21 KST, 작성자: Codex)
+  - **목적**: §81/SPPV-2.93이 최우선으로 지정한 001450 활동성 게이트
+    축을 실제 운영 데이터로 정밀 검증(threshold 변경/완화 배포/
+    코드 수정 없음, Full pytest 미실행).
+  - **핵심 발견**: 최근 7일(KST) 001450의 `trade_decisions` 188건
+    **전량**이 `eligibility_low_relative_activity`로 차단됨
+    (entry_score 0.5375~0.78 무관, `volume_surge_ratio`/`turnover_
+    surge_ratio` 항상 0.88~1.09로 1.10 미만). 같은 기간 전 종목
+    중 `entry_score>=0.65`(A, 136건)는 000810(71)·001450(65) 단
+    2종목뿐 — 그중 활동성 게이트 차단(B, 65건)은 001450 **100%**,
+    `buy_candidate=true`(C, 71건)는 000810 **100%**. 즉 이 게이트는
+    광범위한 방패가 아니라 001450 단일 종목에 좁게 반복되는 패턴.
+    코드 확인 결과 직접 원인은 `max(volume_surge_ratio, turnover_
+    surge_ratio) < 1.10` 단일 조건(entry_score 무관, 다른 eligibility
+    축과 얽히지 않음). 001450의 `average_volume_20d`/`average_
+    turnover_20d`가 2주간 각각 약 -20%/-22% 추세적으로 감소 —
+    "신호는 강한데 활성도만 일시 부족"이 아니라 "거래 관심이
+    추세적으로 식어가는 종목"에 가까움(07-13에는 실제로 1.10을
+    넘어 게이트를 통과하기도 했음 — 영구 차단은 아님).
+  - **판정**: **Watch** — No-Go(명백한 오탐)로 보기엔 실제 유동성
+    하락 추세라는 뒷받침이 있고, Conditional Go(완화 검토 착수)로
+    보기엔 forward return 등 "통과시켰으면 좋았을" 실증 근거가
+    전혀 없음(확인 불가). 단순 Hold로 보기엔 유니버스 내 고득점
+    종목 절반(65/136)을 좌우하는 실질적 병목이라 계속 관찰할 가치가
+    있음. 코드 변경 없음, 신규 KIS 호출 0건. 상세: `docs/10_signal_
+    research_sppv/[DESIGN] regime_conditional_entry_signal_v1.md`
+    §82.
 - [~] **SPPV-3** `entry_score` point-in-time 재현 및 중복 penalty ablation
   - **보류 유지, 형태 재정의 — 우선순위 재조정**: §12(1년, 자기참조
     포함) 당시 "알파 근거 강화"로 낙관했던 것이 §14(3년, 자기참조

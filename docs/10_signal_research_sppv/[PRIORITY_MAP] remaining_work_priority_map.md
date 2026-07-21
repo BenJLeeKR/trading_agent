@@ -9536,10 +9536,34 @@ agent 설계 문서 기준으로도 순서는 다음이 맞다.
      paper runtime에 계속 켜져 있음. 신규 KIS 호출 0건. 상세:
      `docs/10_signal_research_sppv/[DESIGN] regime_conditional_
      entry_signal_v1.md` §80.
+   - **SPPV-2.93(완료, 2026-07-21 KST, Codex 종합 판단 반영 —
+     "창보다 방패 다층 구조" 해석 고정, 작성자: Codex — 우선순위
+     재정렬, 코드 변경 없음)**: 현재 체감상 BUY가 늘지 않는 이유를
+     `R3b` 미작동이 아니라 **상류 candidate pool 협소 + 중류
+     eligibility 차단 + 하류 APPROVE/EV gate 차단의 직렬 구조**로
+     문서화. 대표 사례로 001450(`entry_score=0.78`이나
+     `eligibility_low_relative_activity` 때문에 `buy_candidate=false`)
+     를 고정. 다음 우선순위를 `(1) 001450 eligibility 재검증 →
+     (2) 20% quintile 공식 적정성 검토 → (3) EV gate 재평가`로
+     재배열. 상세: `docs/10_signal_research_sppv/[DESIGN] regime_
+     conditional_entry_signal_v1.md` §81.
+   - **SPPV-2.94(완료, 2026-07-21 KST, `001450 / eligibility_low_
+     relative_activity` 축 정밀 검증, 작성자: Codex — 판정 Watch,
+     코드 변경 없음)**: 최근 7일 001450의 trade_decisions 188건
+     전량이 이 게이트로 차단(entry_score 무관). entry_score>=0.65
+     종목은 000810·001450 단 2개뿐이며 활동성 게이트 차단은 001450
+     100%, buy_candidate 통과는 000810 100% — 광범위 방패 아닌
+     단일 종목 반복 패턴(코드로 직접 원인 max(volume_surge_ratio,
+     turnover_surge_ratio)<1.10 단일 조건 확정). 001450의 20일
+     평균 거래량/거래대금이 2주간 약 -20%/-22% 추세적 감소 — 정당한
+     방어에 가까움(07-13엔 실제로 게이트 통과 이력도 있어 영구
+     차단은 아님). 판정: Watch. 신규 KIS 호출 0건. 상세: `docs/10_
+     signal_research_sppv/[DESIGN] regime_conditional_entry_signal_
+     v1.md` §82.
    - **SPPV-3(다음 착수: core 유니버스 규모 대비 20% quintile 공식
      적정성 설계 검토(코드 수정 아님, 검토 단계) +
+     001450 활동성 추세 관찰 지속(재반등 여부) +
      near-miss override 관찰 지속(코드 변경 없음) +
-     001450 eligibility_low_relative_activity 게이트 재검증 +
      pre-AI 차단(층3, risk_off ranking blocked)
      축 재검증(11/12종목 영향, 병행 검토) +
      candidate_vs_final downgrade 축 재검증 +

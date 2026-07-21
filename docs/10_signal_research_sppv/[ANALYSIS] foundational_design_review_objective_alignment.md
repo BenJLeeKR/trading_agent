@@ -1907,6 +1907,26 @@ value/compliance/broker가 아니라 `entry_score < 0.65`다.
   미작동)는 해당 없음. 코드 변경 없음. 상세: `docs/10_signal_
   research_sppv/[DESIGN] regime_conditional_entry_signal_v1.md`
   §80.
+- 2026-07-21 KST(SPPV-2.93): Codex 종합 판단을 문서에 고정.
+  현재 체감상 BUY가 늘지 않는 이유는 "창(R3b)이 무디다"가 아니라
+  **상류 candidate pool 협소 + 중류 eligibility 차단 + 하류
+  APPROVE/EV gate 차단이 직렬로 겹친 다층 방패 구조**라는 해석을
+  채택. 특히 001450은 `entry_score=0.78`로 threshold를 넘지만
+  `eligibility_low_relative_activity` 때문에 `buy_candidate=false`
+  가 유지되는 대표 사례로 정리. 이에 따라 다음 우선순위는
+  `(1) 001450 eligibility 재검증 → (2) candidate pool 20% 공식
+  적정성 검토 → (3) EV gate 재평가` 순으로 재정렬. 상세:
+  `docs/10_signal_research_sppv/[DESIGN] regime_conditional_entry_
+  signal_v1.md` §81.
+- 2026-07-21 KST(SPPV-2.94): §81이 최우선으로 지정한 001450 활동성
+  게이트 축을 실제 운영 데이터로 정밀 검증. 최근 7일 001450의
+  trade_decisions 188건 전량이 eligibility_low_relative_activity로
+  차단(entry_score 무관). entry_score>=0.65인 종목은 000810·001450
+  뿐이며 활동성 게이트 차단은 001450 100%, buy_candidate 통과는
+  000810 100% — 광범위 방패 아닌 단일 종목 반복 패턴. 001450의 20일
+  평균 거래량/거래대금이 2주간 추세적 감소 — 정당한 방어에 가까움.
+  판정: Watch. 코드 변경 없음. 상세: `docs/10_signal_research_sppv/
+  [DESIGN] regime_conditional_entry_signal_v1.md` §82.
 - **3순위(보류 유지, 형태 재정의 — 우선순위 재조정)**: **`entry_
   score`와 BUY funnel 재현** — §2.7 확장 검증에서 하락장 안정성이
   확인되지 않아 단순 재현으로는 착수하지 않는다. §2.16~§2.21에서
