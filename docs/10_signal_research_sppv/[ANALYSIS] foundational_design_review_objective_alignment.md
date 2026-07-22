@@ -1965,6 +1965,15 @@ value/compliance/broker가 아니라 `entry_score < 0.65`다.
   게이트/AI downgrade/EV gate 등 하류 병목은 그대로 남음. 상세:
   `docs/10_signal_research_sppv/[DESIGN] regime_conditional_entry_
   signal_v1.md` §86.
+- 2026-07-22 KST(SPPV-2.99): floor=0.60 반영 후 약 7.5시간 운영
+  관찰. entry_score 실측 상승(000810 0.00→0.46, 000660 0.33→0.41,
+  001450 무변화) 확인했으나, buy_candidate/final_intent=buy/
+  APPROVE/submit_request/order_requests는 전부 0건으로 반영 전후
+  동일. 병목이 층2(eligibility)로 이동 확인 — 001450/000810은
+  활동성 게이트, 000660은 새로 확인된 `eligibility_negative_
+  overall_floor` 축. 판정: B(부분 유효). 코드 변경 없음. 상세:
+  `docs/10_signal_research_sppv/[DESIGN] regime_conditional_entry_
+  signal_v1.md` §87.
 - **3순위(보류 유지, 형태 재정의 — 우선순위 재조정)**: **`entry_
   score`와 BUY funnel 재현** — §2.7 확장 검증에서 하락장 안정성이
   확인되지 않아 단순 재현으로는 착수하지 않는다. §2.16~§2.21에서

@@ -1472,6 +1472,16 @@
   research_sppv/[DESIGN] regime_conditional_entry_signal_v1.md`
   §86.
 
+- 2026-07-22 KST(SPPV-2.99): floor=0.60 반영 후 약 7.5시간 운영
+  관찰. entry_score 실측 상승(000810 0.00→0.46, 000660 0.33→0.41,
+  001450 무변화) 확인, 그러나 buy_candidate/final_intent=buy/
+  APPROVE/submit_request/order_requests는 전부 0건으로 반영 전후
+  동일. 병목이 층2(eligibility)로 이동 — 001450/000810은 활동성
+  게이트, 000660은 새로 확인된 `eligibility_negative_overall_
+  floor` 축. 판정: B(부분 유효). 코드 변경 없음, Full pytest
+  미실행, 신규 KIS 호출 0건. 상세: `docs/10_signal_research_sppv/
+  [DESIGN] regime_conditional_entry_signal_v1.md` §87.
+
 ---
 
 ## 관리 원칙

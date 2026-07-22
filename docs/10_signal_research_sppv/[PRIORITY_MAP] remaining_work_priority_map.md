@@ -9617,9 +9617,21 @@ agent 설계 문서 기준으로도 순서는 다음이 맞다.
      게이트/AI downgrade/EV gate 등 하류 병목은 그대로 남음. 신규
      KIS 호출 0건. 상세: `docs/10_signal_research_sppv/[DESIGN]
      regime_conditional_entry_signal_v1.md` §86.
-   - **SPPV-3(다음 착수: floor=0.60 실제 반영 후 paper 관찰(§86.6
-     관찰 포인트: entry_score 변화/buy_candidate 건수/candidate_vs_
-     final/APPROVE/order_request) +
+   - **SPPV-2.99(완료, 2026-07-22 KST, floor=0.60 반영 후 SPPV
+     BUY funnel 1일 관찰 결과, 작성자: Codex — 판정 B(부분 유효),
+     코드 변경 없음)**: §86 반영 후 약 7.5시간 관찰. entry_score
+     실측 상승(000810 0.00→0.46, 000660 0.33→0.41, 001450 무변화 —
+     이미 최상위) 확인, 그러나 buy_candidate/final_intent=buy/
+     APPROVE/submit_request/order_requests는 전부 0건으로 반영
+     전후 동일. 병목이 층2(eligibility)로 이동 — 001450/000810은
+     활동성 게이트, 000660은 새로 확인된 `eligibility_negative_
+     overall_floor` 축으로 즉시 차단. 판정: B(부분 유효, 상류 개선
+     하류 병목 잔존). 신규 KIS 호출 0건. 상세: `docs/10_signal_
+     research_sppv/[DESIGN] regime_conditional_entry_signal_v1.md`
+     §87.
+   - **SPPV-3(다음 착수: 층2(eligibility) 재검증(001450/000810의
+     활동성 게이트 + 000660의 eligibility_negative_overall_floor
+     축 함께) 최우선 +
      core 유니버스(decision_loop_intraday
      freeze) 규모 자체의 설계 근거 확인(20% 비율 조정이 아닌 유니버스
      확대 여지 검토) +

@@ -10724,3 +10724,121 @@ env 변수 없음). 이유:
 여전히 제한적이나, 주문 0건 장기화라는 더 큰 운영 문제를 우선한
 **사용자 직권 운영 결정**이며, 이후 실제 paper 관찰 결과가
 쌓이는 대로 재평가한다.
+
+
+---
+
+## 87. floor=0.60 반영 후 SPPV BUY funnel 1일 관찰 결과 (SPPV-2.99, 2026-07-22 KST)
+
+### 87.1 목적
+
+§86에서 실제 paper 운영에 반영한 `CANDIDATE_PERCENTILE_FLOOR=0.60`
+이 배포된 지 약 7.5시간(2026-07-22 09:27 KST 반영 → 17:01 KST
+관찰 시점) 경과한 시점의 **운영 관찰 중간 결과**를 기록한다. 이번
+턴은 "효과 입증"이나 "실패 확정"이 아니라 **관측 사실**과 **해석
+가능한 범위**를 분리해 기록하는 관찰 턴이다. 코드 수정 없음, Full
+pytest 미실행, 신규 KIS 호출 0건(read-only DB 조회만).
+
+### 87.2 관찰 창(KST)
+
+- **반영 시점**: 2026-07-22 09:27 KST(=00:27 UTC).
+- **비교 구간 A(반영 이후)**: 2026-07-22 09:27 KST ~ 17:01 KST(관찰
+  시점, 약 7.5시간).
+- **비교 구간 B(반영 이전 24시간, 비교용)**: 2026-07-21 09:27 KST
+  ~ 2026-07-22 09:27 KST.
+
+### 87.3 BUY funnel 단계별 집계(구간 A vs B)
+
+| 단계 | 반영 이후(A) | 반영 이전 24h(B) | 비교 |
+|---|---|---|---|
+| 전체 trade_decisions | 1,083 | 1,158 | 유사(관찰 시간 차이 반영) |
+| `trigger_r3b_alpha_percentile` 발생 | 198 | 196 | 거의 동일 |
+| `entry_score` 반영 candidate pool 종목 | 000660/000810/001450(3종목) | 000660/000810/001450(3종목) | 동일 pool 유지 |
+| `buy_candidate=true` | **0** | **0** | **변화 없음** |
+| `candidate_vs_final.final_intent='buy'` | **0** | **0** | **변화 없음** |
+| `decision_type='APPROVE'` | **0** | **0** | **변화 없음** |
+| `submit_request` 생성 | 0 | 0 | 변화 없음 |
+| `order_requests` 생성 | **0** | **0** | **변화 없음** |
+
+**funnel 전체 관점에서는 반영 전후 차이가 관측되지 않았다** —
+candidate pool(3종목) 자체는 동일하게 유지됐고, buy_candidate 이후
+모든 단계가 반영 전후 동일하게 0건이다.
+
+### 87.4 종목별 상세(001450 / 000810 / 000660) — 반영 전/후 비교
+
+| 종목 | entry_score(반영 전, 07-21) | entry_score(반영 후, 07-22 최신) | 변화 | eligibility_reasons(마지막) | buy_candidate | evg.passed |
+|---|---|---|---|---|---|---|
+| 001450 | 0.78 | 0.78 | **무변화**(이미 pool 1위, floor 영향권 밖) | `eligibility_low_relative_activity`(양일 동일) | False | True(watch라 non-actionable) |
+| 000810 | 0.00 | **0.46** | **+0.46 상승**(floor 효과) | 반영 전 `eligibility_execution_feasibility_pass`(통과)→반영 후 `eligibility_low_relative_activity`(차단, 사유는 실제 시장 활동성 변화로 추정·floor와 무관) | False | True |
+| 000660 | 0.33 | 0.41 | **+0.08 상승**(floor 효과, 소폭) | `eligibility_negative_overall_floor`(양일 동일, 활동성 게이트가 아닌 **더 이른 단계의 별도 eligibility 축**) | False | False(non_action) |
+
+**해석(관측 사실과 분리)**:
+- **사실**: floor 반영으로 000810(+0.46)과 000660(+0.08)의
+  `entry_score`가 실제로 상승했다 — 이는 §86의 shadow 검증에서
+  예측한 방향과 일치한다.
+- **사실**: 001450은 이미 pool 최상위였으므로 floor의 영향권 밖에
+  있고, 실제로도 무변화였다 — 최상위 무손상이 실운영에서도
+  재확인됐다.
+- **사실**: 세 종목 모두 여전히 `buy_candidate=false`이며, 그 직접
+  원인은 **eligibility 단계**다 — 단, 001450/000810은 활동성 게이트
+  (`eligibility_low_relative_activity`)이고, 000660은 **더 이른
+  단계의 별도 축**(`eligibility_negative_overall_floor`)이라는
+  점이 이번 관찰에서 새로 구분됐다.
+- **해석(추정)**: 000810의 eligibility 사유가 반영 전후로 바뀐 것
+  (통과→차단)은 floor 적용 자체 때문이 아니라, 오늘(07-22)의 실제
+  거래 활성도(거래량/거래대금 surge ratio)가 어제와 달라졌기
+  때문일 가능성이 높다(다른 거래일의 실제 시장 데이터 변화 —
+  floor는 `entry_score`만 바꾸고 eligibility 판정 로직은 전혀
+  건드리지 않았으므로, 이 변화는 floor와 무관한 별도 요인으로
+  해석하는 것이 타당하다).
+
+### 87.5 병목 층위 재분류(현재 관찰 기준)
+
+- **층1(candidate pool/floor)**: **개선 확인됨** — 000810/000660
+  `entry_score` 실측 상승, 001450 무손상. floor는 의도대로 작동
+  중이다.
+- **층2(eligibility 차단)**: **★현재 가장 직접적인 병목★** — 관찰된
+  3종목 전부가 이 층에서 즉시 막힌다. entry_score가 올라도(층1 개선)
+  eligibility를 통과하지 못하면 buy_candidate 자체가 성립하지 않아,
+  그 아래 모든 층(3~5)은 아예 평가될 기회조차 없다.
+- **층3(candidate_vs_final/AI 최종판단)**: 이번 관찰 구간에서는
+  도달한 사례 자체가 없음(층2에서 이미 막힘) — 평가 불가.
+- **층4(expected_value_gate/submit_request)**: 도달 사례 없음 —
+  평가 불가(단, `evg.passed`는 non-actionable 케이스에서 `true`로
+  표시되는데, 이는 EV gate가 "적용 대상 아님"으로 자동 통과 처리된
+  것이지 실제 게이트를 통과한 것이 아니다 — §77~79 참고).
+  000660만 예외적으로 `evg.passed=False`가 관측되나 이는
+  decision_type이 HOLD인 상태에서의 별도 계산 경로로, 이번 턴
+  1차 관심사(층1/층2)와는 무관하다.
+- **층5(실제 주문 생성)**: 0건, 변화 없음.
+
+**가장 직접적인 병목 1개**: **층2(eligibility 차단)**. floor
+반영(층1)은 확인 가능한 효과를 냈지만, 그 효과가 다음 단계로
+전달되기 전에 eligibility 단계에서 전원 즉시 차단된다 — 지금
+BUY 0건이 지속되는 가장 가까운 원인은 layer 1이 아니라 **layer 2**
+로 이동했다.
+
+### 87.6 `floor=0.60` 반영 효과 판정: **B. 부분 유효**
+
+- **A(무효)로 볼 수 없는 근거**: 000810 entry_score가 0.00→0.46,
+  000660이 0.33→0.41로 실측 상승 — 상류 지표는 실제로 개선됐다.
+- **C(실질 유효)로 볼 수 없는 근거**: `buy_candidate`/`final_
+  intent='buy'`/`APPROVE`/`submit_request`/`order_requests` 전부
+  반영 전후 **0건으로 동일** — 최종 BUY funnel 전진은 관측되지
+  않았다.
+- **따라서 B(부분 유효)**: "상류(candidate pool/entry_score)는
+  개선됐으나 하류(eligibility) 병목 때문에 최종 BUY/order는 아직
+  제한적"이라는 §86의 사전 예상과 정확히 일치하는 결과다. §86의
+  "운영 관찰을 위한 제한적 완화 적용"이라는 서술과 충돌하지 않으며,
+  이를 구체적 관찰 수치로 뒷받침한다.
+
+### 87.7 다음 우선 작업
+
+**다음에 손대야 할 병목 1개**: **층2(eligibility) — 특히
+000660류에서 새로 확인된 `eligibility_negative_overall_floor`
+축과, 001450/000810의 `eligibility_low_relative_activity`(§82)
+축을 함께 재검증**할 것을 최우선으로 제안한다. floor(층1)는
+이미 반영 완료되어 추가 조정이 급하지 않으며, 지금 시점에 funnel을
+가장 직접적으로 막고 있는 지점이 층2이기 때문이다. 코드 수정
+제안은 이번 턴에서 하지 않는다 — 다음 턴에서 최소 범위 재검증부터
+시작할 것을 권고한다.

@@ -2081,6 +2081,23 @@ entry 설계 검토로 전환**을 확정했다. 별도 문서
   파일 1개 수정), 신규 KIS 호출 0건. 상세: `docs/10_signal_research_
   sppv/[DESIGN] regime_conditional_entry_signal_v1.md` §86.
 
+- 작성자: Codex
+- 수정일자: 2026-07-22 KST (98차, floor=0.60 반영 후 SPPV BUY
+  funnel 1일 관찰 결과)
+- 수정내용: §86 반영 후 약 7.5시간(2026-07-22 09:27~17:01 KST)
+  운영 관찰 결과를 기록했다(SPPV-2.99, 코드 변경 없음). entry_score
+  실측 상승(000810 0.00→0.46, 000660 0.33→0.41, 001450 무변화 —
+  이미 최상위라 floor 영향권 밖) 확인. 그러나 buy_candidate/final_
+  intent=buy/APPROVE/submit_request/order_requests는 반영 전후
+  전부 0건으로 동일 — 최종 funnel 전진 없음. 병목이 층2(eligibility)
+  로 이동했음을 확인: 001450/000810은 활동성 게이트, 000660은
+  새로 확인된 `eligibility_negative_overall_floor` 축으로 즉시
+  차단. 판정: B(부분 유효) — 상류 개선, 하류 병목으로 최종 전진
+  제한적. §86의 "운영 관찰을 위한 제한적 완화 적용" 서술과 일치.
+  코드 변경 없음, Full pytest 미실행, 신규 KIS 호출 0건. 상세:
+  `docs/10_signal_research_sppv/[DESIGN] regime_conditional_entry_
+  signal_v1.md` §87.
+
 ---
 
 ## 진행 체크리스트
@@ -4974,6 +4991,23 @@ canonical),
     코드 변경 있음(신규 파일 1개, 기존 파일 1개 수정), 신규 KIS
     호출 0건. 상세: `docs/10_signal_research_sppv/[DESIGN] regime_
     conditional_entry_signal_v1.md` §86.
+- [x] **SPPV-2.99(신설)** floor=0.60 반영 후 SPPV BUY funnel 1일
+  관찰 결과 (완료, 2026-07-22 KST, 작성자: Codex)
+  - **⚠️ 최신 상태(한눈에 요약)**: §86 반영(2026-07-22 09:27 KST)
+    후 약 7.5시간 관찰 — **entry_score는 실측 상승**(000810
+    0.00→0.46, 000660 0.33→0.41, 001450은 이미 최상위라 무변화)
+    했으나, **buy_candidate/final_intent=buy/APPROVE/submit_
+    request/order_requests는 반영 전후 전부 0건으로 동일**. 판정:
+    **B. 부분 유효**(상류 개선, 하류 eligibility 병목으로 최종
+    전진 없음) — "효과 입증"도 "실패 확정"도 아닌 중간 관찰 결과.
+  - **가장 직접적인 현재 병목**: 층2(eligibility 차단) — 001450/
+    000810은 `eligibility_low_relative_activity`(§82), 000660은
+    이번에 새로 확인된 별도 축 `eligibility_negative_overall_
+    floor`로 즉시 차단, entry_score 개선이 다음 층(candidate_vs_
+    final/EV gate/실제 주문)까지 전달되지 못함.
+  - 코드 변경 없음, Full pytest 미실행, 신규 KIS 호출 0건. 상세:
+    `docs/10_signal_research_sppv/[DESIGN] regime_conditional_
+    entry_signal_v1.md` §87.
 - [~] **SPPV-3** `entry_score` point-in-time 재현 및 중복 penalty ablation
   - **보류 유지, 형태 재정의 — 우선순위 재조정**: §12(1년, 자기참조
     포함) 당시 "알파 근거 강화"로 낙관했던 것이 §14(3년, 자기참조
