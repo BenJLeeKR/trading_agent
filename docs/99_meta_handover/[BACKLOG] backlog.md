@@ -1459,6 +1459,19 @@
   코드 변경 없음, 신규 KIS 호출 0건. 상세: `docs/10_signal_research_
   sppv/[DESIGN] regime_conditional_entry_signal_v1.md` §85.
 
+- 2026-07-21 KST(SPPV-2.98): §85는 Watch였으나, 사용자가 "주문 0건
+  장기화가 더 큰 운영 문제"로 판단해 직권으로 `CANDIDATE_
+  PERCENTILE_FLOOR=0.60`을 실제 paper 운영에 반영("운영 관찰을
+  위한 제한적 완화 적용", 효과 증명 아님). `r3b_alpha_percentile.
+  py`의 `build_candidate_percentiles()` 내부 한 줄로 최소화, 신규
+  env 변수 없음(`.env`/docker-compose 변경 불필요). 신규 테스트
+  6개+기존 76개=82/82 통과. 실제 DB off/on 비교로 최상위(001450)
+  무손상, 최하위/중하위만 상향 확인. 활동성 게이트/AI downgrade/EV
+  gate 등 하류 병목은 그대로 남음. 코드 변경 있음(신규 파일 1개,
+  기존 파일 1개 수정), 신규 KIS 호출 0건. 상세: `docs/10_signal_
+  research_sppv/[DESIGN] regime_conditional_entry_signal_v1.md`
+  §86.
+
 ---
 
 ## 관리 원칙

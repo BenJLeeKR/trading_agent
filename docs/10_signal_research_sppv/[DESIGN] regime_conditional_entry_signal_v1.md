@@ -10580,3 +10580,147 @@ C안(§84)처럼 최상위를 훼손하는 명백한 부작용은 **없음**(구
    미리 정리해 둔다(단, 이번 턴 결론은 아니다).
 4. §83에서 지정한 core 유니버스 규모 자체의 설계 재검토, §82의
    001450 활동성 게이트 관찰은 그대로 유지.
+
+
+---
+
+## 86. R3b candidate pool 최하위 floor=0.60 — 사용자 직권 paper 운영 반영 (SPPV-2.98, 2026-07-21 KST)
+
+### 86.1 목적/배경
+
+§85까지의 shadow 검증 결과는 **Watch**(회복 근거 아직 불충분,
+단 최상위 무손상은 확실)였다. 그러나 사용자는 "실측 근거가
+제한적이어도, 주문 발생 0건이 장기간 지속되는 현재 paper 운영
+상태가 더 큰 문제"라고 판단하고, **직권으로 floor=0.60을 실제
+paper 운영에 반영하기로 결정**했다. 이번 턴은 그 결정을 "반영할지
+말지"가 아니라 **"어디를 어떻게 바꾸고 무엇을 관찰할지"**를
+정리하는 턴이다. **이는 SPPV와 무관한 임시 운영 해킹이 아니라,
+"과도한 방패로 인해 주문 0건이 지속되는 병목을 일부 완화하는
+운영 결정"으로 SPPV 트랙에 정식 기록한다.**
+
+**중요 — 과장 금지**: 이 적용은 "효과가 증명됐다"는 뜻이 아니다.
+§85의 shadow 검증에서 확인된 유효 거래일 2일 모두 floor=0.60으로도
+buy_candidate 회복 사례가 없었다 — 즉 이번 반영은 **"운영 관찰을
+위한 제한적 완화 적용"**이며, 근거가 확정돼서가 아니라 사용자가
+"0건 지속"이라는 더 큰 문제를 우선한 **운영 판단**이다.
+
+### 86.2 실제 반영 지점
+
+- **코드 경로 재확인**(read-only): `scripts/run_decision_loop.py`
+  의 cycle precompute(`_precompute_r3b_alpha_percentiles` 계열
+  함수, `AppSettings.entry_score_r3b_alpha_enabled` 게이트 뒤)가
+  `services/r3b_alpha_percentile.py`의 `build_candidate_
+  percentiles()`를 호출 → 결과 dict를 `request.metadata["r3b_
+  alpha_percentile"]`로 종목별 주입 → `deterministic_trigger_
+  engine.py`의 `_build_entry_score()`가 `score += 0.80 *
+  _clamp(r3b_alpha_percentile)`로 반영.
+- **floor 적용 지점**: `build_candidate_percentiles()` 내부,
+  percentile 계산 직후 — **가장 좁은 범위**(이 함수 하나, 반환
+  직전 한 줄)로 한정했다. `_build_entry_score()`나 cycle
+  precompute, metadata 주입부는 전혀 손대지 않았다.
+- **적용 방식**: `percentiles[symbol] = max(raw_percentile,
+  CANDIDATE_PERCENTILE_FLOOR)` — pool 내부 raw percentile이
+  0.60 미만인 모든 종목(최하위뿐 아니라 0.60 미만 전체)에 적용된다
+  (§85의 B3 shadow 검증과 동일 정의). raw가 이미 0.60 이상인
+  종목은 `max()`의 단조증가 성질상 전혀 바뀌지 않는다.
+
+### 86.3 코드 상수 vs config 스위치 — 결정 근거
+
+**코드 상수로 결정**(`CANDIDATE_PERCENTILE_FLOOR = 0.60`, 신규
+env 변수 없음). 이유:
+- 이 값은 이미 `AppSettings.entry_score_r3b_alpha_enabled`(기존
+  스위치)로 감싸인 R3b alpha 경로 **내부의 파라미터 조정**이지,
+  독립적인 on/off 기능이 아니다.
+- 같은 모듈의 `TOP_QUINTILE_FRACTION = 0.20`도 이미 bare 모듈
+  상수로 관리되고 있어 — 동일 패턴 유지가 일관적이다.
+- 되돌리기는 이 상수를 `0.0`으로 바꾸거나(사실상 무효화) git
+  revert 한 줄이면 충분해, 신규 env 변수를 추가하는 것과 되돌리기
+  속도 차이가 없다.
+
+### 86.4 실행한 최소 검증 (Full pytest 미실행)
+
+- **신규 전용 테스트**: `tests/services/test_r3b_alpha_percentile.
+  py`(6개) — floor 상수값 확인, n=10 pool 최하위 floor 적용,
+  최상위 무손상, 이미 floor 이상인 값 무변화, 신호 5개 미만 시
+  기존 동작(빈 dict) 유지, 신호 결측 종목 미포함 유지. **6/6 통과**.
+- **관련 기존 테스트**: `test_ev_gate_near_miss_override.py`(13개)
+  + `test_decision_orchestrator.py`(63개) — orchestrator 배선에
+  영향 없는지 확인 목적. **82/82 통과, 회귀 없음**(주: `test_r3b_
+  alpha_percentile.py` 6개 포함 총 82개).
+- **실제 DB 기반 off/on 비교(1회 실행, read-only)**: 오늘(2026-07-22
+  KST) 실제 core universe(17종목, market_common_label=range_bound)
+  로 `build_candidate_percentiles()`를 직접 호출:
+  - **ON(floor=0.60, 현재 코드)**: `{'001450': 1.0, '000810': 0.6,
+    '000660': 0.6}`
+  - **OFF(floor=0.0, 런타임 임시 비교용)**: `{'001450': 1.0,
+    '000810': 0.5, '000660': 0.0}`
+  - **최상위(001450, raw=1.0) 완전 무손상 확인**, 최하위/중하위
+    (000810: 0.5→0.6, 000660: 0.0→0.6)만 상향 확인.
+
+### 86.5 실제 paper 반영 절차
+
+- **`.env` 변경 불필요** — 신규 env 변수를 추가하지 않았다(§86.3).
+- **`docker-compose.yml` 변경 불필요** — 이미 `./src:/app/src`가
+  `ops-scheduler` 컨테이너에 bind-mount 돼 있어(read-only 확인),
+  코드 파일 변경이 즉시 컨테이너 파일시스템에 반영된다.
+- **재기동 필요 여부**: decision loop는 매 cycle마다 `python3 -m
+  scripts.run_decision_loop --count 1 ...`을 **새 subprocess로
+  기동**하므로(로그로 확인), 이론상 재기동 없이도 다음 cycle부터
+  새 코드가 적용된다. 다만 확실한 반영 확인을 위해 컨테이너를
+  재기동한다(§89 등 이전 턴과 동일 절차):
+  ```
+  git add src/agent_trading/services/r3b_alpha_percentile.py \
+          tests/services/test_r3b_alpha_percentile.py
+  git commit -m "..."
+  git push origin main
+  docker compose up -d --force-recreate --no-deps ops-scheduler
+  ```
+
+### 86.6 반영 후 관찰 포인트
+
+- `docker logs agent_trading-ops-scheduler --since <N>` 에서
+  `R3b alpha precompute:` 라인 확인 — candidates 목록/개수 변화.
+- `trade_decisions.decision_json.deterministic_trigger.reason_
+  codes`에 `trigger_r3b_alpha_percentile` 존재 여부(변화 없어야
+  함 — floor는 percentile 값만 바꿈).
+- 최하위 종목의 `entry_score` 변화(예상: 0.0류 → 0.60*0.8=0.48
+  가산분만큼 상승, §85 실측 참고).
+- `buy_candidate=true` 건수 변화(증가 여부 자체가 관찰 대상 —
+  §85 기준 즉시 회복을 보장하지 않음).
+- `candidate_vs_final.final_intent='buy'` 변화.
+- `decision_type='APPROVE'` 발생 변화.
+- `submit_request`/`order_requests` 신규 생성 여부(궁극적 목표
+  지표, 그러나 하류 병목이 남아 있으므로 즉시 발생을 기대하지
+  않는다).
+
+**특히 명시적으로 볼 것**:
+1. 최상위 후보(001450류)가 손상되지 않는지 — §86.4에서 이미 코드
+   구조상 손상 불가함을 확인했으나, 실운영에서도 재확인.
+2. 최하위 후보가 조금이라도 BUY funnel 다음 단계로 전진하는지.
+3. 여전히 하류 병목(§86.7)이 남아 있는지.
+
+### 86.7 남는 하류 병목
+
+이번 반영은 **R3b candidate pool 내부 percentile 축(§80~§85)만**
+건드렸다. 아래 하류 병목은 **전혀 손대지 않았고 그대로 남는다**:
+- **활동성 게이트**(`eligibility_low_relative_activity`, §82,
+  Watch 판정) — 001450류가 entry_score를 넘겨도 여전히 이 게이트로
+  차단될 수 있음.
+- **AI downgrade**(`candidate_vs_final` watch/no_action 전환,
+  §68~69 트랙) — buy_candidate가 되어도 AI 단계에서 다시 깎일 수
+  있음.
+- **EV gate**(§70~79, near-miss override는 paper에 이미 활성화돼
+  있으나 §90에서 확인했듯 최근 사례가 없었음) — APPROVE까지 가도
+  마지막에 이 게이트가 있음.
+
+즉 floor=0.60 반영은 **BUY funnel의 가장 상류(candidate pool) 한
+축만 완화**한 것이며, 이후 최소 3개 하류 게이트를 모두 통과해야
+실제 `order_request`가 생긴다.
+
+### 86.8 SPPV 관점 판정
+
+**"운영 관찰을 위한 제한적 완화 적용"**으로 기록한다. §85의 Watch
+판정을 뒤집거나 "효과가 증명됐다"고 선언하지 않는다 — 실측 근거는
+여전히 제한적이나, 주문 0건 장기화라는 더 큰 운영 문제를 우선한
+**사용자 직권 운영 결정**이며, 이후 실제 paper 관찰 결과가
+쌓이는 대로 재평가한다.

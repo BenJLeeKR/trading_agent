@@ -2064,6 +2064,23 @@ entry 설계 검토로 전환**을 확정했다. 별도 문서
   KIS 호출 0건. 상세: `docs/10_signal_research_sppv/[DESIGN]
   regime_conditional_entry_signal_v1.md` §85.
 
+- 작성자: Codex
+- 수정일자: 2026-07-21 KST (97차, R3b candidate pool 최하위
+  floor=0.60 — 사용자 직권 paper 운영 반영)
+- 수정내용: §85의 shadow 검증은 Watch였으나, 사용자가 "주문 0건
+  장기화가 더 큰 운영 문제"로 판단해 직권으로 `CANDIDATE_
+  PERCENTILE_FLOOR=0.60`을 실제 paper 운영에 반영했다(SPPV-2.98,
+  "운영 관찰을 위한 제한적 완화 적용" — 효과 증명 아님). 반영 지점은
+  `r3b_alpha_percentile.py`의 `build_candidate_percentiles()`
+  내부 한 줄로 최소화, 신규 env 변수 없음(bare 모듈 상수, 기존
+  `TOP_QUINTILE_FRACTION`과 동일 패턴). 신규 테스트 6개+관련 기존
+  76개=82/82 통과(Full pytest 미실행). 실제 DB(오늘 core universe
+  17종목) off/on 비교로 최상위(001450) 무손상, 최하위/중하위
+  (000810/000660) 상향만 확인. 활동성 게이트/AI downgrade/EV gate
+  등 하류 병목은 그대로 남음. 코드 변경 있음(신규 파일 1개, 기존
+  파일 1개 수정), 신규 KIS 호출 0건. 상세: `docs/10_signal_research_
+  sppv/[DESIGN] regime_conditional_entry_signal_v1.md` §86.
+
 ---
 
 ## 진행 체크리스트
@@ -4932,6 +4949,31 @@ canonical),
     표본 축적을 최우선으로 함. 코드 변경 없음, 신규 KIS 호출 0건.
     상세: `docs/10_signal_research_sppv/[DESIGN] regime_conditional_
     entry_signal_v1.md` §85.
+- [x] **SPPV-2.98(신설)** R3b candidate pool 최하위 floor=0.60 —
+  사용자 직권 paper 운영 반영 (완료, 2026-07-21 KST, 작성자: Codex)
+  - **⚠️ 최신 상태(한눈에 요약)**: §85의 shadow 검증은 **Watch**
+    (회복 근거 불충분, 최상위 무손상만 확실)였으나, **사용자가
+    "주문 0건 장기화가 더 큰 운영 문제"로 판단해 직권으로
+    `CANDIDATE_PERCENTILE_FLOOR=0.60`을 실제 paper 운영에 반영**
+    했다. 이는 효과가 증명된 완화가 아니라 **운영 관찰을 위한
+    제한적 완화 적용**이다.
+  - **반영 지점**: `services/r3b_alpha_percentile.py`의
+    `build_candidate_percentiles()` 내부, percentile 계산 직후
+    한 줄(`max(raw_percentile, CANDIDATE_PERCENTILE_FLOOR)`) —
+    가장 좁은 범위. `_build_entry_score()`/cycle precompute/metadata
+    주입부는 무변경. 신규 env 변수 없음(bare 모듈 상수, 기존
+    `TOP_QUINTILE_FRACTION`과 동일 패턴) — `.env`/`docker-compose.
+    yml` 변경 불필요(`./src` bind-mount로 코드 변경이 즉시 반영).
+  - **검증**: 신규 테스트 6개 + 관련 기존 테스트 76개 = 82/82 통과
+    (Full pytest 미실행). 실제 DB(오늘 core universe 17종목) 기반
+    off/on 비교: 최상위(001450, raw=1.0) 완전 무손상, 최하위/중하위
+    (000810 0.5→0.6, 000660 0.0→0.6)만 상향 확인.
+  - **남는 하류 병목**: 활동성 게이트(§82)/AI downgrade(candidate_
+    vs_final)/EV gate(§70~79, near-miss override 이미 활성화)
+    모두 그대로 남음 — 이번 반영은 candidate pool 축 하나만 완화.
+    코드 변경 있음(신규 파일 1개, 기존 파일 1개 수정), 신규 KIS
+    호출 0건. 상세: `docs/10_signal_research_sppv/[DESIGN] regime_
+    conditional_entry_signal_v1.md` §86.
 - [~] **SPPV-3** `entry_score` point-in-time 재현 및 중복 penalty ablation
   - **보류 유지, 형태 재정의 — 우선순위 재조정**: §12(1년, 자기참조
     포함) 당시 "알파 근거 강화"로 낙관했던 것이 §14(3년, 자기참조

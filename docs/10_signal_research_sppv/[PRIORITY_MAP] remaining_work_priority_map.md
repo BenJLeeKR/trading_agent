@@ -9602,7 +9602,25 @@ agent 설계 문서 기준으로도 순서는 다음이 맞다.
      근거는 아직 부족) — 완화안 diff 착수 보류, 표본 축적 우선.
      신규 KIS 호출 0건. 상세: `docs/10_signal_research_sppv/[DESIGN]
      regime_conditional_entry_signal_v1.md` §85.
-   - **SPPV-3(다음 착수: core 유니버스(decision_loop_intraday
+   - **SPPV-2.98(완료, 2026-07-21 KST, R3b candidate pool 최하위
+     floor=0.60 — 사용자 직권 paper 운영 반영, 작성자: Codex —
+     "운영 관찰을 위한 제한적 완화 적용", 효과 증명 아님)**: §85가
+     Watch였음에도 사용자가 "주문 0건 장기화가 더 큰 운영 문제"로
+     판단해 직권으로 `CANDIDATE_PERCENTILE_FLOOR=0.60`을 실제
+     paper 운영에 반영. `r3b_alpha_percentile.py`의
+     `build_candidate_percentiles()` 내부 한 줄로 최소화, 신규 env
+     변수 없음(bare 모듈 상수, `.env`/docker-compose 변경 불필요 —
+     `./src` bind-mount로 코드 변경 즉시 반영). 신규 테스트 6개+
+     관련 기존 76개=82/82 통과(Full pytest 미실행). 실제 DB(오늘
+     core universe 17종목) off/on 비교: 최상위(001450) 완전 무손상,
+     최하위/중하위(000810 0.5→0.6, 000660 0.0→0.6)만 상향. 활동성
+     게이트/AI downgrade/EV gate 등 하류 병목은 그대로 남음. 신규
+     KIS 호출 0건. 상세: `docs/10_signal_research_sppv/[DESIGN]
+     regime_conditional_entry_signal_v1.md` §86.
+   - **SPPV-3(다음 착수: floor=0.60 실제 반영 후 paper 관찰(§86.6
+     관찰 포인트: entry_score 변화/buy_candidate 건수/candidate_vs_
+     final/APPROVE/order_request) +
+     core 유니버스(decision_loop_intraday
      freeze) 규모 자체의 설계 근거 확인(20% 비율 조정이 아닌 유니버스
      확대 여지 검토) +
      001450 활동성 게이트(§82) 관찰 지속 +

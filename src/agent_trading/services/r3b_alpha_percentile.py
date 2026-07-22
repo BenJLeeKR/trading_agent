@@ -37,6 +37,26 @@ from dataclasses import dataclass
 TOP_QUINTILE_FRACTION = 0.20
 """shadow 스크립트와 동일한 상위 20% candidate pool 기준(신규 재추정 없음)."""
 
+CANDIDATE_PERCENTILE_FLOOR = 0.60
+"""candidate pool 내부 최하위 완화(SPPV-2.97/2.98, 2026-07-21 KST 운영
+반영). pool 내부 percentile이 이 값 미만이면 ``max(raw_percentile,
+CANDIDATE_PERCENTILE_FLOOR)``로 올린다. 이미 이 값 이상인 종목(대부분
+최상위/중상위권)은 전혀 영향받지 않는다 — ``max()``는 raw가 floor
+이상이면 항상 raw를 그대로 반환하는 단조증가 연산이라 구조적으로
+상위권을 건드릴 수 없다(§85 shadow 검증에서 최상위 무손상 확인).
+
+배경: candidate pool이 core universe 규모 제약으로 2~4종목에
+불과해(§80/§83), 내부 최하위가 예외 없이 0.0을 받는 이산적 결과가
+반복 관측됐다(§80~§84). §84~§85의 shadow 검증에서 이 floor 자체가
+buy_candidate를 안정적으로 회복시킨다는 근거는 확인되지 않았으나,
+사용자가 "주문 0건이 장기화되는 현재 상태가 더 큰 운영 문제"로
+판단해 제한적 완화를 paper 운영에 직접 반영하기로 결정했다(SPPV
+Watch 판정 유지, "효과 증명"이 아니라 "운영 관찰을 위한 제한적
+완화 적용"). 빠른 되돌리기가 필요하면 이 상수를 0.0으로 되돌리거나
+아래 적용 라인을 되돌리면 된다(신규 config 스위치 없음 — 기존
+``TOP_QUINTILE_FRACTION``과 동일하게 bare 모듈 상수로 관리).
+"""
+
 _BULLISH_OR_RANGE_LABELS = frozenset({"bullish_trend", "range_bound"})
 _BEARISH_LABEL = "bearish_trend"
 
@@ -92,5 +112,6 @@ def build_candidate_percentiles(
     percentiles: dict[str, float] = {}
     for symbol, signal in day_candidates:
         idx = bisect.bisect_left(cand_signals, signal)
-        percentiles[symbol] = idx / (n - 1) if n > 1 else 0.5
+        raw_percentile = idx / (n - 1) if n > 1 else 0.5
+        percentiles[symbol] = max(raw_percentile, CANDIDATE_PERCENTILE_FLOOR)
     return percentiles
