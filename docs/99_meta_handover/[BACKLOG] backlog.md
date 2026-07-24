@@ -1482,6 +1482,17 @@
   미실행, 신규 KIS 호출 0건. 상세: `docs/10_signal_research_sppv/
   [DESIGN] regime_conditional_entry_signal_v1.md` §87.
 
+- 2026-07-24 KST(SPPV-2.100): 층2(eligibility)를 활동성 게이트와
+  negative_overall_floor로 분리 재검증. 000810/001450은 entry_
+  score 0.78까지 도달해도 100% 활동성 게이트로 차단(382건), 000660은
+  entry_score 자체가 최대 0.41로 threshold 미달(negative_overall_
+  floor는 완전히 별개 독립 축). 활동성 게이트가 더 직접적인 병목
+  으로 확정. 최근 3일 활동성 비율이 뚜렷한 미달로 실제 유동성 감소
+  추세와 일치 — 두 축 모두 완화 검토 후보로 올릴 근거 부족, Watch
+  유지. 코드 변경 없음, Full pytest 미실행, 신규 KIS 호출 0건.
+  상세: `docs/10_signal_research_sppv/[DESIGN] regime_conditional_
+  entry_signal_v1.md` §88.
+
 ---
 
 ## 관리 원칙

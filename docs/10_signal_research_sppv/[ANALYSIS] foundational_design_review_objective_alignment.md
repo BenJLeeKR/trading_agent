@@ -1974,6 +1974,16 @@ value/compliance/broker가 아니라 `entry_score < 0.65`다.
   overall_floor` 축. 판정: B(부분 유효). 코드 변경 없음. 상세:
   `docs/10_signal_research_sppv/[DESIGN] regime_conditional_entry_
   signal_v1.md` §87.
+- 2026-07-24 KST(SPPV-2.100): 층2(eligibility)를 활동성 게이트와
+  negative_overall_floor로 분리 재검증. 000810/001450은 entry_score
+  0.78까지 도달해도 100% 활동성 게이트로 차단(382건, 점수는 충분
+  하나 eligibility가 막는 사례), 000660은 entry_score 자체가 최대
+  0.41로 threshold 미달(negative_overall_floor는 완전히 별개 독립
+  축). 활동성 게이트가 더 직접적인 병목으로 확정. 최근 3일 활동성
+  비율(0.57~0.89 vs 1.10)이 뚜렷한 미달로 실제 유동성 감소 추세와
+  일치 — 두 축 모두 완화 검토 후보로 올릴 근거 부족, Watch 유지.
+  코드 변경 없음. 상세: `docs/10_signal_research_sppv/[DESIGN]
+  regime_conditional_entry_signal_v1.md` §88.
 - **3순위(보류 유지, 형태 재정의 — 우선순위 재조정)**: **`entry_
   score`와 BUY funnel 재현** — §2.7 확장 검증에서 하락장 안정성이
   확인되지 않아 단순 재현으로는 착수하지 않는다. §2.16~§2.21에서

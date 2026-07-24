@@ -9629,9 +9629,23 @@ agent 설계 문서 기준으로도 순서는 다음이 맞다.
      하류 병목 잔존). 신규 KIS 호출 0건. 상세: `docs/10_signal_
      research_sppv/[DESIGN] regime_conditional_entry_signal_v1.md`
      §87.
-   - **SPPV-3(다음 착수: 층2(eligibility) 재검증(001450/000810의
-     활동성 게이트 + 000660의 eligibility_negative_overall_floor
-     축 함께) 최우선 +
+   - **SPPV-2.100(완료, 2026-07-24 KST, 층2(eligibility) 병목
+     세분화 재검증 — 활동성 게이트 vs negative_overall_floor,
+     작성자: Codex — 활동성 게이트가 더 직접적, 두 축 모두 Watch,
+     코드 변경 없음)**: 000810/001450은 entry_score 0.78까지
+     도달해도 100% 활동성 게이트로 차단(382건, "점수는 충분하나
+     eligibility가 막는" 사례), 000660은 entry_score 자체가 최대
+     0.41로 threshold 미달(negative_overall_floor는 완전히 별개
+     독립 축, overall_score=-0.1445 vs 임계값 -0.10 고정). 활동성
+     게이트가 층2 내부에서 더 직접적인 병목으로 확정. 최근 3일
+     활동성 비율(0.57~0.89 vs 1.10)이 뚜렷한 미달로 실제 유동성
+     감소 추세와 일치 — 완화 검토 후보로 올릴 근거 부족, 두 축
+     모두 Watch 유지. 신규 KIS 호출 0건. 상세: `docs/10_signal_
+     research_sppv/[DESIGN] regime_conditional_entry_signal_v1.md`
+     §88.
+   - **SPPV-3(다음 착수: 활동성 게이트 단독 심층 검토(000810/001450의
+     average_volume_20d/average_turnover_20d 감소 원인 — 실제 시장
+     유동성 축소인지 관측/계산 방식 문제인지) 최우선 +
      core 유니버스(decision_loop_intraday
      freeze) 규모 자체의 설계 근거 확인(20% 비율 조정이 아닌 유니버스
      확대 여지 검토) +

@@ -2098,6 +2098,24 @@ entry 설계 검토로 전환**을 확정했다. 별도 문서
   `docs/10_signal_research_sppv/[DESIGN] regime_conditional_entry_
   signal_v1.md` §87.
 
+- 작성자: Codex
+- 수정일자: 2026-07-24 KST (99차, 층2(eligibility) 병목 세분화
+  재검증 — 활동성 게이트 vs negative_overall_floor)
+- 수정내용: §87의 층2(eligibility) 병목을 활동성 게이트와
+  negative_overall_floor로 분리 재검증했다(SPPV-2.100, 코드 변경
+  없음). 관찰 창(07-22 09:27~07-24 15:27 KST) 기준 000810/001450은
+  entry_score가 0.78까지 도달해도 100% 활동성 게이트로 차단(382건,
+  "점수는 충분하나 eligibility가 막는" 사례), 000660은 entry_score
+  자체가 최대 0.41로 threshold 미달인 채 negative_overall_floor로
+  차단(188건, 활동성 게이트와 완전히 별개인 독립 축, overall_score
+  =-0.1445 vs 임계값 -0.10). 활동성 게이트가 층2 내부에서 더
+  직접적인 병목으로 확정. 다만 최근 3일 활동성 비율(0.57~0.89 vs
+  1.10)이 근소 미달이 아니라 뚜렷한 미달로 실제 유동성 감소 추세와
+  일치해, 두 축 모두 완화 검토 후보로 올릴 근거는 부족 — Watch
+  유지. 코드 변경 없음, Full pytest 미실행, 신규 KIS 호출 0건.
+  상세: `docs/10_signal_research_sppv/[DESIGN] regime_conditional_
+  entry_signal_v1.md` §88.
+
 ---
 
 ## 진행 체크리스트
@@ -5008,6 +5026,24 @@ canonical),
   - 코드 변경 없음, Full pytest 미실행, 신규 KIS 호출 0건. 상세:
     `docs/10_signal_research_sppv/[DESIGN] regime_conditional_
     entry_signal_v1.md` §87.
+- [x] **SPPV-2.100(신설)** 층2(eligibility) 병목 세분화 재검증 —
+  활동성 게이트 vs negative_overall_floor (완료, 2026-07-24 KST,
+  작성자: Codex)
+  - **⚠️ 최신 상태(한눈에 요약)**: 관찰 창(07-22 09:27~07-24 15:27
+    KST) 기준, **000810/001450은 entry_score가 0.78까지 도달해도
+    100% 활동성 게이트로 차단**(382건), **000660은 entry_score
+    자체가 최대 0.41로 threshold 미달**인 채 negative_overall_
+    floor로 차단(188건, 활동성 게이트와 무관한 독립 축, 임계값
+    -0.10 vs 000660 overall_score=-0.1445 고정). **활동성 게이트가
+    층2 내부에서 더 직접적인 병목**으로 확정 — entry_score가 이미
+    충분한 상태에서 막히기 때문.
+  - **완화 검토 근거**: 최근 3일간 000810/001450의 volume/turnover
+    surge ratio가 근소 미달이 아니라 뚜렷한 미달(0.57~0.89 vs
+    임계값 1.10)로, 실제 유동성 감소 추세와 일치 — **두 축 모두
+    이번 턴 증거로는 완화 검토 후보로 올릴 근거 부족, Watch 유지**.
+  - 코드 변경 없음, Full pytest 미실행, 신규 KIS 호출 0건. 상세:
+    `docs/10_signal_research_sppv/[DESIGN] regime_conditional_
+    entry_signal_v1.md` §88.
 - [~] **SPPV-3** `entry_score` point-in-time 재현 및 중복 penalty ablation
   - **보류 유지, 형태 재정의 — 우선순위 재조정**: §12(1년, 자기참조
     포함) 당시 "알파 근거 강화"로 낙관했던 것이 §14(3년, 자기참조
