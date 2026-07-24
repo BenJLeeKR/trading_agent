@@ -1493,6 +1493,16 @@
   상세: `docs/10_signal_research_sppv/[DESIGN] regime_conditional_
   entry_signal_v1.md` §88.
 
+- 2026-07-24 KST(SPPV-2.101): 층2 판정을 국면별로 층화 재검증.
+  000810/001450은 관찰 창 내내 100% bullish_trend, 000660은 100%
+  range_bound로 국면-종목이 완전히 교락됨을 확인. 활동성 게이트는
+  bullish_trend 표본(382건)에서도 명확한 미달로 반복 확인돼 Watch
+  유지. negative_overall_floor는 bullish_trend 표본 부재로 국면
+  의존성 미확정. 전체 Watch 판정 유지, 상승장 포함해도 변경 없음.
+  코드 변경 없음, Full pytest 미실행, 신규 KIS 호출 0건. 상세:
+  `docs/10_signal_research_sppv/[DESIGN] regime_conditional_entry_
+  signal_v1.md` §89.
+
 ---
 
 ## 관리 원칙

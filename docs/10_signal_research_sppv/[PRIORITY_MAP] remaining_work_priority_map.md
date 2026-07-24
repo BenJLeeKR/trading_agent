@@ -9643,9 +9643,24 @@ agent 설계 문서 기준으로도 순서는 다음이 맞다.
      모두 Watch 유지. 신규 KIS 호출 0건. 상세: `docs/10_signal_
      research_sppv/[DESIGN] regime_conditional_entry_signal_v1.md`
      §88.
-   - **SPPV-3(다음 착수: 활동성 게이트 단독 심층 검토(000810/001450의
+   - **SPPV-2.101(완료, 2026-07-24 KST, 층2(eligibility) 국면별
+     층화 재검증 — bullish_trend 포함, 작성자: Codex — 전체 Watch
+     유지, negative_overall_floor 국면 의존성은 미확정, 코드 변경
+     없음)**: 000810/001450은 관찰 창 내내 100% bullish_trend,
+     000660은 100% range_bound로 국면-종목이 완전히 교락됨을 정직
+     하게 확인. 활동성 게이트는 bullish_trend 표본(382건, entry_
+     score≥0.65인데 막힌 191건 포함)에서도 명확한 미달(37~48%↓)로
+     반복 확인 — 완화 검토 근거 없음(Watch 유지). negative_overall_
+     floor는 bullish_trend 표본 부재로 "range_bound 전용 축"
+     가설이 미확정(확인 불가)으로 남음. 신규 KIS 호출 0건. 상세:
+     `docs/10_signal_research_sppv/[DESIGN] regime_conditional_
+     entry_signal_v1.md` §89.
+   - **SPPV-3(다음 착수: negative_overall_floor의 국면 의존성
+     심층 검토(000660 또는 다른 종목이 bullish_trend로 전환될 때
+     이 축이 발생하는지, 과거 데이터 소급 조회 포함) 최우선 +
+     활동성 게이트 단독 심층 검토(000810/001450의
      average_volume_20d/average_turnover_20d 감소 원인 — 실제 시장
-     유동성 축소인지 관측/계산 방식 문제인지) 최우선 +
+     유동성 축소인지 관측/계산 방식 문제인지) +
      core 유니버스(decision_loop_intraday
      freeze) 규모 자체의 설계 근거 확인(20% 비율 조정이 아닌 유니버스
      확대 여지 검토) +

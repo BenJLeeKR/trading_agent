@@ -1984,6 +1984,14 @@ value/compliance/broker가 아니라 `entry_score < 0.65`다.
   일치 — 두 축 모두 완화 검토 후보로 올릴 근거 부족, Watch 유지.
   코드 변경 없음. 상세: `docs/10_signal_research_sppv/[DESIGN]
   regime_conditional_entry_signal_v1.md` §88.
+- 2026-07-24 KST(SPPV-2.101): 층2 판정을 국면별로 층화 재검증.
+  000810/001450은 관찰 창 내내 100% bullish_trend, 000660은 100%
+  range_bound로 국면-종목이 완전히 교락됨을 확인. 활동성 게이트는
+  bullish_trend 표본(382건)에서도 명확한 미달로 반복 확인돼 Watch
+  유지. negative_overall_floor는 bullish_trend 표본 부재로 국면
+  의존성 미확정. 전체 Watch 판정 유지. 코드 변경 없음. 상세:
+  `docs/10_signal_research_sppv/[DESIGN] regime_conditional_entry_
+  signal_v1.md` §89.
 - **3순위(보류 유지, 형태 재정의 — 우선순위 재조정)**: **`entry_
   score`와 BUY funnel 재현** — §2.7 확장 검증에서 하락장 안정성이
   확인되지 않아 단순 재현으로는 착수하지 않는다. §2.16~§2.21에서

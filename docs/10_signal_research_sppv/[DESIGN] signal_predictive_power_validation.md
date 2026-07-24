@@ -2116,6 +2116,21 @@ entry 설계 검토로 전환**을 확정했다. 별도 문서
   상세: `docs/10_signal_research_sppv/[DESIGN] regime_conditional_
   entry_signal_v1.md` §88.
 
+- 작성자: Codex
+- 수정일자: 2026-07-24 KST (100차, 층2(eligibility) 국면별 층화
+  재검증 — bullish_trend 포함)
+- 수정내용: §88의 활동성 게이트/negative_overall_floor 판정을
+  국면(regime)별로 층화 재검증했다(SPPV-2.101, 코드 변경 없음).
+  000810/001450은 관찰 창 내내 100% bullish_trend, 000660은 100%
+  range_bound로 분류돼 국면과 종목이 완전히 교락됨을 정직하게
+  확인. 활동성 게이트는 bullish_trend 표본(382건)에서도 명확한
+  미달(37~48%↓)로 반복 확인돼 완화 검토 근거 없음(Watch 유지).
+  negative_overall_floor는 bullish_trend 표본 자체가 없어 국면
+  의존성 가설이 미확정으로 남음. 전체 Watch 판정 유지, 상승장
+  포함해도 변경 없음. 코드 변경 없음, Full pytest 미실행, 신규
+  KIS 호출 0건. 상세: `docs/10_signal_research_sppv/[DESIGN]
+  regime_conditional_entry_signal_v1.md` §89.
+
 ---
 
 ## 진행 체크리스트
@@ -5044,6 +5059,24 @@ canonical),
   - 코드 변경 없음, Full pytest 미실행, 신규 KIS 호출 0건. 상세:
     `docs/10_signal_research_sppv/[DESIGN] regime_conditional_
     entry_signal_v1.md` §88.
+- [x] **SPPV-2.101(신설)** 층2(eligibility) 국면별 층화 재검증 —
+  bullish_trend 포함 (완료, 2026-07-24 KST, 작성자: Codex)
+  - **⚠️ 최신 상태(한눈에 요약)**: 관찰 창(07-22 09:27~07-24 20:15
+    KST) 동안 000810/001450은 **관찰 창 내내 100% bullish_trend**,
+    000660은 **100% range_bound**로 분류돼 국면과 종목이 완전히
+    교락(confound)됨을 확인 — 이 한계를 전제로, 활동성 게이트는
+    bullish_trend 표본(382건, entry_score≥0.65인데 막힌 191건
+    포함)에서도 명확한 미달(37~48%↓, 근소부족 아님)로 반복 확인돼
+    **완화 검토 근거가 새로 생기지 않았다**(Watch 유지). negative_
+    overall_floor는 이번 창에 bullish_trend 표본이 아예 없어
+    "range_bound 전용 축"이라는 가설은 **미확정(확인 불가)**으로
+    남는다("없다"가 아니라 "이번엔 관찰 안 됨").
+  - **전체 결론**: 전체 Watch 판정 유지, 상승장 표본 포함해도
+    변경 없음. "상승장에서 무의미"/"반드시 완화 필요" 같은 단정은
+    하지 않는다.
+  - 코드 변경 없음, Full pytest 미실행, 신규 KIS 호출 0건. 상세:
+    `docs/10_signal_research_sppv/[DESIGN] regime_conditional_
+    entry_signal_v1.md` §89.
 - [~] **SPPV-3** `entry_score` point-in-time 재현 및 중복 penalty ablation
   - **보류 유지, 형태 재정의 — 우선순위 재조정**: §12(1년, 자기참조
     포함) 당시 "알파 근거 강화"로 낙관했던 것이 §14(3년, 자기참조
