@@ -9683,10 +9683,26 @@ agent 설계 문서 기준으로도 순서는 다음이 맞다.
      eligibility 축/EV gate는 그대로 유지). 신규 KIS 호출 0건.
      상세: `docs/10_signal_research_sppv/[DESIGN] regime_
      conditional_entry_signal_v1.md` §91.
-   - **SPPV-3(다음 착수: eligibility 조건부 완화(entry_score≥0.70
-     예외) 코드 diff 초안 설계 검토 — 실제 반영은 사용자 결정 필요 +
-     core_cap 확장 병행 검토(값 변경만, 신규 진입 종목 실 반영 후
-     관찰 필요) +
+   - **[SPPV-2.104에서 정정] 위 판정("core_cap 확장=Watch",
+     "eligibility 조건부 완화=Conditional Go 후보")은 하루치 표본
+     기준 과속이었다. 상세는 §92 참고.**
+   - **SPPV-2.104(완료, 2026-07-24 KST, §91 판정 보정 — "Watch/
+     Conditional Go" 라벨 과속 정정, 우선순위 중심 재정리, 작성자:
+     Codex — 코드 변경 없음, 신규 조회/KIS 호출 없음)**: core
+     universe 확장을 "기존 3종목 구제 실패"가 아니라 "신규 후보
+     (009150) 출현을 확인한 상류 모집단 확대 레버"로 재해석해
+     **실반영 우선 후보(1순위)**로 격상. eligibility 조건부 완화는
+     하루치·단일 종목 flip만으로 Go 방향 라벨을 쓴 것이 과속이었
+     음을 인정하고 **제한적 하류 직접 레버(병행 실반영 후보,
+     2순위)**로 하향 정정. 두 레버 모두 "실반영 후 1~2거래일 관찰
+     필요" 상태 유지, 하루치 결과만으로 최종 확정하지 않음. 상세:
+     `docs/10_signal_research_sppv/[DESIGN] regime_conditional_
+     entry_signal_v1.md` §92.
+   - **SPPV-3(다음 착수: [1순위] TRADING_UNIVERSE_CORE_CAP 실제
+     확장 반영(env/config만, 코드 diff 없음) 및 1~2거래일 관찰 +
+     [2순위, 병행] eligibility_low_relative_activity 조건부 완화
+     (entry_score≥0.70 예외) 코드 diff 초안 설계 검토 — 전면 완화
+     금지, 실제 반영은 사용자 결정 필요 +
      negative_overall_floor의 국면 의존성
      심층 검토(000660 또는 다른 종목이 bullish_trend로 전환될 때
      이 축이 발생하는지, 과거 데이터 소급 조회 포함) 최우선 +

@@ -1526,6 +1526,17 @@
   KIS 호출 0건. 상세: `docs/10_signal_research_sppv/[DESIGN]
   regime_conditional_entry_signal_v1.md` §91.
 
+- **[SPPV-2.104에서 정정] 위 판정은 하루치 표본 기준 과속이었다.**
+- 2026-07-24 KST(SPPV-2.104): §91 판정 보정. core universe 확장을
+  "상류 모집단 확대 레버(신규 후보 009150 출현 확인)"로 재해석해
+  **실반영 우선 후보(1순위)**로 격상, eligibility 조건부 완화는
+  하루치·단일 종목 flip만으로 Go 라벨을 쓴 것을 인정하고
+  **제한적 하류 직접 레버(병행 실반영 후보, 2순위)**로 정정. 두
+  레버 모두 실반영 후 1~2거래일 관찰 필요 상태 유지, 하루치 결과
+  만으로 최종 확정하지 않음. 코드 변경 없음, 신규 조회/신규 KIS
+  호출 없음. 상세: `docs/10_signal_research_sppv/[DESIGN] regime_
+  conditional_entry_signal_v1.md` §92.
+
 ---
 
 ## 관리 원칙

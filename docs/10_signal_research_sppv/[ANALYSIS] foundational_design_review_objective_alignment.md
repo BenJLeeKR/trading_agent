@@ -2013,6 +2013,15 @@ value/compliance/broker가 아니라 `entry_score < 0.65`다.
   반영은 별도 결정). 코드 변경 없음. 상세: `docs/10_signal_
   research_sppv/[DESIGN] regime_conditional_entry_signal_v1.md`
   §91.
+- **[SPPV-2.104에서 정정] 위 판정은 하루치 표본 기준 과속이었다.**
+- 2026-07-24 KST(SPPV-2.104): §91 판정 보정. core universe 확장을
+  "상류 모집단 확대 레버(신규 후보 009150 출현 확인)"로 재해석해
+  **실반영 우선 후보(1순위)**로 격상, eligibility 조건부 완화는
+  하루치·단일 종목 flip만으로 Go 라벨을 쓴 것을 인정하고
+  **제한적 하류 직접 레버(병행 실반영 후보, 2순위)**로 정정. 두
+  레버 모두 실반영 후 1~2거래일 관찰 필요 상태 유지. 코드 변경
+  없음. 상세: `docs/10_signal_research_sppv/[DESIGN] regime_
+  conditional_entry_signal_v1.md` §92.
 - **3순위(보류 유지, 형태 재정의 — 우선순위 재조정)**: **`entry_
   score`와 BUY funnel 재현** — §2.7 확장 검증에서 하락장 안정성이
   확인되지 않아 단순 재현으로는 착수하지 않는다. §2.16~§2.21에서

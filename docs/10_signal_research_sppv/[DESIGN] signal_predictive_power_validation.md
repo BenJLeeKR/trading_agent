@@ -2162,6 +2162,25 @@ entry 설계 검토로 전환**을 확정했다. 별도 문서
   pytest 미실행, 신규 KIS 호출 0건. 상세: `docs/10_signal_research_
   sppv/[DESIGN] regime_conditional_entry_signal_v1.md` §91.
 
+- **[SPPV-2.104에서 정정] 위 판정("core_cap 확장=Watch",
+  "eligibility 조건부 완화=Conditional Go 후보")은 하루치·단일
+  시점 표본 기준으로는 과속이었다. 원문은 보존하고 아래에 보정
+  내용을 추가한다.**
+- 작성자: Codex
+- 수정일자: 2026-07-24 KST (103차, §91 판정 보정 — "Watch/
+  Conditional Go" 라벨 과속 정정, 우선순위 중심 재정리)
+- 수정내용: §91의 실측 자체는 정정하지 않고, 라벨/해석만 보정했다
+  (SPPV-2.104, 코드 변경 없음, 신규 조회/신규 KIS 호출 없음).
+  core universe 확장을 "기존 3종목 구제 실패"가 아니라 "신규 후보
+  (009150) 출현을 확인한 상류 모집단 확대 레버"로 재해석해
+  **실반영 우선 후보(1순위)**로 격상. eligibility 조건부 완화는
+  하루치·단일 종목 flip만으로 Go 방향 라벨을 쓴 것이 과속이었음을
+  인정하고 **제한적 하류 직접 레버(병행 실반영 후보, 2순위)**로
+  하향 정정. 두 레버 모두 "실반영 후 1~2거래일 관찰 필요" 상태로
+  유지, 하루치 결과만으로 최종 확정하지 않음. 코드 변경 없음,
+  신규 KIS 호출 없음. 상세: `docs/10_signal_research_sppv/[DESIGN]
+  regime_conditional_entry_signal_v1.md` §92.
+
 ---
 
 ## 진행 체크리스트
@@ -5148,6 +5167,31 @@ canonical),
   - 코드 변경 없음, Full pytest 미실행, 신규 KIS 호출 0건. 상세:
     `docs/10_signal_research_sppv/[DESIGN] regime_conditional_
     entry_signal_v1.md` §91.
+  - **[SPPV-2.104에서 정정] 위 "core_cap 확장=Watch"/"eligibility
+    조건부 완화=Conditional Go 후보"는 하루치·단일 시점 표본 기준
+    으로는 과속 판정이었다. core_cap 확장은 "기존 3종목 구제 실패"
+    가 아니라 "신규 후보(009150) 출현을 이미 확인한 상류 모집단
+    확대 레버"로 재해석해 **1순위 실반영 우선 후보**로 격상하고,
+    eligibility 조건부 완화는 하루치·단일 종목 flip만으로 Go 방향
+    라벨을 쓴 것이 과속이었으므로 **2순위 병행 실반영 후보(제한적
+    하류 직접 레버)**로 하향 정정한다. 이 항목의 원문은 삭제하지
+    않고 보존한다. 상세: `docs/10_signal_research_sppv/[DESIGN]
+    regime_conditional_entry_signal_v1.md` §92.**
+- [x] **SPPV-2.104(신설)** §91 판정 보정 — "Watch/Conditional Go"
+  라벨 과속 정정, 우선순위 중심 재정리 (완료, 2026-07-24 KST,
+  작성자: Codex)
+  - **목적**: §91의 실측 수치·표는 그대로 두고(이력 보존), 하루치
+    표본만으로 확정적 라벨(Watch/Conditional Go)을 매긴 것을
+    보정. 코드 변경 없음, 신규 조회/신규 KIS 호출 없음(순수 문서
+    해석 보정 턴).
+  - **보정 요약**: core universe 확장(`TRADING_UNIVERSE_CORE_CAP`)
+    = **실반영 우선 후보(1순위)** — 상류 모집단 확대 레버, 신규
+    후보 출현 이미 확인. eligibility 조건부 완화(`entry_score>=
+    0.70`) = **제한적 하류 직접 레버(병행 실반영 후보, 2순위)** —
+    전면 완화 아님, Go 방향 확정 아님. 두 레버 모두 "실반영 후
+    1~2거래일 관찰 필요" 상태로 유지, 하루치 결과만으로 최종 Go/
+    No-Go 확정하지 않음. 상세: `docs/10_signal_research_sppv/
+    [DESIGN] regime_conditional_entry_signal_v1.md` §92.
 - [~] **SPPV-3** `entry_score` point-in-time 재현 및 중복 penalty ablation
   - **보류 유지, 형태 재정의 — 우선순위 재조정**: §12(1년, 자기참조
     포함) 당시 "알파 근거 강화"로 낙관했던 것이 §14(3년, 자기참조
