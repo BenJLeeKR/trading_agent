@@ -2181,6 +2181,21 @@ entry 설계 검토로 전환**을 확정했다. 별도 문서
   신규 KIS 호출 없음. 상세: `docs/10_signal_research_sppv/[DESIGN]
   regime_conditional_entry_signal_v1.md` §92.
 
+- 작성자: Codex
+- 수정일자: 2026-07-24 KST (104차, `TRADING_UNIVERSE_CORE_CAP`
+  1순위 레버 실반영 절차)
+- 수정내용: §92의 1순위 레버(core universe 확장)를 실제 반영하는
+  과정에서 `docker-compose.yml`의 `ops-scheduler` 환경변수
+  화이트리스트에 `TRADING_UNIVERSE_CORE_CAP`이 선언돼 있지 않았던
+  배선 공백을 발견·수정했다(SPPV-2.105, 기본값 12 유지). `.env.
+  example`에도 `=40` 예시/근거 추가. 다만 `.env`는 이 세션의 표준
+  원칙에 따라 직접 수정하지 않았으므로, 사용자가 `.env`에 값을
+  추가해야 실제 반영이 완료된다(그 전까지 기본값 12 그대로 적용,
+  컨테이너 env 직접 확인). eligibility 조건부 완화(2순위)는 미착수,
+  EV gate threshold 변경 없음. 코드 로직 변경 없음, 신규 KIS 호출
+  0건. 상세: `docs/10_signal_research_sppv/[DESIGN] regime_
+  conditional_entry_signal_v1.md` §93.
+
 ---
 
 ## 진행 체크리스트
@@ -5192,6 +5207,23 @@ canonical),
     1~2거래일 관찰 필요" 상태로 유지, 하루치 결과만으로 최종 Go/
     No-Go 확정하지 않음. 상세: `docs/10_signal_research_sppv/
     [DESIGN] regime_conditional_entry_signal_v1.md` §92.
+- [x] **SPPV-2.105(신설)** `TRADING_UNIVERSE_CORE_CAP` 1순위 레버
+  실반영 절차 (완료, 2026-07-24 KST, 작성자: Codex)
+  - **⚠️ 최신 상태(한눈에 요약)**: §92가 1순위로 확정한 core
+    universe 확장을 실제로 반영하려는 과정에서 **`docker-compose.
+    yml`의 `ops-scheduler` 환경변수 화이트리스트에 `TRADING_
+    UNIVERSE_CORE_CAP`이 아예 선언돼 있지 않았음**(§62/SPPV-2.73과
+    동일한 배선 공백 패턴)을 발견·수정 완료(기본값 12 유지, 하위
+    호환 보존). `.env.example`에도 `=40` 예시와 근거 추가. **다만
+    이 세션의 표준 원칙("`.env`는 절대 내가 수정하지 않는다")에
+    따라 호스트 `.env` 자체는 이번 턴에서 직접 고치지 않았다** —
+    따라서 사용자가 `.env`에 `TRADING_UNIVERSE_CORE_CAP=40`을
+    직접 추가해야 실제 반영이 완료되며, 그 전까지는 기본값 12가
+    그대로 적용된다(컨테이너 env 직접 확인).
+  - eligibility 조건부 완화(2순위)는 이번 턴에 손대지 않음, EV
+    gate threshold 변경 없음. 코드 로직 변경 없음(config/compose
+    배선만), 신규 KIS 호출 0건. 상세: `docs/10_signal_research_
+    sppv/[DESIGN] regime_conditional_entry_signal_v1.md` §93.
 - [~] **SPPV-3** `entry_score` point-in-time 재현 및 중복 penalty ablation
   - **보류 유지, 형태 재정의 — 우선순위 재조정**: §12(1년, 자기참조
     포함) 당시 "알파 근거 강화"로 낙관했던 것이 §14(3년, 자기참조

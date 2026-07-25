@@ -9698,8 +9698,23 @@ agent 설계 문서 기준으로도 순서는 다음이 맞다.
      필요" 상태 유지, 하루치 결과만으로 최종 확정하지 않음. 상세:
      `docs/10_signal_research_sppv/[DESIGN] regime_conditional_
      entry_signal_v1.md` §92.
-   - **SPPV-3(다음 착수: [1순위] TRADING_UNIVERSE_CORE_CAP 실제
-     확장 반영(env/config만, 코드 diff 없음) 및 1~2거래일 관찰 +
+   - **SPPV-2.105(완료, 2026-07-24 KST, `TRADING_UNIVERSE_CORE_CAP`
+     1순위 레버 실반영 절차, 작성자: Codex — 배선 공백 발견·수정,
+     `.env` 자체는 미수정(세션 원칙), 코드 로직 변경 없음)**:
+     `docker-compose.yml`의 `ops-scheduler` 환경변수 화이트리스트에
+     `TRADING_UNIVERSE_CORE_CAP`이 없었던 배선 공백(§62/SPPV-2.73과
+     동일 패턴)을 발견·수정(기본값 12 유지). `.env.example`에
+     `=40` 예시/근거 추가. `.env`는 세션 표준 원칙("`.env`는 절대
+     내가 수정하지 않는다")에 따라 직접 수정하지 않음 — 사용자가
+     `.env`에 값을 추가해야 실제 반영 완료, 그 전까지 기본값 12
+     그대로 적용 중(컨테이너 env 직접 확인). eligibility 조건부
+     완화(2순위)는 미착수, EV gate threshold 변경 없음. 신규 KIS
+     호출 0건. 상세: `docs/10_signal_research_sppv/[DESIGN] regime_
+     conditional_entry_signal_v1.md` §93.
+   - **SPPV-3(다음 착수: [1순위] 사용자가 `.env`에 `TRADING_
+     UNIVERSE_CORE_CAP=40` 직접 추가 → `ops-scheduler` 재기동 →
+     1~2거래일 관찰(candidate pool 크기, buy_candidate/final_
+     intent/APPROVE/submit_request 변화) +
      [2순위, 병행] eligibility_low_relative_activity 조건부 완화
      (entry_score≥0.70 예외) 코드 diff 초안 설계 검토 — 전면 완화
      금지, 실제 반영은 사용자 결정 필요 +

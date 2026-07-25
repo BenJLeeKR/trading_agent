@@ -2022,6 +2022,15 @@ value/compliance/broker가 아니라 `entry_score < 0.65`다.
   레버 모두 실반영 후 1~2거래일 관찰 필요 상태 유지. 코드 변경
   없음. 상세: `docs/10_signal_research_sppv/[DESIGN] regime_
   conditional_entry_signal_v1.md` §92.
+- 2026-07-24 KST(SPPV-2.105): 1순위 레버(core universe 확장) 실반영
+  절차. `docker-compose.yml`의 `ops-scheduler` 환경변수 화이트
+  리스트에 `TRADING_UNIVERSE_CORE_CAP`이 없었던 배선 공백을
+  발견·수정(기본값 12 유지), `.env.example`에 `=40` 예시 추가.
+  `.env`는 세션 표준 원칙에 따라 직접 수정하지 않음 — 사용자가
+  값을 추가해야 실제 반영 완료(그 전까지 기본값 12 적용 중).
+  eligibility 조건부 완화(2순위)는 미착수. 코드 변경 없음. 상세:
+  `docs/10_signal_research_sppv/[DESIGN] regime_conditional_entry_
+  signal_v1.md` §93.
 - **3순위(보류 유지, 형태 재정의 — 우선순위 재조정)**: **`entry_
   score`와 BUY funnel 재현** — §2.7 확장 검증에서 하락장 안정성이
   확인되지 않아 단순 재현으로는 착수하지 않는다. §2.16~§2.21에서

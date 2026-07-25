@@ -11391,3 +11391,84 @@ Conditional Go 후보")이 **하루치·단일 시점 표본 기준으로는 과
    검토 — 전면 완화 금지, 실제 반영 여부는 별도 사용자 결정.
 3. 두 레버 모두 "실반영 후 1~2거래일 관찰 필요" 상태로 유지하고,
    하루치 결과만으로 최종 Go/No-Go를 확정하지 않는다.
+
+
+---
+
+## 93. `TRADING_UNIVERSE_CORE_CAP` 1순위 레버 실반영 절차 (SPPV-2.105, 2026-07-24 KST)
+
+### 93.1 목적
+
+§92에서 1순위로 확정한 "core universe 확장(`TRADING_UNIVERSE_
+CORE_CAP` 12→40)"을 실제 paper 운영에 반영한다. 2순위(eligibility
+조건부 완화)는 이번 턴에 손대지 않는다. 코드 수정 없음(config/
+compose 배선만), `expected_value_gate`/`eligibility` 로직 변경
+없음.
+
+### 93.2 현재 설정 경로 재확인(코드 read-only)
+
+- `scripts/run_decision_loop.py`: `DEFAULT_TRADING_UNIVERSE_
+  CORE_CAP = 12`(라인 306), env 변수명 `TRADING_UNIVERSE_CORE_CAP`
+  (라인 310)로 오버라이드.
+- **배선 공백 발견(§62/SPPV-2.73과 동일 패턴의 재발)**: `docker-
+  compose.yml`의 `ops-scheduler` 서비스 환경변수 화이트리스트에
+  이 변수가 **선언돼 있지 않았다** — 즉 호스트 `.env`에 값을
+  넣어도 실제 컨테이너 프로세스에는 전달되지 않는 상태였다(사실,
+  grep으로 직접 확인). `ENTRY_SCORE_R3B_ALPHA_ENABLED`/`EV_GATE_
+  NEAR_MISS_OVERRIDE_ENABLED`와 동일한 이슈가 이 변수에도 그대로
+  있었다.
+- **조회 시각 기준(2026-07-24 KST) `.env`/실행 중 컨테이너 모두
+  이 변수가 설정돼 있지 않아 기본값 12가 적용 중**이었음을 확인.
+
+### 93.3 실제 반영 내용(이번 턴 완료분)
+
+- `docker-compose.yml`의 `ops-scheduler` 환경변수 화이트리스트에
+  `TRADING_UNIVERSE_CORE_CAP: "${TRADING_UNIVERSE_CORE_CAP:-12}"`
+  추가(기본값은 하위 호환을 위해 기존 12 유지 — 명시적으로 40을
+  설정해야만 확장 적용).
+- `.env.example`에 `TRADING_UNIVERSE_CORE_CAP=40` 예시값과 배경
+  설명(§80/§83/§90/§91 근거 요약) 추가.
+- **`.env`(실제 운영 값) 자체는 이번 턴에서 직접 수정하지 않았다**
+  — 이 세션의 표준 원칙("`.env`는 절대 내가 수정하지 않는다")을
+  그대로 유지했다. 따라서 **호스트 `.env`에 `TRADING_UNIVERSE_
+  CORE_CAP=40` 한 줄을 사용자가 직접 추가해야** 실제 반영이
+  완료된다 — 이 상태에서는 `docker-compose.yml`의 기본값(12)이
+  그대로 적용돼 아직 동작 변화가 없다(사실, 컨테이너 env 직접
+  확인으로 검증).
+- `.env`가 갱신되면 `ops-scheduler` 컨테이너만 재기동하면 된다:
+  ```
+  docker compose up -d --force-recreate --no-deps ops-scheduler
+  ```
+
+### 93.4 즉시 확인된 사실 vs 1~2거래일 관찰 필요 vs 이번 턴 미착수
+
+**즉시 확인된 사실**:
+- 배선 공백이 실제로 존재했음(코드/설정 read-only 확인).
+- `docker-compose.yml`/`.env.example` 수정이 정상 반영됨(read-only
+  재확인).
+- `.env`가 아직 갱신되지 않아 실제 core_cap은 여전히 12로 동작
+  중임(컨테이너 env 직접 확인).
+
+**1~2거래일 관찰이 필요한 미확정 사항(`.env` 갱신·재기동 이후)**:
+- core universe/R3b candidate pool 크기가 실제로 커지는지(§91의
+  shadow 예측: 2→8 근처).
+- 신규 진입 종목(예: `009150`)이 실제 decision loop에서 어떤
+  entry_score/eligibility 결과를 받는지 — **이는 라이브 실행
+  없이는 확인 불가능하므로, 이번 턴에서도 예측만 유지**한다.
+- `buy_candidate`/`final_intent='buy'`/`APPROVE`/`submit_request`
+  건수 변화.
+
+**이번 턴에서 건드리지 않은 2순위/별도 과제**:
+- `eligibility_low_relative_activity` 조건부 완화 — 보류 유지.
+- `negative_overall_floor` 국면 의존성 — 보류 유지.
+- `expected_value_gate` threshold — 변경하지 않음.
+
+### 93.5 다음 우선 작업
+
+1. **사용자가 `.env`에 `TRADING_UNIVERSE_CORE_CAP=40`을 직접 추가**
+   → `ops-scheduler` 컨테이너 재기동(명령어는 §93.3 참고).
+2. 재기동 후 1~2거래일 관찰: `R3b alpha precompute:` 로그의
+   candidate 수, `buy_candidate`/`final_intent='buy'`/`APPROVE`/
+   `submit_request` 건수 변화를 §87~89와 동일한 방법으로 재집계.
+3. 2순위(eligibility 조건부 완화)는 1순위 관찰 결과가 어느 정도
+   쌓인 뒤 별도 턴에서 다룬다.
