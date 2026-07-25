@@ -9655,7 +9655,25 @@ agent 설계 문서 기준으로도 순서는 다음이 맞다.
      가설이 미확정(확인 불가)으로 남음. 신규 KIS 호출 0건. 상세:
      `docs/10_signal_research_sppv/[DESIGN] regime_conditional_
      entry_signal_v1.md` §89.
-   - **SPPV-3(다음 착수: negative_overall_floor의 국면 의존성
+   - **SPPV-2.102(완료, 2026-07-24 KST, 근본 설계 재검토 — "창 vs
+     방패" 전략 전환에 따른 우선순위 재정렬, 작성자: Codex —
+     core universe 확장 레버 식별, 코드 변경 없음)**: 사용자가
+     "core universe 확장(우선)+eligibility 완화(병행)"를 결정.
+     `TRADING_UNIVERSE_CORE_CAP`(기본값 12, `.env`/compose 오버라이드
+     없음)이 R3b candidate pool 모수를 좌우하는 **코드 diff 없이
+     조정 가능한 config 레버**임을 확인 — 실질 상한은 일 배치
+     유효 신호 종목 약 80개(`signal_feature_after_market` target_
+     count=80). §80/§83의 "모수 자체가 문제"라는 결론과 정확히
+     일치. §88~89의 활동성 게이트 판정(정당 차단에 가까움)은 유지,
+     eligibility 완화가 "예측 오류 손실"이 아니라 "유동성 실행
+     리스크"를 떠안는 것임을 구분해 명시. 신규 KIS 호출 0건. 상세:
+     `docs/10_signal_research_sppv/[DESIGN] regime_conditional_
+     entry_signal_v1.md` §90.
+   - **SPPV-3(다음 착수: TRADING_UNIVERSE_CORE_CAP 확장(12→40 등)
+     shadow 재구성(§83 방법론 재사용, 코드 변경 없음) 최우선 +
+     eligibility 조건부 완화(entry_score 조건부 활동성 게이트 완화)
+     설계 초안 shadow 검증(병행, 비중 낮음) +
+     negative_overall_floor의 국면 의존성
      심층 검토(000660 또는 다른 종목이 bullish_trend로 전환될 때
      이 축이 발생하는지, 과거 데이터 소급 조회 포함) 최우선 +
      활동성 게이트 단독 심층 검토(000810/001450의

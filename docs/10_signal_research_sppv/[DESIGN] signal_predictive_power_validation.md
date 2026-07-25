@@ -2131,6 +2131,21 @@ entry 설계 검토로 전환**을 확정했다. 별도 문서
   KIS 호출 0건. 상세: `docs/10_signal_research_sppv/[DESIGN]
   regime_conditional_entry_signal_v1.md` §89.
 
+- 작성자: Codex
+- 수정일자: 2026-07-24 KST (101차, 근본 설계 재검토 — "창 vs
+  방패" 전략 전환에 따른 우선순위 재정렬)
+- 수정내용: 수십 턴에도 주문 0건이 지속된다는 문제의식에 따라,
+  사용자가 "core universe 확장(우선) + eligibility 완화(병행)"를
+  결정했다(SPPV-2.102, 코드 변경 없음 — 레버 식별/설계 재검토만).
+  `TRADING_UNIVERSE_CORE_CAP`(기본값 12, 현재 오버라이드 없음)이
+  R3b candidate pool 모수를 좌우하는 config 레버임을 확인 — 실질
+  상한은 일 배치 유효 신호 종목 약 80개. §80/§83의 결론과 정확히
+  일치. §88~89의 활동성 게이트 판정(정당 차단에 가까움)은 유지,
+  eligibility 완화는 "예측 오류 손실"과 "유동성 실행 리스크"가
+  다른 종류임을 구분해 명시. 코드 변경 없음, 신규 KIS 호출 0건.
+  상세: `docs/10_signal_research_sppv/[DESIGN] regime_conditional_
+  entry_signal_v1.md` §90.
+
 ---
 
 ## 진행 체크리스트
@@ -5077,6 +5092,24 @@ canonical),
   - 코드 변경 없음, Full pytest 미실행, 신규 KIS 호출 0건. 상세:
     `docs/10_signal_research_sppv/[DESIGN] regime_conditional_
     entry_signal_v1.md` §89.
+- [x] **SPPV-2.102(신설)** 근본 설계 재검토 — "창 vs 방패" 전략
+  전환에 따른 우선순위 재정렬 (완료, 2026-07-24 KST, 작성자: Codex)
+  - **배경**: 수십 턴의 실측에도 주문 0건이 지속된다는 문제의식에
+    따라 사용자가 "core universe 확장(비중 높음) + eligibility
+    완화(병행, 비중 낮음)"를 다음 방향으로 결정.
+  - **⚠️ 최신 상태(한눈에 요약)**: `TRADING_UNIVERSE_CORE_CAP`
+    (기본값 12, 현재 `.env`/compose 어디에도 오버라이드 없음)이
+    R3b candidate pool의 진짜 모수를 좌우하는 **코드 diff 없이
+    바꿀 수 있는 config 레버**임을 확인 — 실질 상한은 일 배치
+    유효 신호 종목 수 약 80개(`signal_feature_after_market` freeze
+    target_count=80). §80/§83의 "quintile 비율이 아니라 모수
+    자체가 문제"라는 결론과 정확히 일치. §88~89의 활동성 게이트
+    판정(명확한 미달, 실제 유동성 감소 추세와 일치 — 정당 차단에
+    가까움)은 그대로 유지, eligibility 완화는 "예측 오류 손실"이
+    아니라 "유동성 실행 리스크"를 떠안는 것임을 구분해 문서화.
+  - 코드 변경 없음(이번 턴은 레버 식별/설계 재검토만). 신규 KIS
+    호출 0건. 상세: `docs/10_signal_research_sppv/[DESIGN] regime_
+    conditional_entry_signal_v1.md` §90.
 - [~] **SPPV-3** `entry_score` point-in-time 재현 및 중복 penalty ablation
   - **보류 유지, 형태 재정의 — 우선순위 재조정**: §12(1년, 자기참조
     포함) 당시 "알파 근거 강화"로 낙관했던 것이 §14(3년, 자기참조

@@ -1992,6 +1992,16 @@ value/compliance/broker가 아니라 `entry_score < 0.65`다.
   의존성 미확정. 전체 Watch 판정 유지. 코드 변경 없음. 상세:
   `docs/10_signal_research_sppv/[DESIGN] regime_conditional_entry_
   signal_v1.md` §89.
+- 2026-07-24 KST(SPPV-2.102): 근본 설계 재검토 — "창 vs 방패"
+  전략 전환에 따른 우선순위 재정렬. 사용자가 core universe 확장
+  (우선)+eligibility 완화(병행)를 결정. `TRADING_UNIVERSE_CORE_CAP`
+  (기본값 12, 오버라이드 없음)이 R3b candidate pool 모수를 좌우
+  하는 config 레버임을 확인(코드 diff 없이 조정 가능, 실질 상한
+  약 80종목). §80/§83 결론과 일치. §88~89의 활동성 게이트 판정은
+  유지, eligibility 완화는 "예측 오류 손실"과 "유동성 실행 리스크"
+  가 다름을 구분해 명시. 코드 변경 없음. 상세: `docs/10_signal_
+  research_sppv/[DESIGN] regime_conditional_entry_signal_v1.md`
+  §90.
 - **3순위(보류 유지, 형태 재정의 — 우선순위 재조정)**: **`entry_
   score`와 BUY funnel 재현** — §2.7 확장 검증에서 하락장 안정성이
   확인되지 않아 단순 재현으로는 착수하지 않는다. §2.16~§2.21에서
