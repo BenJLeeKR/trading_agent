@@ -2146,6 +2146,22 @@ entry 설계 검토로 전환**을 확정했다. 별도 문서
   상세: `docs/10_signal_research_sppv/[DESIGN] regime_conditional_
   entry_signal_v1.md` §90.
 
+- 작성자: Codex
+- 수정일자: 2026-07-24 KST (102차, core universe 확장 vs
+  eligibility 조건부 완화 — shadow 정량 비교)
+- 수정내용: 실제 `UniverseSelectionService.compose()`를 core_cap=
+  12/20/40/60로 재호출해 pool 확장을 실측했다(SPPV-2.103, 코드
+  변경 없음, kis_client=None으로 신규 KIS 호출 0건 보장). 추적
+  3종목 기준 core_cap 확장의 buy_candidate 회복 효과는 0건(000810
+  순위 하락, 001450은 활동성 게이트가 무관하게 차단) — 진짜 잠재
+  효과는 신규 진입 종목(009150 등)에 있으나 라이브 검증 전엔 확인
+  불가. 반대로 entry_score>=0.70 조건부 활동성 게이트 예외는 오늘
+  실측 데이터에서 001450을 즉시 buy_candidate=True로 전환시킴.
+  판정: core_cap 확장=Watch, eligibility 조건부 완화=Conditional
+  Go 후보로 격상 가능(실제 반영은 별도 결정). 코드 변경 없음, Full
+  pytest 미실행, 신규 KIS 호출 0건. 상세: `docs/10_signal_research_
+  sppv/[DESIGN] regime_conditional_entry_signal_v1.md` §91.
+
 ---
 
 ## 진행 체크리스트
@@ -5110,6 +5126,28 @@ canonical),
   - 코드 변경 없음(이번 턴은 레버 식별/설계 재검토만). 신규 KIS
     호출 0건. 상세: `docs/10_signal_research_sppv/[DESIGN] regime_
     conditional_entry_signal_v1.md` §90.
+- [x] **SPPV-2.103(신설)** core universe 확장 vs eligibility 조건부
+  완화 — shadow 정량 비교 (완료, 2026-07-24 KST, 작성자: Codex)
+  - **⚠️ 최신 상태(한눈에 요약)**: `UniverseSelectionService.
+    compose()`를 실제 코드 그대로 `core_cap=12/20/40/60`로 재호출
+    (신규 KIS 호출 0건, `kis_client=None`으로 market overlay 완전
+    no-op 확인)해 candidate pool이 2→4→8→12로 정비례 확장됨을
+    확인. 그러나 **추적 3종목(000810/000660/001450) 기준으로는
+    core_cap 확장이 `buy_candidate` 회복에 0건 효과** — 000810은
+    경쟁 심화로 오히려 순위 하락, 001450은 entry_score와 무관하게
+    활동성 게이트가 그대로 막음. 진짜 잠재 효과는 신규 진입 종목
+    (`009150`, percentile 0.818)에 있으나 라이브 검증 없이는 확인
+    불가. 반면 **`entry_score>=0.70`일 때만 활동성 게이트를 예외
+    처리하는 좁은 조건부 완화는, 오늘 실측 데이터에서 001450 1건을
+    즉시 `buy_candidate=True`로 전환**시킴(다른 eligibility 축/EV
+    gate는 그대로 유지, 실제 코드 반영은 하지 않음 — shadow만).
+  - **판정**: core_cap 확장 = **Watch**(구조적으로 타당하나 추적
+    종목 실효과 0건), eligibility 조건부 완화 = **Conditional Go
+    후보로 격상 가능**(오늘 데이터로 즉시 flip 확인, 단 실제 반영은
+    별도 사용자 결정 필요).
+  - 코드 변경 없음, Full pytest 미실행, 신규 KIS 호출 0건. 상세:
+    `docs/10_signal_research_sppv/[DESIGN] regime_conditional_
+    entry_signal_v1.md` §91.
 - [~] **SPPV-3** `entry_score` point-in-time 재현 및 중복 penalty ablation
   - **보류 유지, 형태 재정의 — 우선순위 재조정**: §12(1년, 자기참조
     포함) 당시 "알파 근거 강화"로 낙관했던 것이 §14(3년, 자기참조

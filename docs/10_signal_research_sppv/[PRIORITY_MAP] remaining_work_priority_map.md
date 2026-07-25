@@ -9669,10 +9669,27 @@ agent 설계 문서 기준으로도 순서는 다음이 맞다.
      리스크"를 떠안는 것임을 구분해 명시. 신규 KIS 호출 0건. 상세:
      `docs/10_signal_research_sppv/[DESIGN] regime_conditional_
      entry_signal_v1.md` §90.
-   - **SPPV-3(다음 착수: TRADING_UNIVERSE_CORE_CAP 확장(12→40 등)
-     shadow 재구성(§83 방법론 재사용, 코드 변경 없음) 최우선 +
-     eligibility 조건부 완화(entry_score 조건부 활동성 게이트 완화)
-     설계 초안 shadow 검증(병행, 비중 낮음) +
+   - **SPPV-2.103(완료, 2026-07-24 KST, core universe 확장 vs
+     eligibility 조건부 완화 shadow 정량 비교, 작성자: Codex —
+     core_cap 확장 Watch / eligibility 조건부 완화 Conditional Go
+     후보 격상 가능, 코드 변경 없음)**: 실제 `compose()`를 core_cap=
+     12/20/40/60로 재호출(신규 KIS 0건), pool이 2→4→8→12로 정비례
+     확장되나 추적 3종목의 buy_candidate 회복은 0건 — 000810은
+     경쟁 심화로 순위 하락, 001450은 entry_score와 무관하게 활동성
+     게이트가 차단. 진짜 잠재 효과는 신규 진입 종목(009150,
+     percentile 0.818)에 있으나 라이브 검증 전엔 확인 불가.
+     entry_score≥0.70 조건부 활동성 게이트 예외는 오늘 실측
+     데이터에서 001450을 즉시 buy_candidate=True로 전환(다른
+     eligibility 축/EV gate는 그대로 유지). 신규 KIS 호출 0건.
+     상세: `docs/10_signal_research_sppv/[DESIGN] regime_
+     conditional_entry_signal_v1.md` §91.
+   - **SPPV-3(다음 착수: eligibility 조건부 완화(entry_score≥0.70
+     예외) 코드 diff 초안 설계 검토 — 실제 반영은 사용자 결정 필요 +
+     core_cap 확장 병행 검토(값 변경만, 신규 진입 종목 실 반영 후
+     관찰 필요) +
+     negative_overall_floor의 국면 의존성
+     심층 검토(000660 또는 다른 종목이 bullish_trend로 전환될 때
+     이 축이 발생하는지, 과거 데이터 소급 조회 포함) 최우선 +
      negative_overall_floor의 국면 의존성
      심층 검토(000660 또는 다른 종목이 bullish_trend로 전환될 때
      이 축이 발생하는지, 과거 데이터 소급 조회 포함) 최우선 +

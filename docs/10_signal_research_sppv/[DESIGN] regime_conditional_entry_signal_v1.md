@@ -11186,3 +11186,129 @@ eligibility 완화 검토(병행, 비중 낮음)**를 함께 진행. 이번 턴�
 3. 두 결과를 종합해, 실제 core_cap 값 변경(config, 코드 diff
    없음) 또는 eligibility 조건부 완화(코드 diff 필요) 중 무엇을
    먼저 실제 반영할지 다음 턴에 결정한다.
+
+
+---
+
+## 91. core universe 확장 vs eligibility 조건부 완화 — shadow 정량 비교 (SPPV-2.103, 2026-07-24 KST)
+
+### 91.1 목적
+
+§90에서 사용자가 결정한 우선순위("core universe 확장" 우선 +
+"eligibility 조건부 완화" 병행)에 따라, **코드 변경 전 read-only
+shadow만으로** 두 축을 같은 funnel 기준으로 정량 비교한다.
+`eligibility_low_relative_activity` 전면 완화나 `expected_value_
+gate` threshold 변경은 제안하지 않는다. 코드 수정 없음, Full
+pytest 미실행, 신규 KIS 호출 **0건**(아래 확인).
+
+### 91.2 core_cap 적용 경로 재확인(코드 read-only)
+
+`scripts/run_decision_loop.py`의 `_load_trading_universe_with_
+anchor()`가 `CompositionContext(core_cap=...)`를 만들어
+`UniverseSelectionService.compose()`를 호출하고, `core_cap`은
+`source_type==CORE`인 종목 수만 제한한다(§90에서 이미 코드로 확인).
+이번 턴은 **바로 이 `compose()` 함수를 실제 코드 그대로, `core_cap`
+값만 12/20/40/60으로 바꿔 직접 호출**해 shadow 재구성했다(신규
+symbol을 새로 만들거나 알고리즘을 재구현하지 않음 — 실제 프로덕션
+함수 그대로 사용). `UniverseSelectionService(repos, kis_client=
+None)`으로 생성해 market overlay 단계가 완전히 no-op 처리되도록
+했다(코드 확인: `kis_client is None`이면 `_add_market_overlay`가
+즉시 반환 — **신규 KIS 호출 0건 보장**).
+
+### 91.3 core_cap 시나리오별 funnel 비교표
+
+| core_cap | 유니버스 종목 수 | 유효 신호 종목 수 | candidate pool 크기(20%+floor 0.60) | pool 신규 진입 종목(굵게 = 첫 등장) |
+|---|---|---|---|---|
+| 12(현재) | 12 | 12 | 2 | 000810(1.0), 000660(0.6) |
+| 20 | 20 | 20 | 4 | 001450(1.0), 000810(0.667), 000660(0.6), **001800(0.6)** |
+| 40 | 40 | 40 | 8 | 001450(1.0), 000810(0.857), 000660(0.714), **004170/003490/003550/000240(각 0.6)** |
+| 60 | 60 | 60 | 12 | 001450(1.0), 000810(0.909), **009150(0.818)**, 000660(0.727), **004170/007070/005930/001800/003490/003550/000240/004370(각 0.6)** |
+
+**핵심 발견**: candidate pool 크기는 core_cap에 정확히 비례해
+2→4→8→12로 커진다(§80/§83의 예측과 일치). 특히 cap=60에서는
+`009150`이 percentile **0.818**(pool 내 2위)로 새로 등장한다 —
+지금까지 한 번도 관찰된 적 없는 신규 고순위 후보다.
+
+### 91.4 종목별 entry_score/buy_candidate 투영(3종목 한정, 조건부 신뢰)
+
+**방법론 caveat(정직하게 명시)**: entry_score 투영은 "오늘 실제
+관측된 (entry_score, 그 percentile일 때의 base)" 쌍으로 역산한
+`base`(alpha 항 외 나머지 요소, 하루 동안 안정적이라고 가정)를
+그대로 유지한 채, percentile만 시나리오별로 교체하는 방식이다 —
+**이 turn 시점의 fresh shadow 재실행이 production의 현재 캐시된
+freeze와 완전히 동일한 시점 데이터가 아닐 수 있다는 점**(compose()
+재호출 시각 차이)도 함께 밝힌다. 실제 오늘 관측치(000810=0.5133,
+000660=0.41, 001450=0.78)와의 정합성은 개별적으로 확인했다.
+
+| 종목 | base(역산) | cap12 entry_score | cap20 | cap40 | cap60 | `buy_candidate`(threshold 0.65) |
+|---|---|---|---|---|---|---|
+| 000810 | -0.287 | **0.513**(실측 일치) | 0.247 | 0.399 | 0.441 | **전 구간 False** — cap이 커질수록 오히려 하락(경쟁 심화) |
+| 000660 | -0.07 | 0.41(실측 일치) | 0.41(pool 내 floor 유지) | 0.501 | 0.512 | **전 구간 False** |
+| 001450 | -0.02 | pool 밖(R3b 미적용 경로로 전환, 투영 불가) | **0.78**(실측 일치) | 0.78 | 0.78 | **entry_score는 전 구간 threshold 이상이나, buy_candidate은 활동성 게이트로 전 구간 False**(§88~89, cap과 무관) |
+
+**핵심 발견 2**: **추적 중인 3종목만 기준으로 보면, core_cap을
+12→60으로 4배 넓혀도 `buy_candidate`는 단 1건도 새로 생기지
+않는다.** 000810은 오히려 경쟁이 늘어 상대 순위가 낮아지고,
+001450은 entry_score와 무관하게 활동성 게이트가 그대로 막는다.
+**core_cap 확장의 실질적 잠재 효과는 추적 중인 종목이 아니라
+`009150`류의 신규 진입 종목**에 있으나, 이 종목들의 eligibility/
+downstream 상태는 **실제 라이브 사이클 없이는 shadow로 검증할
+수 없다**(확인 불가로 명시 — 억지 추정하지 않음).
+
+### 91.5 eligibility 조건부 완화(entry_score≥0.70 / ≥0.75) shadow 비교
+
+**적용 정의**: `entry_score >= X`일 때만 `eligibility_low_
+relative_activity`를 예외 처리(다른 eligibility 축, EV gate는
+그대로 유지 — 전면 완화 아님).
+
+| 종목 | 실제 entry_score(오늘) | eligibility_low_relative_activity 외 나머지 조건 | X=0.70 적용 시 `buy_candidate` | X=0.75 적용 시 `buy_candidate` |
+|---|---|---|---|---|
+| 001450 | 0.78 | 전부 통과(`allocation_budget_ok=True`, `regime_switch_v1_gate_open=True`, 코드/DB 직접 확인) | **True(즉시 flip)** | **True(즉시 flip)** |
+| 000810 | 0.513 | — | False(threshold 미달, 무관) | False |
+| 000660 | 0.41 | — | False(threshold 미달, 무관) | False |
+
+**핵심 발견 3**: **eligibility 조건부 완화는, 오늘 실제 관측된 데이터
+기준으로 001450 1건을 즉시 `buy_candidate=True`로 전환시킨다** —
+core_cap 확장(§91.4)이 추적 종목에 대해 0건의 효과를 보인 것과
+대조적으로, 이 축은 **당장 실측 가능한 flip 효과**가 있다. 다만
+`buy_candidate=True`는 `candidate_vs_final`/EV gate/submit_request
+등 하류 단계를 아직 통과해야 하므로, 실제 주문까지 이어질지는
+별도다(이번 턴 범위 밖).
+
+### 91.6 두 축의 효과·리스크 비교
+
+| | core_cap 확장(12→40/60) | eligibility 조건부 완화(entry_score≥0.70) |
+|---|---|---|
+| 추적 3종목 buy_candidate 회복 | **0건** | **1건(001450)** |
+| 신규 잠재 후보 발굴 | 있음(009150 등, 미검증) | 없음(기존 관찰 종목 한정) |
+| 리스크 성격 | 낮음(판정 기준 자체는 안 바꿈, 다만 신규 종목의 검증되지 않은 리스크 유입 가능) | §88~89에서 이미 "정당 차단에 가까움"으로 판정된 게이트를 특정 조건에서 무시 — **유동성 저하 상태에서 진입 허용**이라는 명시적 트레이드오프 |
+| 코드 변경 범위 | 없음(config 값만) | 필요(좁은 조건부 분기 1곳) |
+| 즉시 검증 가능성 | 낮음(신규 종목은 라이브 필요) | 높음(오늘 데이터로 즉시 확인됨) |
+
+### 91.7 최종 판정
+
+- **core_cap 확장**: **Watch**. 구조적으로 타당하고(§80/§83과
+  일치, pool 크기 정비례 확인) 코드 변경도 필요 없으나, 추적
+  종목 기준 실질 효과는 0건이며 진짜 잠재 효과(신규 종목)는 라이브
+  검증 없이는 확인 불가 — 근거가 아직 "구조적 타당성"에 머문다.
+- **eligibility 조건부 완화(entry_score≥0.70)**: **Conditional
+  Go 후보로 격상 가능**. 오늘 실측 데이터에서 001450 1건을
+  즉시 flip시키는 구체적 효과가 확인됐고, §77~79의 EV gate
+  near-miss override와 동일한 "좁은 조건부 예외" 패턴이라 설계
+  선례도 있다. 다만 이는 §88~89에서 "정당 차단에 가까움"으로
+  판정한 게이트를 특정 상황에서 의도적으로 무시하는 것이므로,
+  실제 코드 반영 여부는 **사용자 승인이 필요한 별도 결정**이다
+  (이번 턴은 shadow 비교까지만 — 코드 diff 작성/반영은 하지
+  않았다).
+
+### 91.8 다음 우선 작업
+
+1. **(우선 검토)** eligibility 조건부 완화(entry_score≥0.70,
+   `eligibility_low_relative_activity`만 예외)의 코드 diff 초안을
+   설계 검토 — 실제 반영 여부는 사용자 결정 필요.
+2. core_cap 확장은 값 변경만으로 가능하므로 병행 가능 — 단, 신규
+   진입 종목(예: 009150)의 실제 다운스트림 상태는 실 반영 후
+   1~2일 관찰로만 확인 가능하다는 점을 전제로 진행.
+3. 두 레버를 동시에 반영할 경우의 상호작용(신규 진입 종목이 늘어난
+   상태에서 조건부 완화까지 겹치면 buy_candidate 회복 건수가 어떻게
+   달라지는지)은 실제 반영 후 다음 관찰 턴에서 다룬다.

@@ -2002,6 +2002,17 @@ value/compliance/broker가 아니라 `entry_score < 0.65`다.
   가 다름을 구분해 명시. 코드 변경 없음. 상세: `docs/10_signal_
   research_sppv/[DESIGN] regime_conditional_entry_signal_v1.md`
   §90.
+- 2026-07-24 KST(SPPV-2.103): core_cap 확장 vs eligibility 조건부
+  완화 shadow 정량 비교. 실제 compose()를 core_cap=12/20/40/60로
+  재호출(신규 KIS 0건), pool이 2→4→8→12로 정비례 확장되나 추적
+  3종목의 buy_candidate 회복은 0건(진짜 잠재 효과는 신규 진입
+  종목 009150 등에 있으나 라이브 검증 전엔 확인 불가). entry_
+  score≥0.70 조건부 활동성 게이트 예외는 오늘 실측으로 001450을
+  즉시 buy_candidate=True로 전환. 판정: core_cap 확장=Watch,
+  eligibility 조건부 완화=Conditional Go 후보로 격상 가능(실제
+  반영은 별도 결정). 코드 변경 없음. 상세: `docs/10_signal_
+  research_sppv/[DESIGN] regime_conditional_entry_signal_v1.md`
+  §91.
 - **3순위(보류 유지, 형태 재정의 — 우선순위 재조정)**: **`entry_
   score`와 BUY funnel 재현** — §2.7 확장 검증에서 하락장 안정성이
   확인되지 않아 단순 재현으로는 착수하지 않는다. §2.16~§2.21에서

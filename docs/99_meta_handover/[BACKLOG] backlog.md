@@ -1514,6 +1514,18 @@
   `docs/10_signal_research_sppv/[DESIGN] regime_conditional_entry_
   signal_v1.md` §90.
 
+- 2026-07-24 KST(SPPV-2.103): core_cap 확장 vs eligibility 조건부
+  완화 shadow 정량 비교. 실제 compose()를 core_cap=12/20/40/60로
+  재호출(신규 KIS 0건), pool이 2→4→8→12로 정비례 확장되나 추적
+  3종목의 buy_candidate 회복은 0건(진짜 잠재 효과는 신규 진입
+  종목 009150 등, 라이브 검증 전엔 확인 불가). entry_score≥0.70
+  조건부 활동성 게이트 예외는 오늘 실측으로 001450을 즉시
+  buy_candidate=True로 전환. 판정: core_cap 확장=Watch,
+  eligibility 조건부 완화=Conditional Go 후보로 격상 가능(실제
+  반영은 별도 결정). 코드 변경 없음, Full pytest 미실행, 신규
+  KIS 호출 0건. 상세: `docs/10_signal_research_sppv/[DESIGN]
+  regime_conditional_entry_signal_v1.md` §91.
+
 ---
 
 ## 관리 원칙
