@@ -11472,3 +11472,103 @@ compose 배선만), `expected_value_gate`/`eligibility` 로직 변경
    `submit_request` 건수 변화를 §87~89와 동일한 방법으로 재집계.
 3. 2순위(eligibility 조건부 완화)는 1순위 관찰 결과가 어느 정도
    쌓인 뒤 별도 턴에서 다룬다.
+
+
+---
+
+## 94. `TRADING_UNIVERSE_CORE_CAP=60` 실제 반영 확인 — ops-scheduler 재기동 + 첫 관찰 (SPPV-2.106, 2026-07-26 KST)
+
+### 94.1 목적
+
+사용자가 호스트 `.env`에 `TRADING_UNIVERSE_CORE_CAP=60`을 이미
+반영한 상태를 전제로, `ops-scheduler`만 재기동해 실제 runtime
+반영 여부를 검증한다. `eligibility`/`expected_value_gate` 로직은
+건드리지 않는다. 코드 변경 없음, Full pytest 미실행.
+
+### 94.2 재기동 대상 및 절차
+
+**`ops-scheduler`만** `docker compose up -d --force-recreate
+--no-deps ops-scheduler`로 재생성했다(다른 서비스 미변경).
+
+### 94.3 즉시 확인된 사실
+
+1. **재기동 전**: `docker exec agent_trading-ops-scheduler env |
+   grep TRADING_UNIVERSE_CORE_CAP` → **결과 없음**(변수 미설정,
+   이전 컨테이너는 이 값을 몰랐음).
+2. **재기동 후**: 동일 명령 → `TRADING_UNIVERSE_CORE_CAP=60`
+   확인. 컨테이너 내부에서 `os.getenv("TRADING_UNIVERSE_CORE_
+   CAP")` 직접 평가 결과도 `'60'` — **설정 객체/실행 경로가 실제
+   `60`을 읽는다**(사실, 코드 실행으로 확인).
+3. **실제 `UniverseSelectionService.compose()`를 ops-scheduler
+   컨테이너 안에서 그대로 재호출**(신규 KIS 호출 0건 — `kis_
+   client=None`)한 결과, **`core` 소스 종목 수가 정확히 60개**
+   반환됨 — §90/§91의 shadow 예측과 실제 프로덕션 함수 호출 결과가
+   **정확히 일치**한다.
+4. **오늘(2026-07-26, KST 일요일)은 비거래일이다** — 로그 확인:
+   `session_gate: SKIP phase=intraday ... opnd_yn=N bzdy_yn=N`,
+   `Non-trading day detected ... entering idle mode`,
+   `Next run_date: 2026-07-27`. **`decision_submit_gate`(실제 R3b
+   precompute + decision loop가 도는 태스크) 자체가 스케줄러에
+   의해 오늘 하루 완전히 스킵됐다** — 이는 이번 config 변경과
+   무관한, 정상적인 비거래일 처리다(§72 등에서 이미 확인된 동일
+   패턴).
+5. **candidate pool 구조 확인(shadow, 최근 snapshot 기준)**: 실제
+   `build_candidate_percentiles()`를 core_cap=60의 실제 60종목
+   리스트 + 가장 최근 snapshot(2026-07-24 11:00 UTC, 이후 비거래일
+   이라 갱신 없음)으로 재호출한 결과, **candidate pool 크기 12개**
+   (`001450, 000810, 009150, 000660, 004170, 007070, 005930,
+   001800, 003490, 003550, 000240, 004370` — 이 중 `009150`은
+   §91에서 이미 발견된 신규 후보와 동일 종목) — §91의 core_cap=60
+   shadow 결과와 **완전히 동일**함을 재확인.
+
+### 94.4 core_cap=12(기존) 대비 core_cap=60(현재) 비교 — 수치 요약
+
+| 항목 | core_cap=12(기존) | core_cap=60(현재 반영) | 변화 |
+|---|---|---|---|
+| core 소스 종목 수 | 12 | **60** | **5배** |
+| candidate pool 크기 | 2 | **12** | **6배** |
+| pool 신규 종목 | — | `009150`(percentile 0.818, pool 내 3위) 포함 8종목 신규 | **신규 후보 출현 확인** |
+| `buy_candidate=true`(추적 3종목 기준) | 0 | **아직 관측 불가**(비거래일) | 미확정 |
+| `order_request`(전체) | 0 | **아직 관측 불가**(비거래일) | 미확정 |
+
+**"candidate pool 크기, 신규 종목 출현 여부, buy_candidate 0건
+탈출 여부"를 먼저 요약**: pool 크기는 shadow 재구성으로 2→12
+확장을 **실측 확인**했고 `009150` 신규 종목 출현도 **실측
+확인**했다. 그러나 **`buy_candidate` 0건 탈출 여부는 오늘 비거래일
+이라 실제 decision loop 사이클이 단 한 번도 돌지 않아 아직
+확인할 수 없다** — 이 부분은 명확히 미확정으로 남긴다.
+
+### 94.5 1~2거래일 관찰이 필요한 미확정 사항
+
+- 실제 `decision_submit_gate` 사이클이 core_cap=60으로 도는 첫
+  실행에서 `R3b alpha precompute:` 로그의 candidate pool 구성이
+  §94.3의 shadow 결과와 그대로 일치하는지.
+- `009150`을 포함한 신규 진입 종목들이 실제 eligibility 체크에서
+  어떤 결과를 받는지(활동성 게이트/신호 바닥 게이트 등 어느 축에
+  걸리는지 또는 통과하는지) — **완전히 새로운 정보이며 이번 턴
+  shadow로는 예측 불가**(다른 eligibility 축 값을 가진 적이 없어
+  기반 데이터가 없음).
+- `buy_candidate`/`final_intent='buy'`/`APPROVE`/`submit_request`/
+  `order_requests` 건수 실제 변화 — 다음 거래일(2026-07-27 KST)
+  이후 재집계 필요.
+- 기존 3종목(000810/000660/001450)의 실제 라이브 상태 변화(pool
+  내 상대 순위가 shadow 예측대로 나오는지).
+
+### 94.6 이번 턴에서 건드리지 않은 2순위/별도 과제
+
+- `eligibility_low_relative_activity` 조건부 완화 — 코드 변경
+  없음, 보류 유지.
+- `negative_overall_floor` 국면 의존성 — 미착수.
+- `expected_value_gate` threshold/로직 — 변경 없음.
+
+### 94.7 다음 우선 작업
+
+1. **2026-07-27 KST(다음 거래일) 이후**, 실제 `decision_submit_
+   gate` 사이클 로그와 `trade_decisions`를 §87~91과 동일한 방법
+   으로 재집계 — candidate pool 실측치가 shadow와 일치하는지,
+   `009150` 등 신규 종목의 eligibility 결과가 무엇인지 확인.
+2. 그 결과가 나온 뒤에만 core_cap=60의 실질 효과("Watch"/"실반영
+   우선 후보" 등 라벨)를 다시 판단한다 — 이번 턴은 "설정 반영
+   확인" 단계이지 "효과 판정" 단계가 아니다.
+3. 2순위(eligibility 조건부 완화)는 1순위 관찰이 최소 1~2거래일
+   쌓인 뒤 별도 턴에서 다룬다.

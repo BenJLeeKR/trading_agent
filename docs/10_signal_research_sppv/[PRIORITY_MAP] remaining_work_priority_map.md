@@ -9711,10 +9711,24 @@ agent 설계 문서 기준으로도 순서는 다음이 맞다.
      완화(2순위)는 미착수, EV gate threshold 변경 없음. 신규 KIS
      호출 0건. 상세: `docs/10_signal_research_sppv/[DESIGN] regime_
      conditional_entry_signal_v1.md` §93.
-   - **SPPV-3(다음 착수: [1순위] 사용자가 `.env`에 `TRADING_
-     UNIVERSE_CORE_CAP=40` 직접 추가 → `ops-scheduler` 재기동 →
-     1~2거래일 관찰(candidate pool 크기, buy_candidate/final_
-     intent/APPROVE/submit_request 변화) +
+   - **SPPV-2.106(완료, 2026-07-26 KST, `TRADING_UNIVERSE_CORE_
+     CAP=60` 실제 반영 확인, 작성자: Codex — 설정 반영 확인 완료,
+     실제 funnel 효과는 다음 거래일 확인 필요, 코드 변경 없음)**:
+     사용자가 `.env`에 이미 반영한 `TRADING_UNIVERSE_CORE_CAP=60`
+     을 `ops-scheduler`만 재기동해 확인 — 컨테이너 env/`os.
+     getenv` 모두 60 확인, 실제 `UniverseSelectionService.
+     compose()` 재호출로 core 60종목·candidate pool 12개(신규
+     `009150`, percentile 0.818 포함) 실측 확인, §90/§91 shadow
+     예측과 정확히 일치. 오늘(2026-07-26)은 비거래일이라
+     `decision_submit_gate` 사이클이 스케줄러에 의해 완전히 스킵됨
+     — `buy_candidate`/`APPROVE`/`submit_request` 실제 효과는
+     다음 거래일(2026-07-27 KST) 이후 확인 필요. 신규 KIS 호출
+     0건. 상세: `docs/10_signal_research_sppv/[DESIGN] regime_
+     conditional_entry_signal_v1.md` §94.
+   - **SPPV-3(다음 착수: [1순위] 2026-07-27(다음 거래일) 이후
+     실제 decision_submit_gate 사이클 재집계(candidate pool 실측
+     일치 여부, `009150` 등 신규 종목 eligibility 결과, buy_
+     candidate/final_intent/APPROVE/submit_request 변화) +
      [2순위, 병행] eligibility_low_relative_activity 조건부 완화
      (entry_score≥0.70 예외) 코드 diff 초안 설계 검토 — 전면 완화
      금지, 실제 반영은 사용자 결정 필요 +

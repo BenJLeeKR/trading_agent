@@ -2031,6 +2031,14 @@ value/compliance/broker가 아니라 `entry_score < 0.65`다.
   eligibility 조건부 완화(2순위)는 미착수. 코드 변경 없음. 상세:
   `docs/10_signal_research_sppv/[DESIGN] regime_conditional_entry_
   signal_v1.md` §93.
+- 2026-07-26 KST(SPPV-2.106): `TRADING_UNIVERSE_CORE_CAP=60`
+  실제 반영 확인. ops-scheduler 재기동으로 컨테이너 env/`os.getenv`
+  60 확인, 실제 `compose()` 재호출로 core 60종목·pool 12개(신규
+  `009150` 포함) 실측 확인 — shadow 예측과 일치. 오늘은 비거래일
+  이라 decision loop 사이클이 스킵돼 실제 funnel 효과는 다음
+  거래일(07-27) 이후 확인 필요. 코드 변경 없음. 상세: `docs/10_
+  signal_research_sppv/[DESIGN] regime_conditional_entry_signal_
+  v1.md` §94.
 - **3순위(보류 유지, 형태 재정의 — 우선순위 재조정)**: **`entry_
   score`와 BUY funnel 재현** — §2.7 확장 검증에서 하락장 안정성이
   확인되지 않아 단순 재현으로는 착수하지 않는다. §2.16~§2.21에서

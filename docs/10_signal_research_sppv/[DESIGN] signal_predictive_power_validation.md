@@ -2196,6 +2196,21 @@ entry 설계 검토로 전환**을 확정했다. 별도 문서
   0건. 상세: `docs/10_signal_research_sppv/[DESIGN] regime_
   conditional_entry_signal_v1.md` §93.
 
+- 작성자: Codex
+- 수정일자: 2026-07-26 KST (105차, `TRADING_UNIVERSE_CORE_CAP=60`
+  실제 반영 확인 — ops-scheduler 재기동 + 첫 관찰)
+- 수정내용: 사용자가 `.env`에 이미 반영한 `TRADING_UNIVERSE_CORE_
+  CAP=60`을 `ops-scheduler` 재기동으로 실제 확인했다(SPPV-2.106).
+  컨테이너 env/`os.getenv` 모두 60 확인, 실제 `compose()` 재호출로
+  core 60종목·candidate pool 12개(신규 `009150` 포함)를 실측
+  확인 — §90/§91의 shadow 예측과 정확히 일치. 다만 오늘은 비거래일
+  이라 실제 decision loop 사이클이 스킵돼 `buy_candidate` 등 실제
+  funnel 효과는 다음 거래일(2026-07-27 KST) 이후 확인 필요 — 설정
+  반영 확인과 효과 판정을 명확히 구분. eligibility 조건부 완화/EV
+  gate는 미착수. 코드 변경 없음, 신규 KIS 호출 0건. 상세: `docs/10_
+  signal_research_sppv/[DESIGN] regime_conditional_entry_signal_
+  v1.md` §94.
+
 ---
 
 ## 진행 체크리스트
@@ -5224,6 +5239,25 @@ canonical),
     gate threshold 변경 없음. 코드 로직 변경 없음(config/compose
     배선만), 신규 KIS 호출 0건. 상세: `docs/10_signal_research_
     sppv/[DESIGN] regime_conditional_entry_signal_v1.md` §93.
+- [x] **SPPV-2.106(신설)** `TRADING_UNIVERSE_CORE_CAP=60` 실제
+  반영 확인 — ops-scheduler 재기동 + 첫 관찰 (완료, 2026-07-26
+  KST, 작성자: Codex)
+  - **⚠️ 최신 상태(한눈에 요약)**: 사용자가 호스트 `.env`에 이미
+    `TRADING_UNIVERSE_CORE_CAP=60`을 반영한 상태에서 **`ops-
+    scheduler`만** 재기동 → 컨테이너 env/`os.getenv` 모두 `60`
+    확인, 실제 `UniverseSelectionService.compose()`를 그대로
+    재호출해 **core 종목 60개 반환**(shadow 예측과 정확히 일치)을
+    확인. candidate pool도 12개(기존 대비 6배, `009150` 신규 포함)
+    로 재구성됨을 확인. **다만 오늘(2026-07-26)은 비거래일이라
+    `decision_submit_gate`(실제 decision loop) 자체가 스케줄러에
+    의해 완전히 스킵**돼, `buy_candidate`/`APPROVE`/`submit_
+    request` 등 실제 funnel 효과는 **다음 거래일(2026-07-27
+    KST) 이후에나 확인 가능**하다 — "설정 반영 확인" 단계이지
+    "효과 판정" 단계가 아님을 명확히 구분.
+  - eligibility 조건부 완화(2순위)/EV gate는 손대지 않음. 코드
+    로직 변경 없음, 신규 KIS 호출 0건(shadow 재호출은 `kis_
+    client=None`). 상세: `docs/10_signal_research_sppv/[DESIGN]
+    regime_conditional_entry_signal_v1.md` §94.
 - [~] **SPPV-3** `entry_score` point-in-time 재현 및 중복 penalty ablation
   - **보류 유지, 형태 재정의 — 우선순위 재조정**: §12(1년, 자기참조
     포함) 당시 "알파 근거 강화"로 낙관했던 것이 §14(3년, 자기참조
