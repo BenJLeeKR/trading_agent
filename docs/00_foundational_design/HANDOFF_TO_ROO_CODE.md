@@ -19,18 +19,18 @@ Codex는 이 시점까지 다음 범위를 담당했다.
 
 ### 2.1 상위 설계 문서
 
-- [ENTERPRISE_TRADING_SYSTEM_DESIGN.md](/workspace/agent_trading/plan_docs/ENTERPRISE_TRADING_SYSTEM_DESIGN.md:1)
+- [ENTERPRISE_TRADING_SYSTEM_DESIGN.md](/workspace/agent_trading/docs/00_foundational_design/ENTERPRISE_TRADING_SYSTEM_DESIGN.md:1)
 
 ### 2.2 상세 설계 문서 세트
 
-- [README.md](/workspace/agent_trading/plan_docs/detailed_design/README.md:1)
-- [01_system_architecture.md](/workspace/agent_trading/plan_docs/detailed_design/01_system_architecture.md:1)
-- [02_order_execution_sequence.md](/workspace/agent_trading/plan_docs/detailed_design/02_order_execution_sequence.md:1)
-- [03_data_model_erd.md](/workspace/agent_trading/plan_docs/detailed_design/03_data_model_erd.md:1)
-- [04_broker_adapter_interface.md](/workspace/agent_trading/plan_docs/detailed_design/04_broker_adapter_interface.md:1)
-- [05_koreainvestment_adapter_spec.md](/workspace/agent_trading/plan_docs/detailed_design/05_koreainvestment_adapter_spec.md:1)
-- [06_config_schema.md](/workspace/agent_trading/plan_docs/detailed_design/06_config_schema.md:1)
-- [07_mvp_scope_and_delivery_plan.md](/workspace/agent_trading/plan_docs/detailed_design/07_mvp_scope_and_delivery_plan.md:1)
+- [README.md](/workspace/agent_trading/docs/00_foundational_design/detailed_design/README.md:1)
+- [01_system_architecture.md](/workspace/agent_trading/docs/00_foundational_design/detailed_design/01_system_architecture.md:1)
+- [02_order_execution_sequence.md](/workspace/agent_trading/docs/00_foundational_design/detailed_design/02_order_execution_sequence.md:1)
+- [03_data_model_erd.md](/workspace/agent_trading/docs/00_foundational_design/detailed_design/03_data_model_erd.md:1)
+- [04_broker_adapter_interface.md](/workspace/agent_trading/docs/00_foundational_design/detailed_design/04_broker_adapter_interface.md:1)
+- [05_koreainvestment_adapter_spec.md](/workspace/agent_trading/docs/00_foundational_design/detailed_design/05_koreainvestment_adapter_spec.md:1)
+- [06_config_schema.md](/workspace/agent_trading/docs/00_foundational_design/detailed_design/06_config_schema.md:1)
+- [07_mvp_scope_and_delivery_plan.md](/workspace/agent_trading/docs/00_foundational_design/detailed_design/07_mvp_scope_and_delivery_plan.md:1)
 
 ### 2.3 DB 초안
 
@@ -285,7 +285,7 @@ src/agent_trading/
 
 권장 산출물:
 
-- `plan_docs/detailed_design/order_state_machine.md`
+- `docs/00_foundational_design/detailed_design/order_state_machine.md`
 - 또는 `services/order_manager.py` 상단에 상태 전이표 주석 추가
 
 ### 9.2 DDL과 entity 간 매핑 규칙 명문화
@@ -309,7 +309,7 @@ src/agent_trading/
 
 권장 산출물:
 
-- `plan_docs/detailed_design/persistence_mapping.md`
+- `docs/00_foundational_design/detailed_design/persistence_mapping.md`
 - 또는 repository 구현 패키지에 공통 row mapper 규칙 문서 추가
 
 ### 9.3 OrderManager와 Guardrail 책임 경계 명확화
@@ -363,7 +363,7 @@ src/agent_trading/
 
 권장 산출물:
 
-- `plan_docs/detailed_design/reconciliation_policy.md`
+- `docs/00_foundational_design/detailed_design/reconciliation_policy.md`
 
 ### 9.5 KIS Adapter 내부 경계 구체화
 
@@ -408,7 +408,7 @@ src/agent_trading/
 
 권장 산출물:
 
-- `plan_docs/detailed_design/audit_and_masking_policy.md`
+- `docs/00_foundational_design/detailed_design/audit_and_masking_policy.md`
 
 ### 9.7 Replay Bundle 구조 보강
 
@@ -514,5 +514,3 @@ Roo Code의 첫 번째 마일스톤은 아래 정도가 적당하다.
 - 주문 상태 전이는 명시적
 - 중복 주문 방지는 저장 계층까지 포함해 보장
 - live 전에 paper/replay/reconcile 먼저 확보
-
-이 문서 기준으로 이후 작업의 주도권은 Roo Code에 넘긴다.

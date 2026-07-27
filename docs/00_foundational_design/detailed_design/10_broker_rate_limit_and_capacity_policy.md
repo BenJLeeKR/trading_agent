@@ -326,4 +326,4 @@ Request → Tier 1: Global REST Bucket (total RPS, e.g. 18)
 - **Backward compatibility**: `global_rest_capacity=0` (default) → global bucket 미생성
 - **변경 불필요 파일**: `rest_client.py` (이미 `consume_or_raise()` 호출), `bootstrap.py`, `broker_capacity.py`, `schemas.py`
 
-**설계 문서**: [`plans/kis_rest_strict_global_cap.md`](plans/kis_rest_strict_global_cap.md)
+**설계 문서**: [`docs/04_broker_kis/kis_rest_strict_global_cap.md`](../../04_broker_kis/kis_rest_strict_global_cap.md)

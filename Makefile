@@ -1,4 +1,6 @@
 .PHONY: install run migrate test lint smoke \
+        harness-status env-check check-file test-one test-file lint-path docs-check admin-test-one \
+        full-test docker-test-safe smoke-safe admin-build admin-test-all \
         docker-up docker-down docker-build docker-migrate docker-test docker-shell \
         docker-up-api docker-logs-api docker-restart-api \
         run-api-inmemory run-api-postgres
@@ -11,23 +13,72 @@ install:
 	pip install -e ".[dev]"
 
 run:
-	python -m agent_trading.main
+	python3 -m agent_trading.main
 
 migrate:
-	python -m agent_trading.db.migrations.run
+	python3 -m agent_trading.db.migrations.run
 
 test:
-	python -m pytest tests/ -v
+	bash scripts/harness/run.sh full-test
 
 smoke:
-	python3 -m pytest tests/smoke/test_kis_sandbox_smoke.py -v -m "smoke" -W ignore::DeprecationWarning
+	bash scripts/harness/run.sh smoke
 
 smoke-all:
-	python3 -m pytest tests/smoke/test_kis_sandbox_smoke.py -v -m "smoke or slow" -W ignore::DeprecationWarning
+	@echo "smoke-all은 부하 제한 대상입니다. 필요한 경우 사용자 승인 후 직접 실행하세요."
+	@exit 1
 
 lint:
 	@echo "Running ruff ..."
-	python -m pip install ruff -q && python -m ruff check src/
+	bash scripts/harness/run.sh lint-path src/agent_trading
+
+# =============================================================================
+# Harness-Safe Commands (preferred for AI agents)
+# =============================================================================
+
+harness-status:
+	bash scripts/harness/run.sh status
+
+env-check:
+	bash scripts/harness/run.sh env-check
+
+check-file:
+	@test -n "$(FILE)" || (echo "사용법: make check-file FILE=src/agent_trading/foo.py" >&2; exit 1)
+	bash scripts/harness/run.sh py-compile "$(FILE)"
+
+test-one:
+	@test -n "$(TEST)" || (echo "사용법: make test-one TEST=tests/path/test_file.py::test_name" >&2; exit 1)
+	bash scripts/harness/run.sh test-one "$(TEST)"
+
+test-file:
+	@test -n "$(TEST)" || (echo "사용법: make test-file TEST=tests/path/test_file.py" >&2; exit 1)
+	bash scripts/harness/run.sh test-file "$(TEST)"
+
+lint-path:
+	@test -n "$(TARGET)" || (echo "사용법: make lint-path TARGET=src/agent_trading/foo.py" >&2; exit 1)
+	bash scripts/harness/run.sh lint-path "$(TARGET)"
+
+docs-check:
+	bash scripts/harness/run.sh docs-check
+
+admin-test-one:
+	@test -n "$(TEST)" || (echo "사용법: make admin-test-one TEST=src/path/file.test.tsx" >&2; exit 1)
+	bash scripts/harness/run.sh admin-test-one "$(TEST)"
+
+full-test:
+	bash scripts/harness/run.sh full-test
+
+docker-test-safe:
+	bash scripts/harness/run.sh docker-test
+
+smoke-safe:
+	bash scripts/harness/run.sh smoke
+
+admin-build:
+	bash scripts/harness/run.sh admin-build
+
+admin-test-all:
+	bash scripts/harness/run.sh admin-test-all
 
 # =============================================================================
 # API Server (FastAPI)
@@ -87,7 +138,7 @@ docker-migrate:
 	docker compose run --rm migrate
 
 docker-test:
-	docker compose exec app python -m pytest tests/ -v
+	bash scripts/harness/run.sh docker-test
 
 docker-shell:
 	docker compose exec app /bin/bash

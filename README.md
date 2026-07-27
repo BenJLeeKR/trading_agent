@@ -1,17 +1,23 @@
 # Agent Trading System
 
-AI 멀티 에이전트 매매 시스템 — PostgreSQL 기반 주문 저장/조회 엔진.
+멀티 에이전트 트레이딩 시스템 — PostgreSQL 기반 주문 저장/조회 엔진.
 
-> **현재 상태**: MVP 마일스톤 1 완료 (53 tests passing).  
-> PostgreSQL 저장소 구현을 바로 시작할 수 있는 개발 환경이 준비되어 있습니다.
+## 작업 지침
+
+이 README는 프로젝트 설치와 실행 안내를 담당한다. 에이전트 작업 규칙과 Harness Engineering 원칙은 다음 문서를 우선한다.
+
+- [`AGENTS.md`](./AGENTS.md): Codex 및 공통 에이전트 작업 규칙
+- [`CLAUDE.md`](./CLAUDE.md): Claude Code용 지침 라우터
+- [`docs/99_meta_handover/agent_workspace_guide.md`](./docs/99_meta_handover/agent_workspace_guide.md): 작업 방식과 문서 분리 기준
 
 ---
 
 ## 요구사항
 
-- **Python** 3.11 이상
+- **Python** 3.14.6
+- **Node.js** 20.20.2 / **npm** 10.8.2
 - **Docker** (선택사항 — PostgreSQL 컨테이너 실행용)
-- **PostgreSQL** 16 (Docker 미사용 시 로컬 설치 필요)
+- **PostgreSQL** 16.14 (Docker 미사용 시 로컬 설치 필요)
 
 ---
 
@@ -20,8 +26,7 @@ AI 멀티 에이전트 매매 시스템 — PostgreSQL 기반 주문 저장/조�
 ### 1. 가상환경 생성 및 의존성 설치
 
 ```bash
-python -m venv .venv
-source .venv/bin/activate
+python3 -m venv .venv
 make install
 ```
 
@@ -179,53 +184,24 @@ make run-api-postgres
 docker compose up -d db api
 ```
 
-[`docker-compose.yml`](docker-compose.yml:82-89)은 이미 올바른 방식(`create_app_from_env --factory`)을 사용하고 있습니다.
+`docker-compose.yml`은 이미 올바른 방식(`create_app_from_env --factory`)을 사용하고 있습니다.
 
 ---
 
 ## 프로젝트 구조
 
-```
-├── pyproject.toml              # 프로젝트 정의 + 의존성
-├── Dockerfile                  # 앱 컨테이너
-├── docker-compose.yml          # PostgreSQL + App
-├── Makefile                    # 태스크 실행기
-├── .env.example                # 환경변수 템플릿
-├── .gitignore
-├── README.md
-│
-├── db/
-│   └── migrations/
-│       └── 0001_initial_schema.sql   # 초기 스키마 (24개 테이블)
-│
-├── src/
-│   └── agent_trading/
-│       ├── main.py                   # 앱 진입점
-│       ├── db/                       # DB 연결 계층
-│       │   ├── connection.py         #   asyncpg pool + DatabaseConfig
-│       │   ├── transaction.py        #   TransactionManager (UnitOfWork)
-│       │   ├── row_mapper.py         #   Record ↔ Entity 변환
-│       │   └── migrations/run.py     #   SQL migration 실행기
-│       ├── domain/                   # 도메인 모델 (변경 금지)
-│       │   ├── entities.py           #   17개 dataclass entities
-│       │   ├── enums.py              #   OrderStatus, OrderSide 등
-│       │   └── models.py             #   SubmitOrderRequest 등
-│       ├── repositories/             # 저장소 계층
-│       │   ├── contracts.py          #   Protocol interfaces (변경 금지)
-│       │   ├── memory.py             #   In-memory 구현
-│       │   ├── postgres/             #   PostgreSQL 구현
-│       │   └── ...
-│       ├── services/
-│       │   └── order_manager.py      #   주문 상태 전이 + idempotency
-│       ├── brokers/                  # 브로커 어댑터 (KIS stub)
-│       └── runtime/
-│           └── bootstrap.py          #   Runtime 조립
-│
-└── tests/
-    ├── conftest.py                   # 공통 fixture
-    ├── repositories/                 # Repository contract tests
-    ├── services/                     # 상태 전이 + idempotency tests
-    └── smoke/                        # End-to-end smoke tests
+```text
+├── src/agent_trading/      # 백엔드 애플리케이션 코드
+├── scripts/                # 운영·검증·스모크 실행 스크립트
+├── tests/                  # pytest 기반 테스트
+├── db/migrations/          # PostgreSQL 스키마 마이그레이션
+├── admin_ui/               # 운영 대시보드 UI
+├── docs/                   # 설계·분석·운영 문서
+├── data/                   # 로컬 데이터와 스냅샷 입력
+├── logs/                   # 런타임 로그와 운영 산출물
+├── docker-compose.yml      # 로컬/서버 Docker 구성
+├── Makefile                # 표준 실행 명령
+└── pyproject.toml          # Python 패키지와 의존성 정의
 ```
 
 ---
@@ -263,7 +239,15 @@ docker compose up -d db api
 | `make install` | 의존성 설치 (`pip install -e ".[dev]"`) |
 | `make run` | 앱 실행 |
 | `make migrate` | 로컬 마이그레이션 실행 |
-| `make test` | 로컬 테스트 실행 |
+| `make harness-status` | 하네스 기준 프로젝트 상태 확인 |
+| `make env-check` | 운영 기준 Python/Node/npm/PostgreSQL 버전과 환경 템플릿 확인 |
+| `make check-file FILE=...` | 단일 Python 파일 컴파일 확인 |
+| `make test-one TEST=...` | 단일 pytest 테스트 실행 |
+| `make test-file TEST=...` | 단일 pytest 파일 실행 |
+| `make lint-path TARGET=...` | 지정 경로 ruff 정적 분석 |
+| `make docs-check` | 핵심 문서 링크 검증 |
+| `make admin-test-one TEST=...` | 단일 Admin UI 테스트 selector 실행 |
+| `make test` | 전체 로컬 테스트 실행 — `HARNESS_ALLOW_HEAVY=1` 없이는 차단 |
 | `make lint` | ruff 정적 분석 |
 | `make run-api-inmemory` | Inspection API 실행 (in-memory, auth 비활성, module-level `app`) |
 | `make run-api-postgres` | Inspection API 실행 (Postgres, auth 활성, `create_app_from_env --factory`, `.env` 필요) |
@@ -271,39 +255,28 @@ docker compose up -d db api
 | `make docker-down` | Docker 서비스 종료 |
 | `make docker-build` | Docker 이미지 빌드 |
 | `make docker-migrate` | 마이그레이션 실행 — `docker compose run --rm migrate`의 alias (표준 경로는 `docker compose run --rm migrate` 자체) |
-| `make docker-test` | Docker 컨테이너에서 테스트 |
+| `make docker-test` | Docker 컨테이너에서 전체 테스트 실행 — `HARNESS_ALLOW_HEAVY=1` 없이는 차단 |
 | `make docker-shell` | Docker 컨테이너 셸 접속 |
 
----
+## 환경 재현성 기준
 
-## 다음 단계
-
-현재 MVP 마일스톤 1이 완료된 상태입니다. 다음으로 진행할 수 있는 작업:
-
-1. **Milestone 2**: PostgreSQL 실제 연결 통합 테스트 + KIS Adapter 실제 API 연동
-2. **PostgreSQL Repository 구현**: `PostgresClientRepository` 등 실제 DB 연동 코드
-3. **Paper Trading Loop**: OrderManager + BrokerAdapter + Repository 조합
-
----
+- Python 버전은 [`.python-version`](./.python-version)과 `Dockerfile` 기준으로 고정한다.
+- Python 패키지는 [`requirements.lock`](./requirements.lock)을 constraints로 사용한다.
+- Node.js 버전은 [`admin_ui/.nvmrc`](./admin_ui/.nvmrc), npm 버전은 [`admin_ui/.npm-version`](./admin_ui/.npm-version) 기준으로 고정한다.
+- Admin UI 의존성 설치는 `package-lock.json` 기반 `npm ci`를 사용한다.
+- PostgreSQL 서버 버전은 [`.postgres-version`](./.postgres-version) 기준으로 확인한다.
+- 환경 기준 검증은 `make env-check` 또는 `bash scripts/harness/run.sh env-check`를 사용한다.
 
 ## Agent Role Boundaries
 
-현재 멀티 에이전트 설계는 모든 책임을 LLM agent로 구현하는 방향이 아닙니다. 특히 리스크 영역은 아래처럼 분리해서 보는 것이 현재 코드와 가장 잘 맞습니다.
+현재 멀티 에이전트 설계는 모든 책임을 LLM agent로 구현하는 방향이 아니다. 리스크, 주문 수량, 최종 차단, 정합성 반영은 AI 의견과 deterministic backend 집행을 분리한다.
 
-- `AI Risk Agent`
-  - 이벤트/포지션/현금/노출 상태를 보고 `allow/reduce/reject/review` 같은 **리스크 의견**을 냅니다.
-- `Sizing Engine`
-  - `max_single_position_pct`, `min_cash_buffer_pct`, `max_order_value` 같은 **하드 수량 제약**을 결정론적으로 적용합니다.
-- `Hard Guardrail`
-  - stale snapshot, blocked reason, kill switch, risk check 같은 **최종 차단 책임**을 집니다.
-- `AI Compliance Agent` (향후)
-  - 규정/정책의 애매한 부분을 해석하는 보조 계층이 될 수 있지만, authoritative한 금지/허용 집행은 deterministic validator가 맡아야 합니다.
+상세 기준:
 
-관련 상세 문서:
-
-- [plan_docs/agents/01_agent_inventory_and_status.md](plan_docs/agents/01_agent_inventory_and_status.md)
-- [plan_docs/agents/02_agent_target_shapes.md](plan_docs/agents/02_agent_target_shapes.md)
-- [plan_docs/agents/03_risk_role_boundaries.md](plan_docs/agents/03_risk_role_boundaries.md)
+- [`docs/00_foundational_design/agents/README.md`](./docs/00_foundational_design/agents/README.md)
+- [`docs/00_foundational_design/agents/01_agent_inventory_and_status.md`](./docs/00_foundational_design/agents/01_agent_inventory_and_status.md)
+- [`docs/00_foundational_design/agents/02_agent_target_shapes.md`](./docs/00_foundational_design/agents/02_agent_target_shapes.md)
+- [`docs/00_foundational_design/agents/03_risk_role_boundaries.md`](./docs/00_foundational_design/agents/03_risk_role_boundaries.md)
 
 ---
 

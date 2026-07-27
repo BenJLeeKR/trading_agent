@@ -10,9 +10,9 @@
 
 기준 문서:
 
-- `plan_docs/detailed_design/01_system_architecture.md`
-- `plan_docs/detailed_design/06_config_schema.md`
-- `plan_docs/detailed_design/08_ai_decision_policy.md`
+- `docs/00_foundational_design/detailed_design/01_system_architecture.md`
+- `docs/00_foundational_design/detailed_design/06_config_schema.md`
+- `docs/00_foundational_design/detailed_design/08_ai_decision_policy.md`
 
 ## 한 줄 원칙
 
