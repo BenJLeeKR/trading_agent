@@ -9725,13 +9725,27 @@ agent 설계 문서 기준으로도 순서는 다음이 맞다.
      다음 거래일(2026-07-27 KST) 이후 확인 필요. 신규 KIS 호출
      0건. 상세: `docs/10_signal_research_sppv/[DESIGN] regime_
      conditional_entry_signal_v1.md` §94.
-   - **SPPV-3(다음 착수: [1순위] 2026-07-27(다음 거래일) 이후
-     실제 decision_submit_gate 사이클 재집계(candidate pool 실측
-     일치 여부, `009150` 등 신규 종목 eligibility 결과, buy_
-     candidate/final_intent/APPROVE/submit_request 변화) +
-     [2순위, 병행] eligibility_low_relative_activity 조건부 완화
-     (entry_score≥0.70 예외) 코드 diff 초안 설계 검토 — 전면 완화
-     금지, 실제 반영은 사용자 결정 필요 +
+   - **[SPPV-2.107에서 정정] 위 shadow는 max_cap=100 가정이 실제
+     (max_cap=30 하드코딩)와 달랐다.**
+   - **SPPV-2.107(완료, 2026-07-27 KST, 첫 거래일 실측 — core_cap=
+     60이 max_cap=30에 의해 상쇄됨·001450 병목 층2→층3 이동,
+     작성자: Codex — 다음 상류 병목 = max_cap=30 확정, 코드 변경
+     없음)**: universe 30개(전량 core)로 고정 확인, `009150`(순위
+     60위)은 진입 못 함. candidate pool 2→6개로 일부 확대.
+     `001450`이 사상 최초로 buy_candidate=True+eligibility_
+     passed=True 달성(활동성 게이트 자연 통과)했으나
+     candidate_vs_final에서 실제 fraud investigation 이벤트로
+     HOLD downgrade — submit_request/order_request 0건. 신규 KIS
+     호출 0건. 상세: `docs/10_signal_research_sppv/[DESIGN] regime_
+     conditional_entry_signal_v1.md` §95.
+   - **SPPV-3(다음 착수: [1순위] max_cap=30 하드코딩 상한 조정 여지
+     설계 검토(코드 diff 필요, 이번 턴은 검토만) +
+     001450의 층3(AI downgrade, fraud investigation 이벤트) 관찰
+     지속(완화 대상 아님) +
+     [2순위, 후순위 조정] eligibility_low_relative_activity 조건부
+     완화(entry_score≥0.70 예외) 코드 diff 초안 설계 검토 — 신규
+     진입 종목들의 entry_score가 낮아(0.36) 실익이 낮아짐, 전면
+     완화 금지 +
      negative_overall_floor의 국면 의존성
      심층 검토(000660 또는 다른 종목이 bullish_trend로 전환될 때
      이 축이 발생하는지, 과거 데이터 소급 조회 포함) 최우선 +

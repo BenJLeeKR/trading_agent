@@ -2211,6 +2211,25 @@ entry 설계 검토로 전환**을 확정했다. 별도 문서
   signal_research_sppv/[DESIGN] regime_conditional_entry_signal_
   v1.md` §94.
 
+- **[SPPV-2.107에서 정정] 위 §94의 shadow 재구성(core 60종목·pool
+  12개)은 `max_cap=100` 가정이 실제 프로덕션 조건(`max_cap=30`
+  하드코딩)과 달랐다 — 원문 보존, 아래에 실측 정정 추가.**
+- 작성자: Codex
+- 수정일자: 2026-07-27 KST (106차, 첫 거래일 실측 — `core_cap=60`이
+  `max_cap=30`에 의해 상쇄됨, 001450 병목이 층2→층3으로 이동)
+- 수정내용: 실제 프로덕션 로그로 `max_cap`이 env 오버라이드 불가한
+  하드코딩 상수 30임을 확인했다(SPPV-2.107). 오늘 universe는 30개
+  (전량 core)로 고정, `009150`은 순위 60위라 진입 못 함. candidate
+  pool은 2→6개(3배)로 일부 확대. `001450`이 사상 최초로 `buy_
+  candidate=True`+`eligibility_passed=True`를 달성했으나(활동성
+  게이트 자연 통과), `candidate_vs_final`에서 실제 fraud
+  investigation 이벤트로 `HOLD` downgrade — submit_request/order_
+  request는 0건. 판정: 다음 상류 병목은 core_cap이 아니라 `max_
+  cap=30`으로 확정 이동. 001450 downgrade는 정당한 리스크 반영으로
+  판단, 완화 대상 아님. 코드 변경 없음, Full pytest 미실행, 신규
+  KIS 호출 0건. 상세: `docs/10_signal_research_sppv/[DESIGN] regime_
+  conditional_entry_signal_v1.md` §95.
+
 ---
 
 ## 진행 체크리스트
@@ -5258,6 +5277,26 @@ canonical),
     로직 변경 없음, 신규 KIS 호출 0건(shadow 재호출은 `kis_
     client=None`). 상세: `docs/10_signal_research_sppv/[DESIGN]
     regime_conditional_entry_signal_v1.md` §94.
+- [x] **SPPV-2.107(신설)** 2026-07-27 KST 첫 거래일 실측 —
+  `core_cap=60`이 `max_cap=30`에 의해 상쇄됨, 001450 병목이
+  층2→층3으로 이동 (완료, 2026-07-27 KST, 작성자: Codex)
+  - **⚠️ 최신 상태(한눈에 요약)**: 실제 프로덕션 로그로 `max_cap`
+    이 env 오버라이드 불가한 **하드코딩 상수 30**임을 확인(§90/91/
+    94의 shadow가 `max_cap=100`으로 재구성했던 것은 실제 조건과
+    달랐음 — 정정). 오늘 universe는 정확히 30개(전량 core)로
+    고정, `009150`(가장 유망했던 shadow 신규 후보)은 순위 60위라
+    아예 universe에 진입 못 함. candidate pool은 2→**6개**(3배)로
+    일부 확대 확인. **`001450`이 사상 최초로 `buy_candidate=True`
+    +`eligibility_passed=True`를 달성**(활동성 게이트 자연 통과)
+    했으나, `candidate_vs_final`에서 **실제 fraud investigation
+    이벤트**로 인해 `HOLD`로 downgrade — `submit_request`/`order_
+    request`는 여전히 0건.
+  - **핵심 판정**: 다음 상류 병목은 core_cap이 아니라 **`max_cap=
+    30`**으로 확정 이동. 001450의 downgrade는 정당한 리스크 반영
+    으로 판단, 완화 대상 아님.
+  - 코드 변경 없음, Full pytest 미실행, 신규 KIS 호출 0건. 상세:
+    `docs/10_signal_research_sppv/[DESIGN] regime_conditional_
+    entry_signal_v1.md` §95.
 - [~] **SPPV-3** `entry_score` point-in-time 재현 및 중복 penalty ablation
   - **보류 유지, 형태 재정의 — 우선순위 재조정**: §12(1년, 자기참조
     포함) 당시 "알파 근거 강화"로 낙관했던 것이 §14(3년, 자기참조

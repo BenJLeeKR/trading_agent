@@ -1557,6 +1557,18 @@
   호출 0건. 상세: `docs/10_signal_research_sppv/[DESIGN] regime_
   conditional_entry_signal_v1.md` §94.
 
+- **[SPPV-2.107에서 정정] 위 shadow는 max_cap=100 가정이 실제
+  (max_cap=30 하드코딩)와 달랐다.**
+- 2026-07-27 KST(SPPV-2.107): 첫 거래일 실측. universe 30개(전량
+  core)로 고정, `009150`(순위 60위)은 진입 못 함. candidate pool
+  2→6개로 일부 확대. `001450`이 사상 최초로 buy_candidate=True+
+  eligibility_passed=True 달성(활동성 게이트 자연 통과)했으나
+  candidate_vs_final에서 실제 fraud investigation 이벤트로 HOLD
+  downgrade — submit_request/order_request 0건. 판정: 다음 상류
+  병목은 core_cap이 아니라 max_cap=30으로 확정 이동. 코드 변경
+  없음, 신규 KIS 호출 0건. 상세: `docs/10_signal_research_sppv/
+  [DESIGN] regime_conditional_entry_signal_v1.md` §95.
+
 ---
 
 ## 관리 원칙

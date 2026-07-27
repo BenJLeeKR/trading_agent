@@ -11572,3 +11572,141 @@ compose 배선만), `expected_value_gate`/`eligibility` 로직 변경
    확인" 단계이지 "효과 판정" 단계가 아니다.
 3. 2순위(eligibility 조건부 완화)는 1순위 관찰이 최소 1~2거래일
    쌓인 뒤 별도 턴에서 다룬다.
+
+
+---
+
+## 95. 2026-07-27 KST 첫 거래일 실측 — `core_cap=60`이 `max_cap=30`에 의해 상당 부분 상쇄됨을 확인, 001450 병목이 층2→층3(AI downgrade)으로 실제 이동 (SPPV-2.107, 2026-07-27 KST)
+
+### 95.1 목적
+
+`TRADING_UNIVERSE_CORE_CAP=60` 반영 후 첫 거래일(2026-07-27 KST)
+실측으로, ① universe 확대 효과 ② candidate pool 확대 효과
+③ `buy_candidate`~`submit_request`까지의 실제 전달 효과를 분리
+검증한다. 특히 **`max_cap=30`이 `core_cap=60`의 효과를 얼마나
+상쇄하는지**를 최우선으로 판정한다. 코드 변경 없음, Full pytest
+미실행, 신규 KIS 호출 없음(기존 운영 로그/DB read-only 조회만).
+
+### 95.2 런타임 설정 재확인(사실)
+
+- `ops-scheduler` 컨테이너: `TRADING_UNIVERSE_CORE_CAP=60` 확인.
+- 코드 확인(`scripts/run_decision_loop.py`): 실제 프로덕션 호출
+  경로(`_load_trading_universe_with_anchor()`, 인자 없이 호출,
+  라인 2509)는 `max_cap`을 전달하지 않는다 — 함수 내부 기본값
+  `max_cap=None → 30`(라인 711)이 그대로 적용된다. **`max_cap`은
+  env로 오버라이드되지 않는 하드코딩된 상수(30)**임을 확인 —
+  §90/§91/§94의 shadow 재구성이 `max_cap=100`으로 호출했던 것은
+  **실제 프로덕션 경로와 다른 조건**이었음을 이번 턴에서 발견·
+  인정한다(이력 보존, 아래 §95.6에서 정정).
+
+### 95.3 첫 거래일(2026-07-27 KST) 실제 로그 결과
+
+```
+14:58~15:28 (KST, 5개 사이클) 반복 확인:
+Trading universe (30): 000080,000100,...,003670 (전량 core, 30개 고정)
+R3b alpha precompute: market_common_label=range_bound candidates=6
+  symbols=000660,000810,001450,001800,003490,003550
+```
+
+- **universe는 정확히 30개로 고정**돼 있고, 전량 `core` 소스다
+  (event_overlay/held/market 소스 없음 — 오늘은 core만으로 30
+  슬롯이 채워짐).
+- **`009150`(core_cap=60 shadow에서 발견했던 신규 후보, rank 60)은
+  이 30개 목록에 없다** — core 우선순위 정렬 순서상 60위는 30개
+  cap 훨씬 밖이므로 애초에 universe 자체에 들어오지 못한다.
+- candidate pool은 **6개**(`000660, 000810, 001450, 001800,
+  003490, 003550`) — 어제까지의 2개(core_cap=12 시절) 대비 **3배**
+  확대. 단 §90/91/94의 shadow(max_cap=100 가정) 예측이던 12개에는
+  미치지 못한다.
+
+### 95.4 첫 거래일 실제 DB 결과
+
+| 종목 | n | entry_score | buy_candidate | eligibility 마지막 사유 | decision_type |
+|---|---|---|---|---|---|
+| 001450 | 55 | 0.8128 | **True(55/55, 100%)** | `eligibility_execution_feasibility_pass`(통과!) | watch 36 / hold 19 |
+| 000810 | 55 | 0.62 | False | `eligibility_low_relative_activity` | watch 54 / hold 1 |
+| 000660 | 55 | 0.36 | False | `eligibility_negative_overall_floor` | watch 6 / hold 49 |
+| 001800 | 55 | 0.36 | False | `eligibility_low_relative_activity` | watch 25 / hold 30 |
+| 003490 | 55 | 0.36 | False | `eligibility_negative_overall_floor` | watch 53 / hold 2 |
+| 003550 | 53 | 0.36 | False | `eligibility_negative_overall_floor` | hold 5 / watch 48 |
+
+- 오늘 전체: `buy_candidate=true` **55건**(전부 001450), `final_
+  intent='buy'` **0건**, `decision_type='APPROVE'` **0건**,
+  `order_requests` **0건**.
+- **001450이 처음으로 eligibility를 완전히 통과했다**(사실,
+  `eligibility_passed=True`, 마지막 reason이 fail이 아닌 pass
+  reason으로 바뀜) — 활동성 게이트가 더 이상 이 종목을 막지 않는
+  상태가 실측으로 확인됐다.
+- 그러나 `candidate_vs_final`에서 **매번 `no_action`/`HOLD`로
+  downgrade**된다: 실제 레코드 확인 결과 `alignment_status=
+  "downgraded"`, `override_applied=true`, `final_decision_type=
+  "HOLD"`이며, AI 판단 근거(`reason_codes`)에 **`fraud_
+  investigation_event`, `risk_off_tone`, `high_volatility_flag`,
+  `strategy_mismatch_defensive_but_candidate_buy`**가 포함돼
+  있다 — **실제 부정거래(fraud) 조사 이벤트가 감지되어 AI Risk/
+  Compliance 계층이 의도적으로 BUY를 HOLD로 눌러앉힌 것**이다
+  (사실, decision_json 직접 확인).
+
+### 95.5 기존 3종목 vs 신규 종목 비교
+
+- **기존 추적 3종목**: 001450에서 **실제 변화 발생**(eligibility
+  통과, buy_candidate=True 최초 달성) — 000810/000660은 여전히
+  각각 활동성 게이트/신호 바닥 게이트로 차단, 변화 없음.
+- **신규 진입 종목**(오늘 universe에 새로 들어온 `001800, 003490,
+  003550` — core_cap 확대로 30번째 안에 든 종목들): 전부
+  entry_score=0.36으로 threshold(0.65) 미달, `eligibility_low_
+  relative_activity`/`eligibility_negative_overall_floor`로 조기
+  차단 — **§88~89 구도가 그대로 반복**된다(층2에서 이미 막힘).
+- **`009150`(core_cap=60 shadow에서 가장 유망했던 후보,
+  percentile 0.818)은 오늘 universe에 아예 없었다** — `max_cap=
+  30`이 이 종목의 등장 자체를 차단했다.
+
+### 95.6 [§90/§91/§94에서 정정] max_cap=30 상쇄 여부 판정
+
+**핵심 판정: `core_cap=60`의 효과는 `max_cap=30`에 의해 상당 부분
+상쇄되고 있다.** 구체적으로:
+
+- universe 확대 효과: core_cap 12→60 자체는 유효했으나, **실제
+  universe 크기는 30에서 그대로 막혀 있다**(하드코딩 상수, env
+  오버라이드 불가).
+- candidate pool 확대 효과: 2→6(3배)로 **일부는 실제로 전달됐다**
+  — 완전히 죽은 것은 아니다. `max_cap=30` 안에서도 30위 이내의
+  core 종목들(001800/003490/003550 등) 사이에서는 candidate pool
+  구성이 실제로 넓어졌다.
+- **그러나 core_cap=60이 열어준 잠재력의 핵심(순위 31~60위 구간,
+  특히 `009150`)은 `max_cap=30`에 의해 universe 진입 자체가
+  막혀 전혀 전달되지 못했다.**
+
+**따라서 이번 실측 기준, "다음 상류 병목"은 core_cap이 아니라
+`max_cap=30`으로 이동했다고 판정한다.** §90/§91/§94에서 core_
+cap=60의 shadow 재구성 시 `max_cap=100`을 가정했던 것은 실제
+프로덕션 조건과 달랐다는 점을 여기서 정정한다(원문은 보존, 이
+문단으로 정정 사실만 추가).
+
+### 95.7 세 가지 효과의 분리 요약
+
+1. **universe 확대 효과**: 부분적(core_cap은 60까지 늘렸으나 실제
+   universe는 max_cap=30에 의해 그대로 30으로 고정).
+2. **candidate pool 확대 효과**: 실제로 발생(2→6, 3배) — 30개
+   universe 안에서는 유효하게 작동.
+3. **`buy_candidate`~`submit_request` 전달 효과**: **부분적으로
+   실제 발생** — 001450이 사상 처음 `buy_candidate=True`+
+   `eligibility_passed=True`를 달성했다(층2 돌파, 실측 확인).
+   다만 층3(AI/`candidate_vs_final`)에서 실제 fraud investigation
+   이벤트로 인해 downgrade — `submit_request`/`order_request`
+   까지는 아직 이어지지 않았다(0건).
+
+### 95.8 다음 우선 작업
+
+1. **`max_cap=30` 상한 자체의 조정 여지 검토**(다음 상류 병목으로
+   확정) — env 오버라이드가 없는 하드코딩 상수이므로, 코드 diff가
+   필요한 변경임을 명시(이번 턴은 코드 수정 없음, 검토만).
+2. 001450의 층3(AI downgrade) 사례는 **실제 fraud investigation
+   이벤트에 근거한 정당한 다운그레이드**로 보이므로, 이 자체를
+   완화 대상으로 삼지 않는다 — 대신 이 사례를 "eligibility를
+   통과한 후보가 실제로 층3까지 도달한 최초 사례"로 기록하고
+   계속 관찰한다.
+3. 2순위(eligibility 조건부 완화)는 이번 실측으로 실익이 더 낮아진
+   것으로 보인다(001450은 이미 자연적으로 eligibility를 통과했고,
+   나머지 신규 종목들은 entry_score 자체가 0.36으로 낮아 조건부
+   완화(entry_score≥0.70)의 적용 대상도 아니다) — 후순위 유지.

@@ -2039,6 +2039,17 @@ value/compliance/broker가 아니라 `entry_score < 0.65`다.
   거래일(07-27) 이후 확인 필요. 코드 변경 없음. 상세: `docs/10_
   signal_research_sppv/[DESIGN] regime_conditional_entry_signal_
   v1.md` §94.
+- **[SPPV-2.107에서 정정] 위 shadow(core 60·pool 12)는 max_cap=100
+  가정이 실제(max_cap=30 하드코딩)와 달랐다.**
+- 2026-07-27 KST(SPPV-2.107): 첫 거래일 실측. universe는 30개
+  (전량 core)로 고정, `009150`은 순위 60위라 진입 못 함. candidate
+  pool은 2→6개로 일부 확대. `001450`이 사상 최초로 buy_candidate=
+  True+eligibility_passed=True 달성했으나 candidate_vs_final에서
+  실제 fraud investigation 이벤트로 HOLD downgrade — submit_
+  request/order_request는 0건. 판정: 다음 상류 병목은 core_cap이
+  아니라 max_cap=30으로 이동. 코드 변경 없음. 상세: `docs/10_
+  signal_research_sppv/[DESIGN] regime_conditional_entry_signal_
+  v1.md` §95.
 - **3순위(보류 유지, 형태 재정의 — 우선순위 재조정)**: **`entry_
   score`와 BUY funnel 재현** — §2.7 확장 검증에서 하락장 안정성이
   확인되지 않아 단순 재현으로는 착수하지 않는다. §2.16~§2.21에서
