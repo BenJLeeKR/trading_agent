@@ -15,6 +15,11 @@ usage() {
   bash scripts/harness/run.sh test-file <tests/path.py>
   bash scripts/harness/run.sh lint-path <path>
   bash scripts/harness/run.sh docs-check
+  bash scripts/harness/run.sh accept docs
+  bash scripts/harness/run.sh accept env
+  bash scripts/harness/run.sh accept backend-file <src/agent_trading/file.py>
+  bash scripts/harness/run.sh accept frontend
+  bash scripts/harness/run.sh accept ops-report <summary_json>
   bash scripts/harness/run.sh admin-test-one <test_file_or_selector>
 
 승인 필요 명령:
@@ -204,6 +209,883 @@ raise SystemExit(1 if missing else 0)
 PY
 }
 
+accept_docs() {
+  python3 - <<'PY'
+import re
+from pathlib import Path
+
+root = Path("/workspace/agent_trading")
+core_docs = [
+    root / "README.md",
+    root / "AGENTS.md",
+    root / "CLAUDE.md",
+    root / "src" / "AGENTS.md",
+    root / "admin_ui" / "AGENTS.md",
+    root / "docs" / "99_meta_handover" / "agent_workspace_guide.md",
+    root / "tests" / "fixtures" / "README.md",
+]
+required_files = core_docs + [
+    root / "scripts" / "harness" / "run.sh",
+    root / "Makefile",
+]
+
+line_suffix = re.compile(r"^(.*\.(?:md|py|sql|yml|yaml|toml|json|txt|sh))(?:[:#]L?\d+(?:-L?\d+)?)$")
+deprecated_reference = re.compile(r"\bplan_docs\b|\]\((?:\.\./)*plans/")
+
+missing_files = [path for path in required_files if not path.exists()]
+missing_links = []
+deprecated_hits = []
+
+for file_path in core_docs:
+    if not file_path.exists():
+        continue
+    text = file_path.read_text()
+    for match in re.finditer(r"\[[^\]]+\]\(([^)]+)\)", text):
+        target = match.group(1).split("#", 1)[0]
+        if not target or re.match(r"^[a-z]+://", target) or target.startswith("mailto:"):
+            continue
+        candidate = target.replace("%20", " ")
+        line_match = line_suffix.match(candidate)
+        if line_match:
+            candidate = line_match.group(1)
+        resolved = Path(candidate) if candidate.startswith("/") else (file_path.parent / candidate).resolve()
+        if not resolved.exists():
+            missing_links.append((file_path, target, resolved))
+    for line_no, line in enumerate(text.splitlines(), 1):
+        if deprecated_reference.search(line):
+            deprecated_hits.append((file_path, line_no, line.strip()))
+
+def contains(path: Path, *needles: str) -> bool:
+    if not path.exists():
+        return False
+    text = path.read_text()
+    return all(needle in text for needle in needles)
+
+semantic_checks = [
+    ("readme_routes_to_agents", contains(root / "README.md", "AGENTS.md", "CLAUDE.md", "agent_workspace_guide.md")),
+    ("claude_routes_to_nested_agents", contains(root / "CLAUDE.md", "AGENTS.md", "src/AGENTS.md", "admin_ui/AGENTS.md")),
+    ("root_agents_requires_harness", contains(root / "AGENTS.md", "scripts/harness/run.sh", "검증 부하 제한")),
+    ("root_agents_env_secret_policy", contains(root / "AGENTS.md", ".env", "직접 수정하지 않는다", "노출하지 않는다")),
+    ("workspace_guide_declares_project_root", contains(root / "docs" / "99_meta_handover" / "agent_workspace_guide.md", "/workspace/agent_trading/", "문서 역할 분리")),
+    ("fixture_policy_present", contains(root / "tests" / "fixtures" / "README.md", "data/", "logs/", "tmp/")),
+]
+failed_semantic_checks = [name for name, ok in semantic_checks if not ok]
+
+metrics = {
+    "required_file_missing_count": len(missing_files),
+    "markdown_link_missing_count": len(missing_links),
+    "deprecated_reference_count": len(deprecated_hits),
+    "semantic_check_failed_count": len(failed_semantic_checks),
+}
+
+passed = all(value == 0 for value in metrics.values())
+print(f"ACCEPT docs: {'PASS' if passed else 'FAIL'}")
+for key, value in metrics.items():
+    print(f"- {key}={value}")
+
+if missing_files:
+    print("DETAIL missing_files:")
+    for path in missing_files:
+        print(f"- {path.relative_to(root)}")
+
+if missing_links:
+    print("DETAIL missing_links:")
+    for source, target, resolved in missing_links:
+        print(f"- {source.relative_to(root)} -> {target} => {resolved}")
+
+if deprecated_hits:
+    print("DETAIL deprecated_references:")
+    for source, line_no, line in deprecated_hits:
+        print(f"- {source.relative_to(root)}:{line_no}: {line}")
+
+if failed_semantic_checks:
+    print("DETAIL failed_semantic_checks:")
+    for name in failed_semantic_checks:
+        print(f"- {name}")
+
+raise SystemExit(0 if passed else 1)
+PY
+}
+
+accept_env() {
+  python3 - <<'PY'
+import json
+import re
+import subprocess
+from pathlib import Path
+
+root = Path("/workspace/agent_trading")
+
+def read_first_line(path: Path) -> str:
+    if not path.exists():
+        return ""
+    return path.read_text().splitlines()[0].strip()
+
+def run_command(command: list[str]) -> tuple[int, str]:
+    try:
+        completed = subprocess.run(
+            command,
+            cwd=root,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            timeout=30,
+            check=False,
+        )
+    except Exception:
+        return 1, ""
+    return completed.returncode, completed.stdout.strip()
+
+def parse_env_keys(path: Path) -> set[str]:
+    keys = set()
+    if not path.exists():
+        return keys
+    for line in path.read_text().splitlines():
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#") or "=" not in stripped:
+            continue
+        key = stripped.split("=", 1)[0].strip()
+        if re.match(r"^[A-Za-z_][A-Za-z0-9_]*$", key):
+            keys.add(key)
+    return keys
+
+expected = {
+    "python": read_first_line(root / ".python-version"),
+    "node": read_first_line(root / "admin_ui" / ".nvmrc"),
+    "npm": read_first_line(root / "admin_ui" / ".npm-version"),
+    "postgres": read_first_line(root / ".postgres-version"),
+}
+
+required_files = [
+    root / ".python-version",
+    root / ".postgres-version",
+    root / "requirements.lock",
+    root / "pyproject.toml",
+    root / "Dockerfile",
+    root / "admin_ui" / ".nvmrc",
+    root / "admin_ui" / ".npm-version",
+    root / "admin_ui" / ".npmrc",
+    root / "admin_ui" / "package.json",
+    root / "admin_ui" / "package-lock.json",
+    root / "admin_ui" / "Dockerfile",
+    root / ".env.example",
+    root / ".gitignore",
+]
+missing_files = [path for path in required_files if not path.exists()]
+
+runtime_versions: dict[str, str] = {}
+runtime_sources: dict[str, str] = {}
+
+code, output = run_command(["docker", "exec", "agent_trading-app-1", "python3", "-c", "import platform; print(platform.python_version())"])
+if code == 0 and output:
+    runtime_versions["python"] = output
+    runtime_sources["python"] = "agent_trading-app-1"
+else:
+    code, output = run_command(["python3", "-c", "import platform; print(platform.python_version())"])
+    runtime_versions["python"] = output if code == 0 else ""
+    runtime_sources["python"] = "host-python3"
+
+code, output = run_command(["docker", "run", "--rm", "node:20-slim", "node", "--version"])
+if code == 0 and output:
+    runtime_versions["node"] = output.removeprefix("v")
+    runtime_sources["node"] = "node:20-slim"
+else:
+    code, output = run_command(["node", "--version"])
+    runtime_versions["node"] = output.removeprefix("v") if code == 0 else ""
+    runtime_sources["node"] = "host-node"
+
+code, output = run_command(["docker", "run", "--rm", "node:20-slim", "npm", "--version"])
+if code == 0 and output:
+    runtime_versions["npm"] = output
+    runtime_sources["npm"] = "node:20-slim"
+else:
+    code, output = run_command(["npm", "--version"])
+    runtime_versions["npm"] = output if code == 0 else ""
+    runtime_sources["npm"] = "host-npm"
+
+code, output = run_command(["docker", "exec", "trading_db", "psql", "-U", "trading", "-d", "trading", "-tAc", "SHOW server_version;"])
+runtime_versions["postgres"] = output.replace(" ", "") if code == 0 else ""
+runtime_sources["postgres"] = "trading_db"
+
+runtime_mismatches = []
+for name, expected_version in expected.items():
+    actual_version = runtime_versions.get(name, "")
+    if not expected_version or actual_version != expected_version:
+        runtime_mismatches.append((name, expected_version or "<missing>", actual_version or "<missing>", runtime_sources.get(name, "<unknown>")))
+
+static_checks = []
+pyproject = (root / "pyproject.toml").read_text() if (root / "pyproject.toml").exists() else ""
+dockerfile = (root / "Dockerfile").read_text() if (root / "Dockerfile").exists() else ""
+admin_dockerfile = (root / "admin_ui" / "Dockerfile").read_text() if (root / "admin_ui" / "Dockerfile").exists() else ""
+npmrc = (root / "admin_ui" / ".npmrc").read_text().strip() if (root / "admin_ui" / ".npmrc").exists() else ""
+gitignore = (root / ".gitignore").read_text() if (root / ".gitignore").exists() else ""
+
+static_checks.append(("pyproject_python_range", 'requires-python = ">=3.14,<3.15"' in pyproject))
+static_checks.append(("dockerfile_python_pin", f"FROM python:{expected['python']}-slim" in dockerfile))
+static_checks.append(("dockerfile_uses_requirements_lock", "requirements.lock" in dockerfile and "--constraint requirements.lock" in dockerfile))
+static_checks.append(("admin_dockerfile_node_pin", f"FROM node:{expected['node']}-slim AS build" in admin_dockerfile))
+static_checks.append(("npm_engine_strict", npmrc == "engine-strict=true"))
+static_checks.append(("gitignore_excludes_env", re.search(r"(?m)^\.env$", gitignore) is not None))
+
+try:
+    package_json = json.loads((root / "admin_ui" / "package.json").read_text())
+except Exception:
+    package_json = {}
+try:
+    package_lock = json.loads((root / "admin_ui" / "package-lock.json").read_text())
+except Exception:
+    package_lock = {}
+
+package_engines = package_json.get("engines", {})
+lock_engines = package_lock.get("packages", {}).get("", {}).get("engines", {})
+static_checks.append(("package_json_node_engine", package_engines.get("node") == expected["node"]))
+static_checks.append(("package_json_npm_engine", package_engines.get("npm") == expected["npm"]))
+static_checks.append(("package_lock_node_engine", lock_engines.get("node") == expected["node"]))
+static_checks.append(("package_lock_npm_engine", lock_engines.get("npm") == expected["npm"]))
+
+failed_static_checks = [name for name, ok in static_checks if not ok]
+
+lock_checks = []
+lock_checks.append(("requirements_lock_nonempty", (root / "requirements.lock").exists() and bool((root / "requirements.lock").read_text().strip())))
+lock_checks.append(("package_lock_nonempty", (root / "admin_ui" / "package-lock.json").exists() and bool((root / "admin_ui" / "package-lock.json").read_text().strip())))
+failed_lock_checks = [name for name, ok in lock_checks if not ok]
+
+tracked_env_count = 0
+code, output = run_command(["git", "ls-files", ".env"])
+if code == 0 and output:
+    tracked_env_count = len(output.splitlines())
+
+env_example_keys = parse_env_keys(root / ".env.example")
+env_file = root / ".env"
+if env_file.exists():
+    env_keys = parse_env_keys(env_file)
+    advisory_missing_env_example_keys = sorted(env_example_keys - env_keys)
+    env_file_status = "present-redacted"
+else:
+    advisory_missing_env_example_keys = sorted(env_example_keys)
+    env_file_status = "missing"
+
+metrics = {
+    "required_file_missing_count": len(missing_files),
+    "runtime_version_mismatch_count": len(runtime_mismatches),
+    "static_pin_failed_count": len(failed_static_checks),
+    "lockfile_failed_count": len(failed_lock_checks),
+    "env_example_key_count": len(env_example_keys),
+    "advisory_env_example_key_missing_count": len(advisory_missing_env_example_keys),
+    "tracked_env_file_count": tracked_env_count,
+}
+
+passed = (
+    metrics["required_file_missing_count"] == 0
+    and metrics["runtime_version_mismatch_count"] == 0
+    and metrics["static_pin_failed_count"] == 0
+    and metrics["lockfile_failed_count"] == 0
+    and metrics["tracked_env_file_count"] == 0
+)
+
+print(f"ACCEPT env: {'PASS' if passed else 'FAIL'}")
+for key, value in metrics.items():
+    print(f"- {key}={value}")
+for name in ("python", "node", "npm", "postgres"):
+    print(f"- {name}={runtime_versions.get(name, '<missing>')} source={runtime_sources.get(name, '<unknown>')}")
+print(f"- env_file={env_file_status}")
+print("- env_values=redacted")
+
+if missing_files:
+    print("DETAIL missing_files:")
+    for path in missing_files:
+        print(f"- {path.relative_to(root)}")
+
+if runtime_mismatches:
+    print("DETAIL runtime_version_mismatches:")
+    for name, expected_version, actual_version, source in runtime_mismatches:
+        print(f"- {name}: expected={expected_version} actual={actual_version} source={source}")
+
+if failed_static_checks:
+    print("DETAIL failed_static_checks:")
+    for name in failed_static_checks:
+        print(f"- {name}")
+
+if failed_lock_checks:
+    print("DETAIL failed_lock_checks:")
+    for name in failed_lock_checks:
+        print(f"- {name}")
+
+if advisory_missing_env_example_keys:
+    print("ADVISORY env_example_keys_missing_from_env:")
+    for key in advisory_missing_env_example_keys:
+        print(f"- {key}")
+
+raise SystemExit(0 if passed else 1)
+PY
+}
+
+accept_backend_file() {
+  local target="${1:-}"
+  require_arg "$target" "backend_file"
+  ACCEPT_BACKEND_TARGET="$target" ACCEPT_SAFE_TIMEOUT_SECONDS="$SAFE_TIMEOUT_SECONDS" python3 - <<'PY'
+import os
+import subprocess
+import sys
+from pathlib import Path
+
+root = Path("/workspace/agent_trading")
+target_raw = os.environ["ACCEPT_BACKEND_TARGET"]
+safe_timeout = int(os.environ.get("ACCEPT_SAFE_TIMEOUT_SECONDS", "90"))
+
+def run_command(command: list[str], timeout_seconds: int = safe_timeout) -> tuple[int, str]:
+    try:
+        completed = subprocess.run(
+            command,
+            cwd=root,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            timeout=timeout_seconds,
+            check=False,
+        )
+    except subprocess.TimeoutExpired as exc:
+        return 124, (exc.stdout or "") + f"\nTIMEOUT after {timeout_seconds}s"
+    except Exception as exc:
+        return 1, f"{type(exc).__name__}: {exc}"
+    return completed.returncode, completed.stdout.strip()
+
+def python_command(args: list[str]) -> list[str]:
+    code, names = run_command(["docker", "ps", "--format", "{{.Names}}"], timeout_seconds=10)
+    if code == 0 and "agent_trading-app-1" in set(names.splitlines()):
+        return ["docker", "exec", "-w", "/app", "agent_trading-app-1", "python3", *args]
+    return ["python3", *args]
+
+details: list[str] = []
+resolved = (root / target_raw).resolve()
+src_root = (root / "src" / "agent_trading").resolve()
+
+valid_path = (
+    str(resolved).startswith(str(src_root) + "/")
+    and resolved.exists()
+    and resolved.is_file()
+    and resolved.suffix == ".py"
+)
+
+py_compile_passed = False
+safe_test_candidates: list[Path] = []
+unsafe_test_candidates: list[Path] = []
+tests_run_count = 0
+test_failed_count = 0
+too_many_safe_candidates = False
+test_outputs: list[tuple[str, int, str]] = []
+
+if not valid_path:
+    if not str(resolved).startswith(str(src_root) + "/"):
+        details.append(f"invalid_path_scope={target_raw}")
+    elif not resolved.exists():
+        details.append(f"missing_file={target_raw}")
+    elif resolved.suffix != ".py":
+        details.append(f"not_python_file={target_raw}")
+else:
+    relative_target = resolved.relative_to(root).as_posix()
+    code, output = run_command(python_command(["-m", "py_compile", relative_target]))
+    py_compile_passed = code == 0
+    if not py_compile_passed:
+        details.append("py_compile_failed")
+        if output:
+            test_outputs.append(("py_compile", code, output))
+
+    module_relative = resolved.relative_to(src_root)
+    stem = resolved.stem
+    direct_candidates = [
+        root / "tests" / module_relative.parent / f"test_{stem}.py",
+        root / "tests" / module_relative.parent / f"{stem}_test.py",
+    ]
+    glob_candidates = [
+        *root.glob(f"tests/**/test_{stem}.py"),
+        *root.glob(f"tests/**/{stem}_test.py"),
+    ]
+    seen: set[Path] = set()
+    candidates: list[Path] = []
+    for candidate in direct_candidates + glob_candidates:
+        candidate = candidate.resolve()
+        if candidate.exists() and candidate.is_file() and candidate not in seen:
+            seen.add(candidate)
+            candidates.append(candidate)
+
+    for candidate in candidates:
+        rel = candidate.relative_to(root).as_posix()
+        if rel.startswith(("tests/smoke/", "tests/integration/", "tests/brokers/")):
+            unsafe_test_candidates.append(candidate)
+        else:
+            safe_test_candidates.append(candidate)
+
+    max_safe_test_files = int(os.environ.get("ACCEPT_BACKEND_MAX_TEST_FILES", "3"))
+    too_many_safe_candidates = len(safe_test_candidates) > max_safe_test_files
+    if too_many_safe_candidates:
+        details.append(f"too_many_safe_test_candidates={len(safe_test_candidates)} max={max_safe_test_files}")
+    else:
+        for candidate in safe_test_candidates:
+            rel = candidate.relative_to(root).as_posix()
+            code, output = run_command(python_command(["-m", "pytest", rel, "-v"]))
+            tests_run_count += 1
+            if code != 0:
+                test_failed_count += 1
+                test_outputs.append((rel, code, output))
+
+metrics = {
+    "valid_backend_file": 1 if valid_path else 0,
+    "py_compile_passed": 1 if py_compile_passed else 0,
+    "safe_test_candidate_count": len(safe_test_candidates),
+    "unsafe_test_candidate_count": len(unsafe_test_candidates),
+    "tests_run_count": tests_run_count,
+    "test_failed_count": test_failed_count,
+    "too_many_safe_test_candidates": 1 if too_many_safe_candidates else 0,
+}
+
+passed = (
+    metrics["valid_backend_file"] == 1
+    and metrics["py_compile_passed"] == 1
+    and metrics["test_failed_count"] == 0
+    and metrics["too_many_safe_test_candidates"] == 0
+)
+
+print(f"ACCEPT backend-file: {'PASS' if passed else 'FAIL'}")
+print(f"- file={target_raw}")
+for key, value in metrics.items():
+    print(f"- {key}={value}")
+
+if safe_test_candidates:
+    print("DETAIL safe_test_candidates:")
+    for candidate in safe_test_candidates:
+        print(f"- {candidate.relative_to(root).as_posix()}")
+else:
+    print("ADVISORY no_safe_test_candidate_found=1")
+
+if unsafe_test_candidates:
+    print("ADVISORY unsafe_test_candidates_not_run:")
+    for candidate in unsafe_test_candidates:
+        print(f"- {candidate.relative_to(root).as_posix()}")
+
+if details:
+    print("DETAIL failed_checks:")
+    for detail in details:
+        print(f"- {detail}")
+
+if test_outputs:
+    print("DETAIL command_failures:")
+    for label, code, output in test_outputs:
+        print(f"- {label}: exit_code={code}")
+        if output:
+            for line in output.splitlines()[-30:]:
+                print(f"  {line}")
+
+raise SystemExit(0 if passed else 1)
+PY
+}
+
+accept_frontend() {
+  python3 - <<'PY'
+import json
+import re
+import subprocess
+from pathlib import Path
+
+root = Path("/workspace/agent_trading")
+admin_root = root / "admin_ui"
+
+def read_first_line(path: Path) -> str:
+    if not path.exists():
+        return ""
+    return path.read_text().splitlines()[0].strip()
+
+def run_command(command: list[str]) -> tuple[int, str]:
+    try:
+        completed = subprocess.run(
+            command,
+            cwd=root,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            timeout=30,
+            check=False,
+        )
+    except Exception:
+        return 1, ""
+    return completed.returncode, completed.stdout.strip()
+
+def read_json(path: Path) -> dict:
+    try:
+        return json.loads(path.read_text())
+    except Exception:
+        return {}
+
+expected_node = read_first_line(admin_root / ".nvmrc")
+expected_npm = read_first_line(admin_root / ".npm-version")
+
+required_files = [
+    admin_root / "AGENTS.md",
+    admin_root / "Dockerfile",
+    admin_root / "package.json",
+    admin_root / "package-lock.json",
+    admin_root / ".nvmrc",
+    admin_root / ".npm-version",
+    admin_root / ".npmrc",
+    admin_root / "vite.config.ts",
+    admin_root / "nginx.frontend.conf",
+    admin_root / "src" / "api" / "client.ts",
+    admin_root / "src" / "types" / "api.ts",
+    admin_root / "src" / "__tests__" / "setup.ts",
+]
+missing_files = [path for path in required_files if not path.exists()]
+
+package_json = read_json(admin_root / "package.json")
+package_lock = read_json(admin_root / "package-lock.json")
+package_engines = package_json.get("engines", {})
+lock_root = package_lock.get("packages", {}).get("", {})
+lock_engines = lock_root.get("engines", {})
+scripts = package_json.get("scripts", {})
+
+dockerfile = (admin_root / "Dockerfile").read_text() if (admin_root / "Dockerfile").exists() else ""
+npmrc = (admin_root / ".npmrc").read_text().strip() if (admin_root / ".npmrc").exists() else ""
+vite_config = (admin_root / "vite.config.ts").read_text() if (admin_root / "vite.config.ts").exists() else ""
+api_client = (admin_root / "src" / "api" / "client.ts").read_text() if (admin_root / "src" / "api" / "client.ts").exists() else ""
+agents = (admin_root / "AGENTS.md").read_text() if (admin_root / "AGENTS.md").exists() else ""
+
+static_checks = [
+    ("package_json_node_engine", package_engines.get("node") == expected_node),
+    ("package_json_npm_engine", package_engines.get("npm") == expected_npm),
+    ("package_lock_node_engine", lock_engines.get("node") == expected_node),
+    ("package_lock_npm_engine", lock_engines.get("npm") == expected_npm),
+    ("npm_engine_strict", npmrc == "engine-strict=true"),
+    ("dockerfile_node_pin", f"FROM node:{expected_node}-slim AS build" in dockerfile),
+    ("dockerfile_uses_npm_ci", "RUN npm ci" in dockerfile),
+    ("vite_uses_jsdom", 'environment: "jsdom"' in vite_config or "environment: 'jsdom'" in vite_config),
+    ("vite_has_test_setup", "setupFiles" in vite_config and "setup.ts" in vite_config),
+    ("api_client_exists", bool(api_client.strip())),
+    ("admin_agents_load_limit", "전체 테스트와 전체 빌드 실행을 기본 금지" in agents),
+    ("admin_agents_state_display_policy", "loading, empty, error, stale" in agents),
+]
+
+dependencies = package_json.get("dependencies", {})
+dev_dependencies = package_json.get("devDependencies", {})
+lock_dependencies = lock_root.get("dependencies", {})
+lock_dev_dependencies = lock_root.get("devDependencies", {})
+dependency_drift = []
+for name, version in sorted(dependencies.items()):
+    if lock_dependencies.get(name) != version:
+        dependency_drift.append(("dependencies", name, version, lock_dependencies.get(name, "<missing>")))
+for name, version in sorted(dev_dependencies.items()):
+    if lock_dev_dependencies.get(name) != version:
+        dependency_drift.append(("devDependencies", name, version, lock_dev_dependencies.get(name, "<missing>")))
+
+test_files = sorted((admin_root / "src" / "__tests__").glob("*.test.*")) if (admin_root / "src" / "__tests__").exists() else []
+component_files = sorted((admin_root / "src" / "components").rglob("*.tsx")) if (admin_root / "src" / "components").exists() else []
+common_state_components = [
+    admin_root / "src" / "components" / "common" / "ErrorBanner.tsx",
+    admin_root / "src" / "components" / "common" / "LoadingSpinner.tsx",
+    admin_root / "src" / "components" / "common" / "StatusBadge.tsx",
+    admin_root / "src" / "components" / "common" / "WarningBanner.tsx",
+]
+missing_state_components = [path for path in common_state_components if not path.exists()]
+
+runtime_versions: dict[str, str] = {}
+runtime_sources: dict[str, str] = {}
+code, output = run_command(["docker", "run", "--rm", "node:20-slim", "node", "--version"])
+if code == 0 and output:
+    runtime_versions["node"] = output.removeprefix("v")
+    runtime_sources["node"] = "node:20-slim"
+else:
+    code, output = run_command(["node", "--version"])
+    runtime_versions["node"] = output.removeprefix("v") if code == 0 else ""
+    runtime_sources["node"] = "host-node"
+
+code, output = run_command(["docker", "run", "--rm", "node:20-slim", "npm", "--version"])
+if code == 0 and output:
+    runtime_versions["npm"] = output
+    runtime_sources["npm"] = "node:20-slim"
+else:
+    code, output = run_command(["npm", "--version"])
+    runtime_versions["npm"] = output if code == 0 else ""
+    runtime_sources["npm"] = "host-npm"
+
+runtime_mismatches = []
+if runtime_versions.get("node") != expected_node:
+    runtime_mismatches.append(("node", expected_node or "<missing>", runtime_versions.get("node") or "<missing>", runtime_sources.get("node", "<unknown>")))
+if runtime_versions.get("npm") != expected_npm:
+    runtime_mismatches.append(("npm", expected_npm or "<missing>", runtime_versions.get("npm") or "<missing>", runtime_sources.get("npm", "<unknown>")))
+
+failed_static_checks = [name for name, ok in static_checks if not ok]
+
+metrics = {
+    "required_file_missing_count": len(missing_files),
+    "runtime_version_mismatch_count": len(runtime_mismatches),
+    "static_contract_failed_count": len(failed_static_checks),
+    "dependency_drift_count": len(dependency_drift),
+    "test_file_count": len(test_files),
+    "component_file_count": len(component_files),
+    "state_component_missing_count": len(missing_state_components),
+}
+
+passed = (
+    metrics["required_file_missing_count"] == 0
+    and metrics["runtime_version_mismatch_count"] == 0
+    and metrics["static_contract_failed_count"] == 0
+    and metrics["dependency_drift_count"] == 0
+    and metrics["test_file_count"] > 0
+    and metrics["component_file_count"] > 0
+    and metrics["state_component_missing_count"] == 0
+)
+
+print(f"ACCEPT frontend: {'PASS' if passed else 'FAIL'}")
+for key, value in metrics.items():
+    print(f"- {key}={value}")
+print(f"- node={runtime_versions.get('node', '<missing>')} source={runtime_sources.get('node', '<unknown>')}")
+print(f"- npm={runtime_versions.get('npm', '<missing>')} source={runtime_sources.get('npm', '<unknown>')}")
+print("- full_build_run=0")
+print("- full_test_run=0")
+
+if missing_files:
+    print("DETAIL missing_files:")
+    for path in missing_files:
+        print(f"- {path.relative_to(root)}")
+
+if runtime_mismatches:
+    print("DETAIL runtime_version_mismatches:")
+    for name, expected, actual, source in runtime_mismatches:
+        print(f"- {name}: expected={expected} actual={actual} source={source}")
+
+if failed_static_checks:
+    print("DETAIL failed_static_checks:")
+    for name in failed_static_checks:
+        print(f"- {name}")
+
+if dependency_drift:
+    print("DETAIL dependency_drift:")
+    for group, name, package_value, lock_value in dependency_drift:
+        print(f"- {group}.{name}: package_json={package_value} package_lock={lock_value}")
+
+if missing_state_components:
+    print("DETAIL missing_state_components:")
+    for path in missing_state_components:
+        print(f"- {path.relative_to(root)}")
+
+raise SystemExit(0 if passed else 1)
+PY
+}
+
+accept_ops_report() {
+  local summary_json="${1:-}"
+  require_arg "$summary_json" "summary_json"
+  python3 - "$summary_json" <<'PY'
+import json
+import re
+import sys
+from pathlib import Path
+from typing import Any
+
+root = Path("/workspace/agent_trading")
+raw_arg = sys.argv[1]
+
+def resolve_input(raw: str) -> tuple[str, str]:
+    if raw.lstrip().startswith(("{", "[")):
+        return raw, "<inline-json>"
+    candidate = (root / raw).resolve() if not raw.startswith("/") else Path(raw).resolve()
+    if str(candidate).startswith(str(root) + "/") and candidate.is_file():
+        return candidate.read_text(), str(candidate.relative_to(root))
+    return raw, "<inline-json>"
+
+def load_payload(raw: str) -> dict[str, Any]:
+    text, source = resolve_input(raw)
+    try:
+        parsed = json.loads(text)
+    except json.JSONDecodeError as exc:
+        print("ACCEPT ops-report: FAIL")
+        print("- json_parse_error_count=1")
+        print(f"DETAIL json_parse_error: source={source} line={exc.lineno} column={exc.colno}")
+        raise SystemExit(1) from exc
+    if not isinstance(parsed, dict):
+        print("ACCEPT ops-report: FAIL")
+        print("- json_object_error_count=1")
+        print(f"DETAIL json_object_error: source={source}")
+        raise SystemExit(1)
+    for wrapper_key in ("summary_json", "operations_day_summary_json"):
+        wrapped = parsed.get(wrapper_key)
+        if isinstance(wrapped, dict):
+            return wrapped
+    return parsed
+
+def get_path(payload: dict[str, Any], dotted_path: str) -> Any:
+    value: Any = payload
+    for part in dotted_path.split("."):
+        if not isinstance(value, dict) or part not in value:
+            return None
+        value = value[part]
+    return value
+
+def is_int_like(value: Any) -> bool:
+    return isinstance(value, int) and not isinstance(value, bool)
+
+def collect_secret_key_hits(value: Any, path: str = "") -> list[str]:
+    hits: list[str] = []
+    secret_pattern = re.compile(r"(secret|password|passwd|authorization|approval_key|access_token|refresh_token|bearer_token|appkey|appsecret|api_key|client_secret)", re.I)
+    if isinstance(value, dict):
+        for key, nested in value.items():
+            child_path = f"{path}.{key}" if path else str(key)
+            if secret_pattern.search(str(key)) and nested not in (None, "", [], {}):
+                hits.append(child_path)
+            hits.extend(collect_secret_key_hits(nested, child_path))
+    elif isinstance(value, list):
+        for index, nested in enumerate(value):
+            hits.extend(collect_secret_key_hits(nested, f"{path}[{index}]"))
+    return hits
+
+payload = load_payload(raw_arg)
+
+required_top_level_paths = [
+    "command_results_count",
+    "ok_count",
+    "failed_count",
+    "timed_out_count",
+    "command_health",
+    "decision_loop",
+    "command_health.decision_loop",
+]
+missing_required_paths = [
+    dotted_path for dotted_path in required_top_level_paths
+    if get_path(payload, dotted_path) is None
+]
+
+counter_paths = [
+    "command_results_count",
+    "ok_count",
+    "failed_count",
+    "timed_out_count",
+]
+counter_type_failures = [
+    dotted_path for dotted_path in counter_paths
+    if not is_int_like(get_path(payload, dotted_path))
+]
+
+counter_inconsistencies: list[str] = []
+command_results_count = get_path(payload, "command_results_count")
+ok_count = get_path(payload, "ok_count")
+failed_count = get_path(payload, "failed_count")
+timed_out_count = get_path(payload, "timed_out_count")
+if all(is_int_like(value) for value in (command_results_count, ok_count, failed_count, timed_out_count)):
+    if ok_count + failed_count != command_results_count:
+        counter_inconsistencies.append("ok_count+failed_count!=command_results_count")
+    if timed_out_count > command_results_count:
+        counter_inconsistencies.append("timed_out_count>command_results_count")
+    if command_results_count <= 0:
+        counter_inconsistencies.append("command_results_count<=0")
+
+decision_loop = get_path(payload, "decision_loop")
+command_health_decision_loop = get_path(payload, "command_health.decision_loop")
+decision_metrics = decision_loop.get("metrics") if isinstance(decision_loop, dict) else None
+health_metrics = command_health_decision_loop.get("last_metrics") if isinstance(command_health_decision_loop, dict) else None
+
+required_decision_metric_keys = [
+    "universe_symbol_count",
+    "processed_symbol_count",
+    "held_position_count",
+    "held_position_processed_count",
+]
+
+decision_metric_failures: list[str] = []
+for metric_source_name, metrics in (
+    ("decision_loop.metrics", decision_metrics),
+    ("command_health.decision_loop.last_metrics", health_metrics),
+):
+    if not isinstance(metrics, dict):
+        decision_metric_failures.append(metric_source_name)
+        continue
+    for key in required_decision_metric_keys:
+        if not is_int_like(metrics.get(key)):
+            decision_metric_failures.append(f"{metric_source_name}.{key}")
+
+coverage_failures: list[str] = []
+if isinstance(decision_metrics, dict):
+    universe_symbol_count = decision_metrics.get("universe_symbol_count")
+    processed_symbol_count = decision_metrics.get("processed_symbol_count")
+    held_position_count = decision_metrics.get("held_position_count")
+    held_position_processed_count = decision_metrics.get("held_position_processed_count")
+    if all(is_int_like(value) for value in (universe_symbol_count, processed_symbol_count)):
+        if processed_symbol_count > universe_symbol_count:
+            coverage_failures.append("processed_symbol_count>universe_symbol_count")
+        if universe_symbol_count > 0 and processed_symbol_count <= 0:
+            coverage_failures.append("universe_symbol_count>0 but processed_symbol_count<=0")
+    if all(is_int_like(value) for value in (held_position_count, held_position_processed_count)):
+        if held_position_processed_count > held_position_count:
+            coverage_failures.append("held_position_processed_count>held_position_count")
+        if held_position_count > 0 and held_position_processed_count <= 0:
+            coverage_failures.append("held_position_count>0 but held_position_processed_count<=0")
+
+health_failures: list[str] = []
+if isinstance(command_health_decision_loop, dict):
+    count = command_health_decision_loop.get("count")
+    last_ok = command_health_decision_loop.get("last_ok")
+    timed_out = command_health_decision_loop.get("timed_out_count")
+    if not is_int_like(count) or count <= 0:
+        health_failures.append("command_health.decision_loop.count<=0")
+    if last_ok is not True:
+        health_failures.append("command_health.decision_loop.last_ok!=true")
+    if is_int_like(timed_out) and timed_out > 0:
+        health_failures.append("command_health.decision_loop.timed_out_count>0")
+else:
+    health_failures.append("command_health.decision_loop")
+
+secret_key_hits = collect_secret_key_hits(payload)
+
+metrics = {
+    "required_path_missing_count": len(missing_required_paths),
+    "counter_type_failed_count": len(counter_type_failures),
+    "counter_inconsistency_count": len(counter_inconsistencies),
+    "decision_metric_missing_count": len(decision_metric_failures),
+    "decision_coverage_failed_count": len(coverage_failures),
+    "decision_health_failed_count": len(health_failures),
+    "secret_key_hit_count": len(secret_key_hits),
+}
+
+passed = all(value == 0 for value in metrics.values())
+print(f"ACCEPT ops-report: {'PASS' if passed else 'FAIL'}")
+for key, value in metrics.items():
+    print(f"- {key}={value}")
+if isinstance(decision_metrics, dict):
+    for key in required_decision_metric_keys:
+        print(f"- {key}={decision_metrics.get(key, '<missing>')}")
+print("- full_test_run=0")
+print("- external_network_run=0")
+
+if missing_required_paths:
+    print("DETAIL missing_required_paths:")
+    for dotted_path in missing_required_paths:
+        print(f"- {dotted_path}")
+if counter_type_failures:
+    print("DETAIL counter_type_failures:")
+    for dotted_path in counter_type_failures:
+        print(f"- {dotted_path}")
+if counter_inconsistencies:
+    print("DETAIL counter_inconsistencies:")
+    for item in counter_inconsistencies:
+        print(f"- {item}")
+if decision_metric_failures:
+    print("DETAIL decision_metric_failures:")
+    for item in decision_metric_failures:
+        print(f"- {item}")
+if coverage_failures:
+    print("DETAIL coverage_failures:")
+    for item in coverage_failures:
+        print(f"- {item}")
+if health_failures:
+    print("DETAIL health_failures:")
+    for item in health_failures:
+        print(f"- {item}")
+if secret_key_hits:
+    print("DETAIL secret_key_hits:")
+    for item in secret_key_hits:
+        print(f"- {item}")
+
+raise SystemExit(0 if passed else 1)
+PY
+}
+
 main() {
   cd "$ROOT_DIR"
 
@@ -250,6 +1132,30 @@ main() {
       ;;
     docs-check)
       docs_check
+      ;;
+    accept)
+      local profile="${1:-}"
+      require_arg "$profile" "accept_profile"
+      case "$profile" in
+        docs)
+          accept_docs
+          ;;
+        env)
+          accept_env
+          ;;
+        backend-file)
+          accept_backend_file "${2:-}"
+          ;;
+        frontend)
+          accept_frontend
+          ;;
+        ops-report)
+          accept_ops_report "${2:-}"
+          ;;
+        *)
+          fail "지원하지 않는 accept profile입니다: $profile"
+          ;;
+      esac
       ;;
     admin-test-one)
       local selector="${1:-}"

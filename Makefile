@@ -1,5 +1,5 @@
 .PHONY: install run migrate test lint smoke \
-        harness-status env-check check-file test-one test-file lint-path docs-check admin-test-one \
+        harness-status env-check check-file test-one test-file lint-path docs-check accept-docs accept-env accept-backend-file accept-admin-ui accept-ops-report admin-test-one \
         full-test docker-test-safe smoke-safe admin-build admin-test-all \
         docker-up docker-down docker-build docker-migrate docker-test docker-shell \
         docker-up-api docker-logs-api docker-restart-api \
@@ -60,6 +60,23 @@ lint-path:
 
 docs-check:
 	bash scripts/harness/run.sh docs-check
+
+accept-docs:
+	bash scripts/harness/run.sh accept docs
+
+accept-env:
+	bash scripts/harness/run.sh accept env
+
+accept-backend-file:
+	@test -n "$(FILE)" || (echo "사용법: make accept-backend-file FILE=src/agent_trading/foo.py" >&2; exit 1)
+	bash scripts/harness/run.sh accept backend-file "$(FILE)"
+
+accept-admin-ui:
+	bash scripts/harness/run.sh accept frontend
+
+accept-ops-report:
+	@test -n "$(SUMMARY_JSON)" || (echo "사용법: make accept-ops-report SUMMARY_JSON='<summary_json 또는 json 파일 경로>'" >&2; exit 1)
+	bash scripts/harness/run.sh accept ops-report "$(SUMMARY_JSON)"
 
 admin-test-one:
 	@test -n "$(TEST)" || (echo "사용법: make admin-test-one TEST=src/path/file.test.tsx" >&2; exit 1)

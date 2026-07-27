@@ -41,6 +41,11 @@
 
 - 가능한 경우 검증 명령은 직접 조합하지 말고 `bash scripts/harness/run.sh <command>` 또는 대응하는 `make` target을 사용한다.
 - 표준 실행기에 없는 새 검증 명령이 필요하면 임의 실행하지 말고 필요한 명령, 예상 부하, 대체 검증안을 먼저 보고한다.
+- 문서 정합성의 정답 판정은 `bash scripts/harness/run.sh accept docs` 또는 `make accept-docs`를 사용한다.
+- 운영 환경 재현성의 정답 판정은 `bash scripts/harness/run.sh accept env` 또는 `make accept-env`를 사용한다.
+- 단일 백엔드 파일의 정답 판정은 `bash scripts/harness/run.sh accept backend-file <file>` 또는 `make accept-backend-file FILE=<file>`을 사용한다.
+- Admin UI의 정답 판정은 `bash scripts/harness/run.sh accept frontend` 또는 `make accept-admin-ui`를 사용한다.
+- 운영 리포트 `summary_json`의 정답 판정은 `bash scripts/harness/run.sh accept ops-report <summary_json>` 또는 `make accept-ops-report SUMMARY_JSON=<summary_json>`을 사용한다.
 - 환경 재현성 확인은 `bash scripts/harness/run.sh env-check` 또는 `make env-check`를 사용한다.
 - Ubuntu 서버 작업 영역에서는 `python` 명령을 사용하지 않는다. 검증과 실행은 `python3` 명령을 사용한다.
 - 서버 환경 특성상 `sh`에서 실행하는 명령은 항상 실패하므로, 셸 명령은 `bash`에서 실행한다.

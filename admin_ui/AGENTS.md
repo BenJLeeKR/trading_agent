@@ -23,6 +23,7 @@
 ## 검증
 
 - 가능한 경우 프론트엔드 검증은 `bash scripts/harness/run.sh <command>` 또는 대응하는 `make` target으로 실행한다.
+- Admin UI의 정답 판정은 `bash scripts/harness/run.sh accept frontend` 또는 `make accept-admin-ui`를 사용한다.
 - 변경 전 `package.json`의 scripts를 확인한다.
 - 가능한 가장 좁은 테스트를 먼저 실행한다.
 - UI 동작 변경 시 관련 컴포넌트나 view 테스트를 우선 실행한다.

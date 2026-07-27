@@ -246,6 +246,11 @@ docker compose up -d db api
 | `make test-file TEST=...` | 단일 pytest 파일 실행 |
 | `make lint-path TARGET=...` | 지정 경로 ruff 정적 분석 |
 | `make docs-check` | 핵심 문서 링크 검증 |
+| `make accept-docs` | 핵심 문서 하네스 판정기 실행 |
+| `make accept-env` | 운영 환경 재현성 하네스 판정기 실행 |
+| `make accept-backend-file FILE=...` | 단일 백엔드 Python 파일 하네스 판정기 실행 |
+| `make accept-admin-ui` | Admin UI 하네스 판정기 실행 (`accept frontend`) |
+| `make accept-ops-report SUMMARY_JSON=...` | 운영 `summary_json` 커버리지 판정기 실행 (`accept ops-report`) |
 | `make admin-test-one TEST=...` | 단일 Admin UI 테스트 selector 실행 |
 | `make test` | 전체 로컬 테스트 실행 — `HARNESS_ALLOW_HEAVY=1` 없이는 차단 |
 | `make lint` | ruff 정적 분석 |

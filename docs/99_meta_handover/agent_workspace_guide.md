@@ -66,6 +66,11 @@
 - Ubuntu 서버 작업 영역에서는 `python` 대신 `python3`를 사용한다.
 - 서버 환경 특성상 `sh` 실행은 실패하므로 셸 명령은 `bash`에서 실행한다.
 - 환경 재현성 확인은 `bash scripts/harness/run.sh env-check` 또는 `make env-check`를 사용한다.
+- 문서 정합성의 정답 판정은 `bash scripts/harness/run.sh accept docs` 또는 `make accept-docs`를 사용한다.
+- 운영 환경 재현성의 정답 판정은 `bash scripts/harness/run.sh accept env` 또는 `make accept-env`를 사용한다.
+- 단일 백엔드 파일의 정답 판정은 `bash scripts/harness/run.sh accept backend-file <file>` 또는 `make accept-backend-file FILE=<file>`을 사용한다.
+- Admin UI의 정답 판정은 `bash scripts/harness/run.sh accept frontend` 또는 `make accept-admin-ui`를 사용한다.
+- 운영 리포트 `summary_json`의 정답 판정은 `bash scripts/harness/run.sh accept ops-report <summary_json>` 또는 `make accept-ops-report SUMMARY_JSON=<summary_json>`을 사용한다.
 - Python, Node.js, npm, PostgreSQL 기준 버전은 각각 `.python-version`, `admin_ui/.nvmrc`, `admin_ui/.npm-version`, `.postgres-version`에 고정한다.
 - Python 패키지는 `requirements.lock`, Admin UI 패키지는 `package-lock.json`과 `npm ci`를 기준으로 재현한다.
 
