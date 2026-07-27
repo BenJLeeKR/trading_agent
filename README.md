@@ -264,6 +264,8 @@ docker compose up -d db api
 | `make docker-test` | Docker 컨테이너에서 전체 테스트 실행 — `HARNESS_ALLOW_HEAVY=1` 없이는 차단 |
 | `make docker-shell` | Docker 컨테이너 셸 접속 |
 
+`make accept-backend-file`은 import 기반으로 직접 대응 테스트를 찾으며, 테스트가 없으면 실패한다. 불가피한 무테스트 우회는 `HARNESS_ALLOW_NO_TEST=1`을 명시한다.
+
 ## 환경 재현성 기준
 
 - Python 버전은 [`.python-version`](./.python-version)과 `Dockerfile` 기준으로 고정한다.

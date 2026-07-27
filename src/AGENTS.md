@@ -25,6 +25,7 @@
 
 - 가능한 경우 백엔드 검증은 `bash scripts/harness/run.sh <command>` 또는 대응하는 `make` target으로 실행한다.
 - 단일 백엔드 파일의 정답 판정은 `bash scripts/harness/run.sh accept backend-file <file>` 또는 `make accept-backend-file FILE=<file>`을 사용한다.
+- 직접 대응 테스트가 없는 백엔드 파일은 기본 실패로 판정한다. 테스트 추가가 불가능한 경우에만 `HARNESS_ALLOW_NO_TEST=1`로 명시 우회하고 이유를 보고한다.
 - 백엔드 런타임 조립, API factory, 설정 import를 건드린 경우 `bash scripts/harness/run.sh accept backend-runtime` 또는 `make accept-backend-runtime`을 사용한다.
 - Python 명령은 `python3`를 사용한다.
 - 셸 명령은 `bash`에서 실행한다.

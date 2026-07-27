@@ -524,10 +524,10 @@ PY
 accept_backend_file() {
   local target="${1:-}"
   require_arg "$target" "backend_file"
-  ACCEPT_BACKEND_TARGET="$target" ACCEPT_SAFE_TIMEOUT_SECONDS="$SAFE_TIMEOUT_SECONDS" python3 - <<'PY'
+ACCEPT_BACKEND_TARGET="$target" ACCEPT_SAFE_TIMEOUT_SECONDS="$SAFE_TIMEOUT_SECONDS" python3 - <<'PY'
+import ast
 import os
 import subprocess
-import sys
 from pathlib import Path
 
 root = Path("/workspace/agent_trading")
@@ -571,10 +571,81 @@ valid_path = (
 py_compile_passed = False
 safe_test_candidates: list[Path] = []
 unsafe_test_candidates: list[Path] = []
+selected_test_candidates: list[Path] = []
 tests_run_count = 0
 test_failed_count = 0
-too_many_safe_candidates = False
+dropped_test_candidate_count = 0
 test_outputs: list[tuple[str, int, str]] = []
+test_discovery_mode = "none"
+matched_by_import_count = 0
+no_test_override = os.environ.get("HARNESS_ALLOW_NO_TEST") == "1"
+
+def is_unsafe_test_candidate(candidate: Path) -> bool:
+    rel = candidate.relative_to(root).as_posix()
+    return rel.startswith(("tests/smoke/", "tests/integration/", "tests/brokers/"))
+
+def is_test_file(candidate: Path) -> bool:
+    return (
+        candidate.exists()
+        and candidate.is_file()
+        and candidate.suffix == ".py"
+        and candidate.name != "conftest.py"
+        and (candidate.name.startswith("test_") or candidate.name.endswith("_test.py"))
+    )
+
+def module_import_score(candidate: Path, module_name: str) -> int:
+    try:
+        text = candidate.read_text()
+        tree = ast.parse(text)
+    except Exception:
+        return 0
+
+    parent_module, _, leaf_name = module_name.rpartition(".")
+    score = 0
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                if alias.name == module_name:
+                    score += 4
+                elif alias.name.startswith(f"{module_name}."):
+                    score += 3
+        elif isinstance(node, ast.ImportFrom):
+            imported_from = node.module or ""
+            if imported_from == module_name:
+                score += 4 + len(node.names)
+            elif imported_from.startswith(f"{module_name}."):
+                score += 3
+            elif imported_from == parent_module:
+                for alias in node.names:
+                    if alias.name == leaf_name:
+                        score += 3
+    if module_name in text:
+        score += 1
+    return score
+
+def discover_import_graph_candidates(module_name: str) -> list[tuple[Path, int]]:
+    matches: list[tuple[Path, int]] = []
+    for candidate in sorted((root / "tests").rglob("*.py")):
+        if not is_test_file(candidate):
+            continue
+        score = module_import_score(candidate, module_name)
+        if score > 0:
+            matches.append((candidate.resolve(), score))
+    return sorted(matches, key=lambda item: (-item[1], item[0].relative_to(root).as_posix()))
+
+def discover_stem_fallback_candidates(module_relative: Path, stem: str) -> list[Path]:
+    direct_candidates = [
+        root / "tests" / module_relative.parent / f"test_{stem}.py",
+        root / "tests" / module_relative.parent / f"{stem}_test.py",
+    ]
+    candidates: list[Path] = []
+    seen: set[Path] = set()
+    for candidate in direct_candidates:
+        candidate = candidate.resolve()
+        if is_test_file(candidate) and candidate not in seen:
+            seen.add(candidate)
+            candidates.append(candidate)
+    return candidates
 
 if not valid_path:
     if not str(resolved).startswith(str(src_root) + "/"):
@@ -593,71 +664,85 @@ else:
             test_outputs.append(("py_compile", code, output))
 
     module_relative = resolved.relative_to(src_root)
+    module_name = "agent_trading." + ".".join(module_relative.with_suffix("").parts)
     stem = resolved.stem
-    direct_candidates = [
-        root / "tests" / module_relative.parent / f"test_{stem}.py",
-        root / "tests" / module_relative.parent / f"{stem}_test.py",
-    ]
-    glob_candidates = [
-        *root.glob(f"tests/**/test_{stem}.py"),
-        *root.glob(f"tests/**/{stem}_test.py"),
-    ]
-    seen: set[Path] = set()
-    candidates: list[Path] = []
-    for candidate in direct_candidates + glob_candidates:
-        candidate = candidate.resolve()
-        if candidate.exists() and candidate.is_file() and candidate not in seen:
-            seen.add(candidate)
-            candidates.append(candidate)
+    import_candidates = discover_import_graph_candidates(module_name)
+    matched_by_import_count = len(import_candidates)
+    candidates = [candidate for candidate, _score in import_candidates]
+    candidate_scores = {candidate: score for candidate, score in import_candidates}
+    if candidates:
+        test_discovery_mode = "import_graph"
+    else:
+        candidates = discover_stem_fallback_candidates(module_relative, stem)
+        candidate_scores = {candidate: 1 for candidate in candidates}
+        if candidates:
+            test_discovery_mode = "stem_fallback"
 
     for candidate in candidates:
-        rel = candidate.relative_to(root).as_posix()
-        if rel.startswith(("tests/smoke/", "tests/integration/", "tests/brokers/")):
+        if is_unsafe_test_candidate(candidate):
             unsafe_test_candidates.append(candidate)
         else:
             safe_test_candidates.append(candidate)
 
     max_safe_test_files = int(os.environ.get("ACCEPT_BACKEND_MAX_TEST_FILES", "3"))
-    too_many_safe_candidates = len(safe_test_candidates) > max_safe_test_files
-    if too_many_safe_candidates:
-        details.append(f"too_many_safe_test_candidates={len(safe_test_candidates)} max={max_safe_test_files}")
-    else:
-        for candidate in safe_test_candidates:
-            rel = candidate.relative_to(root).as_posix()
-            code, output = run_command(python_command(["-m", "pytest", rel, "-v"]))
-            tests_run_count += 1
-            if code != 0:
-                test_failed_count += 1
-                test_outputs.append((rel, code, output))
+    safe_test_candidates = sorted(
+        safe_test_candidates,
+        key=lambda candidate: (-candidate_scores.get(candidate, 0), candidate.relative_to(root).as_posix()),
+    )
+    selected_test_candidates = safe_test_candidates[:max_safe_test_files]
+    dropped_test_candidate_count = max(len(safe_test_candidates) - len(selected_test_candidates), 0)
+    if not safe_test_candidates and not no_test_override:
+        details.append("no_safe_test_candidate_found")
+    for candidate in selected_test_candidates:
+        rel = candidate.relative_to(root).as_posix()
+        code, output = run_command(python_command(["-m", "pytest", rel, "-v"]))
+        tests_run_count += 1
+        if code != 0:
+            test_failed_count += 1
+            test_outputs.append((rel, code, output))
 
 metrics = {
     "valid_backend_file": 1 if valid_path else 0,
     "py_compile_passed": 1 if py_compile_passed else 0,
     "safe_test_candidate_count": len(safe_test_candidates),
     "unsafe_test_candidate_count": len(unsafe_test_candidates),
+    "selected_test_candidate_count": len(selected_test_candidates),
+    "dropped_test_candidate_count": dropped_test_candidate_count,
+    "matched_by_import_count": matched_by_import_count,
     "tests_run_count": tests_run_count,
     "test_failed_count": test_failed_count,
-    "too_many_safe_test_candidates": 1 if too_many_safe_candidates else 0,
+    "no_test_override": 1 if no_test_override else 0,
 }
 
 passed = (
     metrics["valid_backend_file"] == 1
     and metrics["py_compile_passed"] == 1
+    and (metrics["safe_test_candidate_count"] > 0 or no_test_override)
     and metrics["test_failed_count"] == 0
-    and metrics["too_many_safe_test_candidates"] == 0
 )
 
 print(f"ACCEPT backend-file: {'PASS' if passed else 'FAIL'}")
 print(f"- file={target_raw}")
+print(f"- test_discovery_mode={test_discovery_mode}")
 for key, value in metrics.items():
     print(f"- {key}={value}")
+
+if selected_test_candidates:
+    print("DETAIL selected_test_candidates:")
+    for candidate in selected_test_candidates:
+        print(f"- {candidate.relative_to(root).as_posix()}")
 
 if safe_test_candidates:
     print("DETAIL safe_test_candidates:")
     for candidate in safe_test_candidates:
         print(f"- {candidate.relative_to(root).as_posix()}")
 else:
-    print("ADVISORY no_safe_test_candidate_found=1")
+    print("DETAIL no_safe_test_candidate_found=1")
+
+if dropped_test_candidate_count:
+    print("DETAIL dropped_test_candidates:")
+    for candidate in safe_test_candidates[len(selected_test_candidates):]:
+        print(f"- {candidate.relative_to(root).as_posix()}")
 
 if unsafe_test_candidates:
     print("ADVISORY unsafe_test_candidates_not_run:")

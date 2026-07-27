@@ -30,3 +30,14 @@ Claude Code는 이 저장소에서 코드, 문서, 스크립트, 테스트를 �
 - 이 파일에는 세부 규칙을 중복 작성하지 않는다.
 - 지침이 충돌하면 사용자 직접 지시가 없는 한 더 구체적인 하위 `AGENTS.md`를 따른다.
 - `README.md`는 프로젝트 설치와 실행 안내로 사용하고, 에이전트 작업 규칙은 `AGENTS.md` 계열 파일을 기준으로 한다.
+
+## 하네스 진입점
+
+세부 판정 기준은 `AGENTS.md`와 `scripts/harness/run.sh`를 따른다. Claude Code는 검증 명령을 직접 조합하기보다 아래 진입점을 우선 사용한다.
+
+- 문서 정합성: `bash scripts/harness/run.sh accept docs` 또는 `make accept-docs`
+- 환경 재현성: `bash scripts/harness/run.sh accept env` 또는 `make accept-env`
+- 단일 백엔드 파일: `bash scripts/harness/run.sh accept backend-file <file>` 또는 `make accept-backend-file FILE=<file>`
+- 백엔드 런타임 계약: `bash scripts/harness/run.sh accept backend-runtime` 또는 `make accept-backend-runtime`
+- Admin UI: `bash scripts/harness/run.sh accept frontend` 또는 `make accept-admin-ui`
+- 운영 리포트: `bash scripts/harness/run.sh accept ops-report <summary_json>` 또는 `make accept-ops-report SUMMARY_JSON=<summary_json>`
