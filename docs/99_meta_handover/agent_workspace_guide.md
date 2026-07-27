@@ -25,6 +25,7 @@
 - [`README.md`](../../README.md): 설치, 실행, Docker, API, 환경변수, Make 명령 등 프로젝트 사용 안내.
 - [`AGENTS.md`](../../AGENTS.md): Codex 및 공통 에이전트가 반드시 따라야 하는 작업 규칙.
 - [`CLAUDE.md`](../../CLAUDE.md): Claude Code가 `AGENTS.md`를 읽도록 안내하는 얇은 라우터.
+- [`scripts/harness/README.md`](../../scripts/harness/README.md): 하네스 실행기, 승인 플래그, accept 출력 지표 안내.
 - `docs/00_foundational_design/`: 시스템 원형 설계와 에이전트 책임 경계.
 - `docs/01_architecture_milestones/`: 구현 마일스톤과 후속 수정 계획.
 - `docs/02_agent_pipeline/`: AI agent, decision pipeline, prompt/provider 흐름.
@@ -65,13 +66,15 @@
 
 - Ubuntu 서버 작업 영역에서는 `python` 대신 `python3`를 사용한다.
 - 서버 환경 특성상 `sh` 실행은 실패하므로 셸 명령은 `bash`에서 실행한다.
-- 환경 재현성 확인은 `bash scripts/harness/run.sh env-check` 또는 `make env-check`를 사용한다.
 - 문서 정합성의 정답 판정은 `bash scripts/harness/run.sh accept docs` 또는 `make accept-docs`를 사용한다.
 - 운영 환경 재현성의 정답 판정은 `bash scripts/harness/run.sh accept env` 또는 `make accept-env`를 사용한다.
 - 단일 백엔드 파일의 정답 판정은 `bash scripts/harness/run.sh accept backend-file <file>` 또는 `make accept-backend-file FILE=<file>`을 사용한다.
 - 백엔드 런타임 계약의 정답 판정은 `bash scripts/harness/run.sh accept backend-runtime` 또는 `make accept-backend-runtime`을 사용한다.
 - Admin UI의 정답 판정은 `bash scripts/harness/run.sh accept frontend` 또는 `make accept-admin-ui`를 사용한다.
 - 운영 리포트 `summary_json`의 정답 판정은 `bash scripts/harness/run.sh accept ops-report <summary_json>` 또는 `make accept-ops-report SUMMARY_JSON=<summary_json>`을 사용한다.
+- 운영 리포트 덤프는 DB를 조회하므로 `HARNESS_ALLOW_OPS_DUMP=1 bash scripts/harness/run.sh dump ops-report [YYYY-MM-DD]` 또는 `HARNESS_ALLOW_OPS_DUMP=1 make dump-ops-report DATE=<YYYY-MM-DD>`로만 실행한다.
+- API in-memory 모드 실행은 `bash scripts/harness/run.sh run api-inmemory` 또는 `make run-api-inmemory`를 사용한다.
+- API Postgres/Auth 모드 실행은 `bash scripts/harness/run.sh run api-postgres` 또는 `make run-api-postgres`를 사용한다.
 - Python, Node.js, npm, PostgreSQL 기준 버전은 각각 `.python-version`, `admin_ui/.nvmrc`, `admin_ui/.npm-version`, `.postgres-version`에 고정한다.
 - Python 패키지는 `requirements.lock`, Admin UI 패키지는 `package-lock.json`과 `npm ci`를 기준으로 재현한다.
 
@@ -80,6 +83,12 @@
 - 테스트 입력 데이터는 `tests/fixtures/` 아래에 고정한다.
 - mutable한 `data/`, `logs/`, `tmp/`의 현재 파일을 테스트 기대값으로 직접 사용하지 않는다.
 - DB 테스트는 migration, deterministic seed, cleanup 순서를 명시적으로 가져야 한다.
+
+## 검증 부하 예외
+
+- 하네스가 제공하는 `accept`, `env-check`, `py-compile`, `test-one`, `test-file`, `lint-path`, `admin-test-one` 진입점은 승인 없이 실행할 수 있다.
+- 이 예외는 이미 실행 중인 컨테이너의 짧은 `docker exec`, 버전 확인용 `docker run --rm node:20-slim`, 단일 테스트 selector에만 적용한다.
+- 새 서비스 기동, 장시간 컨테이너 실행, 전체 테스트/전체 빌드, 외부 API 호출, DB 쓰기/마이그레이션, 운영 덤프(`HARNESS_ALLOW_OPS_DUMP=1`)는 계속 명시 승인 대상이다.
 
 ## README 유지 원칙
 

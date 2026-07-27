@@ -1,16 +1,20 @@
+SHELL := /usr/bin/bash
+.SHELLFLAGS := -e -o pipefail -c
+
 .PHONY: install run migrate test lint smoke \
-        harness-status env-check check-file test-one test-file lint-path docs-check accept-docs accept-env accept-backend-file accept-backend-runtime accept-admin-ui accept-ops-report admin-test-one \
-        full-test docker-test-safe smoke-safe admin-build admin-test-all \
+        harness-status env-check check-file test-one test-file lint-path docs-check accept-docs accept-env accept-backend-file accept-backend-runtime accept-admin-ui accept-ops-report dump-ops-report admin-test-one \
+        heavy-full-test heavy-docker-test heavy-smoke heavy-admin-build heavy-admin-test-all \
+        full-test docker-test-safe smoke-safe smoke-all admin-build admin-test-all \
         docker-up docker-down docker-build docker-migrate docker-test docker-shell \
-        docker-up-api docker-logs-api docker-restart-api \
-        run-api-inmemory run-api-postgres
+        docker-up-api docker-logs-api docker-restart-api docker-up-snapshot-sync docker-logs-snapshot-sync docker-restart-snapshot-sync \
+        run-api-inmemory run-api-inmemory-dev run-api-postgres
 
 # =============================================================================
 # Local Development (requires local Python venv + local PostgreSQL)
 # =============================================================================
 
 install:
-	pip install -e ".[dev]"
+	python3 -m pip install -e ".[dev]"
 
 run:
 	python3 -m agent_trading.main
@@ -19,14 +23,13 @@ migrate:
 	python3 -m agent_trading.db.migrations.run
 
 test:
-	bash scripts/harness/run.sh full-test
+	$(MAKE) heavy-full-test
 
 smoke:
-	bash scripts/harness/run.sh smoke
+	$(MAKE) heavy-smoke
 
 smoke-all:
-	@echo "smoke-all은 부하 제한 대상입니다. 필요한 경우 사용자 승인 후 직접 실행하세요."
-	@exit 1
+	$(MAKE) heavy-smoke
 
 lint:
 	@echo "Running ruff ..."
@@ -81,24 +84,44 @@ accept-ops-report:
 	@test -n "$(SUMMARY_JSON)" || (echo "사용법: make accept-ops-report SUMMARY_JSON='<summary_json 또는 json 파일 경로>'" >&2; exit 1)
 	bash scripts/harness/run.sh accept ops-report "$(SUMMARY_JSON)"
 
+dump-ops-report:
+	bash scripts/harness/run.sh dump ops-report "$(DATE)"
+
 admin-test-one:
 	@test -n "$(TEST)" || (echo "사용법: make admin-test-one TEST=src/path/file.test.tsx" >&2; exit 1)
 	bash scripts/harness/run.sh admin-test-one "$(TEST)"
 
-full-test:
+heavy-full-test:
 	bash scripts/harness/run.sh full-test
 
-docker-test-safe:
+heavy-docker-test:
 	bash scripts/harness/run.sh docker-test
 
-smoke-safe:
+heavy-smoke:
 	bash scripts/harness/run.sh smoke
 
-admin-build:
+heavy-admin-build:
 	bash scripts/harness/run.sh admin-build
 
-admin-test-all:
+heavy-admin-test-all:
 	bash scripts/harness/run.sh admin-test-all
+
+full-test:
+	$(MAKE) heavy-full-test
+
+docker-test-safe:
+	@echo "docker-test-safe는 호환 alias입니다. 승인 필요 target: make heavy-docker-test"
+	$(MAKE) heavy-docker-test
+
+smoke-safe:
+	@echo "smoke-safe는 호환 alias입니다. 승인 필요 target: make heavy-smoke"
+	$(MAKE) heavy-smoke
+
+admin-build:
+	$(MAKE) heavy-admin-build
+
+admin-test-all:
+	$(MAKE) heavy-admin-test-all
 
 # =============================================================================
 # API Server (FastAPI)
@@ -116,14 +139,12 @@ admin-test-all:
 #     → INSPECTION_API_TOKEN, API_RUNTIME_MODE 환경변수는 무시됨
 #     → 개발/테스트용으로만 사용
 run-api-inmemory:
-	uvicorn agent_trading.api.app:app --reload --host 0.0.0.0 --port 8000
+	bash scripts/harness/run.sh run api-inmemory
 
-# ⚠️  INSPECTION_API_TOKEN을 설정해도 module-level app이므로 in_memory
-#     (환경변수를 주는 것 자체가 무의미함을 강조)
+# ⚠️  module-level app은 환경변수를 읽지 않는다.
 #     → 개발/테스트용으로만 사용
 run-api-inmemory-dev:
-	INSPECTION_API_TOKEN=dev-token-123 \
-	uvicorn agent_trading.api.app:app --reload --host 0.0.0.0 --port 8000
+	$(MAKE) run-api-inmemory
 
 # ✅  create_app_from_env --factory 사용
 #     → API_RUNTIME_MODE, INSPECTION_API_TOKEN, INSPECTION_API_ROLE 환경변수 적용
@@ -132,12 +153,10 @@ run-api-inmemory-dev:
 #     → 사전에 DATABASE_* 환경변수 export 또는 .env 로드 필요
 #
 # 사용 예:
-#   source .env && make run-api-postgres
-#   API_RUNTIME_MODE=postgres INSPECTION_API_TOKEN=dev-token-123 make run-api-postgres
+#   set -a; source .env; set +a; make run-api-postgres
+#   INSPECTION_API_TOKEN은 사용자가 직접 export한다. 값은 출력하지 않는다.
 run-api-postgres:
-	API_RUNTIME_MODE=postgres \
-	INSPECTION_API_TOKEN=dev-token-123 \
-	uvicorn agent_trading.api.app:create_app_from_env --factory --reload --host 0.0.0.0 --port 8000
+	bash scripts/harness/run.sh run api-postgres
 
 # =============================================================================
 # Docker Development (requires Docker + docker compose)
@@ -158,7 +177,7 @@ docker-migrate:
 	docker compose run --rm migrate
 
 docker-test:
-	bash scripts/harness/run.sh docker-test
+	$(MAKE) heavy-docker-test
 
 docker-shell:
 	docker compose exec app /bin/bash

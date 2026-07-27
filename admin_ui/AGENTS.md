@@ -33,6 +33,8 @@
 
 - 이 Ubuntu 서버에서는 프론트엔드 전체 테스트와 전체 빌드 실행을 기본 금지한다.
 - 사용자 명시 승인 없이 `npm test`, `npm run test`, `npm run test:run`, `npm run build`를 실행하지 않는다.
+- 예외: `bash scripts/harness/run.sh admin-test-one <selector>` 또는 `make admin-test-one TEST=<selector>`처럼 단일 selector를 지정한 하네스 경로는 승인 없이 실행할 수 있다.
+- 예외: `bash scripts/harness/run.sh accept frontend` 또는 `make accept-admin-ui`가 수행하는 정적 검사와 버전 확인은 승인 없이 실행할 수 있다.
 - watch mode, 장시간 실행 테스트, 대량 DOM 렌더링 테스트, 백엔드 API를 실제 호출하는 검증은 사용자 명시 승인 없이 실행하지 않는다.
 - 전체 테스트나 전체 빌드가 필요하다고 판단되면 직접 실행하지 말고 예상 부하, 필요한 이유, 대체 검증안을 먼저 보고한다.
 

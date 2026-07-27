@@ -315,13 +315,22 @@ class InMemoryInstrumentRepository:
         self, market_code: str, *, asset_class: str | None = None
     ) -> Sequence[InstrumentEntity]:
         """List all active instruments for a given market code."""
+        normalized_asset_class = (
+            str(getattr(asset_class, "value", asset_class)).strip().lower()
+            if asset_class is not None
+            else None
+        )
         return [
             item
             for item in self._items.values()
             if item.market_code == market_code
             and item.is_active
             and item.symbol != 'E2ESUM'
-            and (asset_class is None or item.asset_class == asset_class)
+            and (
+                normalized_asset_class is None
+                or str(getattr(item.asset_class, "value", item.asset_class)).strip().lower()
+                == normalized_asset_class
+            )
         ]
 
 

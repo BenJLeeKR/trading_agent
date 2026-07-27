@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-ROOT_DIR="/workspace/agent_trading"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ROOT_DIR="$(cd "$SCRIPT_DIR/../.." && pwd)"
+export HARNESS_ROOT_DIR="$ROOT_DIR"
 SAFE_TIMEOUT_SECONDS="${HARNESS_SAFE_TIMEOUT_SECONDS:-90}"
 HEAVY_TIMEOUT_SECONDS="${HARNESS_HEAVY_TIMEOUT_SECONDS:-900}"
 
@@ -9,21 +11,27 @@ usage() {
   cat <<'EOF'
 사용법:
   bash scripts/harness/run.sh status
-  bash scripts/harness/run.sh env-check
   bash scripts/harness/run.sh py-compile <python_file>
   bash scripts/harness/run.sh test-one <tests/path.py::test_name>
   bash scripts/harness/run.sh test-file <tests/path.py>
   bash scripts/harness/run.sh lint-path <path>
-  bash scripts/harness/run.sh docs-check
   bash scripts/harness/run.sh accept docs
   bash scripts/harness/run.sh accept env
   bash scripts/harness/run.sh accept backend-file <src/agent_trading/file.py>
   bash scripts/harness/run.sh accept backend-runtime
   bash scripts/harness/run.sh accept frontend
   bash scripts/harness/run.sh accept ops-report <summary_json>
+  bash scripts/harness/run.sh dump ops-report [YYYY-MM-DD]
+  bash scripts/harness/run.sh run api-inmemory
+  bash scripts/harness/run.sh run api-postgres
   bash scripts/harness/run.sh admin-test-one <test_file_or_selector>
 
+호환 alias:
+  bash scripts/harness/run.sh docs-check
+  bash scripts/harness/run.sh env-check
+
 승인 필요 명령:
+  HARNESS_ALLOW_OPS_DUMP=1 bash scripts/harness/run.sh dump ops-report [YYYY-MM-DD]
   HARNESS_ALLOW_HEAVY=1 bash scripts/harness/run.sh full-test
   HARNESS_ALLOW_HEAVY=1 bash scripts/harness/run.sh docker-test
   HARNESS_ALLOW_HEAVY=1 bash scripts/harness/run.sh smoke
@@ -60,6 +68,18 @@ require_arg() {
   [[ -n "$value" ]] || fail "${name} 인자가 필요합니다."
 }
 
+require_env_names() {
+  local missing=0
+  local name
+  for name in "$@"; do
+    if [[ -z "${!name:-}" ]]; then
+      echo "환경변수 누락: $name" >&2
+      missing=1
+    fi
+  done
+  [[ "$missing" -eq 0 ]] || fail ".env.example을 참고해 사용자가 직접 export한 뒤 다시 실행하세요."
+}
+
 resolve_in_repo() {
   local raw="$1"
   [[ "$raw" != -* ]] || fail "옵션처럼 보이는 경로는 허용하지 않습니다: $raw"
@@ -67,6 +87,11 @@ resolve_in_repo() {
   resolved="$(realpath -m "$ROOT_DIR/$raw")"
   [[ "$resolved" == "$ROOT_DIR"/* ]] || fail "프로젝트 밖 경로는 허용하지 않습니다: $raw"
   printf '%s\n' "$resolved"
+}
+
+repo_relative_from_resolved() {
+  local resolved="$1"
+  printf '%s\n' "${resolved#$ROOT_DIR/}"
 }
 
 require_existing_file() {
@@ -93,135 +118,37 @@ require_heavy_allowed() {
   [[ "${HARNESS_ALLOW_HEAVY:-}" == "1" ]] || fail "무거운 검증은 차단되었습니다. 사용자가 명시 승인한 경우에만 HARNESS_ALLOW_HEAVY=1을 설정해 실행하세요."
 }
 
-read_expected_version() {
-  local version_file="$1"
-  [[ -f "$version_file" ]] || fail "버전 파일이 없습니다: ${version_file#$ROOT_DIR/}"
-  head -n 1 "$version_file" | tr -d '[:space:]'
+require_ops_dump_allowed() {
+  [[ "${HARNESS_ALLOW_OPS_DUMP:-}" == "1" ]] || fail "운영 리포트 DB 덤프는 차단되었습니다. 사용자가 명시 승인한 경우에만 HARNESS_ALLOW_OPS_DUMP=1을 설정해 실행하세요."
 }
 
-check_exact_version() {
-  local name="$1"
-  local expected="$2"
-  local actual="$3"
-  [[ -n "$actual" ]] || fail "${name} 버전을 확인할 수 없습니다."
-  if [[ "$actual" != "$expected" ]]; then
-    fail "${name} 버전 불일치: expected=$expected actual=$actual"
-  fi
-  echo "${name}=$actual"
+run_api_inmemory() {
+  exec python3 -m uvicorn agent_trading.api.app:app --reload --host 0.0.0.0 --port "${API_PORT:-8000}"
+}
+
+run_api_postgres() {
+  require_env_names DATABASE_HOST DATABASE_PORT DATABASE_NAME DATABASE_USER DATABASE_PASSWORD INSPECTION_API_TOKEN
+  API_RUNTIME_MODE=postgres exec python3 -m uvicorn agent_trading.api.app:create_app_from_env --factory --reload --host 0.0.0.0 --port "${API_PORT:-8000}"
 }
 
 env_check() {
-  local expected_python expected_node expected_postgres
-  expected_python="$(read_expected_version "$ROOT_DIR/.python-version")"
-  expected_node="$(read_expected_version "$ROOT_DIR/admin_ui/.nvmrc")"
-  local expected_npm
-  expected_npm="$(read_expected_version "$ROOT_DIR/admin_ui/.npm-version")"
-  expected_postgres="$(read_expected_version "$ROOT_DIR/.postgres-version")"
-
-  local actual_python
-  if docker ps --format '{{.Names}}' | grep -qx 'agent_trading-app-1'; then
-    actual_python="$(docker exec agent_trading-app-1 python3 -c 'import platform; print(platform.python_version())')"
-  else
-    actual_python="$(python3 -c 'import platform; print(platform.python_version())')"
-    echo "WARN: agent_trading-app-1 컨테이너가 없어 host Python을 확인했습니다." >&2
-  fi
-  check_exact_version "python" "$expected_python" "$actual_python"
-
-  if docker image inspect node:20-slim >/dev/null 2>&1; then
-    local actual_node
-    actual_node="$(docker run --rm node:20-slim node --version | sed 's/^v//')"
-    check_exact_version "node" "$expected_node" "$actual_node"
-    local actual_npm
-    actual_npm="$(docker run --rm node:20-slim npm --version)"
-    check_exact_version "npm" "$expected_npm" "$actual_npm"
-  elif command -v node >/dev/null 2>&1; then
-    local actual_node
-    actual_node="$(node --version | sed 's/^v//')"
-    check_exact_version "node" "$expected_node" "$actual_node"
-    if command -v npm >/dev/null 2>&1; then
-      local actual_npm
-      actual_npm="$(npm --version)"
-      check_exact_version "npm" "$expected_npm" "$actual_npm"
-    else
-      fail "npm 버전을 확인할 수 없습니다."
-    fi
-  else
-    fail "Node.js 버전을 확인할 수 없습니다."
-  fi
-
-  if docker ps --format '{{.Names}}' | grep -qx 'trading_db'; then
-    local actual_postgres
-    actual_postgres="$(docker exec trading_db psql -U trading -d trading -tAc 'SHOW server_version;' 2>/dev/null | tr -d '[:space:]')"
-    check_exact_version "postgres" "$expected_postgres" "$actual_postgres"
-  else
-    echo "postgres=not-checked"
-    echo "WARN: trading_db 컨테이너가 실행 중이 아니라 PostgreSQL 서버 버전을 확인하지 못했습니다." >&2
-  fi
-
-  [[ -f "$ROOT_DIR/.env.example" ]] || fail ".env.example 파일이 없습니다."
-  echo "env_template=.env.example"
-  if [[ -f "$ROOT_DIR/.env" ]]; then
-    echo "env_file=present-redacted"
-  else
-    echo "env_file=missing"
-  fi
-}
-
-docs_check() {
-  python3 - <<'PY'
-import re
-from pathlib import Path
-
-root = Path("/workspace/agent_trading")
-files = [
-    root / "README.md",
-    root / "CLAUDE.md",
-    root / "AGENTS.md",
-    root / "src" / "AGENTS.md",
-    root / "admin_ui" / "AGENTS.md",
-    root / "docs" / "99_meta_handover" / "agent_workspace_guide.md",
-]
-
-missing = []
-line_suffix = re.compile(r"^(.*\.(?:md|py|sql|yml|yaml|toml|json|txt|sh))(?:[:#]L?\d+(?:-L?\d+)?)$")
-
-for file_path in files:
-    if not file_path.exists():
-        missing.append((str(file_path.relative_to(root)), "<file>", str(file_path)))
-        continue
-    text = file_path.read_text()
-    for match in re.finditer(r"\[[^\]]+\]\(([^)]+)\)", text):
-        target = match.group(1).split("#", 1)[0]
-        if not target or re.match(r"^[a-z]+://", target) or target.startswith("mailto:"):
-            continue
-        candidate = target.replace("%20", " ")
-        line_match = line_suffix.match(candidate)
-        if line_match:
-            candidate = line_match.group(1)
-        resolved = Path(candidate) if candidate.startswith("/") else (file_path.parent / candidate).resolve()
-        if not resolved.exists():
-            missing.append((str(file_path.relative_to(root)), target, str(resolved)))
-
-print(f"markdown_link_missing_count={len(missing)}")
-for source, target, resolved in missing:
-    print(f"MISSING {source} -> {target} => {resolved}")
-
-raise SystemExit(1 if missing else 0)
-PY
+  accept_env
 }
 
 accept_docs() {
   python3 - <<'PY'
+import os
 import re
 from pathlib import Path
 
-root = Path("/workspace/agent_trading")
+root = Path(os.environ["HARNESS_ROOT_DIR"])
 core_docs = [
     root / "README.md",
     root / "AGENTS.md",
     root / "CLAUDE.md",
     root / "src" / "AGENTS.md",
     root / "admin_ui" / "AGENTS.md",
+    root / "scripts" / "harness" / "README.md",
     root / "docs" / "99_meta_handover" / "agent_workspace_guide.md",
     root / "tests" / "fixtures" / "README.md",
 ]
@@ -236,6 +163,18 @@ deprecated_reference = re.compile(r"\bplan_docs\b|\]\((?:\.\./)*plans/")
 missing_files = [path for path in required_files if not path.exists()]
 missing_links = []
 deprecated_hits = []
+
+make_targets = set()
+makefile = root / "Makefile"
+if makefile.exists():
+    for line in makefile.read_text().splitlines():
+        if line.startswith("\t") or line.startswith(" "):
+            continue
+        match = re.match(r"^([A-Za-z0-9_.-]+)\s*:", line)
+        if match:
+            make_targets.add(match.group(1))
+
+documented_make_target_misses = []
 
 for file_path in core_docs:
     if not file_path.exists():
@@ -255,6 +194,14 @@ for file_path in core_docs:
     for line_no, line in enumerate(text.splitlines(), 1):
         if deprecated_reference.search(line):
             deprecated_hits.append((file_path, line_no, line.strip()))
+        for match in re.finditer(r"\bmake\s+([A-Za-z0-9_.-]+)", line):
+            target = match.group(1)
+            next_char = line[match.end(1):match.end(1) + 1]
+            if next_char == "*" or target not in make_targets:
+                if next_char != "*":
+                    documented_make_target_misses.append(
+                        (file_path, line_no, target, line.strip())
+                    )
 
 def contains(path: Path, *needles: str) -> bool:
     if not path.exists():
@@ -262,13 +209,32 @@ def contains(path: Path, *needles: str) -> bool:
     text = path.read_text()
     return all(needle in text for needle in needles)
 
+def not_contains(path: Path, *needles: str) -> bool:
+    if not path.exists():
+        return False
+    text = path.read_text()
+    return all(needle not in text for needle in needles)
+
+def absent(path: Path) -> bool:
+    return not path.exists()
+
 semantic_checks = [
-    ("readme_routes_to_agents", contains(root / "README.md", "AGENTS.md", "CLAUDE.md", "agent_workspace_guide.md")),
-    ("claude_routes_to_nested_agents", contains(root / "CLAUDE.md", "AGENTS.md", "src/AGENTS.md", "admin_ui/AGENTS.md")),
+    ("readme_routes_to_agents", contains(root / "README.md", "AGENTS.md", "CLAUDE.md", "agent_workspace_guide.md", "scripts/harness/README.md")),
+    ("readme_quickstart_uses_accept", contains(root / "README.md", "기본 하네스 검증", "make accept-docs", "make accept-env", "HARNESS_ALLOW_HEAVY=1 make heavy-full-test")),
+    ("readme_removes_stale_full_test_count", not_contains(root / "README.md", "53 passed, 0 failed, 0 errors")),
+    ("claude_routes_to_nested_agents", contains(root / "CLAUDE.md", "AGENTS.md", "src/AGENTS.md", "admin_ui/AGENTS.md", "scripts/harness/README.md")),
+    ("claude_declares_api_run", contains(root / "CLAUDE.md", "run api-inmemory", "run api-postgres")),
     ("root_agents_requires_harness", contains(root / "AGENTS.md", "scripts/harness/run.sh", "검증 부하 제한")),
     ("root_agents_env_secret_policy", contains(root / "AGENTS.md", ".env", "직접 수정하지 않는다", "노출하지 않는다")),
-    ("workspace_guide_declares_project_root", contains(root / "docs" / "99_meta_handover" / "agent_workspace_guide.md", "/workspace/agent_trading/", "문서 역할 분리")),
+    ("root_agents_prefers_accept_env", contains(root / "AGENTS.md", "accept env", "make accept-env", "env-check", "호환 alias")),
+    ("workspace_guide_declares_project_root", contains(root / "docs" / "99_meta_handover" / "agent_workspace_guide.md", f"{root}/", "문서 역할 분리")),
+    ("workspace_guide_prefers_accept_env", contains(root / "docs" / "99_meta_handover" / "agent_workspace_guide.md", "accept env", "make accept-env")),
+    ("harness_readme_declares_metrics", contains(root / "scripts" / "harness" / "README.md", "accept backend-file", "tests_run_count", "secret_key_hit_count")),
+    ("harness_readme_declares_api_run", contains(root / "scripts" / "harness" / "README.md", "run api-postgres", "INSPECTION_API_TOKEN")),
+    ("harness_readme_declares_compat_aliases", contains(root / "scripts" / "harness" / "README.md", "docs-check", "env-check", "호환 alias")),
+    ("root_agents_declares_api_run", contains(root / "AGENTS.md", "run api-inmemory", "run api-postgres")),
     ("fixture_policy_present", contains(root / "tests" / "fixtures" / "README.md", "data/", "logs/", "tmp/")),
+    ("pytest_config_single_source", absent(root / "pytest.ini") and contains(root / "pyproject.toml", "[tool.pytest.ini_options]", 'asyncio_default_fixture_loop_scope = "module"', "markers = [")),
 ]
 failed_semantic_checks = [name for name, ok in semantic_checks if not ok]
 
@@ -276,6 +242,7 @@ metrics = {
     "required_file_missing_count": len(missing_files),
     "markdown_link_missing_count": len(missing_links),
     "deprecated_reference_count": len(deprecated_hits),
+    "documented_make_target_missing_count": len(documented_make_target_misses),
     "semantic_check_failed_count": len(failed_semantic_checks),
 }
 
@@ -299,6 +266,11 @@ if deprecated_hits:
     for source, line_no, line in deprecated_hits:
         print(f"- {source.relative_to(root)}:{line_no}: {line}")
 
+if documented_make_target_misses:
+    print("DETAIL documented_make_target_misses:")
+    for source, line_no, target, line in documented_make_target_misses:
+        print(f"- {source.relative_to(root)}:{line_no}: make {target} :: {line}")
+
 if failed_semantic_checks:
     print("DETAIL failed_semantic_checks:")
     for name in failed_semantic_checks:
@@ -309,13 +281,15 @@ PY
 }
 
 accept_env() {
-  python3 - <<'PY'
+  ACCEPT_SAFE_TIMEOUT_SECONDS="$SAFE_TIMEOUT_SECONDS" python3 - <<'PY'
 import json
+import os
 import re
 import subprocess
 from pathlib import Path
 
-root = Path("/workspace/agent_trading")
+root = Path(os.environ["HARNESS_ROOT_DIR"])
+safe_timeout = int(os.environ.get("ACCEPT_SAFE_TIMEOUT_SECONDS", "90"))
 
 def read_first_line(path: Path) -> str:
     if not path.exists():
@@ -330,7 +304,7 @@ def run_command(command: list[str]) -> tuple[int, str]:
             text=True,
             stdout=subprocess.PIPE,
             stderr=subprocess.DEVNULL,
-            timeout=30,
+            timeout=safe_timeout,
             check=False,
         )
     except Exception:
@@ -420,13 +394,22 @@ dockerfile = (root / "Dockerfile").read_text() if (root / "Dockerfile").exists()
 admin_dockerfile = (root / "admin_ui" / "Dockerfile").read_text() if (root / "admin_ui" / "Dockerfile").exists() else ""
 npmrc = (root / "admin_ui" / ".npmrc").read_text().strip() if (root / "admin_ui" / ".npmrc").exists() else ""
 gitignore = (root / ".gitignore").read_text() if (root / ".gitignore").exists() else ""
+requirements_lock = (root / "requirements.lock").read_text() if (root / "requirements.lock").exists() else ""
 
 static_checks.append(("pyproject_python_range", 'requires-python = ">=3.14,<3.15"' in pyproject))
 static_checks.append(("dockerfile_python_pin", f"FROM python:{expected['python']}-slim" in dockerfile))
 static_checks.append(("dockerfile_uses_requirements_lock", "requirements.lock" in dockerfile and "--constraint requirements.lock" in dockerfile))
+static_checks.append(("pyproject_dev_ruff_pin", '"ruff==0.16.0"' in pyproject))
+static_checks.append(("requirements_lock_ruff_pin", re.search(r"(?m)^ruff==0\.16\.0$", requirements_lock) is not None))
+static_checks.append(("pyproject_ruff_config", "[tool.ruff]" in pyproject and "[tool.ruff.lint]" in pyproject))
 static_checks.append(("admin_dockerfile_node_pin", f"FROM node:{expected['node']}-slim AS build" in admin_dockerfile))
 static_checks.append(("npm_engine_strict", npmrc == "engine-strict=true"))
 static_checks.append(("gitignore_excludes_env", re.search(r"(?m)^\.env$", gitignore) is not None))
+
+code, output = run_command(["docker", "exec", "agent_trading-app-1", "python3", "-m", "ruff", "--version"])
+if code != 0:
+    code, output = run_command(["python3", "-m", "ruff", "--version"])
+static_checks.append(("ruff_executable", code == 0 and output.strip() == "ruff 0.16.0"))
 
 try:
     package_json = json.loads((root / "admin_ui" / "package.json").read_text())
@@ -530,7 +513,7 @@ import os
 import subprocess
 from pathlib import Path
 
-root = Path("/workspace/agent_trading")
+root = Path(os.environ["HARNESS_ROOT_DIR"])
 target_raw = os.environ["ACCEPT_BACKEND_TARGET"]
 safe_timeout = int(os.environ.get("ACCEPT_SAFE_TIMEOUT_SECONDS", "90"))
 
@@ -774,7 +757,7 @@ import re
 import subprocess
 from pathlib import Path
 
-root = Path("/workspace/agent_trading")
+root = Path(os.environ["HARNESS_ROOT_DIR"])
 safe_timeout = int(os.environ.get("ACCEPT_SAFE_TIMEOUT_SECONDS", "90"))
 
 def read_first_line(path: Path) -> str:
@@ -852,6 +835,7 @@ missing_files = [path for path in required_files if not path.exists()]
 
 pyproject = (root / "pyproject.toml").read_text() if (root / "pyproject.toml").exists() else ""
 dockerfile = (root / "Dockerfile").read_text() if (root / "Dockerfile").exists() else ""
+requirements_lock = (root / "requirements.lock").read_text() if (root / "requirements.lock").exists() else ""
 env_example_keys = parse_env_keys(root / ".env.example")
 required_env_example_keys = {
     "INSPECTION_API_TOKEN",
@@ -866,8 +850,14 @@ static_checks = [
     ("pyproject_python_range", 'requires-python = ">=3.14,<3.15"' in pyproject),
     ("dockerfile_python_pin", bool(expected_python) and f"FROM python:{expected_python}-slim" in dockerfile),
     ("dockerfile_uses_requirements_lock", "requirements.lock" in dockerfile and "--constraint requirements.lock" in dockerfile),
+    ("pyproject_dev_ruff_pin", '"ruff==0.16.0"' in pyproject),
+    ("requirements_lock_ruff_pin", re.search(r"(?m)^ruff==0\.16\.0$", requirements_lock) is not None),
+    ("pyproject_ruff_config", "[tool.ruff]" in pyproject and "[tool.ruff.lint]" in pyproject),
     ("env_example_backend_keys", required_env_example_keys.issubset(env_example_keys)),
 ]
+ruff_command, _ruff_source = python_command(["-m", "ruff", "--version"])
+ruff_code, ruff_output = run_command(ruff_command)
+static_checks.append(("ruff_executable", ruff_code == 0 and ruff_output.strip() == "ruff 0.16.0"))
 failed_static_checks = [name for name, ok in static_checks if not ok]
 missing_env_example_keys = sorted(required_env_example_keys - env_example_keys)
 
@@ -1036,14 +1026,16 @@ PY
 }
 
 accept_frontend() {
-  python3 - <<'PY'
+  ACCEPT_SAFE_TIMEOUT_SECONDS="$SAFE_TIMEOUT_SECONDS" python3 - <<'PY'
 import json
+import os
 import re
 import subprocess
 from pathlib import Path
 
-root = Path("/workspace/agent_trading")
+root = Path(os.environ["HARNESS_ROOT_DIR"])
 admin_root = root / "admin_ui"
+safe_timeout = int(os.environ.get("ACCEPT_SAFE_TIMEOUT_SECONDS", "90"))
 
 def read_first_line(path: Path) -> str:
     if not path.exists():
@@ -1058,7 +1050,7 @@ def run_command(command: list[str]) -> tuple[int, str]:
             text=True,
             stdout=subprocess.PIPE,
             stderr=subprocess.DEVNULL,
-            timeout=30,
+            timeout=safe_timeout,
             check=False,
         )
     except Exception:
@@ -1230,13 +1222,17 @@ accept_ops_report() {
   require_arg "$summary_json" "summary_json"
   python3 - "$summary_json" <<'PY'
 import json
+import os
 import re
 import sys
 from pathlib import Path
 from typing import Any
 
-root = Path("/workspace/agent_trading")
+root = Path(os.environ["HARNESS_ROOT_DIR"])
 raw_arg = sys.argv[1]
+
+class InputResolutionError(Exception):
+    pass
 
 def resolve_input(raw: str) -> tuple[str, str]:
     if raw.lstrip().startswith(("{", "[")):
@@ -1244,10 +1240,18 @@ def resolve_input(raw: str) -> tuple[str, str]:
     candidate = (root / raw).resolve() if not raw.startswith("/") else Path(raw).resolve()
     if str(candidate).startswith(str(root) + "/") and candidate.is_file():
         return candidate.read_text(), str(candidate.relative_to(root))
-    return raw, "<inline-json>"
+    if raw.startswith("/") or "/" in raw or raw.endswith(".json"):
+        raise InputResolutionError(f"summary_json 파일을 찾을 수 없거나 프로젝트 밖 경로입니다: {raw}")
+    raise InputResolutionError("inline JSON은 '{' 또는 '['로 시작해야 합니다.")
 
 def load_payload(raw: str) -> dict[str, Any]:
-    text, source = resolve_input(raw)
+    try:
+        text, source = resolve_input(raw)
+    except InputResolutionError as exc:
+        print("ACCEPT ops-report: FAIL")
+        print("- input_resolution_error_count=1")
+        print(f"DETAIL input_resolution_error: {exc}")
+        raise SystemExit(1) from exc
     try:
         parsed = json.loads(text)
     except json.JSONDecodeError as exc:
@@ -1277,9 +1281,21 @@ def get_path(payload: dict[str, Any], dotted_path: str) -> Any:
 def is_int_like(value: Any) -> bool:
     return isinstance(value, int) and not isinstance(value, bool)
 
+def is_non_trading_session(payload: dict[str, Any]) -> bool:
+    is_trading_day = payload.get("is_trading_day")
+    if is_trading_day is False:
+        return True
+    session_reason = str(payload.get("session_reason") or "").lower()
+    return any(marker in session_reason for marker in ("non-trading", "non trading", "holiday", "주말", "휴장"))
+
 def collect_secret_key_hits(value: Any, path: str = "") -> list[str]:
     hits: list[str] = []
     secret_pattern = re.compile(r"(secret|password|passwd|authorization|approval_key|access_token|refresh_token|bearer_token|appkey|appsecret|api_key|client_secret)", re.I)
+    value_patterns = [
+        re.compile(r"\bBearer\s+[A-Za-z0-9._~+/=-]{12,}", re.I),
+        re.compile(r"\b(?:appkey|appsecret|api[_-]?key|client[_-]?secret|access[_-]?token|refresh[_-]?token)\s*[:=]\s*[A-Za-z0-9._~+/=-]{8,}", re.I),
+        re.compile(r"\bPS[A-Za-z0-9]{12,}\b"),
+    ]
     if isinstance(value, dict):
         for key, nested in value.items():
             child_path = f"{path}.{key}" if path else str(key)
@@ -1289,9 +1305,15 @@ def collect_secret_key_hits(value: Any, path: str = "") -> list[str]:
     elif isinstance(value, list):
         for index, nested in enumerate(value):
             hits.extend(collect_secret_key_hits(nested, f"{path}[{index}]"))
+    elif isinstance(value, str):
+        if any(pattern.search(value) for pattern in value_patterns):
+            hits.append(path or "<root>")
     return hits
 
 payload = load_payload(raw_arg)
+session_profile = "non_trading_day" if is_non_trading_session(payload) else "decision_loop"
+allowed_failed_count = int(os.environ.get("HARNESS_OPS_ALLOWED_FAILED_COUNT", "0"))
+allowed_timed_out_count = int(os.environ.get("HARNESS_OPS_ALLOWED_TIMED_OUT_COUNT", "0"))
 
 required_top_level_paths = [
     "command_results_count",
@@ -1299,9 +1321,9 @@ required_top_level_paths = [
     "failed_count",
     "timed_out_count",
     "command_health",
-    "decision_loop",
-    "command_health.decision_loop",
 ]
+if session_profile == "decision_loop":
+    required_top_level_paths.extend(["decision_loop", "command_health.decision_loop"])
 missing_required_paths = [
     dotted_path for dotted_path in required_top_level_paths
     if get_path(payload, dotted_path) is None
@@ -1328,8 +1350,14 @@ if all(is_int_like(value) for value in (command_results_count, ok_count, failed_
         counter_inconsistencies.append("ok_count+failed_count!=command_results_count")
     if timed_out_count > command_results_count:
         counter_inconsistencies.append("timed_out_count>command_results_count")
-    if command_results_count <= 0:
+    if command_results_count <= 0 and session_profile != "non_trading_day":
         counter_inconsistencies.append("command_results_count<=0")
+
+command_failure_policy_failures: list[str] = []
+if is_int_like(failed_count) and failed_count > allowed_failed_count:
+    command_failure_policy_failures.append(f"failed_count>{allowed_failed_count}")
+if is_int_like(timed_out_count) and timed_out_count > allowed_timed_out_count:
+    command_failure_policy_failures.append(f"timed_out_count>{allowed_timed_out_count}")
 
 decision_loop = get_path(payload, "decision_loop")
 command_health_decision_loop = get_path(payload, "command_health.decision_loop")
@@ -1344,16 +1372,17 @@ required_decision_metric_keys = [
 ]
 
 decision_metric_failures: list[str] = []
-for metric_source_name, metrics in (
-    ("decision_loop.metrics", decision_metrics),
-    ("command_health.decision_loop.last_metrics", health_metrics),
-):
-    if not isinstance(metrics, dict):
-        decision_metric_failures.append(metric_source_name)
-        continue
-    for key in required_decision_metric_keys:
-        if not is_int_like(metrics.get(key)):
-            decision_metric_failures.append(f"{metric_source_name}.{key}")
+if session_profile == "decision_loop":
+    for metric_source_name, metrics in (
+        ("decision_loop.metrics", decision_metrics),
+        ("command_health.decision_loop.last_metrics", health_metrics),
+    ):
+        if not isinstance(metrics, dict):
+            decision_metric_failures.append(metric_source_name)
+            continue
+        for key in required_decision_metric_keys:
+            if not is_int_like(metrics.get(key)):
+                decision_metric_failures.append(f"{metric_source_name}.{key}")
 
 coverage_failures: list[str] = []
 if isinstance(decision_metrics, dict):
@@ -1373,7 +1402,9 @@ if isinstance(decision_metrics, dict):
             coverage_failures.append("held_position_count>0 but held_position_processed_count<=0")
 
 health_failures: list[str] = []
-if isinstance(command_health_decision_loop, dict):
+if session_profile == "non_trading_day":
+    pass
+elif isinstance(command_health_decision_loop, dict):
     count = command_health_decision_loop.get("count")
     last_ok = command_health_decision_loop.get("last_ok")
     timed_out = command_health_decision_loop.get("timed_out_count")
@@ -1392,6 +1423,7 @@ metrics = {
     "required_path_missing_count": len(missing_required_paths),
     "counter_type_failed_count": len(counter_type_failures),
     "counter_inconsistency_count": len(counter_inconsistencies),
+    "command_failure_policy_failed_count": len(command_failure_policy_failures),
     "decision_metric_missing_count": len(decision_metric_failures),
     "decision_coverage_failed_count": len(coverage_failures),
     "decision_health_failed_count": len(health_failures),
@@ -1400,8 +1432,11 @@ metrics = {
 
 passed = all(value == 0 for value in metrics.values())
 print(f"ACCEPT ops-report: {'PASS' if passed else 'FAIL'}")
+print(f"- session_profile={session_profile}")
 for key, value in metrics.items():
     print(f"- {key}={value}")
+print(f"- allowed_failed_count={allowed_failed_count}")
+print(f"- allowed_timed_out_count={allowed_timed_out_count}")
 if isinstance(decision_metrics, dict):
     for key in required_decision_metric_keys:
         print(f"- {key}={decision_metrics.get(key, '<missing>')}")
@@ -1419,6 +1454,10 @@ if counter_type_failures:
 if counter_inconsistencies:
     print("DETAIL counter_inconsistencies:")
     for item in counter_inconsistencies:
+        print(f"- {item}")
+if command_failure_policy_failures:
+    print("DETAIL command_failure_policy_failures:")
+    for item in command_failure_policy_failures:
         print(f"- {item}")
 if decision_metric_failures:
     print("DETAIL decision_metric_failures:")
@@ -1438,6 +1477,147 @@ if secret_key_hits:
         print(f"- {item}")
 
 raise SystemExit(0 if passed else 1)
+PY
+}
+
+dump_ops_report() {
+  local target_date="${1:-}"
+  require_ops_dump_allowed
+  TARGET_DATE="$target_date" ACCEPT_SAFE_TIMEOUT_SECONDS="$SAFE_TIMEOUT_SECONDS" python3 - <<'PY'
+import json
+import os
+import re
+import subprocess
+from pathlib import Path
+from typing import Any
+
+root = Path(os.environ["HARNESS_ROOT_DIR"])
+target_date = os.environ.get("TARGET_DATE", "").strip()
+safe_timeout = int(os.environ.get("ACCEPT_SAFE_TIMEOUT_SECONDS", "90"))
+output_dir = root / "tmp" / "harness" / "ops-report"
+
+def fail(message: str) -> None:
+    print("DUMP ops-report: FAIL")
+    print(f"DETAIL dump_error: {message}")
+    raise SystemExit(1)
+
+def run_command(command: list[str], timeout_seconds: int = safe_timeout) -> tuple[int, str]:
+    try:
+        completed = subprocess.run(
+            command,
+            cwd=root,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            timeout=timeout_seconds,
+            check=False,
+        )
+    except subprocess.TimeoutExpired as exc:
+        return 124, (exc.stdout or "") + f"\nTIMEOUT after {timeout_seconds}s"
+    except Exception as exc:
+        return 1, f"{type(exc).__name__}: {exc}"
+    return completed.returncode, completed.stdout.strip()
+
+def collect_secret_hits(value: Any, path: str = "") -> list[str]:
+    hits: list[str] = []
+    key_pattern = re.compile(r"(secret|password|passwd|authorization|approval_key|access_token|refresh_token|bearer_token|appkey|appsecret|api_key|client_secret)", re.I)
+    value_patterns = [
+        re.compile(r"\bBearer\s+[A-Za-z0-9._~+/=-]{12,}", re.I),
+        re.compile(r"\b(?:appkey|appsecret|api[_-]?key|client[_-]?secret|access[_-]?token|refresh[_-]?token)\s*[:=]\s*[A-Za-z0-9._~+/=-]{8,}", re.I),
+        re.compile(r"\bPS[A-Za-z0-9]{12,}\b"),
+    ]
+    if isinstance(value, dict):
+        for key, nested in value.items():
+            child_path = f"{path}.{key}" if path else str(key)
+            if key_pattern.search(str(key)) and nested not in (None, "", [], {}):
+                hits.append(child_path)
+            hits.extend(collect_secret_hits(nested, child_path))
+    elif isinstance(value, list):
+        for index, nested in enumerate(value):
+            hits.extend(collect_secret_hits(nested, f"{path}[{index}]"))
+    elif isinstance(value, str) and any(pattern.search(value) for pattern in value_patterns):
+        hits.append(path or "<root>")
+    return hits
+
+if target_date and not re.fullmatch(r"\d{4}-\d{2}-\d{2}", target_date):
+    fail("날짜는 YYYY-MM-DD 형식이어야 합니다.")
+
+code, names = run_command(["docker", "ps", "--format", "{{.Names}}"], timeout_seconds=10)
+if code != 0 or "trading_db" not in set(names.splitlines()):
+    fail("trading_db 컨테이너가 실행 중이어야 합니다.")
+
+if target_date:
+    where_clause = f"WHERE run_date = DATE '{target_date}'"
+    output_name = f"ops-report-{target_date}.json"
+else:
+    where_clause = ""
+    output_name = "ops-report-latest.json"
+
+sql = f"""
+WITH target AS (
+  SELECT run_date, is_trading_day, scheduler_status, session_source, market_phase, summary_json
+  FROM trading.operations_day_runs
+  {where_clause}
+  ORDER BY COALESCE(last_heartbeat_at, updated_at, created_at) DESC NULLS LAST
+  LIMIT 1
+)
+SELECT (
+  jsonb_build_object(
+    'run_date', run_date,
+    'is_trading_day', is_trading_day,
+    'scheduler_status', scheduler_status,
+    'session_source', session_source,
+    'market_phase', market_phase
+  ) || COALESCE(summary_json, '{{}}'::jsonb)
+)::text
+FROM target;
+"""
+
+code, output = run_command([
+    "docker",
+    "exec",
+    "trading_db",
+    "psql",
+    "-U",
+    "trading",
+    "-d",
+    "trading",
+    "-tA",
+    "-c",
+    sql,
+])
+if code != 0:
+    fail(f"operations_day_runs 조회 실패: exit_code={code}")
+if not output:
+    fail("해당 operations_day_runs row가 없습니다.")
+
+try:
+    payload = json.loads(output.splitlines()[-1])
+except json.JSONDecodeError as exc:
+    fail(f"summary_json 파싱 실패: line={exc.lineno} column={exc.colno}")
+if not isinstance(payload, dict):
+    fail("덤프 payload가 JSON object가 아닙니다.")
+
+secret_hits = collect_secret_hits(payload)
+if secret_hits:
+    print("DUMP ops-report: FAIL")
+    print(f"- payload_secret_hit_count={len(secret_hits)}")
+    print("DETAIL secret_key_hits:")
+    for item in secret_hits:
+        print(f"- {item}")
+    raise SystemExit(1)
+
+output_dir.mkdir(parents=True, exist_ok=True)
+output_path = output_dir / output_name
+output_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n")
+
+print("DUMP ops-report: PASS")
+print(f"- output_file={output_path.relative_to(root).as_posix()}")
+print(f"- run_date={payload.get('run_date', '<missing>')}")
+print("- database_query_run=1")
+print("- external_network_run=0")
+print("- payload_values_printed=0")
+print("- payload_secret_hit_count=0")
 PY
 }
 
@@ -1462,7 +1642,9 @@ main() {
       local file_path
       file_path="$(require_existing_file "$target")"
       [[ "$file_path" == *.py ]] || fail "Python 파일만 py-compile 대상이 될 수 있습니다: $target"
-      run_python_with_timeout "$SAFE_TIMEOUT_SECONDS" -m py_compile "$target"
+      local normalized_target
+      normalized_target="$(repo_relative_from_resolved "$file_path")"
+      run_python_with_timeout "$SAFE_TIMEOUT_SECONDS" -m py_compile "$normalized_target"
       ;;
     test-one)
       local selector="${1:-}"
@@ -1483,10 +1665,12 @@ main() {
       local resolved_path
       resolved_path="$(resolve_in_repo "$target_path")"
       [[ -e "$resolved_path" ]] || fail "경로가 존재하지 않습니다: $target_path"
-      run_python_with_timeout "$SAFE_TIMEOUT_SECONDS" -m ruff check "$target_path"
+      local normalized_target
+      normalized_target="$(repo_relative_from_resolved "$resolved_path")"
+      run_python_with_timeout "$SAFE_TIMEOUT_SECONDS" -m ruff check "$normalized_target"
       ;;
     docs-check)
-      docs_check
+      accept_docs
       ;;
     accept)
       local profile="${1:-}"
@@ -1512,6 +1696,33 @@ main() {
           ;;
         *)
           fail "지원하지 않는 accept profile입니다: $profile"
+          ;;
+      esac
+      ;;
+    dump)
+      local profile="${1:-}"
+      require_arg "$profile" "dump_profile"
+      case "$profile" in
+        ops-report)
+          dump_ops_report "${2:-}"
+          ;;
+        *)
+          fail "지원하지 않는 dump profile입니다: $profile"
+          ;;
+      esac
+      ;;
+    run)
+      local profile="${1:-}"
+      require_arg "$profile" "run_profile"
+      case "$profile" in
+        api-inmemory)
+          run_api_inmemory
+          ;;
+        api-postgres)
+          run_api_postgres
+          ;;
+        *)
+          fail "지원하지 않는 run profile입니다: $profile"
           ;;
       esac
       ;;

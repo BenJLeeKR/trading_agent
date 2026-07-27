@@ -48,14 +48,16 @@
 - 백엔드 런타임 계약의 정답 판정은 `bash scripts/harness/run.sh accept backend-runtime` 또는 `make accept-backend-runtime`을 사용한다.
 - Admin UI의 정답 판정은 `bash scripts/harness/run.sh accept frontend` 또는 `make accept-admin-ui`를 사용한다.
 - 운영 리포트 `summary_json`의 정답 판정은 `bash scripts/harness/run.sh accept ops-report <summary_json>` 또는 `make accept-ops-report SUMMARY_JSON=<summary_json>`을 사용한다.
-- 환경 재현성 확인은 `bash scripts/harness/run.sh env-check` 또는 `make env-check`를 사용한다.
+- `accept ops-report`는 기본적으로 `failed_count=0`, `timed_out_count=0`을 요구한다. 허용 임계값을 사용한 경우 보고서에 `HARNESS_OPS_ALLOWED_FAILED_COUNT`, `HARNESS_OPS_ALLOWED_TIMED_OUT_COUNT` 값을 남긴다.
+- 운영 리포트 덤프는 DB를 조회하므로 `HARNESS_ALLOW_OPS_DUMP=1 bash scripts/harness/run.sh dump ops-report [YYYY-MM-DD]` 또는 `HARNESS_ALLOW_OPS_DUMP=1 make dump-ops-report DATE=<YYYY-MM-DD>`로만 실행한다.
+- 환경 재현성 확인은 `bash scripts/harness/run.sh accept env` 또는 `make accept-env`를 사용한다. `env-check`는 호환 alias다.
 - Ubuntu 서버 작업 영역에서는 `python` 명령을 사용하지 않는다. 검증과 실행은 `python3` 명령을 사용한다.
 - 서버 환경 특성상 `sh`에서 실행하는 명령은 항상 실패하므로, 셸 명령은 `bash`에서 실행한다.
 - Python 컴파일 확인: `python3 -m py_compile <changed_file>`
 - 대상 테스트: `python3 -m pytest <specific_test_file> -v`
 - Python 스타일 검증이 필요한 경우: `make lint`
-- API in-memory 모드 확인: `make run-api-inmemory`
-- API Postgres/Auth 모드 확인: `make run-api-postgres`
+- API in-memory 모드 실행: `bash scripts/harness/run.sh run api-inmemory` 또는 `make run-api-inmemory`
+- API Postgres/Auth 모드 실행: `bash scripts/harness/run.sh run api-postgres` 또는 `make run-api-postgres`
 - Docker 마이그레이션 표준 경로: `docker compose run --rm migrate` 또는 `make docker-migrate`
 
 API 컨테이너 시작이 DB 마이그레이션을 자동으로 수행한다고 가정하지 않는다.
@@ -75,6 +77,9 @@ API 컨테이너 시작이 DB 마이그레이션을 자동으로 수행한다고
 - 기본 검증은 변경 파일에 직접 대응하는 가장 좁은 테스트로 제한한다.
 - 전체 테스트가 필요하다고 판단되면 직접 실행하지 말고 예상 부하, 필요한 이유, 대체 검증안을 먼저 보고한다.
 - 네트워크, Docker, DB, KIS, 외부 API, 대량 데이터 파일을 사용하는 검증은 사용자 승인 없이 실행하지 않는다.
+- 예외: 하네스가 제공하는 `accept`, `env-check`, `py-compile`, `test-one`, `test-file`, `lint-path`, `admin-test-one` 진입점은 승인 없이 실행할 수 있다.
+- 위 예외는 이미 실행 중인 컨테이너에 대한 짧은 `docker exec`, 버전 확인용 `docker run --rm node:20-slim`, 단일 테스트 selector 실행에만 적용한다.
+- 새 서비스 기동, 장시간 컨테이너 실행, 전체 테스트/전체 빌드, 외부 API 호출, DB 쓰기/마이그레이션, 운영 덤프(`HARNESS_ALLOW_OPS_DUMP=1`)는 계속 명시 승인 대상이다.
 
 ## Harness Engineering 기대사항
 

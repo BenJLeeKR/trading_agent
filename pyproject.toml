@@ -21,10 +21,12 @@ dependencies = [
 dev = [
     "pytest>=8.0,<10",
     "pytest-asyncio>=1.0.0,<2.0",
+    "ruff==0.16.0",
 ]
 test = [
     "pytest>=8.0,<10",
     "pytest-asyncio>=1.0.0,<2.0",
+    "ruff==0.16.0",
 ]
 
 [project.scripts]
@@ -35,6 +37,17 @@ run-orchestrator-once = "scripts.run_orchestrator_once:main"
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "module"
 testpaths = ["tests"]
+markers = [
+    "smoke: KIS paper/sandbox read-only smoke test (requires KIS API credentials)",
+    "slow: Time-intensive tests (WebSocket, etc.)",
+]
+
+[tool.ruff]
+target-version = "py314"
+line-length = 120
+
+[tool.ruff.lint]
+select = ["E9"]
 
 [tool.setuptools.packages.find]
 where = ["src"]

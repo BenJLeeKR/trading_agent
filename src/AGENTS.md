@@ -40,6 +40,9 @@
 - 사용자 명시 승인 없이 `make test`, `python3 -m pytest`, `python3 -m pytest tests/`, `make docker-test`를 실행하지 않는다.
 - smoke, slow, integration, broker, KIS, 외부 API 연동 테스트는 사용자 명시 승인 없이 실행하지 않는다.
 - 네트워크, Docker, DB, KIS, 외부 API, 대량 데이터 파일을 사용하는 검증은 사용자 승인 없이 실행하지 않는다.
+- 예외: 하네스가 제공하는 `accept backend-file`, `accept backend-runtime`, `py-compile`, `test-one`, `test-file`, `lint-path`는 승인 없이 실행할 수 있다.
+- 위 예외는 이미 실행 중인 컨테이너에 대한 짧은 `docker exec`와 단일 테스트 selector에만 적용한다.
+- 새 서비스 기동, 장시간 컨테이너 실행, 전체 테스트, 외부 API 호출, DB 쓰기/마이그레이션은 계속 명시 승인 대상이다.
 - 전체 테스트가 필요하다고 판단되면 직접 실행하지 말고 예상 부하, 필요한 이유, 대체 검증안을 먼저 보고한다.
 
 ## 금지 사항

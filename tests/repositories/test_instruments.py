@@ -127,6 +127,31 @@ class TestInstrumentRepositoryContract:
         assert fetched.exchange_code == "KRX"
         assert fetched.market_segment == "KOSPI"
 
+    @pytest.mark.asyncio
+    async def test_list_active_by_market_filters_asset_class_case_insensitively(
+        self,
+        in_memory_repos,
+    ) -> None:
+        instrument = InstrumentEntity(
+            instrument_id=uuid4(),
+            symbol="005930",
+            market_code="KRX",
+            asset_class="KR_STOCK",
+            currency="KRW",
+            name="삼성전자",
+            is_active=True,
+            exchange_code="KRX",
+            market_segment="KOSPI",
+        )
+        await in_memory_repos.instruments.add(instrument)
+
+        result = await in_memory_repos.instruments.list_active_by_market(
+            "KRX",
+            asset_class="kr_stock",
+        )
+
+        assert [item.instrument_id for item in result] == [instrument.instrument_id]
+
 
 @pytest.mark.asyncio
 async def test_postgres_get_by_symbol_any_market_prefers_krx_canonical_row(

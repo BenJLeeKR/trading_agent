@@ -9,6 +9,7 @@
 - [`AGENTS.md`](./AGENTS.md): Codex 및 공통 에이전트 작업 규칙
 - [`CLAUDE.md`](./CLAUDE.md): Claude Code용 지침 라우터
 - [`docs/99_meta_handover/agent_workspace_guide.md`](./docs/99_meta_handover/agent_workspace_guide.md): 작업 방식과 문서 분리 기준
+- [`scripts/harness/README.md`](./scripts/harness/README.md): 하네스 실행기와 accept 출력 지표 안내
 
 ---
 
@@ -60,13 +61,21 @@ make migrate
 
 성공 시 `trading` 스키마에 24개 테이블이 생성됩니다.
 
-### 5. 테스트 실행
+### 5. 기본 하네스 검증
 
 ```bash
-make test
+make accept-docs
+make accept-env
+make accept-backend-runtime
 ```
 
-예상 결과: **53 passed, 0 failed, 0 errors**
+각 명령의 출력에서 `*_failed_count=0`, `*_missing_count=0`, `runtime_version_mismatch_count=0` 같은 지표를 확인한다.
+
+전체 테스트는 Ubuntu 서버 부하 제한 대상이다. 필요한 경우에만 사용자 승인 후 다음처럼 실행한다.
+
+```bash
+HARNESS_ALLOW_HEAVY=1 make heavy-full-test
+```
 
 ---
 
@@ -140,8 +149,8 @@ Inspection API는 FastAPI 기반의 읽기 전용 조회 API입니다. **실행 
 
 | 방식 | 명령 | DB 연결 | Auth | 환경변수 |
 |------|------|---------|------|----------|
-| In-memory (개발용) | `make run-api-inmemory` | ❌ (in-memory mock) | ❌ (비활성) | 무시됨 |
-| Postgres (운영용) | `make run-api-postgres` | ✅ PostgreSQL | ✅ Bearer token | `API_RUNTIME_MODE`, `INSPECTION_API_TOKEN` |
+| In-memory (개발용) | `bash scripts/harness/run.sh run api-inmemory` | ❌ (in-memory mock) | ❌ (비활성) | 무시됨 |
+| Postgres (운영용) | `bash scripts/harness/run.sh run api-postgres` | ✅ PostgreSQL | ✅ Bearer token | `API_RUNTIME_MODE`, `INSPECTION_API_TOKEN` |
 
 ### ⚠️ 잘못된 실행 방식 — 항상 in-memory
 
@@ -150,12 +159,8 @@ Inspection API는 FastAPI 기반의 읽기 전용 조회 API입니다. **실행 
 #    module-level app = create_app(auth_enabled=False) 가 고정되어 있기 때문입니다.
 uvicorn agent_trading.api.app:app --reload --host 0.0.0.0 --port 9000
 
-# ❌ 환경변수를 줘도 module-level app은 읽지 않습니다.
-INSPECTION_API_TOKEN=dev-token-123 \
-uvicorn agent_trading.api.app:app --reload --host 0.0.0.0 --port 9000
-
-# ❌ API_RUNTIME_MODE=postgres 도 마찬가지로 무시됩니다.
-API_RUNTIME_MODE=postgres INSPECTION_API_TOKEN=dev-token-123 \
+# ❌ API_RUNTIME_MODE=postgres 도 module-level app에서는 무시됩니다.
+API_RUNTIME_MODE=postgres \
 uvicorn agent_trading.api.app:app --reload --host 0.0.0.0 --port 9000
 ```
 
@@ -164,19 +169,21 @@ uvicorn agent_trading.api.app:app --reload --host 0.0.0.0 --port 9000
 `create_app_from_env`를 `--factory` 플래그와 함께 사용해야 환경변수가 적용됩니다.
 
 ```bash
-# 1. .env 파일에서 DATABASE_* 환경변수 로드 (PostgreSQL 연결 정보)
-source .env
+# 1. .env 또는 export로 DATABASE_* 환경변수 로드
+#    값은 터미널에 출력하지 않습니다.
+set -a; source .env; set +a
 
-# 2. Postgres-backed 모드로 실행
-API_RUNTIME_MODE=postgres \
-INSPECTION_API_TOKEN=dev-token-123 \
-uvicorn agent_trading.api.app:create_app_from_env --factory --reload --host 0.0.0.0 --port 9000
+# 2. 사용자가 직접 INSPECTION_API_TOKEN 설정
+export INSPECTION_API_TOKEN=<token>
 
-# 또는 Makefile target 사용 (DATABASE_* 는 .env 또는 export 필요)
+# 3. Postgres-backed 모드로 실행
+bash scripts/harness/run.sh run api-postgres
+
+# 또는 Makefile target 사용
 make run-api-postgres
 ```
 
-> **참고**: `DATABASE_HOST`, `DATABASE_PORT`, `DATABASE_NAME`, `DATABASE_USER`, `DATABASE_PASSWORD` 환경변수가 설정되어 있어야 Postgres 모드가 정상 동작합니다. `.env` 파일을 통해 로드하거나 직접 export 하세요.
+> **참고**: `DATABASE_HOST`, `DATABASE_PORT`, `DATABASE_NAME`, `DATABASE_USER`, `DATABASE_PASSWORD`, `INSPECTION_API_TOKEN` 환경변수가 설정되어 있어야 Postgres 모드가 실행됩니다. `.env` 파일은 사용자가 직접 관리하고, 값은 문서·보고서·로그에 출력하지 않습니다.
 
 ### Docker Compose (권장)
 
@@ -236,35 +243,44 @@ docker compose up -d db api
 
 | 명령어 | 설명 |
 |--------|------|
-| `make install` | 의존성 설치 (`pip install -e ".[dev]"`) |
+| `make install` | 의존성 설치 (`python3 -m pip install -e ".[dev]"`) |
 | `make run` | 앱 실행 |
 | `make migrate` | 로컬 마이그레이션 실행 |
 | `make harness-status` | 하네스 기준 프로젝트 상태 확인 |
-| `make env-check` | 운영 기준 Python/Node/npm/PostgreSQL 버전과 환경 템플릿 확인 |
+| `make env-check` | `make accept-env`의 호환 alias |
 | `make check-file FILE=...` | 단일 Python 파일 컴파일 확인 |
 | `make test-one TEST=...` | 단일 pytest 테스트 실행 |
 | `make test-file TEST=...` | 단일 pytest 파일 실행 |
 | `make lint-path TARGET=...` | 지정 경로 ruff 정적 분석 |
-| `make docs-check` | 핵심 문서 링크 검증 |
+| `make docs-check` | `make accept-docs`의 호환 alias |
 | `make accept-docs` | 핵심 문서 하네스 판정기 실행 |
 | `make accept-env` | 운영 환경 재현성 하네스 판정기 실행 |
 | `make accept-backend-file FILE=...` | 단일 백엔드 Python 파일 하네스 판정기 실행 |
 | `make accept-backend-runtime` | 백엔드 런타임 import/factory 계약 판정기 실행 |
 | `make accept-admin-ui` | Admin UI 하네스 판정기 실행 (`accept frontend`) |
 | `make accept-ops-report SUMMARY_JSON=...` | 운영 `summary_json` 커버리지 판정기 실행 (`accept ops-report`) |
+| `make dump-ops-report DATE=...` | `operations_day_runs.summary_json` 파일 덤프 — `HARNESS_ALLOW_OPS_DUMP=1` 필요 |
 | `make admin-test-one TEST=...` | 단일 Admin UI 테스트 selector 실행 |
-| `make test` | 전체 로컬 테스트 실행 — `HARNESS_ALLOW_HEAVY=1` 없이는 차단 |
+| `make heavy-full-test` | 전체 로컬 테스트 실행 — `HARNESS_ALLOW_HEAVY=1` 없이는 차단 |
+| `make heavy-docker-test` | Docker 컨테이너에서 전체 테스트 실행 — `HARNESS_ALLOW_HEAVY=1` 없이는 차단 |
+| `make heavy-smoke` | smoke 테스트 실행 — `HARNESS_ALLOW_HEAVY=1` 없이는 차단 |
+| `make heavy-admin-build` | Admin UI 전체 빌드 — `HARNESS_ALLOW_HEAVY=1` 없이는 차단 |
+| `make heavy-admin-test-all` | Admin UI 전체 테스트 — `HARNESS_ALLOW_HEAVY=1` 없이는 차단 |
+| `make test` | `make heavy-full-test`의 호환 alias |
 | `make lint` | ruff 정적 분석 |
-| `make run-api-inmemory` | Inspection API 실행 (in-memory, auth 비활성, module-level `app`) |
-| `make run-api-postgres` | Inspection API 실행 (Postgres, auth 활성, `create_app_from_env --factory`, `.env` 필요) |
+| `make run-api-inmemory` | `bash scripts/harness/run.sh run api-inmemory`의 alias |
+| `make run-api-postgres` | `bash scripts/harness/run.sh run api-postgres`의 alias, `DATABASE_*`와 `INSPECTION_API_TOKEN` export 필요 |
 | `make docker-up` | Docker 서비스 시작 |
 | `make docker-down` | Docker 서비스 종료 |
 | `make docker-build` | Docker 이미지 빌드 |
 | `make docker-migrate` | 마이그레이션 실행 — `docker compose run --rm migrate`의 alias (표준 경로는 `docker compose run --rm migrate` 자체) |
-| `make docker-test` | Docker 컨테이너에서 전체 테스트 실행 — `HARNESS_ALLOW_HEAVY=1` 없이는 차단 |
+| `make docker-test` | `make heavy-docker-test`의 호환 alias |
 | `make docker-shell` | Docker 컨테이너 셸 접속 |
 
 `make accept-backend-file`은 import 기반으로 직접 대응 테스트를 찾으며, 테스트가 없으면 실패한다. 불가피한 무테스트 우회는 `HARNESS_ALLOW_NO_TEST=1`을 명시한다.
+`make accept-ops-report`는 기본적으로 `failed_count=0`, `timed_out_count=0`을 요구한다. 운영상 허용 범위가 필요한 경우 `HARNESS_OPS_ALLOWED_FAILED_COUNT`, `HARNESS_OPS_ALLOWED_TIMED_OUT_COUNT`를 명시한다.
+`make dump-ops-report`는 DB를 조회하므로 기본 차단한다. 필요한 경우 `HARNESS_ALLOW_OPS_DUMP=1`을 명시하고, 출력 파일을 `accept-ops-report`에 전달한다.
+전체 테스트, smoke, Admin UI 전체 빌드/테스트는 `make heavy-*` target을 우선 사용한다. 기존 `make full-test`, `make docker-test-safe`, `make smoke-safe`, `make admin-build`, `make admin-test-all`은 호환 alias다.
 
 ## 환경 재현성 기준
 
@@ -273,7 +289,7 @@ docker compose up -d db api
 - Node.js 버전은 [`admin_ui/.nvmrc`](./admin_ui/.nvmrc), npm 버전은 [`admin_ui/.npm-version`](./admin_ui/.npm-version) 기준으로 고정한다.
 - Admin UI 의존성 설치는 `package-lock.json` 기반 `npm ci`를 사용한다.
 - PostgreSQL 서버 버전은 [`.postgres-version`](./.postgres-version) 기준으로 확인한다.
-- 환경 기준 검증은 `make env-check` 또는 `bash scripts/harness/run.sh env-check`를 사용한다.
+- 환경 기준 검증은 `make accept-env` 또는 `bash scripts/harness/run.sh accept env`를 사용한다. `make env-check`와 `bash scripts/harness/run.sh env-check`는 호환 alias다.
 
 ## Agent Role Boundaries
 

@@ -56,7 +56,7 @@ from agent_trading.domain.enums import (
     OrderStatus,
     OrderType,
 )
-from agent_trading.domain.models import SubmitOrderRequest
+from agent_trading.domain.models import Quote, SubmitOrderRequest
 from agent_trading.repositories.bootstrap import build_in_memory_repositories
 from agent_trading.repositories.container import RepositoryContainer
 from agent_trading.repositories.contracts import SnapshotSyncHealthSummary
@@ -73,6 +73,7 @@ from agent_trading.services.submit_lane_gate import (
     HELD_POSITION_SELL_MAX_PER_CYCLE,
     evaluate_symbol_submit_lane,
 )
+from agent_trading.services.validators import ValidationResult
 
 # Module under test
 from scripts.run_decision_loop import (
@@ -135,6 +136,20 @@ def _make_trade_decision(
         entry_style=EntryStyle.MARKET,
         created_at=now,
         source_type=source_type,
+    )
+
+
+def _blocked_pre_ai_result(
+    reason: str, details: dict[str, str | None]
+) -> tuple[ValidationResult, dict[str, str | None]]:
+    return (
+        ValidationResult.blocked(
+            rule_set_version="pre_ai_gate_v1",
+            blocking_rule_codes=[reason],
+            rule_results={"details": details},
+            stop_reason=reason,
+        ),
+        details,
     )
 
 
@@ -372,6 +387,16 @@ async def _mock_runtime(snapshot_stale: bool = False) -> AsyncIterator[dict[str,
 
     # Mock broker adapter
     broker = AsyncMock(spec=BrokerAdapter)
+    broker.get_quote = AsyncMock(
+        return_value=Quote(
+            symbol=SYMBOL,
+            market=MARKET,
+            bid=Decimal("69900"),
+            ask=Decimal("70100"),
+            last=Decimal("70000"),
+            as_of=datetime.now(timezone.utc),
+        )
+    )
     broker.submit_order = AsyncMock(
         return_value=MagicMock(
             status="submitted",
@@ -469,6 +494,16 @@ async def _mock_runtime_for_one_cycle(
 
     # Mock broker adapter
     broker = AsyncMock(spec=BrokerAdapter)
+    broker.get_quote = AsyncMock(
+        return_value=Quote(
+            symbol=SYMBOL,
+            market=MARKET,
+            bid=Decimal("69900"),
+            ask=Decimal("70100"),
+            last=Decimal("70000"),
+            as_of=datetime.now(timezone.utc),
+        )
+    )
     broker.submit_order = AsyncMock(
         return_value=MagicMock(
             status="submitted",
@@ -498,6 +533,7 @@ async def _mock_runtime_for_one_cycle(
     # So we must patch the ORIGINAL module paths, not scripts.run_decision_loop.*
     mock_tx = AsyncMock()
     mock_tx.commit = AsyncMock()
+    mock_tx.connection = None
 
     @asynccontextmanager
     async def _mock_db_transaction() -> AsyncIterator[AsyncMock]:
@@ -1283,7 +1319,8 @@ class TestRunOneCycle:
                 runtime=runtime,
             )
 
-        assert result["status"] != "SKIPPED"
+        assert result["error_phase"] != "pre_ai_gate"
+        assert result["stop_reason"] != "low_orderable_amount"
         evaluations = list(repos.guardrail_evaluations._items.values())  # type: ignore[attr-defined]
         assert evaluations == []
 
@@ -2163,9 +2200,9 @@ class TestRunOneCycle:
         async with _mock_runtime_for_one_cycle() as runtime:
             repos = runtime["repositories"]
             with patch(
-                "scripts.run_decision_loop._evaluate_pre_ai_skip_reason",
+                "scripts.run_decision_loop._evaluate_pre_ai_validation_result",
                 new=AsyncMock(
-                    return_value=(
+                    return_value=_blocked_pre_ai_result(
                         "same_symbol_reentry_cooldown",
                         {
                             "held_quantity": "0",
@@ -2200,9 +2237,9 @@ class TestRunOneCycle:
         async with _mock_runtime_for_one_cycle() as runtime:
             repos = runtime["repositories"]
             with patch(
-                "scripts.run_decision_loop._evaluate_pre_ai_skip_reason",
+                "scripts.run_decision_loop._evaluate_pre_ai_validation_result",
                 new=AsyncMock(
-                    return_value=(
+                    return_value=_blocked_pre_ai_result(
                         "held_position_recent_buy_sell_cooldown",
                         {
                             "held_quantity": "10",
@@ -2237,9 +2274,9 @@ class TestRunOneCycle:
         async with _mock_runtime_for_one_cycle() as runtime:
             repos = runtime["repositories"]
             with patch(
-                "scripts.run_decision_loop._evaluate_pre_ai_skip_reason",
+                "scripts.run_decision_loop._evaluate_pre_ai_validation_result",
                 new=AsyncMock(
-                    return_value=(
+                    return_value=_blocked_pre_ai_result(
                         "reverse_trade_same_signal_feature_snapshot",
                         {
                             "current_signal_feature_snapshot_id": "same-snapshot",

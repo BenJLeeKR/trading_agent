@@ -25,6 +25,11 @@ Claude Code는 이 저장소에서 코드, 문서, 스크립트, 테스트를 �
    - 운영 UI, API contract, 상태 표시, 프론트엔드 검증 규칙
    - 프론트엔드 검증 부하 제한
 
+4. `scripts/harness/README.md`
+   - 하네스 실행기 사용법과 출력 지표 해석이 필요할 때 참조
+   - 승인 플래그가 필요한 명령과 `heavy-*` target 구분
+   - API 수동 실행 진입점
+
 ## 운영 원칙
 
 - 이 파일에는 세부 규칙을 중복 작성하지 않는다.
@@ -41,3 +46,6 @@ Claude Code는 이 저장소에서 코드, 문서, 스크립트, 테스트를 �
 - 백엔드 런타임 계약: `bash scripts/harness/run.sh accept backend-runtime` 또는 `make accept-backend-runtime`
 - Admin UI: `bash scripts/harness/run.sh accept frontend` 또는 `make accept-admin-ui`
 - 운영 리포트: `bash scripts/harness/run.sh accept ops-report <summary_json>` 또는 `make accept-ops-report SUMMARY_JSON=<summary_json>`
+- 운영 리포트 덤프: `HARNESS_ALLOW_OPS_DUMP=1 bash scripts/harness/run.sh dump ops-report [YYYY-MM-DD]`
+- API in-memory 실행: `bash scripts/harness/run.sh run api-inmemory` 또는 `make run-api-inmemory`
+- API Postgres/Auth 실행: `bash scripts/harness/run.sh run api-postgres` 또는 `make run-api-postgres`
