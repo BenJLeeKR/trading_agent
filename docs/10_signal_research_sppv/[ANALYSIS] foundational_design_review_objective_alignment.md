@@ -2062,6 +2062,17 @@ value/compliance/broker가 아니라 `entry_score < 0.65`다.
   필요). 상류(max_cap)·하류(층3) 이중 병목 구조로 재정리. 코드
   변경 없음. 상세: `docs/10_signal_research_sppv/[DESIGN] regime_
   conditional_entry_signal_v1.md` §96.
+- **[SPPV-2.109에서 정정]** 위 §96 "risk_off+volatility 55건
+  전수(100%)" 표현은 부정확했다 — `reason_codes` 필드 단독
+  기준 재검증 결과 55건 중 **54건**에서 함께 관측됨(사실상
+  공통 축, 전수/100% 아님). "실제 프로덕션 호출부 2곳 모두
+  인자 없이 호출" 서술도 부정확 — 파라미터를 받는 래퍼
+  (`_read_trading_universe()`)가 코드베이스에 이미 존재하나
+  현재 테스트에서만 쓰이고 프로덕션 호출부는 이를 거치지
+  않음(메인 런타임 결론은 동일: 사실상 30 고정). 큰 결론(상류
+  병목/중심 축/우선순위 1·2순위) 변경 없음. 코드 변경 없음,
+  신규 KIS 호출 0건. 상세: `docs/10_signal_research_sppv/
+  [DESIGN] regime_conditional_entry_signal_v1.md` §96.6.
 - **3순위(보류 유지, 형태 재정의 — 우선순위 재조정)**: **`entry_
   score`와 BUY funnel 재현** — §2.7 확장 검증에서 하락장 안정성이
   확인되지 않아 단순 재현으로는 착수하지 않는다. §2.16~§2.21에서

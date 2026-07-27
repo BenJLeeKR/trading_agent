@@ -1580,6 +1580,16 @@
   호출 0건. 상세: `docs/10_signal_research_sppv/[DESIGN] regime_
   conditional_entry_signal_v1.md` §96.
 
+- **[SPPV-2.109에서 정정]** "risk_off+volatility 55건 전수
+  (100%)" → `reason_codes` 필드 단독 기준 55건 중 **54건**(사실상
+  공통 축)으로 정정. "프로덕션 호출부 2곳 모두 인자 없이 호출"
+  → 파라미터화 래퍼(`_read_trading_universe()`)가 존재하나
+  현재 테스트 전용, 프로덕션은 미경유(메인 런타임 사실상 30
+  고정 결론은 유지)로 정정. 상류 병목/중심 축/1·2순위 결론
+  변경 없음. 코드 변경 없음, 신규 KIS 호출 0건. 상세: `docs/10_
+  signal_research_sppv/[DESIGN] regime_conditional_entry_signal_
+  v1.md` §96.6.
+
 ---
 
 ## 관리 원칙

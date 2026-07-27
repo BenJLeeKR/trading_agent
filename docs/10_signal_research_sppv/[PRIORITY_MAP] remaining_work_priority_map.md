@@ -9749,6 +9749,15 @@ agent 설계 문서 기준으로도 순서는 다음이 맞다.
      미확정. 상류(max_cap)·하류(층3) 이중 병목 명시. 코드 변경
      없음, 신규 KIS 호출 0건. 상세: `docs/10_signal_research_sppv/
      [DESIGN] regime_conditional_entry_signal_v1.md` §96.
+   - **[SPPV-2.109에서 정정]** "risk_off+volatility 55건
+     전수(100%)" → `reason_codes` 필드 단독 기준 55건 중 54건
+     (사실상 공통 축)으로 정정. "프로덕션 호출부 2곳 모두 인자
+     없이 호출" → 파라미터화 래퍼(`_read_trading_universe()`)가
+     존재하나 현재 테스트 전용, 프로덕션 미경유(메인 런타임
+     사실상 30 고정 결론 유지)로 정정. 상류 병목/중심 축/1·2순위
+     결론 변경 없음. 코드 변경 없음, 신규 KIS 호출 0건. 상세:
+     `docs/10_signal_research_sppv/[DESIGN] regime_conditional_
+     entry_signal_v1.md` §96.6.
    - **SPPV-3(다음 착수: [1순위] max_cap=30 env 배선 코드 diff
      초안 작성(실제 값 변경/배포는 별도 승인 후) +
      [2순위] 001450의 층3(AI downgrade, risk_off+volatility 축)

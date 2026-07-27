@@ -2243,7 +2243,19 @@ entry 설계 검토로 전환**을 확정했다. 별도 문서
   요소임을 확인. 정당 반영/과잉 방어 여부는 미확정(추가 관찰
   필요). 상류(max_cap)·하류(층3 AI downgrade) 이중 병목 구조로
   재정리. 코드 변경 없음, Full pytest 미실행, 신규 KIS 호출 0건.
-  상세: `docs/10_signal_research_sppv/[DESIGN] regime_
+  상세: `docs/10_signal_research_sppv/[DESIGN] regime_conditional_entry_signal_v1.md` §96.
+
+- **[SPPV-2.109에서 정정]** 위 108차 항목의 "55건 전수(100%)"는
+  `reason_codes` 필드 단독 기준 재검증 결과 55건 중 54건(사실상
+  공통 축)으로 정정. "프로덕션 호출부 2곳 모두 인자 없이 호출"도
+  파라미터화 래퍼(`_read_trading_universe()`) 존재를 반영해
+  정정(단, 이 래퍼는 현재 테스트 전용, 프로덕션은 미경유 — 메인
+  런타임 사실상 30 고정 결론은 유지). 큰 결론(상류 병목/중심
+  축/1·2순위) 변경 없음.
+- 작성자: Codex
+- 수정일자: 2026-07-27 KST (109차, 서술 정밀도 보정)
+- 수정내용: 위 정정 2건 반영. 코드 변경 없음, Full pytest 미실행,
+  신규 KIS 호출 0건. 상세: `docs/10_signal_research_sppv/[DESIGN] regime_
   conditional_entry_signal_v1.md` §95.
 
 ---
@@ -5293,6 +5305,13 @@ canonical),
     로직 변경 없음, 신규 KIS 호출 0건(shadow 재호출은 `kis_
     client=None`). 상세: `docs/10_signal_research_sppv/[DESIGN]
     regime_conditional_entry_signal_v1.md` §94.
+- [x] **SPPV-2.109(신설)** 서술 정밀도 보정 — risk_off+volatility
+  55건 전수(100%)→54건(사실상 공통 축), max_cap 호출부 "2곳
+  모두 인자 없이"→래퍼 경로 존재 반영 정정 (완료, 2026-07-27
+  KST, 작성자: Codex, 코드 변경 없음)
+  - 큰 결론(상류 병목/중심 축/1·2순위) 변경 없음. 상세: `docs/10_
+    signal_research_sppv/[DESIGN] regime_conditional_entry_signal_
+    v1.md` §96.6.
 - [x] **SPPV-2.108(신설)** max_cap=30 설계 검토(코드 미작성) +
   001450 층3 재관찰(키워드 재집계로 fraud 과대대표 정정) (완료,
   2026-07-27 KST, 작성자: Codex)
