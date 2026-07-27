@@ -249,6 +249,7 @@ docker compose up -d db api
 | `make accept-docs` | 핵심 문서 하네스 판정기 실행 |
 | `make accept-env` | 운영 환경 재현성 하네스 판정기 실행 |
 | `make accept-backend-file FILE=...` | 단일 백엔드 Python 파일 하네스 판정기 실행 |
+| `make accept-backend-runtime` | 백엔드 런타임 import/factory 계약 판정기 실행 |
 | `make accept-admin-ui` | Admin UI 하네스 판정기 실행 (`accept frontend`) |
 | `make accept-ops-report SUMMARY_JSON=...` | 운영 `summary_json` 커버리지 판정기 실행 (`accept ops-report`) |
 | `make admin-test-one TEST=...` | 단일 Admin UI 테스트 selector 실행 |

@@ -18,6 +18,7 @@ usage() {
   bash scripts/harness/run.sh accept docs
   bash scripts/harness/run.sh accept env
   bash scripts/harness/run.sh accept backend-file <src/agent_trading/file.py>
+  bash scripts/harness/run.sh accept backend-runtime
   bash scripts/harness/run.sh accept frontend
   bash scripts/harness/run.sh accept ops-report <summary_json>
   bash scripts/harness/run.sh admin-test-one <test_file_or_selector>
@@ -680,6 +681,275 @@ raise SystemExit(0 if passed else 1)
 PY
 }
 
+accept_backend_runtime() {
+  ACCEPT_SAFE_TIMEOUT_SECONDS="$SAFE_TIMEOUT_SECONDS" python3 - <<'PY'
+import json
+import os
+import re
+import subprocess
+from pathlib import Path
+
+root = Path("/workspace/agent_trading")
+safe_timeout = int(os.environ.get("ACCEPT_SAFE_TIMEOUT_SECONDS", "90"))
+
+def read_first_line(path: Path) -> str:
+    if not path.exists():
+        return ""
+    return path.read_text().splitlines()[0].strip()
+
+def run_command(command: list[str], timeout_seconds: int = safe_timeout) -> tuple[int, str]:
+    env = os.environ.copy()
+    env["PYTHONPATH"] = f"{root / 'src'}:{env.get('PYTHONPATH', '')}".rstrip(":")
+    try:
+        completed = subprocess.run(
+            command,
+            cwd=root,
+            env=env,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            timeout=timeout_seconds,
+            check=False,
+        )
+    except subprocess.TimeoutExpired as exc:
+        return 124, (exc.stdout or "") + f"\nTIMEOUT after {timeout_seconds}s"
+    except Exception as exc:
+        return 1, f"{type(exc).__name__}: {exc}"
+    return completed.returncode, completed.stdout.strip()
+
+def python_command(args: list[str]) -> tuple[list[str], str]:
+    code, names = run_command(["docker", "ps", "--format", "{{.Names}}"], timeout_seconds=10)
+    if code == 0 and "agent_trading-app-1" in set(names.splitlines()):
+        return (
+            [
+                "docker",
+                "exec",
+                "-e",
+                "PYTHONPATH=/app/src",
+                "-w",
+                "/app",
+                "agent_trading-app-1",
+                "python3",
+                *args,
+            ],
+            "agent_trading-app-1",
+        )
+    return (["python3", *args], "host-python3")
+
+def parse_env_keys(path: Path) -> set[str]:
+    keys: set[str] = set()
+    if not path.exists():
+        return keys
+    for line in path.read_text().splitlines():
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#") or "=" not in stripped:
+            continue
+        key = stripped.split("=", 1)[0].strip()
+        if re.match(r"^[A-Za-z_][A-Za-z0-9_]*$", key):
+            keys.add(key)
+    return keys
+
+expected_python = read_first_line(root / ".python-version")
+required_files = [
+    root / "src" / "AGENTS.md",
+    root / "src" / "agent_trading" / "__init__.py",
+    root / "src" / "agent_trading" / "api" / "app.py",
+    root / "src" / "agent_trading" / "config" / "settings.py",
+    root / "src" / "agent_trading" / "runtime" / "bootstrap.py",
+    root / "src" / "agent_trading" / "db" / "connection.py",
+    root / "pyproject.toml",
+    root / "Dockerfile",
+    root / "requirements.lock",
+    root / ".python-version",
+    root / ".env.example",
+]
+missing_files = [path for path in required_files if not path.exists()]
+
+pyproject = (root / "pyproject.toml").read_text() if (root / "pyproject.toml").exists() else ""
+dockerfile = (root / "Dockerfile").read_text() if (root / "Dockerfile").exists() else ""
+env_example_keys = parse_env_keys(root / ".env.example")
+required_env_example_keys = {
+    "INSPECTION_API_TOKEN",
+    "DATABASE_HOST",
+    "DATABASE_PORT",
+    "DATABASE_NAME",
+    "DATABASE_USER",
+    "DATABASE_PASSWORD",
+}
+
+static_checks = [
+    ("pyproject_python_range", 'requires-python = ">=3.14,<3.15"' in pyproject),
+    ("dockerfile_python_pin", bool(expected_python) and f"FROM python:{expected_python}-slim" in dockerfile),
+    ("dockerfile_uses_requirements_lock", "requirements.lock" in dockerfile and "--constraint requirements.lock" in dockerfile),
+    ("env_example_backend_keys", required_env_example_keys.issubset(env_example_keys)),
+]
+failed_static_checks = [name for name, ok in static_checks if not ok]
+missing_env_example_keys = sorted(required_env_example_keys - env_example_keys)
+
+runtime_probe_code = r'''
+import importlib
+import json
+import os
+import platform
+
+for key in (
+    "API_RUNTIME_MODE",
+    "INSPECTION_API_TOKEN",
+    "INSPECTION_API_ROLE",
+    "CORS_ALLOWED_ORIGINS",
+    "KIS_APP_KEY",
+    "KIS_API_KEY",
+    "KIS_APP_SECRET",
+    "KIS_API_SECRET",
+    "KIS_LIVE_INFO_APP_KEY",
+    "KIS_LIVE_INFO_APP_SECRET",
+    "KIS_REALTIME_QUOTE_APP_KEY",
+    "KIS_REALTIME_QUOTE_APP_SECRET",
+):
+    os.environ.pop(key, None)
+
+os.environ["API_RUNTIME_MODE"] = "in_memory"
+os.environ["INSPECTION_API_TOKEN"] = "harness-redacted-token"
+os.environ["INSPECTION_API_ROLE"] = "viewer"
+os.environ["CORS_ALLOWED_ORIGINS"] = "http://localhost:3000"
+os.environ["LLM_PROVIDER"] = "deepseek"
+os.environ["DEEPSEEK_API_KEY"] = ""
+
+modules = [
+    "agent_trading",
+    "agent_trading.api.app",
+    "agent_trading.config.settings",
+    "agent_trading.runtime.bootstrap",
+    "agent_trading.db.connection",
+    "agent_trading.repositories.bootstrap",
+    "agent_trading.repositories.postgres.bootstrap",
+    "agent_trading.services.decision_orchestrator",
+]
+
+import_failures = []
+for name in modules:
+    try:
+        importlib.import_module(name)
+    except Exception as exc:
+        import_failures.append({"module": name, "error": f"{type(exc).__name__}: {exc}"})
+
+factory_checks = {}
+factory_error = ""
+route_count = 0
+required_route_hits = {}
+try:
+    app_module = importlib.import_module("agent_trading.api.app")
+    factory = getattr(app_module, "create_app_from_env")
+    app = factory()
+    routes = {getattr(route, "path", "") for route in app.routes}
+    route_types = [type(route).__name__ for route in app.routes]
+    route_count = len(app.routes)
+    required_route_hits = {
+        "/openapi.json": "/openapi.json" in routes,
+        "/docs": "/docs" in routes,
+        "_IncludedRouter": "_IncludedRouter" in route_types,
+    }
+    factory_checks = {
+        "factory_callable": callable(factory),
+        "app_has_routes": route_count > 0,
+        "required_routes_present": all(required_route_hits.values()),
+    }
+except Exception as exc:
+    factory_error = f"{type(exc).__name__}: {exc}"
+
+print(json.dumps({
+    "python": platform.python_version(),
+    "import_failures": import_failures,
+    "factory_checks": factory_checks,
+    "factory_error": factory_error,
+    "route_count": route_count,
+    "required_route_hits": required_route_hits,
+}, ensure_ascii=False, sort_keys=True))
+'''
+
+command, runtime_source = python_command(["-c", runtime_probe_code])
+probe_code, probe_output = run_command(command)
+probe_payload: dict[str, object] = {}
+probe_parse_failed = False
+if probe_code == 0:
+    try:
+        probe_payload = json.loads(probe_output.splitlines()[-1])
+    except Exception:
+        probe_parse_failed = True
+
+runtime_python = str(probe_payload.get("python", "")) if probe_payload else ""
+runtime_version_mismatches = []
+if runtime_python != expected_python:
+    runtime_version_mismatches.append(("python", expected_python or "<missing>", runtime_python or "<missing>", runtime_source))
+
+import_failures = probe_payload.get("import_failures", []) if isinstance(probe_payload, dict) else []
+factory_checks = probe_payload.get("factory_checks", {}) if isinstance(probe_payload, dict) else {}
+factory_error = str(probe_payload.get("factory_error", "")) if isinstance(probe_payload, dict) else ""
+failed_factory_checks = [
+    name for name in ("factory_callable", "app_has_routes", "required_routes_present")
+    if not isinstance(factory_checks, dict) or factory_checks.get(name) is not True
+]
+
+metrics = {
+    "required_file_missing_count": len(missing_files),
+    "static_contract_failed_count": len(failed_static_checks),
+    "runtime_version_mismatch_count": len(runtime_version_mismatches),
+    "runtime_probe_failed_count": 0 if probe_code == 0 and not probe_parse_failed else 1,
+    "import_failed_count": len(import_failures) if isinstance(import_failures, list) else 1,
+    "factory_check_failed_count": len(failed_factory_checks),
+    "env_example_missing_key_count": len(missing_env_example_keys),
+}
+
+passed = all(value == 0 for value in metrics.values())
+print(f"ACCEPT backend-runtime: {'PASS' if passed else 'FAIL'}")
+for key, value in metrics.items():
+    print(f"- {key}={value}")
+print(f"- python={runtime_python or '<missing>'} source={runtime_source}")
+if isinstance(probe_payload, dict):
+    print(f"- route_count={probe_payload.get('route_count', '<missing>')}")
+print("- app_server_started=0")
+print("- database_connection_run=0")
+print("- external_network_run=0")
+print("- full_test_run=0")
+
+if missing_files:
+    print("DETAIL missing_files:")
+    for path in missing_files:
+        print(f"- {path.relative_to(root)}")
+if failed_static_checks:
+    print("DETAIL failed_static_checks:")
+    for name in failed_static_checks:
+        print(f"- {name}")
+if missing_env_example_keys:
+    print("DETAIL missing_env_example_keys:")
+    for key in missing_env_example_keys:
+        print(f"- {key}")
+if runtime_version_mismatches:
+    print("DETAIL runtime_version_mismatches:")
+    for name, expected, actual, source in runtime_version_mismatches:
+        print(f"- {name}: expected={expected} actual={actual} source={source}")
+if probe_code != 0 or probe_parse_failed:
+    print("DETAIL runtime_probe_failure:")
+    print(f"- exit_code={probe_code}")
+    for line in probe_output.splitlines()[-30:]:
+        print(f"  {line}")
+if isinstance(import_failures, list) and import_failures:
+    print("DETAIL import_failures:")
+    for item in import_failures:
+        if isinstance(item, dict):
+            print(f"- {item.get('module')}: {item.get('error')}")
+if failed_factory_checks:
+    print("DETAIL failed_factory_checks:")
+    for name in failed_factory_checks:
+        print(f"- {name}")
+if factory_error:
+    print("DETAIL factory_error:")
+    print(f"- {factory_error}")
+
+raise SystemExit(0 if passed else 1)
+PY
+}
+
 accept_frontend() {
   python3 - <<'PY'
 import json
@@ -1145,6 +1415,9 @@ main() {
           ;;
         backend-file)
           accept_backend_file "${2:-}"
+          ;;
+        backend-runtime)
+          accept_backend_runtime
           ;;
         frontend)
           accept_frontend

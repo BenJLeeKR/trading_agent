@@ -1,5 +1,5 @@
 .PHONY: install run migrate test lint smoke \
-        harness-status env-check check-file test-one test-file lint-path docs-check accept-docs accept-env accept-backend-file accept-admin-ui accept-ops-report admin-test-one \
+        harness-status env-check check-file test-one test-file lint-path docs-check accept-docs accept-env accept-backend-file accept-backend-runtime accept-admin-ui accept-ops-report admin-test-one \
         full-test docker-test-safe smoke-safe admin-build admin-test-all \
         docker-up docker-down docker-build docker-migrate docker-test docker-shell \
         docker-up-api docker-logs-api docker-restart-api \
@@ -70,6 +70,9 @@ accept-env:
 accept-backend-file:
 	@test -n "$(FILE)" || (echo "사용법: make accept-backend-file FILE=src/agent_trading/foo.py" >&2; exit 1)
 	bash scripts/harness/run.sh accept backend-file "$(FILE)"
+
+accept-backend-runtime:
+	bash scripts/harness/run.sh accept backend-runtime
 
 accept-admin-ui:
 	bash scripts/harness/run.sh accept frontend

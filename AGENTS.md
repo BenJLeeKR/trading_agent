@@ -44,6 +44,7 @@
 - 문서 정합성의 정답 판정은 `bash scripts/harness/run.sh accept docs` 또는 `make accept-docs`를 사용한다.
 - 운영 환경 재현성의 정답 판정은 `bash scripts/harness/run.sh accept env` 또는 `make accept-env`를 사용한다.
 - 단일 백엔드 파일의 정답 판정은 `bash scripts/harness/run.sh accept backend-file <file>` 또는 `make accept-backend-file FILE=<file>`을 사용한다.
+- 백엔드 런타임 계약의 정답 판정은 `bash scripts/harness/run.sh accept backend-runtime` 또는 `make accept-backend-runtime`을 사용한다.
 - Admin UI의 정답 판정은 `bash scripts/harness/run.sh accept frontend` 또는 `make accept-admin-ui`를 사용한다.
 - 운영 리포트 `summary_json`의 정답 판정은 `bash scripts/harness/run.sh accept ops-report <summary_json>` 또는 `make accept-ops-report SUMMARY_JSON=<summary_json>`을 사용한다.
 - 환경 재현성 확인은 `bash scripts/harness/run.sh env-check` 또는 `make env-check`를 사용한다.
