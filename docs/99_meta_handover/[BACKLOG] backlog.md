@@ -1569,6 +1569,17 @@
   없음, 신규 KIS 호출 0건. 상세: `docs/10_signal_research_sppv/
   [DESIGN] regime_conditional_entry_signal_v1.md` §95.
 
+- **[SPPV-2.108에서 정정] 위 fraud investigation 근거 "정당한
+  다운그레이드" 판정은 표본 1건(2%) 과대 대표였다.**
+- 2026-07-27 KST(SPPV-2.108): max_cap=30 설계 검토(코드 미작성,
+  최소 수정안/영향범위/검증포인트 정리만) + 001450 층3 재관찰.
+  키워드 기반 재집계로 `risk_off`+`volatility` 조합이 55건 전수
+  (100%)의 공통 축임을 확인, `fraud`는 7건(13%) 소수 동반 요소로
+  정정. 정당 반영/과잉 방어 여부 미확정. 상류(max_cap)·하류(층3
+  AI downgrade) 이중 병목으로 재정리. 코드 변경 없음, 신규 KIS
+  호출 0건. 상세: `docs/10_signal_research_sppv/[DESIGN] regime_
+  conditional_entry_signal_v1.md` §96.
+
 ---
 
 ## 관리 원칙

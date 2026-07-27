@@ -11710,3 +11710,194 @@ cap=60의 shadow 재구성 시 `max_cap=100`을 가정했던 것은 실제
    것으로 보인다(001450은 이미 자연적으로 eligibility를 통과했고,
    나머지 신규 종목들은 entry_score 자체가 0.36으로 낮아 조건부
    완화(entry_score≥0.70)의 적용 대상도 아니다) — 후순위 유지.
+
+
+---
+
+## §96. `max_cap=30` 설계 검토(코드 미수정) + 001450 층3 downgrade 재관찰(SPPV-2.108, 2026-07-27 KST)
+
+**전제**: 이번 턴은 사용자 명시 지시에 따라 **코드 수정 금지, 문서화
+중심 검토 턴**이다. 아래 두 축은 서로 다른 층(상류 universe 구성 vs
+하류 AI 판단)이므로 분리해서 다룬다.
+
+### 96.1 Part A — `max_cap=30` 설계 검토
+
+**Q1. 실제 코드 경로(사실, 재확인)**
+
+`scripts/run_decision_loop.py`의 `_load_trading_universe_with_anchor()`
+내부, `CompositionContext` 생성부(약 707번째 줄 부근)에 다음과 같이
+하드코딩되어 있다:
+
+```python
+max_cap=max_cap if max_cap is not None else 30,
+```
+
+이 함수는 `max_cap` 파라미터를 받지만, 실제 프로덕션 호출부 2곳
+(`scripts/run_decision_loop.py:2509`, `scripts/run_ops_scheduler.py:2738`)
+모두 **인자 없이(zero-argument)** 호출한다. 따라서 `max_cap`은 항상
+`None` → 항상 `30`으로 귀결된다. `core_cap`과 달리 `max_cap`을 읽는
+env 변수는 코드베이스 어디에도 없다(grep 재확인, 0건 매치).
+
+`CompositionContext`(`universe_selection_types.py`) 자체의 dataclass
+기본값도 `max_cap: int = 30`으로 이중으로 30을 강제한다.
+
+**Q2. `core_cap=60`이 열어준 후보가 `max_cap=30`에 실제로 막히는가
+(사실, §95에서 이미 실측 확인된 내용 재확인)**
+
+그렇다. §95.6에서 실측한 대로, 2026-07-27 실제 프로덕션 로그의
+`Trading universe (30)` 목록에는 `009150`(rank 60, percentile 0.818)이
+포함되지 않았다 — 상위 30위 안에 든 core 종목만 universe에 진입했고,
+31~60위 구간은 `core_cap=60` 설정과 무관하게 `max_cap=30`이라는
+별도의 total-cap 루프 break 조건에 의해 원천 차단된다
+(`universe_selection.py`의 `if non_held_count >= ctx.max_cap: break`).
+
+**Q3. 조정 시 최소 수정안 / 영향 범위 / 검증 포인트(설계 diff 관점,
+코드 미작성)**
+
+- **최소 수정안**: `TRADING_UNIVERSE_CORE_CAP`과 동일한 패턴을
+  거울처럼(mirror) 적용 — `run_decision_loop.py` 상단에
+  `DEFAULT_TRADING_UNIVERSE_MAX_CAP = 30`,
+  `ENV_TRADING_UNIVERSE_MAX_CAP = "TRADING_UNIVERSE_MAX_CAP"` 상수를
+  추가하고, `_load_trading_universe_with_anchor()` 내부에서
+  `resolved_core_cap`과 동일한 방식으로
+  `resolved_max_cap = max_cap if max_cap is not None else int(os.getenv(ENV_TRADING_UNIVERSE_MAX_CAP, str(DEFAULT_TRADING_UNIVERSE_MAX_CAP)))`
+  를 계산해 `CompositionContext(max_cap=resolved_max_cap, ...)`에
+  전달하도록 바꾸는 것이 유일하게 필요한 코드 변경 지점이다.
+  `docker-compose.yml`의 `ops-scheduler` 서비스 env 블록에
+  `TRADING_UNIVERSE_MAX_CAP: "${TRADING_UNIVERSE_MAX_CAP:-30}"` 라인을
+  추가하고, `.env.example`에 설명 주석을 다는 것도 필요하다(기존
+  `TRADING_UNIVERSE_CORE_CAP` 배선 때와 동일한 절차).
+- **영향 범위**: `_load_trading_universe_with_anchor()`,
+  `run_decision_loop.py`/`run_ops_scheduler.py`의 두 호출부(단, 이
+  호출부 자체는 수정 불필요 — 인자를 안 넘겨도 함수 내부
+  기본값 해석 로직만 바뀌면 됨), `docker-compose.yml`,
+  `.env.example`. `universe_selection.py`/`universe_selection_types.py`는
+  수정 불필요(이미 `max_cap`을 파라미터로 받는 구조).
+- **검증 포인트**: (1) env 미설정 시 기존 동작(30)과 100% 동일한지
+  단위 테스트로 확인, (2) env 설정 시 실제 `compose()` 호출 결과
+  universe 크기가 설정값과 일치하는지, (3) `core_cap`과의 상호작용
+  — `max_cap < core_cap`으로 설정된 경우 여전히 `max_cap`이
+  총량 상한으로 우선 적용되는지(현재 루프 구조상 `core_cap`은
+  "CORE 소스 내부 하위 상한"이고 `max_cap`은 "전체 non-held 상한"이므로
+  둘의 우선순위 관계를 테스트로 명시할 필요), (4) held position이
+  많은 날 `exclude_held_from_cap` 조합에서 회귀가 없는지.
+
+**주의(설계 검토 범위 한정)**: 이번 턴은 "몇으로 바꿀지"를 논하지
+않는다 — 위 항목은 "어디서, 어떤 방식으로, 어떤 영향으로 조정되는지"에
+대한 구조적 설명이며, 실제 값 변경이나 코드 작성은 다음 턴 이후
+별도 승인을 받아야 한다.
+
+### 96.2 Part B — 001450 층3(AI downgrade) 관찰 재정리
+
+**방법론 수정 사항(사실, 이전 턴 분석의 한계 발견)**: 직전(§95) 분석은
+사용자가 지정한 6개 reason 문자열과의 **정확 일치(exact string
+match)**만 카운트했다. 그런데 `reason_codes`/`risk_reason_codes`는
+AI(LLM)가 매 사이클 생성하는 자유 서술형 값이며 고정된 enum이 아니다.
+실제로 같은 날 동일 종목(001450)의 서로 다른 사이클 기록에서 다음과
+같은 표현 변이가 관찰되었다(사실, 3건 표본 직접 확인):
+
+- `risk_off_tone` vs `risk_off_regime`
+- `regulatory_scrutiny` vs `regulatory_risk`
+- `high_volatility_flag` vs `high_volatility` vs `volatility_high`
+- `strategy_mismatch_defensive_but_candidate_buy` vs `strategy_style_mismatch`
+
+이 때문에 직전 정확-일치 카운트는 `risk_off_tone` 계열을 55건 중
+17건으로, "매칭 없음"을 37건(67%)으로 과다 집계했다 — **이는 실제
+분포가 아니라 방법론 결함(정확 문자열 매칭)의 산물이다.** 이번 턴은
+키워드 기반(부분 문자열) 재집계로 이를 보정했다(재검증, 신규 KIS
+호출 0건, 기존 `trade_decisions` read-only 재조회만 사용).
+
+**재집계 결과(사실, `symbol='001450'`, `buy_candidate=True` AND
+`eligibility_passed=True`를 동시 만족하는 55건 전수, 2026-07-27
+KST 하루 — 최근 3거래일 창 전체를 조회해도 이 55건이 유일한 해당일임을
+재확인, "사상 최초"라는 전기간 비교 표현은 쓰지 않는다. 관찰 창은
+2026-07-24~07-27이며, 이 조건을 만족하는 날은 관찰 창 내에서
+2026-07-27 하루뿐이다):**
+
+| 버킷(키워드 매칭) | 발생 건수(55건 중) | 비율 |
+|---|---|---|
+| `risk_off`(risk_off_tone/risk_off_regime 등) | 55 | 100% |
+| `volatility`(high_volatility_flag/volatility_high 등) | 55 | 100% |
+| `strategy_mismatch` | 14 | 25% |
+| `ai_risk_reduce` | 9 | 16% |
+| `regulatory` | 9 | 16% |
+| `fraud` | 7 | 13% |
+| `conflicting_events` | 1 | 2% |
+| `media` | 1 | 2% |
+
+조합 분포(상위): `(risk_off, volatility)` 단독 26건(47%),
+`(risk_off, strategy_mismatch, volatility)` 8건(15%),
+`(ai_risk_reduce, risk_off, volatility)` 6건(11%),
+`(fraud, risk_off, volatility)` 5건(9%), 나머지는 3건 이하 소수
+조합.
+
+`risk_opinion` 분포: `reduce` 21건(38%), `review` 18건(33%),
+`allow` 16건(29%).
+
+`candidate_vs_final.final_intent` 분포(§95 이전 조회 재확인):
+`watch` 36건, `no_action` 19건 — `buy`로 이어진 사례는 0건.
+
+**직전 턴(§95) 서술 정정**: §95.8에서 "실제 fraud investigation
+이벤트에 근거한 정당한 다운그레이드"라고 단정한 것은 **표본
+1건(2%)에 근거한 과대 대표였다** — 여기서 [SPPV-2.108에서 정정]
+한다. 실제로는 `risk_off`+`volatility` 조합이 55건 전수(100%)에
+공통으로 나타나는 유일한 축이고, `fraud`는 소수(13%) 사례에서만
+추가로 동반되는 요소다.
+
+**Q3/Q4 답변(완화 제안 없이, 관찰 사실만으로 분류)**:
+
+- `risk_off`+`volatility`가 55건 전수에서 공통으로 나타난다는 점은
+  이 조합이 001450 downgrade의 **가장 직접적인 핵심 축**임을
+  시사한다(사실). 다만 이것이 "실제 시장 상황을 반영한 정당한
+  리스크 판단"인지 "AI 계층의 구조적 과잉 방어 성향(거의 모든
+  사이클에서 동일 톤 반복)"인지는 **이번 관찰만으로는 단정할 수
+  없다** — 55건이 모두 같은 하루(07-27)의 연속 사이클이라
+  시계열 독립성이 낮고(같은 날 시장 상태가 실제로 계속
+  risk-off/변동성 확대였을 수도 있고, AI가 한번 형성한 톤을
+  관성적으로 반복했을 수도 있음), 두 가설을 가르는 추가 증거
+  (예: 같은 기간 시장 전체 지수/거래대금 변동성 데이터, 다른
+  종목들의 같은 사이클 risk_opinion과의 비교)가 이번 턴 범위에는
+  없다.
+- 따라서 001450 사례는 **"정당한 리스크 반영"으로 확정할 수도,
+  "과잉 하향"으로 확정할 수도 없는, 추가 관찰이 필요한 상태**로
+  분류한다(성급한 라벨 금지 원칙 준수).
+
+### 96.3 구조 해석 — 상류(`max_cap`)와 하류(AI downgrade) 동시 병목
+
+이번 실측은 병목이 층2에서 층3으로 "이동"한 단선적 구조가 아니라,
+**상류(max_cap=30)와 하류(층3 AI downgrade)가 동시에 독립적으로
+작동하는 이중 병목 구조**임을 보여준다:
+
+- **상류 병목(`max_cap=30`)**: `009150`처럼 percentile이 높은
+  신규 후보가 층1(candidate pool) 진입 자체를 못 하게 막는다 —
+  이 종목은 층2/층3 평가를 받아볼 기회조차 없다.
+- **하류 병목(층3 AI downgrade)**: `001450`처럼 이미 max_cap=30
+  universe 안에 있고 층1(percentile/entry_score)과 층2(eligibility)를
+  모두 통과한 종목도, 층3(`candidate_vs_final`)에서
+  `risk_off`+`volatility` 축에 의해 100% 하향된다.
+
+두 병목은 서로 다른 종목·서로 다른 층에서 **동시에** 관측되므로,
+"001450의 층3 문제만 풀면 주문이 나온다"거나 "max_cap만 풀면 주문이
+나온다"라고 단정할 수 없다 — 둘 다 열어야 실제 `submit_request`
+발생 가능성을 온전히 관찰할 수 있다.
+
+### 96.4 최종 판정(성급한 Go/Watch 지양)
+
+- `max_cap=30`: 설계상 조정 여지가 존재함을 확인(env 미배선 상수,
+  코드 diff로 배선 가능) — **다만 이번 턴은 검토만, 실제 반영
+  여부는 별도 승인 필요.**
+- `001450` 층3 downgrade: `risk_off`+`volatility` 축이 55건 전수의
+  공통 근거라는 사실은 확인했으나, 이것이 정당 반영인지 과잉
+  방어인지는 **미확정(추가 관찰 필요)** — Watch/Go 라벨 부여하지
+  않음.
+
+### 96.5 다음 우선 작업(1순위/2순위)
+
+1. **1순위**: `max_cap` 설계 diff 초안 작성(env 배선 방식 코드
+   작성 — 단, 실제 값 변경/배포는 사용자 별도 승인 후) — 상류
+   병목은 구조가 이미 명확히 파악되었고 최소 수정 지점도 특정되어
+   있어 다음 착수 대상으로 우선순위가 더 높다.
+2. **2순위**: `001450` 층3 관찰 지속 — 특히 (a) 같은 기간 시장
+   전체/타 종목 risk_opinion과의 비교로 "AI 관성적 반복 톤"
+   가설을 검증할 수 있는 추가 read-only 조회 설계, (b) `risk_off`
+   축이 다음 거래일에도 100%로 유지되는지 재관찰.

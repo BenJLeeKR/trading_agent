@@ -2050,6 +2050,18 @@ value/compliance/broker가 아니라 `entry_score < 0.65`다.
   아니라 max_cap=30으로 이동. 코드 변경 없음. 상세: `docs/10_
   signal_research_sppv/[DESIGN] regime_conditional_entry_signal_
   v1.md` §95.
+- **[SPPV-2.108에서 정정] 위 §95.8의 "실제 fraud investigation
+  이벤트에 근거한 정당한 다운그레이드" 판정은 표본 1건(55건 중
+  2%)에 근거한 과대 대표였다.**
+- 2026-07-27 KST(SPPV-2.108, 코드 수정 없음): max_cap=30 설계
+  검토(코드 미작성, 최소 수정안/영향범위/검증포인트만 정리) +
+  001450 층3 재관찰 — 키워드 기반 재집계 결과 `risk_off`+
+  `volatility` 조합이 buy_candidate&eligibility_passed 동시 만족
+  55건 전수(100%)의 공통 축임을 확인, `fraud`는 7건(13%)의 소수
+  동반 요소로 정정. 정당 반영/과잉 방어 여부는 미확정(추가 관찰
+  필요). 상류(max_cap)·하류(층3) 이중 병목 구조로 재정리. 코드
+  변경 없음. 상세: `docs/10_signal_research_sppv/[DESIGN] regime_
+  conditional_entry_signal_v1.md` §96.
 - **3순위(보류 유지, 형태 재정의 — 우선순위 재조정)**: **`entry_
   score`와 BUY funnel 재현** — §2.7 확장 검증에서 하락장 안정성이
   확인되지 않아 단순 재현으로는 착수하지 않는다. §2.16~§2.21에서

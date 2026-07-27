@@ -2228,6 +2228,22 @@ entry 설계 검토로 전환**을 확정했다. 별도 문서
   cap=30`으로 확정 이동. 001450 downgrade는 정당한 리스크 반영으로
   판단, 완화 대상 아님. 코드 변경 없음, Full pytest 미실행, 신규
   KIS 호출 0건. 상세: `docs/10_signal_research_sppv/[DESIGN] regime_
+
+- **[SPPV-2.108에서 정정]** 위 106차 항목의 "정당한 리스크 반영으로
+  판단"은 fraud investigation 표본 1건(55건 중 2%)에 근거한 과대
+  대표였다.
+- 작성자: Codex
+- 수정일자: 2026-07-27 KST (108차, max_cap=30 설계 검토(코드 미작성)
+  + 001450 층3 재관찰(키워드 기반 재집계))
+- 수정내용: max_cap=30 조정 시 최소 수정안(env 배선 미러링)/영향
+  범위/검증 포인트를 코드 미작성으로 정리. 001450 재관찰은 정확
+  문자열 매칭 대신 키워드(부분 문자열) 기반으로 재집계 — `risk_
+  off`+`volatility` 조합이 buy_candidate&eligibility_passed 동시
+  만족 55건 전수(100%)의 공통 축, `fraud`는 7건(13%)의 소수 동반
+  요소임을 확인. 정당 반영/과잉 방어 여부는 미확정(추가 관찰
+  필요). 상류(max_cap)·하류(층3 AI downgrade) 이중 병목 구조로
+  재정리. 코드 변경 없음, Full pytest 미실행, 신규 KIS 호출 0건.
+  상세: `docs/10_signal_research_sppv/[DESIGN] regime_
   conditional_entry_signal_v1.md` §95.
 
 ---
@@ -5277,6 +5293,19 @@ canonical),
     로직 변경 없음, 신규 KIS 호출 0건(shadow 재호출은 `kis_
     client=None`). 상세: `docs/10_signal_research_sppv/[DESIGN]
     regime_conditional_entry_signal_v1.md` §94.
+- [x] **SPPV-2.108(신설)** max_cap=30 설계 검토(코드 미작성) +
+  001450 층3 재관찰(키워드 재집계로 fraud 과대대표 정정) (완료,
+  2026-07-27 KST, 작성자: Codex)
+  - max_cap=30 조정 최소 수정안(`TRADING_UNIVERSE_CORE_CAP` 패턴
+    미러링)/영향범위/검증포인트 정리, 코드 미작성. 001450 재관찰은
+    정확 문자열 매칭의 방법론 결함(AI 자유서술 reason_codes 표현
+    변이)을 발견·수정 — 키워드 기반 재집계 결과 `risk_off`+
+    `volatility` 조합이 55건 전수(100%) 공통 축, `fraud`는 7건
+    (13%) 소수 동반 요소. §95.8의 "정당한 다운그레이드" 단정을
+    정정, "미확정(추가 관찰 필요)"로 재분류. 상류(max_cap)·하류
+    (층3) 이중 병목 명시. 코드 변경 없음, 신규 KIS 호출 0건. 상세:
+    `docs/10_signal_research_sppv/[DESIGN] regime_conditional_
+    entry_signal_v1.md` §96.
 - [x] **SPPV-2.107(신설)** 2026-07-27 KST 첫 거래일 실측 —
   `core_cap=60`이 `max_cap=30`에 의해 상쇄됨, 001450 병목이
   층2→층3으로 이동 (완료, 2026-07-27 KST, 작성자: Codex)

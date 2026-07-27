@@ -9738,11 +9738,22 @@ agent 설계 문서 기준으로도 순서는 다음이 맞다.
      HOLD downgrade — submit_request/order_request 0건. 신규 KIS
      호출 0건. 상세: `docs/10_signal_research_sppv/[DESIGN] regime_
      conditional_entry_signal_v1.md` §95.
-   - **SPPV-3(다음 착수: [1순위] max_cap=30 하드코딩 상한 조정 여지
-     설계 검토(코드 diff 필요, 이번 턴은 검토만) +
-     001450의 층3(AI downgrade, fraud investigation 이벤트) 관찰
-     지속(완화 대상 아님) +
-     [2순위, 후순위 조정] eligibility_low_relative_activity 조건부
+   - **[SPPV-2.108에서 정정] 위 fraud investigation 근거 "정당한
+     다운그레이드" 판정은 표본 1건(2%) 과대 대표였다.**
+   - **SPPV-2.108(완료, 2026-07-27 KST, max_cap=30 설계 검토(코드
+     미작성) + 001450 층3 재관찰, 작성자: Codex)**: max_cap=30
+     조정 최소 수정안/영향범위/검증포인트 정리(코드 미작성).
+     001450 재관찰은 키워드 기반 재집계로 방법론 정정 —
+     `risk_off`+`volatility` 조합이 55건 전수(100%) 공통 축,
+     `fraud`는 7건(13%) 소수 동반 요소. 정당 반영/과잉 방어 여부
+     미확정. 상류(max_cap)·하류(층3) 이중 병목 명시. 코드 변경
+     없음, 신규 KIS 호출 0건. 상세: `docs/10_signal_research_sppv/
+     [DESIGN] regime_conditional_entry_signal_v1.md` §96.
+   - **SPPV-3(다음 착수: [1순위] max_cap=30 env 배선 코드 diff
+     초안 작성(실제 값 변경/배포는 별도 승인 후) +
+     [2순위] 001450의 층3(AI downgrade, risk_off+volatility 축)
+     관찰 지속(정당/과잉 여부 미확정, 완화 제안 아님) +
+     [3순위, 후순위 조정] eligibility_low_relative_activity 조건부
      완화(entry_score≥0.70 예외) 코드 diff 초안 설계 검토 — 신규
      진입 종목들의 entry_score가 낮아(0.36) 실익이 낮아짐, 전면
      완화 금지 +
