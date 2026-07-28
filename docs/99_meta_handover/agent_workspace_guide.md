@@ -75,9 +75,11 @@
 - Ubuntu 서버 작업 영역에서는 `python` 대신 `python3`를 사용한다.
 - 서버 환경 특성상 `sh` 실행은 실패하므로 셸 명령은 `bash`에서 실행한다.
 - 검증 계층은 `scripts/harness/README.md`의 L0~L6 정의를 따른다.
+- L4/L5 무거운 계층의 상세 분류와 보고 카운트는 `scripts/harness/README.md`를 기준으로 한다.
 - 커밋 전 빠른 스냅샷은 `bash scripts/harness/run.sh check quick` 또는 `make check-quick`을 사용한다.
 - 변경 백엔드 파일 스냅샷은 `bash scripts/harness/run.sh check changed` 또는 `make check-changed`를 사용한다.
 - 타입 검사 스냅샷은 `bash scripts/harness/run.sh type-check backend`, `bash scripts/harness/run.sh type-check frontend`, `make type-check-backend`, `make type-check-frontend`를 사용한다.
+- read-only 보안 스냅샷은 `bash scripts/harness/run.sh security scan` 또는 `make security-scan`을 사용한다.
 - 문서 정합성의 정답 판정은 `bash scripts/harness/run.sh accept docs` 또는 `make accept-docs`를 사용한다.
 - 운영 환경 재현성의 정답 판정은 `bash scripts/harness/run.sh accept env` 또는 `make accept-env`를 사용한다.
 - 단일 백엔드 파일의 정답 판정은 `bash scripts/harness/run.sh accept backend-file <file>` 또는 `make accept-backend-file FILE=<file>`을 사용한다.

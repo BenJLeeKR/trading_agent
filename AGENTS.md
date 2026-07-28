@@ -34,6 +34,7 @@
 - 커밋 전 빠른 스냅샷: `bash scripts/harness/run.sh check quick` 또는 `make check-quick`.
 - 변경 백엔드 파일 스냅샷: `bash scripts/harness/run.sh check changed` 또는 `make check-changed`.
 - 타입 검사 스냅샷: `bash scripts/harness/run.sh type-check backend`, `bash scripts/harness/run.sh type-check frontend`, `make type-check-backend`, `make type-check-frontend`.
+- read-only 보안 스냅샷: `bash scripts/harness/run.sh security scan` 또는 `make security-scan`.
 - 문서 정합성: `bash scripts/harness/run.sh accept docs` 또는 `make accept-docs`.
 - 운영 환경 재현성: `bash scripts/harness/run.sh accept env` 또는 `make accept-env`. `env-check`는 호환 alias다.
 - 단일 백엔드 파일: `bash scripts/harness/run.sh accept backend-file <file>` 또는 `make accept-backend-file FILE=<file>`.
@@ -53,6 +54,7 @@ Ubuntu 서버 작업 영역에서는 `python` 명령을 사용하지 않고 `pyt
 이 Ubuntu 서버에서는 full test suite 실행을 기본 금지한다. 이전 전체 테스트 실행에서 서버 네트워크 단절 수준의 부하가 발생했으므로, 사용자 명시 승인 없이 전체 테스트, 장시간 테스트, 외부 연동 테스트를 실행하지 않는다.
 
 - 사용자 명시 승인 없이 금지: `make test`, `python3 -m pytest`, `python3 -m pytest tests/`, `make docker-test`, `docker compose exec app python3 -m pytest tests/ -v`, `npm test`, `npm run test`, `npm run test:run`, smoke/slow/integration/broker/KIS/외부 API 연동 테스트.
+- L4/L5 무거운 계층의 상세 분류와 보고 카운트는 `scripts/harness/README.md`의 기준을 따른다.
 - 예외: 하네스가 제공하는 `accept`, `env-check`, `py-compile`, `test-one`, `test-file`, `lint-path`, `admin-test-one` 진입점은 승인 없이 실행할 수 있다.
 - 위 예외는 이미 실행 중인 컨테이너에 대한 짧은 `docker exec`, 버전 확인용 `docker run --rm node:20-slim`, 단일 테스트 selector 실행에만 적용한다.
 - 새 서비스 기동, 장시간 컨테이너 실행, 전체 테스트/전체 빌드, 외부 API 호출, DB 쓰기/마이그레이션, 운영 덤프는 계속 명시 승인 대상이다.

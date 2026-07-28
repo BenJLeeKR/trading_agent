@@ -24,6 +24,7 @@
 | 변경 백엔드 파일 검증 | `bash scripts/harness/run.sh check changed` | `make check-changed` |
 | 백엔드 타입 검사 | `bash scripts/harness/run.sh type-check backend` | `make type-check-backend` |
 | Frontend 타입 검사 | `bash scripts/harness/run.sh type-check frontend` | `make type-check-frontend` |
+| read-only 보안 검사 | `bash scripts/harness/run.sh security scan` | `make security-scan` |
 | 환경 계약 | `bash scripts/harness/run.sh accept env` | `make accept-env` |
 | 문서 계약 | `bash scripts/harness/run.sh accept docs` | `make accept-docs` |
 | 단일 백엔드 파일 | `bash scripts/harness/run.sh accept backend-file <file>` | `make accept-backend-file FILE=<file>` |
@@ -48,13 +49,26 @@
 | L3 | 단위 테스트 | 단일 파일·단일 selector만 승인 없이 실행 | `test-one`, `test-file`, `admin-test-one` |
 | L4 | 통합 테스트 | `HARNESS_ALLOW_HEAVY=1` 필요 | `full-test`, `docker-test` |
 | L5 | E2E·smoke 테스트 | `HARNESS_ALLOW_HEAVY=1` 필요 | `smoke`, broker/KIS 연동 테스트 |
-| L6 | 성능·보안 검사 | read-only secret scan 외에는 별도 승인 필요 | 다음 단계에서 `security` 계열로 검토 |
+| L6 | 성능·보안 검사 | read-only secret scan은 승인 없이 실행, dependency audit·성능 검사는 별도 승인 필요 | `security scan` |
 
 `check quick`은 커밋 전 기본 스냅샷용 계층 묶음이다. 현재 범위는 `accept docs`, `accept env`, `accept backend-runtime`, `accept frontend`, `lint-path src/agent_trading`, `git diff --check`이며 전체 테스트, 전체 빌드, DB 연결, 외부 네트워크 호출을 실행하지 않는다.
 
 `check changed`는 Git 변경 목록에서 `src/agent_trading/**/*.py` 파일만 골라 각 파일에 `accept backend-file`을 적용한다. 문서만 변경된 경우 `changed_backend_file_count=0`으로 보고하며 전체 테스트를 실행하지 않는다.
 
 `type-check backend`는 `mypy` 또는 `pyright`가 설치된 경우에만 실행한다. 둘 다 없으면 `backend_type_tool_missing_count=1`, `backend_type_check_run=0`으로 보고한다. `type-check frontend`는 `admin_ui/package.json`의 `typecheck`, `type-check`, `check:types` script 중 하나가 있을 때만 실행한다. script가 없으면 `frontend_typecheck_script_missing_count=1`, `frontend_type_check_run=0`으로 보고한다.
+
+`security scan`은 Git 변경 파일과 untracked 후보 파일을 대상으로 secret key/value 패턴을 read-only로 검사한다. `.env` 값은 읽거나 출력하지 않고, secret 후보가 있으면 값 대신 `path:line:kind`만 출력한다. 네트워크 기반 dependency audit과 성능 검사는 실행하지 않고 `dependency_audit_run=0`, `external_network_run=0`으로 보고한다.
+
+### L4/L5 무거운 계층 기준
+
+L4/L5는 코드 변경의 일반 검증 경로가 아니라 사용자가 명시적으로 승인한 수동 검증 경로다. 에이전트는 승인 없이 이 계층을 실행하지 않고, 필요하다고 판단하면 예상 부하와 대체 가능한 L0~L3 검증을 먼저 보고한다.
+
+| 계층 | 포함 범위 | 실행 예 | 보고해야 하는 카운트 |
+|------|-----------|---------|----------------------|
+| L4 통합 테스트 | 전체 pytest, Docker 기반 전체 테스트, DB·컨테이너가 필요한 통합 검증 | `HARNESS_ALLOW_HEAVY=1 bash scripts/harness/run.sh full-test`, `HARNESS_ALLOW_HEAVY=1 bash scripts/harness/run.sh docker-test` | `full_test_run`, `docker_test_run`, `failed_step_count`, 테스트 통과·실패 수 |
+| L5 E2E·smoke 테스트 | smoke, broker/KIS 연동, 외부 API 가능 경로, Admin UI 전체 빌드·전체 테스트 | `HARNESS_ALLOW_HEAVY=1 bash scripts/harness/run.sh smoke`, `HARNESS_ALLOW_HEAVY=1 bash scripts/harness/run.sh admin-build`, `HARNESS_ALLOW_HEAVY=1 bash scripts/harness/run.sh admin-test-all` | `smoke_run`, `admin_build_run`, `admin_test_run`, 외부 연동 실행 여부 |
+
+`check quick`에는 L4/L5 명령과 L6 `security scan`을 포함하지 않는다. `check quick`은 빠른 커밋 전 스냅샷으로 유지하고, 보안 스냅샷은 사용자가 별도로 요청했을 때 `security scan`으로 실행한다.
 
 ## 수동 실행 명령
 
@@ -141,6 +155,16 @@ Makefile에서는 승인 필요 명령을 `heavy-*` target으로 노출한다. �
 - `secret_key_hit_count`: secret으로 의심되는 key 또는 value 노출 수.
 
 기본 임계값은 `failed_count=0`, `timed_out_count=0`이다. 임계값을 바꾼 경우 `HARNESS_OPS_ALLOWED_FAILED_COUNT`, `HARNESS_OPS_ALLOWED_TIMED_OUT_COUNT` 값을 보고서에 남긴다.
+
+### `security scan`
+
+- `changed_file_count`: Git 변경 파일 수.
+- `untracked_file_count`: Git에 아직 추적되지 않은 후보 파일 수.
+- `candidate_file_count`: secret scan 후보 파일 수.
+- `scanned_file_count`: secret 패턴을 검사한 텍스트 파일 수.
+- `tracked_env_file_count`: Git 추적 대상에 포함된 `.env` 계열 파일 수.
+- `secret_hit_count`: secret 후보 패턴 수. 값은 출력하지 않는다.
+- `dependency_audit_run`: 네트워크 또는 registry audit 실행 여부를 나타내는 0/1 지표.
 
 ## 보고 기준
 

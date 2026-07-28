@@ -15,6 +15,7 @@ usage() {
   bash scripts/harness/run.sh check changed
   bash scripts/harness/run.sh type-check backend
   bash scripts/harness/run.sh type-check frontend
+  bash scripts/harness/run.sh security scan
   bash scripts/harness/run.sh py-compile <python_file>
   bash scripts/harness/run.sh test-one <tests/path.py::test_name>
   bash scripts/harness/run.sh test-file <tests/path.py>
@@ -390,6 +391,176 @@ PY
   return "$exit_code"
 }
 
+security_scan() {
+  python3 - <<'PY'
+import os
+import re
+import subprocess
+from pathlib import Path
+
+root = Path(os.environ["HARNESS_ROOT_DIR"])
+
+excluded_dirs = {
+    ".git",
+    ".mypy_cache",
+    ".pytest_cache",
+    ".ruff_cache",
+    "node_modules",
+    "__pycache__",
+}
+excluded_suffixes = {
+    ".png",
+    ".jpg",
+    ".jpeg",
+    ".gif",
+    ".ico",
+    ".sqlite",
+    ".db",
+    ".pyc",
+}
+excluded_names = {
+    "package-lock.json",
+    "requirements.lock",
+    "tsconfig.tsbuildinfo",
+}
+allowed_placeholder_values = {
+    "",
+    "<missing>",
+    "<redacted>",
+    "redacted",
+    "present-redacted",
+    "your_api_key_here",
+    "your-api-key-here",
+    "changeme",
+    "change_me",
+    "example",
+    "dummy",
+    "test",
+}
+
+key_pattern = re.compile(
+    r"(?i)\b(secret|password|passwd|authorization|approval_key|access_token|refresh_token|bearer_token|appkey|appsecret|api_key|client_secret)\b"
+)
+assignment_pattern = re.compile(
+    r"(?i)\b(secret|password|passwd|authorization|approval_key|access_token|refresh_token|bearer_token|appkey|appsecret|api_key|client_secret)\b"
+    r"\s*[:=]\s*['\"]?([^'\"\s#,}]{8,})"
+)
+bearer_pattern = re.compile(r"(?i)\bBearer\s+[A-Za-z0-9._~+/=-]{16,}")
+
+def run_git(args: list[str]) -> list[str]:
+    completed = subprocess.run(
+        ["git", *args],
+        cwd=root,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.DEVNULL,
+        check=False,
+    )
+    if completed.returncode != 0:
+        return []
+    return [line for line in completed.stdout.splitlines() if line]
+
+def is_scannable(path: Path) -> bool:
+    parts = set(path.parts)
+    if parts & excluded_dirs:
+        return False
+    if path.name in excluded_names:
+        return False
+    if path.name == ".env" or path.name.startswith(".env."):
+        return False
+    if path.suffix.lower() in excluded_suffixes:
+        return False
+    return path.is_file()
+
+def normalized_value(value: str) -> str:
+    return value.strip().strip("'\"").lower()
+
+def is_placeholder(value: str) -> bool:
+    normalized = normalized_value(value)
+    if normalized in allowed_placeholder_values:
+        return True
+    return (
+        "example" in normalized
+        or "placeholder" in normalized
+        or "redacted" in normalized
+        or normalized.startswith("<")
+    )
+
+changed_files = [Path(item) for item in run_git(["diff", "--name-only", "--diff-filter=ACMR"])]
+untracked_files = [Path(item) for item in run_git(["ls-files", "--others", "--exclude-standard"])]
+candidate_files = sorted(set(changed_files + untracked_files))
+env_tracked_files = [
+    path
+    for path in candidate_files
+    if path.name == ".env" or (path.name.startswith(".env.") and path.name != ".env.example")
+]
+
+scan_files = []
+for path in candidate_files:
+    absolute = root / path
+    if is_scannable(absolute):
+        scan_files.append(path)
+
+secret_hits: list[tuple[str, int, str]] = []
+read_error_count = 0
+
+for path in scan_files:
+    absolute = root / path
+    try:
+        text = absolute.read_text(errors="ignore")
+    except Exception:
+        read_error_count += 1
+        continue
+    for line_no, line in enumerate(text.splitlines(), 1):
+        if not key_pattern.search(line) and "Bearer " not in line:
+            continue
+        for match in assignment_pattern.finditer(line):
+            value = match.group(2)
+            if not is_placeholder(value):
+                secret_hits.append((path.as_posix(), line_no, match.group(1).lower()))
+        if bearer_pattern.search(line):
+            secret_hits.append((path.as_posix(), line_no, "bearer"))
+
+secret_hits = sorted(set(secret_hits))
+
+metrics = {
+    "changed_file_count": len(changed_files),
+    "untracked_file_count": len(untracked_files),
+    "candidate_file_count": len(candidate_files),
+    "scanned_file_count": len(scan_files),
+    "read_error_count": read_error_count,
+    "tracked_env_file_count": len(env_tracked_files),
+    "secret_hit_count": len(secret_hits),
+    "dependency_audit_run": 0,
+    "external_network_run": 0,
+    "full_test_run": 0,
+    "full_build_run": 0,
+}
+
+passed = (
+    metrics["read_error_count"] == 0
+    and metrics["tracked_env_file_count"] == 0
+    and metrics["secret_hit_count"] == 0
+)
+
+print(f"SECURITY scan: {'PASS' if passed else 'FAIL'}")
+for key, value in metrics.items():
+    print(f"- {key}={value}")
+
+if env_tracked_files:
+    print("DETAIL tracked_env_files:")
+    for path in env_tracked_files:
+        print(f"- {path.as_posix()}")
+
+if secret_hits:
+    print("DETAIL secret_hits:")
+    for path, line_no, kind in secret_hits:
+        print(f"- {path}:{line_no}: kind={kind}")
+
+raise SystemExit(0 if passed else 1)
+PY
+}
+
 accept_docs() {
   python3 - <<'PY'
 import os
@@ -485,7 +656,7 @@ semantic_checks = [
     ("workspace_guide_declares_project_root", contains(root / "docs" / "99_meta_handover" / "agent_workspace_guide.md", f"{root}/", "문서 역할 분리")),
     ("workspace_guide_prefers_accept_env", contains(root / "docs" / "99_meta_handover" / "agent_workspace_guide.md", "accept env", "make accept-env")),
     ("harness_readme_declares_metrics", contains(root / "scripts" / "harness" / "README.md", "accept backend-file", "tests_run_count", "secret_key_hit_count")),
-    ("harness_readme_declares_validation_layers", contains(root / "scripts" / "harness" / "README.md", "L0", "L6", "check quick", "make check-quick", "check changed", "make check-changed", "type-check backend", "make type-check-backend")),
+    ("harness_readme_declares_validation_layers", contains(root / "scripts" / "harness" / "README.md", "L0", "L6", "check quick", "make check-quick", "check changed", "make check-changed", "type-check backend", "make type-check-backend", "security scan", "make security-scan")),
     ("harness_readme_declares_api_run", contains(root / "scripts" / "harness" / "README.md", "run api-postgres", "INSPECTION_API_TOKEN")),
     ("harness_readme_declares_compat_aliases", contains(root / "scripts" / "harness" / "README.md", "docs-check", "env-check", "호환 alias")),
     ("root_agents_declares_api_run", contains(root / "AGENTS.md", "run api-inmemory", "run api-postgres")),
@@ -1916,6 +2087,18 @@ main() {
           ;;
         *)
           fail "지원하지 않는 type-check profile입니다: $profile"
+          ;;
+      esac
+      ;;
+    security)
+      local profile="${1:-}"
+      require_arg "$profile" "security_profile"
+      case "$profile" in
+        scan)
+          security_scan
+          ;;
+        *)
+          fail "지원하지 않는 security profile입니다: $profile"
           ;;
       esac
       ;;
