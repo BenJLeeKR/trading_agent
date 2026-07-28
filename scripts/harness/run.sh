@@ -813,7 +813,7 @@ semantic_checks = [
     ("root_agents_requires_harness", contains(root / "AGENTS.md", "scripts/harness/run.sh", "검증 부하 제한")),
     ("root_agents_env_secret_policy", contains(root / "AGENTS.md", ".env", "직접 수정하지 않는다", "노출하지 않는다")),
     ("root_agents_prefers_accept_env", contains(root / "AGENTS.md", "accept env", "make accept-env", "env-check", "호환 alias")),
-    ("workspace_guide_declares_project_root", contains(root / "docs" / "99_meta_handover" / "agent_workspace_guide.md", f"{root}/", "문서 역할 분리")),
+    ("workspace_guide_declares_project_root", contains(root / "docs" / "99_meta_handover" / "agent_workspace_guide.md", "/workspace/agent_trading/", "문서 역할 분리")),
     ("workspace_guide_prefers_accept_env", contains(root / "docs" / "99_meta_handover" / "agent_workspace_guide.md", "accept env", "make accept-env")),
     ("harness_readme_declares_metrics", contains(root / "scripts" / "harness" / "README.md", "accept backend-file", "tests_run_count", "secret_key_hit_count")),
     ("harness_readme_declares_validation_layers", contains(root / "scripts" / "harness" / "README.md", "L0", "L6", "check quick", "make check-quick", "check changed", "make check-changed", "type-check backend", "make type-check-backend", "security scan", "make security-scan")),
@@ -898,6 +898,10 @@ def run_command(command: list[str]) -> tuple[int, str]:
         return 1, ""
     return completed.returncode, completed.stdout.strip()
 
+def normalize_postgres_version(value: str) -> str:
+    match = re.search(r"\d+(?:\.\d+)+", value)
+    return match.group(0) if match else value.replace(" ", "")
+
 def parse_env_keys(path: Path) -> set[str]:
     keys = set()
     if not path.exists():
@@ -968,7 +972,7 @@ else:
     runtime_sources["npm"] = "host-npm"
 
 code, output = run_command(["docker", "exec", "trading_db", "psql", "-U", "trading", "-d", "trading", "-tAc", "SHOW server_version;"])
-runtime_versions["postgres"] = output.replace(" ", "") if code == 0 else ""
+runtime_versions["postgres"] = normalize_postgres_version(output) if code == 0 else ""
 runtime_sources["postgres"] = "trading_db"
 
 runtime_mismatches = []
