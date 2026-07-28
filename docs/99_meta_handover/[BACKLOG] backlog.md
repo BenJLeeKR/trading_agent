@@ -1704,6 +1704,20 @@
   완화안 미제시. 상세: `docs/10_signal_research_sppv/[DESIGN]
   regime_conditional_entry_signal_v1.md` §107.
 
+- 2026-07-28 KST(SPPV-2.121, 신규 KIS 호출 0건): `[PLAN] ranking_
+  score_formula_validation.md` §6 체크리스트 실행. 트랙 A/B는
+  기존 판정 재확인(근접 표본 0건, 4개 항목 무분산). 트랙 C
+  신규: 상위 5건 vs 하위 5건 기여도 대조 — 차이(0.1916)는 전적으로
+  entry_score+relative_activity 기여분으로만 설명, 가장 큰
+  가중치(0.20, coverage_score)가 가장 낮은 실제 설명력을 가짐.
+  트랙 D(신규): relative_activity 4곳, regime 3곳, strategy_
+  alignment 3곳(2곳 완전 동일 조건)에서 중복 반영 확인 — 중복의
+  절대 크기는 threshold 미달을 설명할 만큼 크지 않고 실질 차단력은
+  하드 게이트가 담당. 최종 판정: 1순위 산식 재검토, 2순위 중복
+  차단 정리, 3순위 모집단 재정의, 4순위 threshold 재측정. 완화안
+  미제시. 상세: `docs/10_signal_research_sppv/[DESIGN] regime_
+  conditional_entry_signal_v1.md` §109.
+
 ---
 
 ## 관리 원칙
@@ -3624,6 +3638,34 @@
 | 7 | Observability stack (metrics, tracing, structured logging, alerting) | [Enterpris`e Design](../plan_docs/ENTERPRISE_TRADING_SYSTEM_DESIGN.md) | v1 제외 |
 | 8 | Extended market session intelligence (pre/open/intraday/post/holiday checklist automation) | User request (2026-05-13) | v2/Phase X 후보 |
 | 9 | Broker-backed instrument master sync and enrichment | User request (2026-05-13) | v2/Phase X 후보 |
+
+---
+
+## ranking_score 공식 검증 백로그 (2026-07-28 추가)
+
+### 배경
+
+최근 downstream BUY funnel 검증에서 `ranking_score`가 단순 정렬 공식이
+아니라, 다른 BUY 차단 장치와 함께 **실질적인 추가 차단층**으로 작동할
+가능성이 확인됐다.
+
+### 신규 백로그 항목
+
+| # | 항목 | 상태 | 비고 |
+|---|------|------|------|
+| RS-1 | `ranking_min_score=0.48` 분포 정합성 재검증 | 🔄 검토 중 | 현재 분포에서 경계값 기능 여부 확인 필요 |
+| RS-2 | `ranking_score` 6개 구성항목 적절성 검증 | 🔄 검토 중 | 왜 이 6개가 선택됐는지, 지금도 유지할 가치가 있는지 재검증 |
+| RS-3 | 가중치(`0.55/0.10/0.20/0.10/0.03/0.02`) 적정성 검증 | 🔄 검토 중 | 명시적 계량 근거 부재, 설명력 기준 재평가 필요 |
+| RS-4 | 다른 BUY 차단 장치와의 중복 적정성 검증 | 🔄 검토 중 | `entry_score`, `relative_activity`, `coverage`, `regime` 중복 반영 여부 확인 |
+
+### 기준 문서
+
+- `docs/10_signal_research_sppv/[PLAN] ranking_score_formula_validation.md`
+
+### 현재 원칙
+
+- threshold 단독 완화는 후순위다.
+- 먼저 **공식의 목적 적합성**과 **중복 차단 구조**를 닫는다.
 
 ---
 

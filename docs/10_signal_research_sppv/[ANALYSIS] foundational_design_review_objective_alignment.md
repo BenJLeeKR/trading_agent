@@ -2430,3 +2430,61 @@ value/compliance/broker가 아니라 `entry_score < 0.65`다.
 - `plans/[DESIGN] regime_conditional_entry_signal_v1.md` — 국면 분기형
   entry 설계 초안 + shadow 계산기(2026-07-15)
 - `plans/[PRIORITY_MAP] remaining_work_priority_map.md`
+
+---
+
+## 6. ranking_score 공식 검증 트랙 신설 (2026-07-28)
+
+최근 검증으로 `BUY 주문 0건`의 원인이 단순히 "좋은 신호가 없다"가
+아니라, **좋다고 판단한 신호를 downstream에서 어떤 공식으로
+정렬·차단하느냐**까지 포함한다는 점이 드러났다.
+
+특히 다음 사실이 누적됐다.
+
+1. `ranking_min_score=0.48`은 현재 분포에서 경계값처럼 기능하지 않는다.
+2. 실제 구현식은 설계 문서 초안식과 다르다.
+3. `entry_score`, `relative_activity`, `coverage_score`, `regime`
+   축은 ranking과 eligibility/threshold에서 중복 반영된다.
+
+이에 따라 별도 계획 문서
+`docs/10_signal_research_sppv/[PLAN] ranking_score_formula_validation.md`
+를 신설하고, 아래 질문을 독립적으로 검증한다.
+
+- 임계치가 맞는가
+- 구성항목이 맞는가
+- 가중치가 맞는가
+- 다른 BUY 차단 장치와의 중복이 적절한가
+
+이 트랙의 의미는 "완화안을 빨리 넣자"가 아니다. 오히려 **공식의 역할을
+정의하지 않은 채 임계값만 조정하면, 구조적 중복 처벌을 그대로 둔 채
+문턱만 이동시키는 임시방편이 될 위험이 크다**는 점을 문서 차원에서
+고정한다.
+
+## 7. `[PLAN] ranking_score_formula_validation.md` §6 체크리스트 실행 결과(SPPV-2.121, 2026-07-28 KST)
+
+위 §6에서 신설한 계획 문서의 §6 실행 체크리스트를 실제로 수행했다
+(코드 미수정, threshold/diff/완화안 제안 없음, 신규 KIS 호출 0건).
+
+- **트랙 A(임계치)**: `0.43~0.48` 근접 표본 최근 3거래일·전체
+  이력 모두 0건(재확인, 불변).
+- **트랙 B(구성항목)**: 6개 중 4개(`coverage_score`/`allocation_
+  quality`/`regime_tailwind`/`strategy_alignment`)가 이 모집단
+  안에서 완전 무분산(고정), 변별력 있는 항목은 `entry_score`/
+  `relative_activity` 2개뿐.
+- **트랙 C(가중치)**: 상위 5건 vs 하위 5건 기여도 직접 대조 —
+  두 그룹의 `ranking_score` 차이(0.1916)는 전적으로 `entry_
+  score`+`relative_activity` 기여분 차이로만 설명됨. 가장 큰
+  가중치(0.20, `coverage_score`)가 가장 낮은 실제 설명력(분산 0)
+  을 가짐.
+- **트랙 D(중복, 이번 턴의 핵심 산출물)**: `relative_activity`가
+  entry_score/ranking/eligibility/core guard **4곳**, `regime`
+  (risk_off)이 entry_score/ranking/eligibility·guard **3곳**,
+  `strategy_alignment`가 entry_score/ranking/core guard **3곳**
+  (2곳은 완전 동일 조건 중복)에서 반영됨을 코드로 확인. 다만
+  중복의 절대 크기(소프트 가산/감산)는 threshold 미달을 설명할
+  만큼 크지 않고, 실질 차단력은 하드 게이트가 담당함(§109.4.4).
+
+**최종 판정(4개 중 순위)**: 1순위 산식 재검토, 2순위 중복 차단
+정리, 3순위 모집단 재정의, 4순위(또는 근본 원인 아님) threshold
+재측정. 상세: `docs/10_signal_research_sppv/[DESIGN] regime_
+conditional_entry_signal_v1.md` §109.

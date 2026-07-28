@@ -13588,3 +13588,297 @@ score = (
    문제가 §99~§101의 근본 원인과 같은 뿌리인지 명시적으로 닫음.
 3. **3순위(이전 턴 이월)**: `high_volatility` 단독 경로(001450형)
    층3 관찰 지속.
+
+## §108. ranking_score 공식 자체 검증 트랙 분리 (2026-07-28 KST)
+
+**전제**: §105~§107은 `0.48`이 현재 분포에서 경계값처럼 기능하지
+않고, 실제 구현식도 설계 문서 초안과 다르며, 일부 항목이 다른 BUY
+차단 장치와 중복 반영될 가능성이 있음을 보여줬다. 따라서 이제
+쟁점은 "문턱을 조금 낮출까"가 아니라 **공식 자체가 지금 목적에 맞게
+설계돼 있는가**를 검증하는 것이다.
+
+이를 위해 별도 계획 문서
+`docs/10_signal_research_sppv/[PLAN] ranking_score_formula_validation.md`
+를 신설한다. 이 문서는 아래 4가지를 독립 검증 대상으로 고정한다.
+
+1. `ranking_min_score=0.48` 임계치 정합성
+2. 6개 구성항목의 적절성
+3. 가중치(`0.55/0.10/0.20/0.10/0.03/0.02`)의 적정성
+4. 다른 BUY 차단 장치와의 중복 적정성
+
+**현재 판단**: 이 트랙은 완화안 구현 문서가 아니라 **원인 규명 문서**
+다. 특히 `entry_score`, `relative_activity`, `coverage_score`,
+`regime` 축은 ranking과 eligibility/threshold에서 중복 반영되고 있어,
+"신호가 약해서 막힌 것"과 "같은 이유로 여러 번 막힌 것"을 구분해야
+한다.
+
+### 108.1 이 트랙의 실무적 의미
+
+- `ranking_score`는 BUY 후보를 "좋은 순서로 정렬"하는 도구여야 한다.
+- 그런데 현재는 일부 항목이
+  - threshold에서 한 번,
+  - ranking에서 한 번,
+  - eligibility에서 또 한 번
+  반영될 수 있다.
+- 이 경우 ranking은 우선순위화 공식이 아니라 **추가 처벌 공식**처럼
+  변질될 수 있다.
+
+따라서 다음 턴부터는 `0.48` 단일 숫자보다, **공식 전체의 목적 적합성**
+을 먼저 검증한다.
+
+
+---
+
+## §109. `[PLAN] ranking_score_formula_validation.md` §6 체크리스트 실행(SPPV-2.121, 2026-07-28 KST)
+
+**전제**: `[PLAN] ranking_score_formula_validation.md` §6 실행
+체크리스트를 이번 턴의 작업 순서로 그대로 사용한다. 코드 미수정,
+threshold/diff/완화안 제안 없음, `.env` 미수정, Full pytest
+미실행, 신규 KIS 호출 0건. 트랙별로 "무엇을 조회했는지/사실로
+확인된 것/아직 해석 단계인 것"을 분리한다.
+
+### 109.1 트랙 A — 임계치 정합성(§6.1 재확인)
+
+- [x] 최근 3거래일(KST) `raw_ranking_score` 구간 재집계 — **사실**:
+  `0.43~0.48` 구간 0건(§106.1과 동일 수치, 오늘 재조회로 재확인).
+- [x] 전체 이력 구간 재집계 — **사실**: `0.43~0.48` 구간 0건,
+  `0.48 이상` 0건.
+- [x] 근접 표본 수 확인 — **사실**: 0건(양 창 모두).
+- [x] 상위 20건 독립 표본성 확인 — **사실**: 전체 20건이 단일
+  종목(`002790`, 2026-07-03) 반복 사이클(§106.2 재확인).
+- [x] 1차 판정 — **해석**: 경계값 아님, 상시 봉쇄 상수에 가까움
+  (§105~§106에서 이미 판정, 이번 턴 재확인으로 불변).
+
+### 109.2 트랙 B — 구성항목 적절성(§6.2 재확인)
+
+- [x] `entry_score` 분포/상한 — **사실**: 전체 이력 mean 0.0485,
+  max 0.2479.
+- [x] `relative_activity` 분포/상한 — **사실**: mean 0.0351,
+  median 0.0000, max 0.6830.
+- [x] `coverage_score` 무분산 확인 — **사실**: 전체 이력
+  min=max=1.0000(완전 고정).
+- [x] `allocation_quality` 무분산 확인 — **사실**: min=max=0.2500
+  (완전 고정).
+- [x] `regime_tailwind` 고정값 확인 — **사실**: 전수 0.0000(이
+  모집단은 정의상 `risk_off`이므로 100% 결정적).
+- [x] `strategy_alignment` 고정값 확인 — **사실**: 전수 0.0000
+  (이 모집단은 `preferred_strategy`가 항상 `defensive_low_
+  volatility_rotation`으로 고정되어 `{swing_momentum, event_
+  continuation}` 집합에 속하지 않음).
+- [x] 변별력 있는 항목 vs 고정 바닥 항목 구분 — **사실+해석**:
+  변별력 있는 항목은 `entry_score`/`relative_activity` 2개뿐
+  (사실, 분산 존재). `coverage_score`/`allocation_quality`/
+  `regime_tailwind`/`strategy_alignment` 4개는 이 모집단 안에서
+  고정 바닥/고정 0으로만 동작한다(사실, 무분산 확인). 6개 중
+  4개가 이 특정 모집단에서는 무의미한 항목이라는 것은 해석이
+  아니라 분산=0이라는 실측 그 자체다.
+
+### 109.3 트랙 C — 가중치 적정성(§6.3 재확인 + 신규 상위/저점 비교)
+
+- [x] 실제 구현식 vs 설계 문서 초안식 차이 재확인 — **사실**(§107.1
+  에서 이미 확인): 실제 가중치는 `0.55/0.10/0.20/0.10/0.03/0.02`
+  이며 항목 구성도 초안(`0.45/0.20(slow)/0.15/0.10/0.10`)과
+  다르다. `slow_score`는 실제 식에 없고 `relative_activity`/
+  `coverage_score`가 대신 들어가 있다.
+- [x] 항목별 평균 기여도(가중치 반영) — **사실**(전체 이력
+  n=11,971): `entry_score` 기여 mean 0.0267, `relative_activity`
+  기여 mean 0.0035, `coverage_score` 기여 mean **0.2000(고정)**,
+  `allocation_quality` 기여 mean **0.0250(고정)**, `regime_
+  tailwind`/`strategy_alignment` 기여 0(고정).
+- [x] **신규**: 상위 5건 vs 하위 5건 기여도 직접 대조(DB 재조회,
+  이번 턴 신규 실측):
+
+  | 그룹 | ranking_score | entry 기여 | activity 기여 | coverage 기여 | alloc 기여 |
+  |---|---:|---:|---:|---:|---:|
+  | 상위 5건(전부 `002790`) | 0.4166 | 0.1363 | 0.0553 | 0.2000 | 0.0250 |
+  | 하위 5건(`000990`/`000720`) | 0.2250 | **0.0000** | **0.0000** | 0.2000 | 0.0250 |
+
+  | 그룹(n=50 평균) | entry 기여 | activity 기여 | coverage 기여 | alloc 기여 |
+  |---|---:|---:|---:|---:|
+  | 상위 50건 | 0.1363 | 0.0553 | 0.2000 | 0.0250 |
+  | 하위 50건 | 0.0000 | 0.0000 | 0.2000 | 0.0250 |
+
+  **사실**: 상위 그룹과 하위 그룹의 `ranking_score` 차이
+  (0.4166−0.2250=0.1916)는 **전적으로 `entry_score`(0.1363)와
+  `relative_activity`(0.0553) 기여분의 차이만으로 설명된다**
+  (0.1363+0.0553=0.1916, 정확히 일치). `coverage`/`alloc`
+  기여분은 상위·하위 그룹 간 **완전히 동일**하다 — 이 둘은 순위를
+  가르는 데 전혀 기여하지 않는다.
+- [x] 1차 판정 — **해석**: 현재 가중치 배분(`coverage_score`
+  0.20, `entry_score` 0.55)은 "설명력에 비례"하지 않는다 — 이
+  모집단 안에서 실제 순위를 가르는 것은 `entry_score`(0.55
+  가중치, 그러나 원값 자체가 낮아 절대 기여는 작음)와 `relative_
+  activity`(0.10 가중치, 원값도 낮음)뿐인데, 가중치 0.20을 받는
+  `coverage_score`는 이 모집단 안에서 변별력이 전무하다. 즉
+  **가장 큰 가중치(0.20)가 가장 낮은 실제 설명력(분산 0)을 가진
+  항목에 배정돼 있다.**
+
+### 109.4 트랙 D — 다른 BUY 차단 장치와의 중복 적정성(§6.4, 신규
+코드 확인 — 이번 턴의 핵심 산출물)
+
+전제 확인(read-only 코드, `deterministic_trigger_engine.py`):
+`ranking_score`(`_build_buy_ranking_score`)는 `_build_entry_score`
+가 이미 반환한 `entry_score`를 그대로 입력값으로 재사용한다 — 즉
+`entry_score` 자체가 이미 여러 신호를 내부적으로 합성한 값이고,
+`ranking_score`는 그 위에 다시 일부 항목을 얹는 2층 구조다.
+
+#### 109.4.1 `entry_score` 중복
+
+- `_build_entry_score`(내부): `overall`/`fast`/`slow` 가중합에
+  더해 `risk_off` 시 **−0.15**, `strategy_selection.preferred_
+  strategy ∈ {swing_momentum, event_continuation}` 시 **+0.05**,
+  `relative_activity_bonus` 최대 **+0.10**을 이미 반영.
+- `_assess_buy_eligibility`: `buy_candidate_threshold=0.65`로
+  `entry_score` 자체를 **하드 게이트**.
+- `_build_buy_ranking_score`: 이 `entry_score`를 다시 **0.55
+  가중치로 재사용**.
+- **역할 구분(사실+해석)**: threshold(0.65)는 "후보 생성
+  가능 여부"를 정하는 이진 게이트, ranking(0.55×)은 "생성된
+  후보 중 순위"를 정하는 연속값 — **역할은 다르다**(같은 방향
+  누적이 아니라 후보생성→순위화의 순차 구조). 다만 `risk_off`
+  페널티(−0.15)는 이 entry_score 안에만 있고 ranking_score의
+  `regime_tailwind`와는 별개 항이므로, 최종적으로는 §109.4.4에서
+  regime 축과 함께 다시 다룬다.
+
+#### 109.4.2 `relative_activity` 중복
+
+- 동일한 원시 필드(`volume_surge_ratio`/`turnover_surge_ratio`)가
+  **세 곳**에서 쓰인다:
+  1. `_build_entry_score` 내부(`relative_activity_bonus`, 최대
+     +0.10)
+  2. `_build_buy_ranking_score`(`relative_activity`, 0.10 가중치)
+  3. `_assess_buy_eligibility`의 `eligibility_low_relative_
+     activity`(임계값 **1.10 미만 하드 차단**)
+  4. (core+risk_off 한정) `_assess_core_risk_off_buy_guard`의
+     활동성 게이트(임계값 **1.20**, top-k override 시 1.10)
+- **역할 구분(사실+해석)**: (1)(2)는 같은 방향(높을수록 가산)의
+  **연속 가산 중복** — 활동성이 낮으면 entry_score와 ranking_
+  score 양쪽에서 동시에 깎인다(같은 방향으로 두 번 반영). (3)(4)
+  는 하드 게이트로 역할이 다르지만, **같은 신호(활동성)를 이미
+  두 번 가산에서 쓴 뒤 세 번째·네 번째로 다시 이진 차단에도
+  쓴다** — 이는 "후보 생성 vs 실행 가능성" 구분이 아니라 **같은
+  약점이 네 겹으로 반영되는 구조**에 가깝다(해석, 완화안 아님).
+
+#### 109.4.3 `coverage_score` 중복
+
+- `_build_feature_coverage_score`의 결과가 **두 곳**에서 쓰인다:
+  1. `_build_buy_ranking_score`(0.20 가중치, §109.3에서 이미
+     확인한 대로 이 모집단 안에서는 항상 1.0으로 무분산)
+  2. `_assess_buy_eligibility`의 `eligibility_low_feature_
+     coverage`(임계값 **0.50 미만 하드 차단**)
+- **역할 구분(사실+해석)**: 이 게이트에 도달한 모집단은 이미
+  coverage 하드 차단(<0.50)을 통과한 표본만 남은 상태이므로,
+  ranking에서 다시 0.20 가중치를 주는 것은 **변별력 없는 상수를
+  가장 큰 비중으로 재적용하는 것**과 같다(§109.3에서 실측으로
+  확인). 하드 게이트(실행 가능성 확인)와 ranking 가중치(순위화)
+  는 원래 다른 역할이어야 하나, 이 모집단에서는 ranking 쪽 역할이
+  사실상 소멸돼 있다.
+
+#### 109.4.4 `regime` 축 중복(가장 겹이 많음)
+
+- `risk_off`/`bearish_trend`가 영향을 주는 지점이 **세 겹**이다:
+  1. `_build_entry_score`: `risk_off`면 **−0.15**(연속 감점).
+  2. `_build_buy_ranking_score`: `regime_tailwind`가 `risk_off`
+     면 **0.0**(비교 대상인 `risk_on`+`bullish_trend`의 1.0 대비
+     최대 0.03 손실, §109.3에서 이 항은 이 모집단 안에서 항상
+     0으로 무분산임을 재확인).
+  3. `_assess_buy_eligibility` + `_assess_core_risk_off_buy_guard`:
+     `risk_off AND bearish_trend`(core) 또는 `risk_off`(비core)
+     시 **하드 차단**(예외 미충족 시 `eligibility_risk_off_
+     block`/`eligibility_core_risk_off_ranking_blocked` 등).
+- **역할 구분(사실+해석)**: (1)(2)는 같은 방향의 **연속 감점
+  중복**(합쳐도 최대 0.15+0.03=0.18로 절대 크기는 작음). (3)은
+  질적으로 다른 하드 게이트다 — 다만 §102~§104에서 이미 확인한
+  대로 이 하드 게이트가 실제 병목의 대부분(59.5%)을 차지하고,
+  (1)(2)의 소프트 감점은 병목 발생에 실질적으로 관여하지 않는다
+  (감점 크기가 threshold 대비 미미). **즉 regime 축은 3겹으로
+  설계돼 있지만, 실제 차단력은 거의 전부 (3)에서 나오고 (1)(2)는
+  장식적 중복에 가깝다**(해석).
+
+#### 109.4.5 `strategy_alignment` 중복
+
+- 동일한 개념(전략 정합성)이 **세 곳에서 서로 다른 전략 집합**
+  으로 쓰인다:
+  1. `_build_entry_score`: `preferred_strategy ∈ {swing_
+     momentum, event_continuation}`면 **+0.05**.
+  2. `_build_buy_ranking_score`: `strategy_alignment` — 동일한
+     집합 `{swing_momentum, event_continuation}`이면 1.0(0.02
+     가중치).
+  3. `_assess_core_risk_off_buy_guard`(core+risk_off 한정): 전혀
+     **다른 집합** `{defensive_low_volatility_rotation, mean_
+     reversion_bounce, event_continuation}`이 아니면 하드 차단.
+- **역할 구분(사실+해석)**: (1)(2)는 **완전히 동일한 조건을 두
+  번 가산하는 순수 중복**(0.05+0.02=0.07, 절대 크기는 작지만
+  중복임은 명확한 사실). (3)은 다른 전략 집합을 쓰는 별도 하드
+  게이트라 역할이 다르지만, **이 모집단에서는 `preferred_
+  strategy`가 항상 `defensive_low_volatility_rotation`으로
+  고정**돼 있어(risk_off 상태의 `strategy_selection.py` 로직,
+  §102.2에서 이미 확인) (1)(2)의 대상 집합(`swing_momentum`,
+  `event_continuation`)과 전혀 겹치지 않는다 — 즉 이 모집단
+  안에서는 (1)(2)가 발동할 조건 자체가 존재하지 않는다(§109.2의
+  `strategy_alignment` 전수 0.0000과 정합).
+
+### 109.5 트랙 D 종합(사실 요약)
+
+| 항목 | 반영 지점 수 | 같은 방향 중복(연속 가산/감산) | 하드 게이트(질적으로 다른 역할) | 이 모집단에서 실질 영향 |
+|---|---:|---|---|---|
+| `entry_score` | threshold(1) + ranking(1) | — | 있음(0.65) | 순차 구조(역할 다름) |
+| `relative_activity` | entry(1) + ranking(1) + eligibility(1) + core guard(1) | **있음**(entry+ranking) | 있음(2개) | 4겹, 가장 중첩 심함 |
+| `coverage_score` | ranking(1) + eligibility(1) | — | 있음(0.50) | ranking 쪽 변별력 소멸 |
+| `regime`(risk_off) | entry(1) + ranking(1) + eligibility/guard(1) | **있음**(entry+ranking, 크기 작음) | 있음(핵심 병목) | 하드 게이트가 실질 전부 담당 |
+| `strategy_alignment` | entry(1) + ranking(1) + core guard(1, 다른 집합) | **있음**(entry+ranking, 완전 중복) | 있음(다른 집합) | entry/ranking 중복은 이 모집단에서 발동 불가(고정 0) |
+
+### 109.6 체크리스트 완료 현황(§6.1~§6.6)
+
+- [x] §6.1 트랙 A — 완료(§109.1)
+- [x] §6.2 트랙 B — 완료(§109.2)
+- [x] §6.3 트랙 C — 완료(§109.3)
+- [x] §6.4 트랙 D — 완료(§109.4~§109.5)
+- [x] §6.5 문서 반영 체크리스트 — 이번 커밋으로 5개 canonical
+  문서 전부에 반영 완료(진행 중, 이 문단 포함 시 완료)
+- [x] §6.6 최종 완료 기준 체크 — §109.7에서 판정
+
+### 109.7 최종 판정
+
+**1순위: 산식 재검토.** 이유(사실 기반): (a) 6개 항목 중 4개
+(`coverage_score`/`allocation_quality`/`regime_tailwind`/
+`strategy_alignment`)가 이 모집단 안에서 완전 무분산(고정)이며,
+그중 가장 큰 가중치(0.20, `coverage_score`)가 가장 낮은 실제
+설명력(분산 0)을 가진다(§109.3). (b) 실제 구현식이 설계 초안식과
+이미 다르다는 것 자체가, 산식이 "설계된 대로"가 아니라 "코드가
+먼저 굳은 대로" 운영되고 있다는 근거다(§107.1, §3.6 인용 재확인).
+
+**2순위: 중복 차단 정리.** 이유: `relative_activity`가 4곳,
+`regime`이 3곳, `strategy_alignment`가 3곳(2곳은 완전 동일
+조건)에서 반영된다(§109.4). 다만 실측상 중복의 절대 크기(entry
++ranking 소프트 감점/가산 합)는 threshold 미달을 설명할 만큼
+크지 않다(§107.4에서 이미 확인한 이론적 상한 계산과 정합) — 즉
+중복은 **개념적으로는 명확히 존재**하지만, **현재 이 모집단의
+threshold 미달을 일으키는 주된 힘은 아니다**(하드 게이트가 실질
+전부를 담당, §109.4.4).
+
+**3순위: 모집단 재정의.** 이유: entry_score/relative_activity의
+낮은 원값(§106~§107) 자체가 이 모집단(`core`+`risk_off`)의
+근본 특성이며, 이는 §99~§101에서 이미 추적한 `atr_14_pct`/
+`bearish_trend` 연쇄와 같은 뿌리다 — 산식/중복 문제를 정리해도
+모집단 자체의 낮은 신호 원값 문제는 남는다.
+
+**4순위(또는 근본 원인 아님): threshold(`0.48`) 재측정.** §105~
+§107에서 이미 판정한 대로, threshold만 움직이는 것은 산식/모집단
+문제를 그대로 둔 채 문턱만 옮기는 것이라 이번 검증에서 가장
+낮은 우선순위로 유지한다.
+
+### 109.8 다음 우선 작업(완화안 아님, 후속 규명 과제로만 제시)
+
+1. **1순위**: `coverage_score`(0.20 가중치, 이 모집단 내 무분산)
+   와 `allocation_quality`(0.10 가중치, 이 모집단 내 무분산)가
+   BUY ranking 전체(이 모집단 밖의 정상 케이스 포함)에서도
+   일반적으로 무분산인지, 아니면 이 특정 모집단(`core`+`risk_
+   off`)에서만 우연히 고정되는지 — 다른 source_type/regime
+   조합에서도 같은 무분산이 나타나는지 범위를 넓혀 확인(완화안
+   설계 아님, 일반성 확인까지만).
+2. **2순위**: `relative_activity`/`regime`/`strategy_alignment`
+   3개 항목의 다중 반영 지점이 실제로 "의도된 다층 방어"인지
+   설계 문서 이력에서 명시적 근거를 추가로 찾을 수 있는지 확인.
+3. **3순위(이전 턴 이월)**: `high_volatility` 단독 경로(001450형)
+   층3 관찰 지속.

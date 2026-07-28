@@ -9901,6 +9901,20 @@ agent 설계 문서 기준으로도 순서는 다음이 맞다.
      2순위 원인=모집단 정의 문제, threshold 재측정은 근본 원인
      아님**. 상세: `docs/10_signal_research_sppv/[DESIGN] regime_
      conditional_entry_signal_v1.md` §107.
+   - **SPPV-2.121(완료, 2026-07-28 KST, `[PLAN] ranking_score_
+     formula_validation.md` §6 체크리스트 실행, 작성자: Codex,
+     코드 미수정, threshold/diff/완화안 없음, 신규 KIS 호출 0건)**:
+     트랙 A/B 재확인. 트랙 C 신규(상위 5건 vs 하위 5건 기여도
+     대조 — 차이 0.1916은 전적으로 entry_score+relative_activity
+     기여분으로 설명, 가장 큰 가중치 0.20(coverage_score)이 가장
+     낮은 실제 설명력을 가짐). 트랙 D 신규(중복 매핑 —
+     relative_activity 4곳/regime 3곳/strategy_alignment 3곳,
+     2곳 완전 동일 조건 — 다만 중복의 절대 크기는 threshold
+     미달을 설명할 만큼 크지 않고 실질 차단력은 하드 게이트가
+     담당). 최종 판정: **1순위 산식 재검토, 2순위 중복 차단
+     정리, 3순위 모집단 재정의, 4순위(근본 원인 아님) threshold
+     재측정**. 완화안 미제시. 상세: `docs/10_signal_research_sppv/
+     [DESIGN] regime_conditional_entry_signal_v1.md` §109.
    - **SPPV-3(다음 착수: [1순위] `regime_tailwind`/`strategy_
      alignment`가 `risk_off`/방어적 전략 상태에서 항상 0으로
      고정되는 것이 설계 의도인지 단순 부산물인지 확인(완화안
@@ -10259,3 +10273,32 @@ agent 설계 문서 기준으로도 순서는 다음이 맞다.
 즉, 앞으로의 우선순위는 다음 한 줄로 요약된다.
 
 > **체결 진실 강화 → 장중 실운영 검증 → 운영 메타데이터 정리 → deterministic guardrail 정리 → 전략/에이전트 구조화**
+
+---
+
+## ranking_score 공식 검증 트랙 추가 (2026-07-28)
+
+BUY 주문 0건 문제가 단순 신호 부재가 아니라 downstream 정렬·차단
+공식에도 걸쳐 있다는 점이 누적 검증으로 확인됐다. 이에 따라
+`ranking_score`를 별도 검증 트랙으로 승격한다.
+
+### 목적
+
+- `ranking_min_score=0.48`의 현재 분포 정합성 검증
+- 구성항목 6개의 적절성 검증
+- 가중치 적정성 검증
+- 다른 BUY 차단 장치와의 중복 적정성 검증
+
+### 문서 위치
+
+- `docs/10_signal_research_sppv/[PLAN] ranking_score_formula_validation.md`
+- 실행 체크리스트는 위 문서 **§6 실행 체크리스트**를 기준으로 사용한다.
+
+### 우선순위 해석
+
+- 이 작업은 단순 threshold 완화보다 앞선다.
+- 이유: 현재 쟁점은 "몇 점으로 낮출까"가 아니라, **같은 축을 여러
+  번 막는 구조인지**와 **공식이 우선순위화 도구인지 추가 처벌 도구인지**
+  를 먼저 닫아야 하기 때문이다.
+- 따라서 이 트랙은 `high_volatility`/`risk_off` 연쇄와 함께
+  **deterministic BUY funnel 정합성 복구의 핵심 진단 작업**으로 분류한다.

@@ -2438,6 +2438,25 @@ entry 설계 검토로 전환**을 확정했다. 별도 문서
   `docs/10_signal_research_sppv/[DESIGN] regime_conditional_
   entry_signal_v1.md` §107.
 
+- 작성자: Codex
+- 수정일자: 2026-07-28 KST (121차, `[PLAN] ranking_score_
+  formula_validation.md` §6 체크리스트 실행, 코드 미수정,
+  threshold/diff/완화안 없음, 신규 KIS 호출 0건)
+- 수정내용: 트랙 A/B 재확인(근접 표본 0건, 4개 항목 무분산).
+  트랙 C 신규 — 상위 5건/하위 5건 기여도 직접 대조: 차이
+  (0.1916)는 전적으로 `entry_score`+`relative_activity` 기여분
+  으로만 설명되고, 가장 큰 가중치(0.20, `coverage_score`)가
+  가장 낮은 실제 설명력(분산 0)을 가짐. 트랙 D(신규, 이번 턴
+  핵심 산출물) — `relative_activity` 4곳(entry/ranking/
+  eligibility/core guard), `regime` 3곳, `strategy_alignment`
+  3곳(2곳 완전 동일 조건)에서 중복 반영을 코드로 확인. 다만
+  중복의 절대 크기는 threshold 미달을 설명할 만큼 크지 않고,
+  실질 차단력은 하드 게이트가 담당(§109.4.4). 최종 판정: 1순위
+  산식 재검토, 2순위 중복 차단 정리, 3순위 모집단 재정의,
+  4순위(근본 원인 아님) threshold 재측정. 완화안 미제시. 상세:
+  `docs/10_signal_research_sppv/[DESIGN] regime_conditional_
+  entry_signal_v1.md` §109.
+
 ---
 
 ## 진행 체크리스트
@@ -5485,6 +5504,16 @@ canonical),
     로직 변경 없음, 신규 KIS 호출 0건(shadow 재호출은 `kis_
     client=None`). 상세: `docs/10_signal_research_sppv/[DESIGN]
     regime_conditional_entry_signal_v1.md` §94.
+- [x] **SPPV-2.121(신설)** `[PLAN] ranking_score_formula_
+  validation.md` §6 체크리스트 실행 (완료, 2026-07-28 KST,
+  작성자: Codex, 코드 미수정, threshold/diff/완화안 없음, 신규
+  KIS 호출 0건)
+  - 트랙 A/B 재확인, 트랙 C 신규(상위/하위 기여도 대조), 트랙 D
+    신규(중복 매핑 — relative_activity 4곳, regime 3곳, strategy_
+    alignment 3곳). 최종 판정: 1순위 산식 재검토, 2순위 중복
+    차단 정리, 3순위 모집단 재정의, 4순위 threshold 재측정.
+    상세: `docs/10_signal_research_sppv/[DESIGN] regime_
+    conditional_entry_signal_v1.md` §109.
 - [x] **SPPV-2.120(신설)** `ranking_score` 산식 구성요소 분해 —
   threshold vs 산식 vs 모집단 (완료, 2026-07-28 KST, 작성자:
   Codex, 코드 미수정, threshold/diff/완화안 없음, 신규 KIS 호출
@@ -7233,3 +7262,26 @@ next_direction.md`**
    설계·shadow 검증 단계에 머문다.
 2. 이 판정은 SPPV-3의 성격 자체를 바꾸는 것이라 사용자 확인을
    권장한다.
+
+## 24. ranking_score 공식 검증 트랙 분리 기록 (2026-07-28)
+
+SPPV 본체는 신호 예측력과 국면 조건부 진입 신호의 방향성 검증을
+다루고, `ranking_score` 공식의 적절성은 이제 별도 검증 트랙으로
+분리한다. 이유는 현재 쟁점이 "신호가 유의한가"가 아니라
+"유의하다고 본 신호를 downstream BUY funnel에서 어떤 공식으로
+우선순위화·차단할 것인가"로 이동했기 때문이다.
+
+이번에 별도 계획 문서
+`docs/10_signal_research_sppv/[PLAN] ranking_score_formula_validation.md`
+를 신설해 아래 4축을 독립 검증 대상으로 고정했다.
+
+1. `ranking_min_score=0.48`의 분포 정합성
+2. 구성항목 6개(`entry_score`, `relative_activity`, `coverage_score`,
+   `allocation_quality`, `regime_tailwind`, `strategy_alignment`)의
+   적절성
+3. 각 가중치의 적정성
+4. 다른 BUY 차단 장치와의 중복 적정성
+
+이 트랙은 SPPV-3의 직접 착수 이전에 정리해야 할 downstream funnel
+정합성 과제이며, threshold 단순 완화가 아니라 **공식의 역할 정의를
+먼저 다시 고정하는 작업**으로 분류한다.
