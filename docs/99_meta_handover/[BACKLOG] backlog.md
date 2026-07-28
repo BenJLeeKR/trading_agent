@@ -1683,6 +1683,14 @@
   미제시. 상세: `docs/10_signal_research_sppv/[DESIGN] regime_
   conditional_entry_signal_v1.md` §105.
 
+- 2026-07-28 KST(SPPV-2.119, 신규 KIS 호출 0건): `0.48` 모집단
+  정밀 분해. `0.43~0.48` 근접 구간 0건(양 창 모두). 모집단
+  85.68~91.02%가 `0.20~0.30`에 몰림. ranking 상위 조합에서도
+  신호(overall/slow) 개선 없음. 도입 시점 문서(평균 0.24)와
+  현재(평균 0.2568) 정합적 일치. 판정: 경계값 아님, 모집단 품질
+  문제에 가까움. 완화안 미제시. 상세: `docs/10_signal_research_
+  sppv/[DESIGN] regime_conditional_entry_signal_v1.md` §106.
+
 ---
 
 ## 관리 원칙

@@ -9875,40 +9875,56 @@ agent 설계 문서 기준으로도 순서는 다음이 맞다.
      필요)에 가장 근접. 완화안 미제시. 상세: `docs/10_signal_
      research_sppv/[DESIGN] regime_conditional_entry_signal_
      v1.md` §105.
-   - **SPPV-3(다음 착수: [1순위] `shadow_topk_exception_v2`
-     경로가 4주간 한 번도 발동하지 않은 이유가 전제조건 자체가
-     좁게 설계된 것인지 시장 조건 때문인지 원인만 더 좁혀서
-     확인(완화안 설계 아님) +
-     [2순위] `high_volatility` 단독(=`regime_label≠bearish_
+   - **SPPV-2.119(완료, 2026-07-28 KST, `0.48` 모집단 정밀 분해,
+     작성자: Codex, 코드 미수정, threshold 변경 없음, 신규 KIS
+     호출 0건)**: `eligibility_core_risk_off_ranking_blocked`
+     모집단을 구간별로 분해 — `0.43~0.48`(threshold 근접 구간)은
+     최근 3거래일·전체 이력 모두 **0건**. 모집단 85.68~91.02%가
+     `0.20~0.30`에 몰림(평균 0.2568). 전체 이력 상위 20건은
+     단일 종목(002790) 반복 기록. distinct symbol 상위 10개
+     조합에서도 신호(overall/slow) 개선 없음(−0.25~−0.62/−0.66~
+     −0.80). 도입 시점 문서(평균 0.24)와 현재(0.2568) 정합적
+     일치. 판정: 경계값으로 기능하지 않음, 모집단 품질 문제에
+     더 가까움(라벨 미부여). 완화안 미제시. 상세: `docs/10_
+     signal_research_sppv/[DESIGN] regime_conditional_entry_
+     signal_v1.md` §106.
+   - **SPPV-3(다음 착수: [1순위] 이 모집단(core+bearish_trend)이
+     신호 품질(overall/slow)이 항상 깊은 음수로만 나오는 원인을
+     `atr_14_pct`/`bearish_trend` 판정과의 연결고리 관점에서
+     "모집단 구성" 문제로 추가 좁힘(완화안 설계 아님) +
+     [2순위] `shadow_topk_exception_v2` 경로가 4주간 한 번도
+     발동하지 않은 이유가 전제조건 자체가 좁게 설계된 것인지
+     시장 조건 때문인지 원인만 더 좁혀서 확인(완화안 설계 아님) +
+     [3순위] `high_volatility` 단독(=`regime_label≠bearish_
      trend`) 경로로 이미 eligibility를 통과한 종목(001450형)의
      층3(AI downgrade) 완화 검토 방향으로 전환 — 이 하드 게이트
      (core+bearish_trend) 내부 탐색은 4턴 연속 후보 없음으로
      종료 +
-     [3순위] `core_risk_off_topk_v1` override가 실제로 어느
+     [4순위] `core_risk_off_topk_v1` override가 실제로 어느
      호출부에서 `deterministic_trigger_override`를 채워야
      활성화되는지 코드 경로만 확인(활성화 여부 결정은 별도 승인
      필요, 활성화해도 즉시 효과 없음이 이미 확인됨) +
-     [4순위] `risk_off_exception_eligible` 경로가 0.02%로 거의
+     [5순위] `risk_off_exception_eligible` 경로가 0.02%로 거의
      발동하지 않는 정확한 사유를 조건별로 분해 +
-     [5순위] `KIS_ENV`(paper/real) 실제 설정 확인 및 KIS 모의투자
+     [6순위] `KIS_ENV`(paper/real) 실제 설정 확인 및 KIS 모의투자
      서버 일봉 데이터 특성이 실전 서버와 다른지 공식 자료 기준
      별도 검증(사용자 확인 필요, `.env` 직접 열람 없이) +
-     [6순위] 가능하면 실전 서버/공개 시세로 같은 기간 KODEX200
+     [7순위] 가능하면 실전 서버/공개 시세로 같은 기간 KODEX200
      실제 스프레드 대조(신규 호출 필요 — 별도 턴·사용자 승인
      하에) +
-     [7순위] `market_regime.py`의 `bearish_trend` 조건이 `slow_
+     [8순위] `market_regime.py`의 `bearish_trend` 조건이 `slow_
      score`(파생)와 원시 지표를 동시 검사하는 중복 구조가 설계
      의도인지 확인 +
-     [8순위] `signal_feature_snapshots` 배치의 일별 1회 갱신
+     [9순위] `signal_feature_snapshots` 배치의 일별 1회 갱신
      주기·재사용 설계 확인(`build_signal_feature_snapshots.py`
      실행 이력) +
-     [9순위] 사용자가 `.env`에 `TRADING_UNIVERSE_MAX_CAP` 설정 후
+     [10순위] 사용자가 `.env`에 `TRADING_UNIVERSE_MAX_CAP` 설정 후
      `ops-scheduler` 재기동 → 다음 거래일 실측(§97.3 체크리스트:
      universe 크기/009150 진입/candidate pool 확대/buy_candidate~
      submit_request 변화) +
-     [10순위] 001450의 층3(AI downgrade, risk_off+volatility 축)
+     [11순위] 001450의 층3(AI downgrade, risk_off+volatility 축)
      관찰 지속(정당/과잉 여부 미확정, 완화 제안 아님) +
-     [11순위, 후순위 조정] eligibility_low_relative_activity 조건부
+     [12순위, 후순위 조정] eligibility_low_relative_activity 조건부
      완화(entry_score≥0.70 예외) 코드 diff 초안 설계 검토 — 신규
      진입 종목들의 entry_score가 낮아(0.36) 실익이 낮아짐, 전면
      완화 금지 +

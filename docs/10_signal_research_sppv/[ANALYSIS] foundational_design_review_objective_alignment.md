@@ -2207,6 +2207,17 @@ value/compliance/broker가 아니라 `entry_score < 0.65`다.
   근거 약한 운영 상수, 현재도 재검증 필요)에 가장 근접. 완화안
   미제시. 상세: `docs/10_signal_research_sppv/[DESIGN] regime_
   conditional_entry_signal_v1.md` §105.
+- 2026-07-28 KST(SPPV-2.119, 코드 미수정, threshold 변경 없음,
+  신규 KIS 호출 0건): `0.48` 모집단 정밀 분해. `0.43~0.48`
+  구간(threshold 근접 구간)은 최근 3거래일·전체 이력 모두 **0건**
+  — "아깝게 막힌 표본" 없음. 모집단 85.68~91.02%가 `0.20~0.30`
+  구간에 몰림(평균 0.2568). ranking 상위 10개 조합(distinct
+  symbol)에서도 신호(overall/slow)는 여전히 −0.25~−0.62/−0.66~
+  −0.80로 개선 없음. 도입 시점 문서(§3.6, 평균 0.24)와 현재
+  실측(평균 0.2568)이 정합적으로 일치. 판정: 경계값 아님, 모집단
+  품질 문제에 가까움(라벨 미부여). 완화안 미제시. 상세: `docs/10_
+  signal_research_sppv/[DESIGN] regime_conditional_entry_signal_
+  v1.md` §106.
 - **3순위(보류 유지, 형태 재정의 — 우선순위 재조정)**: **`entry_
   score`와 BUY funnel 재현** — §2.7 확장 검증에서 하락장 안정성이
   확인되지 않아 단순 재현으로는 착수하지 않는다. §2.16~§2.21에서

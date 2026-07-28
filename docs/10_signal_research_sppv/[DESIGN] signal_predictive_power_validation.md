@@ -2404,6 +2404,22 @@ entry 설계 검토로 전환**을 확정했다. 별도 문서
   미제시. 상세: `docs/10_signal_research_sppv/[DESIGN] regime_
   conditional_entry_signal_v1.md` §105.
 
+- 작성자: Codex
+- 수정일자: 2026-07-28 KST (119차, `0.48` 모집단 정밀 분해, 코드
+  미수정, threshold 변경 없음, 신규 KIS 호출 0건)
+- 수정내용: `eligibility_core_risk_off_ranking_blocked` 모집단을
+  구간별(<0.20/0.20~0.30/0.30~0.40/0.40~0.43/0.43~0.48/0.48이상)로
+  분해 — `0.43~0.48`(threshold 근접 구간)은 최근 3거래일·전체
+  이력 모두 **0건**. 모집단 85.68~91.02%가 `0.20~0.30`에 몰림
+  (평균 0.2568). 전체 이력 상위 20건은 단일 종목(002790)의 반복
+  기록임을 확인. distinct symbol 기준 상위 10개 조합에서도 신호
+  (overall/slow)는 여전히 −0.25~−0.62/−0.66~−0.80로 개선 없음.
+  도입 시점 문서(평균 0.24, §3.6)와 현재(평균 0.2568) 정합적
+  일치. 판정: 경계값으로 기능하지 않음, 모집단 품질 문제에 더
+  가까움(라벨 미부여). 완화안 미제시. 상세: `docs/10_signal_
+  research_sppv/[DESIGN] regime_conditional_entry_signal_v1.md`
+  §106.
+
 ---
 
 ## 진행 체크리스트
@@ -5451,6 +5467,14 @@ canonical),
     로직 변경 없음, 신규 KIS 호출 0건(shadow 재호출은 `kis_
     client=None`). 상세: `docs/10_signal_research_sppv/[DESIGN]
     regime_conditional_entry_signal_v1.md` §94.
+- [x] **SPPV-2.119(신설)** `0.48` 모집단 정밀 분해 — 경계값 vs
+  상시 봉쇄 상수 (완료, 2026-07-28 KST, 작성자: Codex, 코드
+  미수정, threshold 변경 없음, 신규 KIS 호출 0건)
+  - `0.43~0.48` 근접 구간 0건(양 창 모두). 모집단 85.68~91.02%가
+    `0.20~0.30`에 몰림. 상위 10개 조합에서도 신호 개선 없음.
+    판정: 경계값 아님, 모집단 품질 문제에 가까움. 상세: `docs/10_
+    signal_research_sppv/[DESIGN] regime_conditional_entry_
+    signal_v1.md` §106.
 - [x] **SPPV-2.118(신설)** `0.48` 설정 근거·정합성 검증 (완료,
   2026-07-28 KST, 작성자: Codex, 코드 미수정, threshold 변경
   없음, 신규 KIS 호출 0건)
