@@ -2457,6 +2457,23 @@ entry 설계 검토로 전환**을 확정했다. 별도 문서
   `docs/10_signal_research_sppv/[DESIGN] regime_conditional_
   entry_signal_v1.md` §109.
 
+- 작성자: Codex
+- 수정일자: 2026-07-28 KST (122차, 산식 재검토(1순위)+중복 차단
+  정리(2순위) 관점 항목별 분류, 코드 미수정, threshold/diff/
+  완화안 없음, 신규 KIS 호출 0건)
+- 수정내용: 6개 구성항목을 3분류(즉시 유지/역할 축소 검토/중복
+  제거·정리 검토)로 분류 — 즉시 유지=`entry_score`. 역할 축소
+  검토=`coverage_score`(가중치 최대인데 이 모집단 내 무분산)/
+  `regime_tailwind`(항상 죽어 있는 항). 중복 제거/정리 검토=
+  `relative_activity`(entry+ranking 소프트 2중+eligibility/core
+  guard 하드 2중, 4겹)/`strategy_alignment`(entry+ranking 조건
+  집합 완전 동일). 미확정=`coverage_score` ranking 가중치의
+  일반성, `regime` 하드 게이트 정당/과잉(§102~§104 판정 유지).
+  `[PLAN] ranking_score_formula_validation.md` §6 체크리스트
+  전 항목 완료 처리. 완화안 미제시. 상세: `docs/10_signal_
+  research_sppv/[DESIGN] regime_conditional_entry_signal_v1.md`
+  §110.
+
 ---
 
 ## 진행 체크리스트
@@ -5504,6 +5521,14 @@ canonical),
     로직 변경 없음, 신규 KIS 호출 0건(shadow 재호출은 `kis_
     client=None`). 상세: `docs/10_signal_research_sppv/[DESIGN]
     regime_conditional_entry_signal_v1.md` §94.
+- [x] **SPPV-2.122(신설)** 산식 재검토(1순위)+중복 차단 정리
+  (2순위) 관점 항목별 분류 (완료, 2026-07-28 KST, 작성자: Codex,
+  코드 미수정, threshold/diff/완화안 없음, 신규 KIS 호출 0건)
+  - 즉시 유지=entry_score. 역할 축소 검토=coverage_score/
+    regime_tailwind. 중복 제거/정리 검토=relative_activity/
+    strategy_alignment. `[PLAN]` §6 체크리스트 전 항목 완료.
+    상세: `docs/10_signal_research_sppv/[DESIGN] regime_
+    conditional_entry_signal_v1.md` §110.
 - [x] **SPPV-2.121(신설)** `[PLAN] ranking_score_formula_
   validation.md` §6 체크리스트 실행 (완료, 2026-07-28 KST,
   작성자: Codex, 코드 미수정, threshold/diff/완화안 없음, 신규

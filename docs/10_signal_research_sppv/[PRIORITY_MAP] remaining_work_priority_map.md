@@ -9915,6 +9915,21 @@ agent 설계 문서 기준으로도 순서는 다음이 맞다.
      정리, 3순위 모집단 재정의, 4순위(근본 원인 아님) threshold
      재측정**. 완화안 미제시. 상세: `docs/10_signal_research_sppv/
      [DESIGN] regime_conditional_entry_signal_v1.md` §109.
+   - **SPPV-2.122(완료, 2026-07-28 KST, 산식 재검토(1순위)+중복
+     차단 정리(2순위) 관점 항목별 분류, 작성자: Codex, 코드
+     미수정, threshold/diff/완화안 없음, 신규 KIS 호출 0건)**:
+     6개 항목을 3분류 — **즉시 유지**=`entry_score`(threshold+
+     ranking 역할 분리 정당). **역할 축소 검토**=`coverage_
+     score`(가중치 최대 0.20인데 이 모집단 내 무분산)/`regime_
+     tailwind`(항상 죽어 있는 항). **중복 제거/정리 검토**=
+     `relative_activity`(entry+ranking 소프트 2중+eligibility/
+     core guard 하드 2중, 4겹 중첩)/`strategy_alignment`(entry+
+     ranking 조건 집합 완전 동일). **미확정**=`coverage_score`
+     ranking 가중치의 일반성(이 모집단 밖 대조 필요), `regime`
+     하드 게이트 정당/과잉(§102~§104 판정 유지). `[PLAN] ranking_
+     score_formula_validation.md` §6 체크리스트 전 항목 완료
+     처리. 상세: `docs/10_signal_research_sppv/[DESIGN] regime_
+     conditional_entry_signal_v1.md` §110.
    - **SPPV-3(다음 착수: [1순위] `regime_tailwind`/`strategy_
      alignment`가 `risk_off`/방어적 전략 상태에서 항상 0으로
      고정되는 것이 설계 의도인지 단순 부산물인지 확인(완화안

@@ -1718,6 +1718,16 @@
   미제시. 상세: `docs/10_signal_research_sppv/[DESIGN] regime_
   conditional_entry_signal_v1.md` §109.
 
+- 2026-07-28 KST(SPPV-2.122, 신규 KIS 호출 0건): 산식 재검토(1순위)
+  + 중복 차단 정리(2순위) 관점 항목별 분류. 즉시 유지=entry_score.
+  역할 축소 검토=coverage_score/regime_tailwind. 중복 제거/정리
+  검토=relative_activity/strategy_alignment. 미확정(일반 모집단
+  대조 필요)=coverage_score의 ranking 가중치 일반성, regime 하드
+  게이트 정당/과잉(§102~§104 판정 유지). `[PLAN] ranking_score_
+  formula_validation.md` §6 체크리스트 전 항목 완료 처리. 완화안
+  미제시. 상세: `docs/10_signal_research_sppv/[DESIGN] regime_
+  conditional_entry_signal_v1.md` §110.
+
 ---
 
 ## 관리 원칙

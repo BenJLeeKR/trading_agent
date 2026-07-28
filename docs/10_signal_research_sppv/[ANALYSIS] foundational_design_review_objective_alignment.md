@@ -2488,3 +2488,29 @@ value/compliance/broker가 아니라 `entry_score < 0.65`다.
 정리, 3순위 모집단 재정의, 4순위(또는 근본 원인 아님) threshold
 재측정. 상세: `docs/10_signal_research_sppv/[DESIGN] regime_
 conditional_entry_signal_v1.md` §109.
+
+## 8. 산식 재검토 + 중복 차단 정리 관점 항목별 분류 결과(SPPV-2.122, 2026-07-28 KST)
+
+`[PLAN] ranking_score_formula_validation.md` §6 체크리스트를
+전 항목 완료 처리하고, 6개 구성항목을 "유지 가치 높음/역할
+축소·재정의 후보/다른 장치와 중복돼 재검토 필요"로 분류했다
+(코드 미수정, threshold/diff/완화안 없음, 신규 KIS 호출 0건).
+
+- **즉시 유지**: `entry_score`(threshold+ranking 역할 분리는
+  정당한 순차 구조).
+- **역할 축소 검토**: `coverage_score`(가장 큰 가중치 0.20이나
+  이 모집단 내 무분산), `regime_tailwind`(항상 죽어 있는 항).
+- **중복 제거/정리 검토**: `relative_activity`(entry+ranking
+  소프트 2중 + eligibility/core guard 하드 2중, 4겹 중첩),
+  `strategy_alignment`(entry+ranking 조건 집합이 완전히 동일한
+  순수 중복).
+- **미확정(일반 모집단 대조 필요)**: `coverage_score`의 ranking
+  가중치가 이 특정 모집단에서만 무의미한지, `regime` 하드 게이트
+  부분의 정당/과잉 여부(§102~§104 판정 유지).
+
+**최종 판정**: 다음 단계는 `coverage_score`/`regime_tailwind`의
+역할 재정의(산식 쪽)가 `relative_activity`/`strategy_alignment`
+의 중복 제거(중복 쪽)보다 순서상 먼저다 — 다만 이번 턴은 진단·
+분류까지만이며, 구체적 diff는 다음 턴 이후 별도 승인 대상이다.
+상세: `docs/10_signal_research_sppv/[DESIGN] regime_conditional_
+entry_signal_v1.md` §110.
