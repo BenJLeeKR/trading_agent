@@ -2367,6 +2367,20 @@ entry 설계 검토로 전환**을 확정했다. 별도 문서
   제시하지 않음. 상세: `docs/10_signal_research_sppv/[DESIGN]
   regime_conditional_entry_signal_v1.md` §103.
 
+- 작성자: Codex
+- 수정일자: 2026-07-28 KST (117차, `ranking_blocked` 제외 후
+  경계 표본 탐색, 코드 미수정, diff 초안 없음, 신규 KIS 호출 0건)
+- 수정내용: `core_risk_off_guard_active=true` 레코드 전수(3거래일
+  n=2,623, 전체 이력 n=11,891) 중 `ranking_blocked` 이외의 차단
+  사유는 0건(게이트 1에서 즉시 반환되는 구조). shadow 진단으로도
+  신호 게이트(overall≥0/slow≥−0.05)까지 격차가 전체 이력 최댓값
+  기준 각각 0.251/0.34, near-miss 표본 0건. 전략 게이트는 항상
+  pass. 판정: 완화 검토 가치 있는 사유 1·2순위 모두 없음 — 억지로
+  후보를 남기지 않음. 다음 턴은 이 게이트를 우회하는 high_
+  volatility 단독 경로(001450형)의 층3(AI downgrade) 쪽으로
+  방향 전환 제안. 상세: `docs/10_signal_research_sppv/[DESIGN]
+  regime_conditional_entry_signal_v1.md` §104.
+
 ---
 
 ## 진행 체크리스트
@@ -5414,6 +5428,15 @@ canonical),
     로직 변경 없음, 신규 KIS 호출 0건(shadow 재호출은 `kis_
     client=None`). 상세: `docs/10_signal_research_sppv/[DESIGN]
     regime_conditional_entry_signal_v1.md` §94.
+- [x] **SPPV-2.117(신설)** `ranking_blocked` 제외 후 경계 표본
+  탐색 (완료, 2026-07-28 KST, 작성자: Codex, 코드 미수정, diff
+  초안 없음, 신규 KIS 호출 0건)
+  - `core_risk_off_guard_active=true` 전수(3거래일 2,623건,
+    전체 이력 11,891건) 중 ranking_blocked 이외 사유 0건. shadow
+    신호 게이트 격차 최소 0.25, near-miss 0건. 판정: 완화 검토
+    가치 있는 사유 1·2순위 모두 없음. 다음 턴 방향 전환(층3)
+    제안. 상세: `docs/10_signal_research_sppv/[DESIGN] regime_
+    conditional_entry_signal_v1.md` §104.
 - [x] **SPPV-2.116(신설)** `risk_off AND bearish_trend` 하드
   게이트 완화 후보 사전 정밀 검증 (완료, 2026-07-28 KST, 작성자:
   Codex, 코드/설정 변경 없음, 신규 KIS 호출 0건)

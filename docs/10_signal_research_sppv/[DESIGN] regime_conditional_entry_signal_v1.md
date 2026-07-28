@@ -12979,3 +12979,127 @@ negative)인 표본으로만 구성**돼 있다는 뜻이다.
    `max_cap` env 값 실제 반영/재기동/실측, `001450` 층3(AI
    downgrade, `bearish_trend`가 아닌 `high_volatility` 단독
    경로) 관찰 지속.
+
+
+---
+
+## §104. `ranking_blocked` 제외 후 경계 표본 탐색(SPPV-2.117, 2026-07-28 KST)
+
+**전제**: §103에서 `ranking_blocked` 자체는 완화 타깃이 아니라고
+확정했다. 이번 턴은 그 외 하드 게이트 서브셋(`signal_blocked`/
+`activity_blocked`/`strategy_blocked`/`guard_pass`)에서 경계
+표본을 찾는다. 코드 미수정, diff 초안 없음, threshold 변경 없음,
+`atr_14_pct`/`max_cap`/`core_cap`/`001450` 단일 종목 맞춤 완화
+논의 없음.
+
+### 104.1 하드 게이트 차단 사유 전체 분해(Q-A)
+
+`trade_decisions.decision_json.deterministic_trigger.metadata.
+core_risk_off_guard_reasons`를
+`core_risk_off_guard_active='true'` 조건으로 전수 집계했다.
+
+| 창 | 전체 n | `ranking_blocked` | 그 외 사유(`signal_blocked`/`activity_blocked`/`strategy_blocked`/`guard_pass`) |
+|---|---:|---:|---:|
+| 최근 3거래일(07-24/27/28) | 2,623 | 2,623(100%) | **0건** |
+| 전체 이력 | 11,891 | 11,891(100%) | **0건** |
+
+**핵심 사실**: `core_risk_off_guard_active=true`로 표시된 레코드
+전수(3거래일·전체 이력 모두)에서 `core_risk_off_guard_reasons`에
+`eligibility_core_risk_off_ranking_blocked` **이외의 사유가 단
+한 건도 기록된 적이 없다.** 이는 `_assess_core_risk_off_buy_
+guard()`가 게이트 1(ranking_score≥0.48, 또는 top-k override)에서
+막히면 즉시 `return`하는 구조라서(§103.1), top-k override가
+비활성인 현재 운영 조건에서는 게이트 2~5(신호/활동성/전략)가
+**실제로 평가된 적이 단 한 번도 없기 때문**이다. `source_type`은
+이 게이트가 `core` 전용이라 100% `core`로 고정된다.
+
+### 104.2 `ranking_blocked` 제외 후 경계 표본 탐색(Q-B)
+
+게이트 2~5는 production에서 발동하지 않으므로, 대신 매 사이클
+함께 기록되는 **shadow 진단 필드**(`core_risk_off_experiment.
+shadow_overall_score`/`shadow_slow_score`/`shadow_activity_pass`/
+`shadow_strategy_pass`)를 통해 "게이트 1을 우회했다면 게이트
+2~5에서 경계에 걸릴 표본이 있는가"를 조사했다(전체 이력
+n=11,891, `shadow_*` 필드 결측 제외 유효 n=9,955~10,364).
+
+- **overall≥0.0까지 거리**: 전체 이력 중 관측된 `shadow_overall_
+  score` **최댓값(가장 유리한 사례)도 −0.251** — threshold까지
+  거리 0.251. `overall`이 threshold 0.1 이내(−0.10~0.0)에 든
+  표본은 **0건**.
+- **slow≥−0.05까지 거리**: `shadow_slow_score` 최댓값도 −0.390 —
+  threshold까지 거리 0.34. `slow`가 threshold 0.10 이내
+  (−0.15~−0.05)에 든 표본도 **0건**.
+- **`overall`과 `slow` 둘 다 근접한 표본**: 0건.
+- **`shadow_signal_pass`(overall≥0 and slow≥−0.05) True인 표본**:
+  전체 이력 11,891건 중 **0건**.
+- **`shadow_strategy_pass=False`인 표본**: 전체 이력 **0건** —
+  전략 조건은 한 번도 병목이었던 적이 없다.
+- **`shadow_activity_pass=True`인 표본**: 1,474/10,364(14.2%) —
+  다만 이 표본들도 신호(overall/slow) 게이트가 이미 실패한
+  상태이므로, 활동성만 완화해도 최종 결과에 영향이 없다.
+- **ranking_score 상위 20건(가장 유망했던 순서로 정렬)조차** 예외
+  없이 `overall=-0.25`대, `slow=-0.66`대에 머문다(대표 사례
+  `002790`, 2026-07-03, rank=0.417 — 이 종목이 전체 이력에서
+  가장 순위가 높았던 사례임에도 신호 게이트는 threshold와 0.25~
+  0.34 격차).
+- **`risk_off_exception_eligible` 직전까지 간 흔적**: 위 결과상
+  게이트 1을 통과해도 게이트 2에서 즉시 막히므로, "예외 경로
+  직전까지 간" 표본은 관측되지 않는다.
+
+**결론(Q-B)**: `ranking_blocked`를 제외한 나머지 서브셋은
+**실제로 존재하지 않는다**(production 관측 0건). 게이트 1을
+우회했다고 가정한 shadow 시뮬레이션 기준으로도, 신호 게이트
+(overall/slow)에서 threshold와 최소 0.25 이상 격차가 있는
+"깊게 음수인" 집단만 확인되며, 경계(near-miss) 표본은 전체
+이력에서 **0건**이다.
+
+### 104.3 완화 검토 가치가 있는 사유(Q-C)
+
+| 사유 | 경계 표본 존재 | 종목 수 | 3거래일 반복성 | 전체 이력 반복성 | 판정 |
+|---|---|---:|---|---|---|
+| `ranking_blocked` | 없음(§103 확정) | 21~25 | 매 사이클 | 매 사이클 | 완화 타깃 아님 |
+| `signal_blocked`(shadow) | **없음**(격차 0.25~0.34) | — | 0건(발동 안 함) | 0건(발동 안 함) | 완화 검토 가치 없음 |
+| `activity_blocked`(shadow) | 부분 있음(14.2%) but 신호 실패로 무의미 | — | 0건(발동 안 함) | 0건(발동 안 함) | 완화 검토 가치 없음(신호가 먼저 막음) |
+| `strategy_blocked`(shadow) | 없음(0건, 전략은 항상 pass) | — | 0건 | 0건 | 완화 대상 자체가 아님 |
+
+**1순위/2순위 모두 "없음"으로 명시한다** — 이번 실측은 완화 검토
+가치가 있는 사유를 찾지 못했다. 억지로 순위를 매기면 사실을
+왜곡하게 되므로, 이번 턴은 "후보 없음"을 정확한 결론으로
+기록한다.
+
+### 104.4 기존 예외 경로와의 관계(Q-D)
+
+- 위 결론상, 현재 이 하드 게이트(`_assess_core_risk_off_buy_
+  guard`) 내부에는 **신규든 기존이든 연결할 만한 경계 표본
+  자체가 없다** — 신규 예외를 만들거나 기존 예외(`risk_off_
+  exception_eligible`/top-k override) 입력 조건을 조정하는 것
+  모두, 대상 표본이 없으므로 실효가 없다.
+- top-k override를 활성화하더라도(§103.4에서 이미 확인), 게이트
+  1을 통과한 상위 후보들조차 게이트 2(신호)에서 예외 없이 즉시
+  막히므로 — **이 게이트 내부에서는 "기존 경로 재사용"과 "신규
+  설계" 중 어느 쪽을 택해도 현재 데이터로는 결과가 같다(둘 다
+  0건)**.
+
+### 104.5 최종 판정
+
+`risk_off AND bearish_trend` 하드 게이트는 게이트 1(ranking)뿐
+아니라 게이트 2(신호)에서도 전체 이력에 걸쳐 threshold와 최소
+0.25 이상의 격차를 유지하는 **깊게 음수인 단일 모집단**으로만
+구성돼 있다. `ranking_blocked` 이외의 서브셋을 찾는 이번 탐색은
+**"조건부 완화 후보가 이 게이트 내부에는 존재하지 않는다"**는
+결론으로 닫힌다(3턴 연속 동일한 방향의 증거 — §102/§103/§104).
+
+### 104.6 다음 우선 작업(완화 후보 없음, 방향 전환 제안만)
+
+1. **1순위**: 이 하드 게이트(`core` + `bearish_trend`) 내부
+   탐색은 이번 턴으로 종료하고, 다음 턴은 **이 게이트를 우회하는
+   경로**(001450처럼 `regime_label≠bearish_trend`, 즉
+   `high_volatility` 단독으로 risk_off가 성립하는 경로)의 층3(AI
+   downgrade) 쪽으로 완화 검토 방향을 이동할 것을 제안한다(이
+   경로는 이미 eligibility를 통과하므로, 하드 게이트가 아니라
+   AI 판단 층의 문제이며 §98/§99에서 이미 별도로 관찰돼 있다).
+2. **2순위(이전 턴 이월)**: `eligibility_core_risk_off_ranking_
+   blocked` 게이트의 원 설계 시점(§36) 시장 조건과 현재의 차이,
+   "하락 국면 한정" 스코프 미반영 여부 확인.
+3. **3순위(후순위, 이전 턴 이월)**: `KIS_ENV` 실제 설정 확인,
+   `max_cap` env 값 실제 반영/재기동/실측.

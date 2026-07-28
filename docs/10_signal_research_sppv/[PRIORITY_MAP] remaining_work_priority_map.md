@@ -9848,15 +9848,33 @@ agent 설계 문서 기준으로도 순서는 다음이 맞다.
      없음(게이트 2 신호 조건 100% 실패). 2번째 후보는 데이터
      미지지로 제시하지 않음. 상세: `docs/10_signal_research_sppv/
      [DESIGN] regime_conditional_entry_signal_v1.md` §103.
-   - **SPPV-3(다음 착수: [1순위] `core_risk_off_topk_v1` override가
-     실제로 어느 호출부에서 `deterministic_trigger_override`를
-     채워야 활성화되는지 코드 경로만 확인(활성화 여부 결정은 별도
-     승인 필요) +
-     [2순위] `eligibility_core_risk_off_ranking_blocked` 하드
+   - **SPPV-2.117(완료, 2026-07-28 KST, `ranking_blocked` 제외
+     후 경계 표본 탐색, 작성자: Codex, 코드 미수정, diff 초안
+     없음, 신규 KIS 호출 0건)**: `core_risk_off_guard_active=true`
+     전수(3거래일 n=2,623, 전체 이력 n=11,891) 중 `ranking_
+     blocked` 이외의 차단 사유는 0건(게이트 1에서 즉시 반환되는
+     구조, top-k override 비활성). shadow 진단 기준 신호 게이트
+     (overall≥0/slow≥−0.05)까지 격차도 전체 이력 최댓값 기준
+     각각 0.251/0.34, near-miss 0건. 전략 게이트는 항상 pass.
+     판정: 완화 검토 가치 있는 사유 1·2순위 모두 **없음** — 억지로
+     후보를 남기지 않음. 다음 턴은 이 게이트를 우회하는 `high_
+     volatility` 단독 경로(001450형)의 층3(AI downgrade) 쪽으로
+     방향 전환 제안. 상세: `docs/10_signal_research_sppv/[DESIGN]
+     regime_conditional_entry_signal_v1.md` §104.
+   - **SPPV-3(다음 착수: [1순위] `high_volatility` 단독(=
+     `regime_label≠bearish_trend`) 경로로 이미 eligibility를
+     통과한 종목(001450형)의 층3(AI downgrade) 완화 검토 방향으로
+     전환 — 이 하드 게이트(core+bearish_trend) 내부 탐색은
+     3턴 연속 후보 없음으로 종료 +
+     [2순위] `core_risk_off_topk_v1` override가 실제로 어느
+     호출부에서 `deterministic_trigger_override`를 채워야
+     활성화되는지 코드 경로만 확인(활성화 여부 결정은 별도 승인
+     필요, 활성화해도 즉시 효과 없음이 이미 확인됨) +
+     [3순위] `eligibility_core_risk_off_ranking_blocked` 하드
      게이트의 원 설계 시점(§36) 시장 조건과 현재(§99~§101 상시
      risk_off) 차이, "하락 국면 한정" 스코프 제약의 코드 미반영
      여부만 추가 확인(완화안 설계 아님) +
-     [3순위] `risk_off_exception_eligible` 경로가 0.02%로 거의
+     [4순위] `risk_off_exception_eligible` 경로가 0.02%로 거의
      발동하지 않는 정확한 사유를 조건별로 분해 +
      [5순위] `KIS_ENV`(paper/real) 실제 설정 확인 및 KIS 모의투자
      서버 일봉 데이터 특성이 실전 서버와 다른지 공식 자료 기준

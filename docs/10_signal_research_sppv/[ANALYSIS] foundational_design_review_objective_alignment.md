@@ -2174,6 +2174,21 @@ value/compliance/broker가 아니라 `entry_score < 0.65`다.
   전원 실패). 2번째 후보는 데이터 미지지로 제시하지 않음. 상세:
   `docs/10_signal_research_sppv/[DESIGN] regime_conditional_
   entry_signal_v1.md` §103.
+- 2026-07-28 KST(SPPV-2.117, 코드 미수정, diff 초안 없음, 신규
+  KIS 호출 0건): `ranking_blocked` 제외 후 경계 표본 탐색.
+  `core_risk_off_guard_active=true` 레코드 전수(3거래일 n=2,623,
+  전체 이력 n=11,891) 중 `ranking_blocked` 이외의 차단 사유
+  (signal/activity/strategy_blocked)는 **단 한 건도 발생한 적이
+  없음**(게이트 1에서 즉시 반환되는 구조, top-k override 비활성).
+  게이트 1을 우회했다고 가정한 shadow 진단으로도 신호 게이트
+  (overall≥0/slow≥−0.05)까지 격차가 전체 이력 최댓값 기준 각각
+  0.251/0.34로, threshold 0.10 이내 근접 표본은 **0건**. 전략
+  게이트는 항상 pass(병목 아님). 판정: 이 하드 게이트 내부에는
+  완화 검토 가치가 있는 사유가 1순위/2순위 모두 "없음" — 완화
+  후보를 억지로 남기지 않음. 다음 턴은 이 게이트를 우회하는
+  `high_volatility` 단독 경로(001450형)의 층3(AI downgrade)
+  쪽으로 방향 전환 제안. 상세: `docs/10_signal_research_sppv/
+  [DESIGN] regime_conditional_entry_signal_v1.md` §104.
 - **3순위(보류 유지, 형태 재정의 — 우선순위 재조정)**: **`entry_
   score`와 BUY funnel 재현** — §2.7 확장 검증에서 하락장 안정성이
   확인되지 않아 단순 재현으로는 착수하지 않는다. §2.16~§2.21에서
