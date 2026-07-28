@@ -1628,6 +1628,15 @@
   10_signal_research_sppv/[DESIGN] regime_conditional_entry_
   signal_v1.md` §100.
 
+- 2026-07-28 KST(SPPV-2.114, 신규 KIS 호출 0건): `atr_14_pct`
+  상시 고값 원인 진단. raw bar 수동 재계산이 snapshot과 정확히
+  일치(계산 오류 배제). 81개 종목 전체·ETF(069500) 포함 균일하게
+  넓은 고가-저가 스프레드(2.80~17.80%) — ETF가 개별 종목과
+  구분 안 됨(분산효과 부재), A(실물 특성) 근거 약함. 판정: B
+  (페이퍼 데이터 소스 특성)에 가장 근접, E 여지 일부. 완화안
+  미제시. 상세: `docs/10_signal_research_sppv/[DESIGN] regime_
+  conditional_entry_signal_v1.md` §101.
+
 ---
 
 ## 관리 원칙

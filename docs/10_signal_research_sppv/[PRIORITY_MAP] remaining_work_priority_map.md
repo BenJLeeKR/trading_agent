@@ -9808,22 +9808,38 @@ agent 설계 문서 기준으로도 순서는 다음이 맞다.
      미검증 상태로 얕게 설정)의 결합에 가장 근접, A는 확인 불가,
      D는 배제. 완화안 미제시. 상세: `docs/10_signal_research_sppv/
      [DESIGN] regime_conditional_entry_signal_v1.md` §100.
-   - **SPPV-3(다음 착수: [1순위] `atr_14_pct`가 이 유니버스에서
-     상시 4.5% 이상으로 분포하는 원인이 실제 기초자산 특성인지
-     페이퍼 환경 가격 데이터 소스 특성인지 원인만 더 좁혀서 확인 +
-     [2순위] `market_regime.py`의 `bearish_trend` 조건이 `slow_
+   - **SPPV-2.114(완료, 2026-07-28 KST, `atr_14_pct` 상시 고값
+     원인 진단 — 실물 특성 vs 페이퍼 데이터 소스, 작성자: Codex,
+     코드/설정 변경 없음, 신규 KIS 호출 0건)**: raw bar(001450 등)
+     수동 재계산이 snapshot 저장값과 정확히 일치(C: 계산식/단위
+     오류 배제). 81개 종목 전체(ETF `069500` 포함) 최근 거래일
+     고가-저가 스프레드가 균일하게 넓음(2.80~17.80%) — 지수 추종
+     ETF도 개별 종목과 구분되지 않는 atr14 수준(3개 창 전부
+     100% high_volatility), 실제 시장 분산효과 원리와 맞지 않아
+     A(실물 특성) 근거 약함. 판정: B(페이퍼 환경 데이터 소스
+     특성)에 가장 근접, E(미확정) 여지 일부 남음. 완화안 미제시.
+     상세: `docs/10_signal_research_sppv/[DESIGN] regime_
+     conditional_entry_signal_v1.md` §101.
+   - **SPPV-3(다음 착수: [1순위] `KIS_ENV`(paper/real) 실제 설정
+     확인 및 KIS 모의투자 서버 일봉 데이터 특성이 실전 서버와
+     다른지 공식 자료 기준 별도 검증(사용자 확인 필요, `.env`
+     직접 열람 없이) +
+     [2순위] 가능하면 실전 서버/공개 시세로 같은 기간 KODEX200
+     실제 스프레드 대조(신규 호출 필요 — 별도 턴·사용자 승인
+     하에) +
+     [3순위] `market_regime.py`의 `bearish_trend` 조건이 `slow_
      score`(파생)와 원시 지표를 동시 검사하는 중복 구조가 설계
      의도인지 확인 +
-     [3순위] `signal_feature_snapshots` 배치의 일별 1회 갱신
+     [4순위] `signal_feature_snapshots` 배치의 일별 1회 갱신
      주기·재사용 설계 확인(`build_signal_feature_snapshots.py`
      실행 이력) +
-     [4순위] 사용자가 `.env`에 `TRADING_UNIVERSE_MAX_CAP` 설정 후
+     [5순위] 사용자가 `.env`에 `TRADING_UNIVERSE_MAX_CAP` 설정 후
      `ops-scheduler` 재기동 → 다음 거래일 실측(§97.3 체크리스트:
      universe 크기/009150 진입/candidate pool 확대/buy_candidate~
      submit_request 변화) +
-     [5순위] 001450의 층3(AI downgrade, risk_off+volatility 축)
+     [6순위] 001450의 층3(AI downgrade, risk_off+volatility 축)
      관찰 지속(정당/과잉 여부 미확정, 완화 제안 아님) +
-     [6순위, 후순위 조정] eligibility_low_relative_activity 조건부
+     [7순위, 후순위 조정] eligibility_low_relative_activity 조건부
      완화(entry_score≥0.70 예외) 코드 diff 초안 설계 검토 — 신규
      진입 종목들의 entry_score가 낮아(0.36) 실익이 낮아짐, 전면
      완화 금지 +

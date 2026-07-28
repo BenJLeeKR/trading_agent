@@ -2322,6 +2322,19 @@ entry 설계 검토로 전환**을 확정했다. 별도 문서
   KIS 호출 0건. 상세: `docs/10_signal_research_sppv/[DESIGN]
   regime_conditional_entry_signal_v1.md` §100.
 
+- 작성자: Codex
+- 수정일자: 2026-07-28 KST (114차, `atr_14_pct` 상시 고값 원인
+  진단, 코드/설정 변경 없음, 신규 KIS 호출 0건)
+- 수정내용: raw bar 수동 재계산이 snapshot 저장값과 정확히
+  일치(C: 계산식/단위 오류 배제). 81개 종목 전체(ETF 069500 포함)
+  최근 거래일 고가-저가 스프레드가 균일하게 넓음(2.80~17.80%),
+  지수 추종 ETF도 개별 종목과 구분되지 않는 atr14 수준(3개 창
+  전부 100% high_volatility) — 실제 시장 분산효과 원리와 맞지
+  않아 A(실물 특성) 근거 약함. 판정: B(페이퍼 환경 데이터 소스
+  특성)에 가장 근접, E(미확정) 여지 일부 남음. 완화안 미제시.
+  상세: `docs/10_signal_research_sppv/[DESIGN] regime_conditional_
+  entry_signal_v1.md` §101.
+
 ---
 
 ## 진행 체크리스트
@@ -5369,6 +5382,15 @@ canonical),
     로직 변경 없음, 신규 KIS 호출 0건(shadow 재호출은 `kis_
     client=None`). 상세: `docs/10_signal_research_sppv/[DESIGN]
     regime_conditional_entry_signal_v1.md` §94.
+- [x] **SPPV-2.114(신설)** `atr_14_pct` 상시 고값 원인 진단 —
+  실물 특성 vs 페이퍼 데이터 소스 (완료, 2026-07-28 KST, 작성자:
+  Codex, 코드/설정 변경 없음, 신규 KIS 호출 0건)
+  - raw bar 수동 재계산 vs snapshot 일치(계산 오류 배제). 81개
+    종목 전체·ETF(069500) 포함 균일하게 넓은 스프레드
+    (2.80~17.80%), ETF가 개별 종목과 구분 안 됨. 판정: B(페이퍼
+    데이터 소스 특성)에 가장 근접, A 근거 약함, C 배제, E 여지
+    일부. 상세: `docs/10_signal_research_sppv/[DESIGN] regime_
+    conditional_entry_signal_v1.md` §101.
 - [x] **SPPV-2.113(신설)** threshold-분포 정렬 원인 진단 (완료,
   2026-07-28 KST, 작성자: Codex, 코드/설정 변경 없음)
   - 계산식 변경 이력 없음(D 배제). 4개 창(3일/2주/1개월/전체) 모두

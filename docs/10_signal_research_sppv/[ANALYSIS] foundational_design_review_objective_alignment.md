@@ -2130,6 +2130,17 @@ value/compliance/broker가 아니라 `entry_score < 0.65`다.
   A는 확인 불가, D는 배제. 완화안 미제시. 코드 변경 없음, 신규
   KIS 호출 0건. 상세: `docs/10_signal_research_sppv/[DESIGN]
   regime_conditional_entry_signal_v1.md` §100.
+- 2026-07-28 KST(SPPV-2.114, 코드/설정 변경 없음, 신규 KIS 호출
+  0건): `atr_14_pct` 상시 고값 원인 — 실물 특성 vs 페이퍼 데이터
+  소스 진단. raw bar(001450 등) 수동 재계산이 snapshot 저장값과
+  정확히 일치(C: 계산식/단위 오류 배제). 81개 종목 전체(ETF
+  069500 포함) 최근 거래일 고가-저가 스프레드가 최소 2.80%~최대
+  17.80%로 균일하게 넓고, 지수 추종 ETF(069500)도 개별 종목과
+  구분되지 않는 atr14 수준(3개 창 전부 100% high_volatility) —
+  실제 시장 분산효과 원리와 맞지 않아 A(실물 특성) 근거 약함.
+  판정: B(페이퍼 환경 데이터 소스 특성)에 가장 근접, E(미확정)
+  여지 일부 남음. 완화안 미제시. 상세: `docs/10_signal_research_
+  sppv/[DESIGN] regime_conditional_entry_signal_v1.md` §101.
 - **3순위(보류 유지, 형태 재정의 — 우선순위 재조정)**: **`entry_
   score`와 BUY funnel 재현** — §2.7 확장 검증에서 하락장 안정성이
   확인되지 않아 단순 재현으로는 착수하지 않는다. §2.16~§2.21에서
