@@ -12095,3 +12095,129 @@ decision loop 사이클에 반영되려면 **다음 신규 freeze 사이클**(�
    거래일 실측을 진행한다(이번 턴은 코드 반영까지만, 실제 값
    변경/재기동은 사용자 결정 이후).
 2. **2순위**: `001450` 층3(`risk_off`/`volatility` 축) 관찰 지속.
+
+
+---
+
+## §98. `001450` 층3(AI downgrade) 정밀 분해 + 시장 전체 비교(SPPV-2.111, 2026-07-28 KST)
+
+**전제**: 이번 턴은 `max_cap` env 반영/`ops-scheduler` 재기동/다음
+거래일 대기 관찰은 후순위로 미루고, `001450` 층3 병목만 정밀
+분석한다. 코드 수정 없음, `.env` 미수정, `ops-scheduler` 미재기동.
+
+### 98.1 관찰 창 재정의
+
+최근 3거래일: 2026-07-24, 2026-07-27, 2026-07-28(KST, 07-25/26은
+주말). `001450`의 `buy_candidate=True` AND `eligibility_passed=True`
+동시 만족 레코드는 **이 3일 중 07-27 하루(55건)뿐**이었다 —
+07-24/07-28에는 0건(사실).
+
+### 98.2 `001450` 단독 심층 분해(reason_codes/risk_reason_codes/
+event_reason_codes/risk_flags/opposing_evidence/`deterministic_
+trigger.metadata.risk_tone`/`strategy_selection.metadata.
+volatility_regime` 종합, 키워드 계열 집계)
+
+- risk_off 계열(`risk_tone=='risk_off'` 또는 reason 계열에 `risk_off`
+  포함): 55/55(100%).
+- 고변동성 계열(`volatility_regime=='high_volatility'` 또는
+  `high_volatility`/`volatile`/`atr_watch` 계열 키워드): 55/55(100%).
+- **둘 다 포함**: 55/55(100%). 둘 중 하나만/둘 다 없음: 0건.
+- **event축(fraud/regulatory_scrutiny/negative_media) 없이도
+  risk_off+고변동성만으로 downgrade가 발생한 사례**: 39/55(71%).
+  event축이 실제로 동반된 사례는 16/55(29%).
+- `decision_type`: WATCH 36 / HOLD 19. `candidate_vs_final.
+  final_intent`: watch 36 / no_action 19(WATCH/HOLD와 1:1 대응).
+- `risk_opinion`: reduce 21 / review 18 / allow 16.
+- `expected_value_gate.passed`: 55/55 `true`(비활성 대상이라
+  통과 처리됨 — `expected_value_not_required_non_actionable`).
+- **event축 존재 여부와 decision_type의 결합 패턴**: event축
+  부재 시 WATCH 30/HOLD 9(WATCH 우세), event축 존재 시 WATCH
+  6/HOLD 10(HOLD 우세) — event축이 있으면 downgrade 강도가
+  WATCH→HOLD로 더 강해지는 경향이 관찰된다(사실, 표본 55건 한정).
+- `strategy_selection.reason_codes`에는 `risk_off_defensive`,
+  `high_volatility_shorter_horizon`이 반복 등장하고,
+  `portfolio_allocation.reason_codes`에는 `portfolio_risk_off_cap`,
+  `portfolio_high_volatility_cap`이 반복 등장 — risk_off/고변동성이
+  전략 선택(방어적 전략 고정)과 포트폴리오 배분(de_risk 편향) 두
+  하류 단계에 모두 구조적으로 전파됨을 확인.
+
+### 98.3 비교 표본(같은 3거래일 창, 시장 전체 30종목·3970건)
+
+- **동일 funnel 단계(`buy_candidate=True`) 도달 종목**: 이 창에서
+  `001450`이 **유일**하다(사실 — 다른 29종목은 0건). `eligibility_
+  passed=True`까지만 도달한 종목은 `000240`(61건), `003230`
+  (35건) 2개가 더 있으나, 이들은 `buy_candidate` 자체가 없어
+  층1(entry_score/percentile)에서 멈춘 것으로, 층3 비교 대상이
+  아니다(층2/층1 병목이지 층3 병목이 아님 — 층 혼동 주의).
+  **따라서 "층3까지 도달한 다른 후보"와의 직접 비교는 이 관찰
+  창에서는 불가능하다**(표본 부재, 결론 아님).
+- **`final_intent='buy'` 또는 `decision_type='APPROVE'` 도달 종목**:
+  이 3일 전체(30종목, 3970건)에서 **0건** — 시장 전체가 이 창에서
+  APPROVE/BUY에 도달한 사례가 하나도 없다(기존 "주문 0건" 사실과
+  정합).
+- **risk_off 비율(시장 전체 vs 001450)**: `risk_tone=='risk_off'`는
+  3970건 **전수(100%)** 에서 관측된다 — 즉 이 창 전체에서 001450
+  뿐 아니라 **어느 종목의 어느 사이클도 예외 없이** risk_off로
+  분류됐다. risk_off는 001450에 특이적인 신호가 아니라 **이 관찰
+  창 전체의 상수(constant) 상태**다.
+- **고변동성 비율**: 001450 100%(151/151) vs 001450 제외 나머지
+  84.3%(3219/3819) — 001450이 다소 높지만 나머지 종목들도 대다수
+  (84%)가 이미 고변동성으로 분류돼 있어 격차가 크지 않다.
+
+### 98.4 "과잉 방어 가능성" 검토(완화 제안 없이, 관찰 사실 기반)
+
+- risk_off가 있어도 buy_candidate를 유지하는 다른 종목 사례는
+  이 창에서 **확인할 수 없다** — risk_off 자체가 시장 전체
+  상수이기 때문에, "risk_off가 있어도 통과한 사례"라는 반례가
+  구조적으로 존재할 수 없는 조건이다(모든 레코드가 risk_off).
+- 001450이 다른 종목 대비 특별히 나쁜 점은 **고변동성 비율의
+  근소한 격차(100% vs 84.3%)** 뿐이며, 이 격차만으로 downgrade
+  100%를 설명하기엔 근거가 약하다 — 오히려 001450이 층1/층2를
+  통과한 **유일한 후보**라는 사실 자체가, "이 시스템에서 어떤
+  후보든 층3까지 오면 risk_off/고변동성 상수 조건 아래 방어적
+  전략으로 강제 라우팅될 가능성"을 시사한다(가설, 미확정 —
+  검증하려면 risk_off가 아닌 비교 사례가 필요한데 이 창에는 없음).
+- `fraud`/`regulatory_scrutiny`/`negative_media` 같은 이벤트
+  축이 빠진 경우(39/55, 71%)에도 downgrade는 여전히 반복된다 —
+  이벤트 축은 downgrade의 필요조건이 아니다.
+- 정리하면, 001450을 누르는 핵심은 **`risk_off/volatility` 자체**에
+  더 가깝다(이벤트 축은 강도를 WATCH→HOLD로 높이는 보조 요인).
+  다만 risk_off가 이 창에서 상수이므로, 이것이 "실제 시장이
+  이 기간 내내 방어적이었다"는 정당한 반영인지 "regime/risk_tone
+  분류기 자체가 구조적으로 항상 risk_off만 산출하는 과잉 일반화"
+  인지는 **이 데이터만으로 가를 수 없다**(외부 시장 지표/변동성
+  데이터 대조가 필요, 이번 턴 범위 밖).
+
+### 98.5 최종 해석
+
+**"아직 미확정"에 가깝되, 관찰이 좁혀진 형태다**:
+
+- `risk_off`+`volatility`는 001450 downgrade의 사실상 유일한
+  공통 축임이 재확인됐다(단순 반복 톤이 아니라, 실제 하류
+  strategy_selection/portfolio_allocation까지 구조적으로 전파되는
+  핵심 축).
+- 다만 `risk_off`가 이 관찰 창 전체의 상수라는 사실이 새로 드러나
+  면서, "001450에 유독 강하게 작용"한다는 가설은 **약화**됐다 —
+  오히려 "층3에 도달하는 어떤 종목이든 같은 조건에 부딪힐
+  가능성"이라는 더 넓은 구조적 질문으로 이동한다.
+- "정당 반영" 쪽 근거: 이벤트 축(실제 fraud/규제 뉴스) 동반 시
+  downgrade 강도가 실제로 강해지는 패턴(WATCH→HOLD)은 AI가
+  이벤트 정보를 실제로 구분해서 반영하고 있음을 시사.
+- "과잉 방어 가능성 남음" 쪽 근거: risk_off가 3일·30종목·3970건
+  전수에서 예외 없이 등장한다는 것은 이 라벨의 판별력이
+  현재 관찰 창 안에서는 사실상 0에 가깝다는 뜻이고, 이 라벨이
+  판단에 계속 강하게 반영된다면 구조적 과잉 방어일 가능성이
+  있다.
+- 따라서 **"과잉 방어 가능성이 남아 있는, 아직 미확정"** 판정이
+  가장 근거 수준에 맞다 — Watch/Go/No-Go 라벨은 부여하지 않는다.
+
+### 98.6 다음 우선 작업
+
+1. **1순위**: `risk_tone`(`deterministic_trigger.metadata.
+   risk_tone`)이 왜 이 관찰 창 전체에서 예외 없이 `risk_off`만
+   산출됐는지 — 코드 read-only로 이 필드의 결정 로직(어느
+   모듈/신호가 이 값을 만드는지)을 추적. 완화안 설계가 아니라
+   "왜 상수가 됐는지" 원인 규명이 우선이다.
+2. **2순위**: `max_cap` env 값 실제 반영/`ops-scheduler` 재기동/
+   다음 거래일 실측(§97.3 체크리스트) — 이번 턴에서 미룬 항목,
+   사용자 결정 이후 진행.

@@ -9771,13 +9771,28 @@ agent 설계 문서 기준으로도 순서는 다음이 맞다.
      eligibility/층3/EV gate 미착수. 상세: `docs/10_signal_
      research_sppv/[DESIGN] regime_conditional_entry_signal_v1.md`
      §97.
-   - **SPPV-3(다음 착수: [1순위] 사용자가 `.env`에
-     `TRADING_UNIVERSE_MAX_CAP` 설정 후 `ops-scheduler` 재기동 →
-     다음 거래일 실측(§97.3 체크리스트: universe 크기/009150
-     진입/candidate pool 확대/buy_candidate~submit_request 변화) +
-     [2순위] 001450의 층3(AI downgrade, risk_off+volatility 축)
+   - **SPPV-2.111(완료, 2026-07-28 KST, `001450` 층3 정밀 분해 +
+     시장 전체 비교, 작성자: Codex, 코드/설정 변경 없음)**: 최근
+     3거래일(07-24/27/28) 중 buy_candidate&eligibility_passed
+     동시 만족은 07-27 55건뿐. risk_off+고변동성 55/55(100%)
+     재확인, event축 없이도 39/55(71%) downgrade. 시장 전체
+     (30종목, 3970건) 비교 결과 **risk_off가 이 창 전체 100%에서
+     상수**로 나타나 001450 특이 신호 가설이 약화됨 — 001450은
+     buy_candidate 도달 유일 종목이라 층3 직접 비교 표본 부재.
+     판정: 과잉 방어 가능성이 남은 미확정(라벨 부여 안 함). 상세:
+     `docs/10_signal_research_sppv/[DESIGN] regime_conditional_
+     entry_signal_v1.md` §98.
+   - **SPPV-3(다음 착수: [1순위] `risk_tone`(`deterministic_
+     trigger.metadata.risk_tone`)이 관찰 창 전체에서 예외 없이
+     `risk_off`만 산출하는 원인을 코드 read-only로 추적(완화안이
+     아니라 원인 규명 우선) +
+     [2순위] 사용자가 `.env`에 `TRADING_UNIVERSE_MAX_CAP` 설정 후
+     `ops-scheduler` 재기동 → 다음 거래일 실측(§97.3 체크리스트:
+     universe 크기/009150 진입/candidate pool 확대/buy_candidate~
+     submit_request 변화) +
+     [3순위] 001450의 층3(AI downgrade, risk_off+volatility 축)
      관찰 지속(정당/과잉 여부 미확정, 완화 제안 아님) +
-     [3순위, 후순위 조정] eligibility_low_relative_activity 조건부
+     [4순위, 후순위 조정] eligibility_low_relative_activity 조건부
      완화(entry_score≥0.70 예외) 코드 diff 초안 설계 검토 — 신규
      진입 종목들의 entry_score가 낮아(0.36) 실익이 낮아짐, 전면
      완화 금지 +

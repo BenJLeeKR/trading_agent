@@ -2276,6 +2276,20 @@ entry 설계 검토로 전환**을 확정했다. 별도 문서
   상세: `docs/10_signal_research_sppv/[DESIGN] regime_conditional_
   entry_signal_v1.md` §97.
 
+- 작성자: Codex
+- 수정일자: 2026-07-28 KST (111차, `001450` 층3 정밀 분해 + 시장
+  전체 비교, 코드/설정 변경 없음)
+- 수정내용: 최근 3거래일(07-24/27/28) 중 buy_candidate&eligibility_
+  passed 동시 만족은 07-27 55건뿐. risk_off+고변동성 55/55(100%)
+  재확인, event축 없이도 39/55(71%) downgrade 발생. 시장 전체
+  (30종목, 3970건) 비교 결과 risk_off가 이 창 전체 100%에서
+  상수로 나타나 001450 특이 신호 가설이 약화됨 — 001450은 이
+  창에서 buy_candidate 도달 유일 종목이라 층3 직접 비교 표본
+  부재. 판정: 과잉 방어 가능성이 남은 미확정(Watch/Go/No-Go
+  라벨 부여 안 함). Full pytest 미실행, 신규 KIS 호출 0건. 상세:
+  `docs/10_signal_research_sppv/[DESIGN] regime_conditional_entry_
+  signal_v1.md` §98.
+
 ---
 
 ## 진행 체크리스트
@@ -5323,6 +5337,16 @@ canonical),
     로직 변경 없음, 신규 KIS 호출 0건(shadow 재호출은 `kis_
     client=None`). 상세: `docs/10_signal_research_sppv/[DESIGN]
     regime_conditional_entry_signal_v1.md` §94.
+- [x] **SPPV-2.111(신설)** `001450` 층3 정밀 분해 + 시장 전체 비교
+  (완료, 2026-07-28 KST, 작성자: Codex, 코드/설정 변경 없음)
+  - 최근 3거래일(07-24/27/28) 중 buy_candidate&eligibility_passed
+    동시 만족은 07-27 55건뿐. risk_off+고변동성 55/55(100%)
+    재확인, event축 없이도 71% downgrade. 시장 전체(3970건) 비교
+    결과 risk_off가 상수임을 발견 — 001450 특이 신호 가설 약화.
+    001450은 buy_candidate 도달 유일 종목이라 층3 직접 비교
+    표본 부재. 판정: 과잉 방어 가능성 남은 미확정. 상세: `docs/10_
+    signal_research_sppv/[DESIGN] regime_conditional_entry_signal_
+    v1.md` §98.
 - [x] **SPPV-2.110(신설)** `TRADING_UNIVERSE_MAX_CAP` env 배선 실제
   반영 (완료, 2026-07-27 KST, 작성자: Codex, 코드 변경 있음)
   - `core_cap`과 동일 패턴(기본값 30, 하위 호환 유지). 좁은 테스트

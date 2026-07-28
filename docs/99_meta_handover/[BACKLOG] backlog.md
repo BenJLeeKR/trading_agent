@@ -1599,6 +1599,15 @@
   이후. 값 자체는 미변경. 상세: `docs/10_signal_research_sppv/
   [DESIGN] regime_conditional_entry_signal_v1.md` §97.
 
+- 2026-07-28 KST(SPPV-2.111): `001450` 층3 정밀 분해 + 시장 전체
+  비교. risk_off+고변동성 55/55(100%, 07-27 하루 표본) 재확인,
+  event축 없이도 71% downgrade 발생. 시장 전체(3970건) 비교 결과
+  risk_off가 상수임을 발견 — 001450 특이 신호 가설 약화. 001450은
+  이 창에서 buy_candidate 도달 유일 종목이라 직접 비교 불가.
+  판정: 과잉 방어 가능성 남은 미확정. 코드 변경 없음, 신규 KIS
+  호출 0건. 상세: `docs/10_signal_research_sppv/[DESIGN] regime_
+  conditional_entry_signal_v1.md` §98.
+
 ---
 
 ## 관리 원칙

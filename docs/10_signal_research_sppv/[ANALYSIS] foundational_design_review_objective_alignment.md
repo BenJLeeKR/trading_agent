@@ -2088,6 +2088,19 @@ value/compliance/broker가 아니라 `entry_score < 0.65`다.
   다음 거래일 실측 필요). eligibility/층3/EV gate는 미착수. 상세:
   `docs/10_signal_research_sppv/[DESIGN] regime_conditional_entry_
   signal_v1.md` §97.
+- 2026-07-28 KST(SPPV-2.111, 코드/설정 변경 없음): `001450` 층3
+  정밀 분해. 최근 3거래일(07-24/27/28) 중 buy_candidate&
+  eligibility_passed 동시 만족은 07-27 55건뿐(다른 날 0건).
+  risk_off+고변동성 55/55(100%) 재확인, event축(fraud/규제/
+  media) 없이도 39/55(71%) downgrade 발생. **시장 전체(30종목,
+  3970건) 비교 결과 risk_off는 이 창 전체 100%에서 상수**로
+  나타나 001450 특이 신호가 아님이 드러남 — "001450에 유독
+  강하게 작용" 가설은 약화, "층3 도달 시 구조적으로 방어 라우팅"
+  가능성으로 질문이 이동. 001450은 이 창에서 buy_candidate에
+  도달한 유일한 종목이라 층3 직접 비교 표본은 부재. 판정:
+  과잉 방어 가능성이 남은 미확정. 코드 변경 없음, 신규 KIS 호출
+  0건. 상세: `docs/10_signal_research_sppv/[DESIGN] regime_
+  conditional_entry_signal_v1.md` §98.
 - **3순위(보류 유지, 형태 재정의 — 우선순위 재조정)**: **`entry_
   score`와 BUY funnel 재현** — §2.7 확장 검증에서 하락장 안정성이
   확인되지 않아 단순 재현으로는 착수하지 않는다. §2.16~§2.21에서
