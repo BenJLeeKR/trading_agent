@@ -41,6 +41,8 @@ class TestBuildRefreshCallback:
             position_snapshots=object(),
             cash_balance_snapshots=object(),
             risk_limit_snapshots=object(),
+            symbol_trade_states=object(),
+            orders=object(),
         )
         rest_client = object()
         broker = SimpleNamespace(_rest_client=rest_client)
@@ -79,6 +81,8 @@ class TestBuildRefreshCallback:
         assert kwargs["position_snapshot_repo"] is repos.position_snapshots
         assert kwargs["cash_balance_snapshot_repo"] is repos.cash_balance_snapshots
         assert kwargs["risk_limit_snapshot_repo"] is repos.risk_limit_snapshots
+        assert kwargs["symbol_trade_state_repo"] is repos.symbol_trade_states
+        assert kwargs["order_repo"] is repos.orders
         assert kwargs["account_id"] == account_id
         assert kwargs["after_hours"] is False
         assert kwargs["fetch_positions"] is True
@@ -103,6 +107,8 @@ class TestBuildRefreshCallback:
             position_snapshots=object(),
             cash_balance_snapshots=object(),
             risk_limit_snapshots=object(),
+            symbol_trade_states=object(),
+            orders=object(),
         )
         rest_client = object()
         broker = SimpleNamespace(_rest=rest_client)
@@ -148,6 +154,8 @@ class TestBuildRefreshCallback:
             position_snapshots=object(),
             cash_balance_snapshots=object(),
             risk_limit_snapshots=object(),
+            symbol_trade_states=object(),
+            orders=object(),
         )
         broker = SimpleNamespace(_rest=object())
 
@@ -190,6 +198,8 @@ class TestBuildRefreshCallback:
             position_snapshots=object(),
             cash_balance_snapshots=object(),
             risk_limit_snapshots=object(),
+            symbol_trade_states=object(),
+            orders=object(),
         )
         sync_mock = AsyncMock()
         monkeypatch.setattr(module, "sync_account_snapshots", sync_mock)

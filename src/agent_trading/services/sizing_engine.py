@@ -27,7 +27,6 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass, field
 from decimal import Decimal, ROUND_DOWN
-from typing import Sequence
 
 from agent_trading.domain.enums import OrderSide
 from agent_trading.services.ai_agents.schemas import SizingHint

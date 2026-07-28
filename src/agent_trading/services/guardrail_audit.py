@@ -5,6 +5,7 @@ from uuid import UUID
 
 from agent_trading.repositories.container import RepositoryContainer
 from agent_trading.services.validators import (
+    ValidationContext,
     ValidationResult,
     build_validation_context,
 )

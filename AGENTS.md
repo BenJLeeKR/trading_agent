@@ -37,6 +37,9 @@
 - read-only 보안 스냅샷: `bash scripts/harness/run.sh security scan` 또는 `make security-scan`.
 - 문서 정합성: `bash scripts/harness/run.sh accept docs` 또는 `make accept-docs`.
 - 운영 환경 재현성: `bash scripts/harness/run.sh accept env` 또는 `make accept-env`. `env-check`는 호환 alias다.
+- DB 저장소 구조: `bash scripts/harness/run.sh accept db-structure` 또는 `make accept-db-structure`.
+- 아키텍처 계층 구조: `bash scripts/harness/run.sh accept architecture` 또는 `make accept-architecture`.
+- 코드 스타일 baseline: `bash scripts/harness/run.sh accept style` 또는 `make accept-style`.
 - 단일 백엔드 파일: `bash scripts/harness/run.sh accept backend-file <file>` 또는 `make accept-backend-file FILE=<file>`.
 - 백엔드 런타임 계약: `bash scripts/harness/run.sh accept backend-runtime` 또는 `make accept-backend-runtime`.
 - Admin UI 계약: `bash scripts/harness/run.sh accept frontend` 또는 `make accept-admin-ui`.

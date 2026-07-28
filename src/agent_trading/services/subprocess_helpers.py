@@ -11,13 +11,6 @@ import logging
 from typing import Any
 
 from agent_trading.config.settings import resolve_provider_runtime_config
-from agent_trading.domain.entities import (
-    AgentRunEntity,
-    CashBalanceSnapshotEntity,
-    ExternalEventEntity,
-    PositionSnapshotEntity,
-)
-from agent_trading.repositories.contracts import AccountLookup
 from agent_trading.services.ai_agents.base import AgentExecutionRequest
 from agent_trading.services.ai_agents.event_interpretation import _finalize_ei_output
 from agent_trading.services.ai_agents.schemas import (
@@ -28,7 +21,6 @@ from agent_trading.services.ai_agents.schemas import (
 )
 from agent_trading.services.common_types import (
     AIPolicyContextView,
-    AssembledContext,
     ScoreResult,
     dataclass_to_dict,
     dict_to_dataclass,
@@ -101,7 +93,6 @@ def deserialize_agent_output(
     raw_json
         Raw JSON string from subprocess stdout.
         Expected keys: ``ei_output``, ``ar_output``, ``ac_output``, ``fdc_output``,
-        ``score``, ``ei_run_id``, ``ar_run_id``, ``ac_run_id``, ``fdc_run_id``,
         ``ei_error_metadata``.
 
     Returns
@@ -133,14 +124,6 @@ def deserialize_agent_output(
         FinalDecisionComposerOutput,
     )  # type: ignore[arg-type]
 
-    # Score
-    score_data = data.get("score")
-    score = ScoreResult(**score_data) if score_data else ScoreResult()
-
-    # Run IDs from subprocess
-    ei_run_id: str | None = data.get("ei_run_id")  # type: ignore[assignment]
-    ar_run_id: str | None = data.get("ar_run_id")  # type: ignore[assignment]
-    fdc_run_id: str | None = data.get("fdc_run_id")  # type: ignore[assignment]
     ei_error_metadata: dict[str, object] | None = data.get("ei_error_metadata")  # type: ignore[assignment]
 
     # --- Assemble AIDecisionInputs (same logic as _run_agents()) ---

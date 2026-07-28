@@ -337,9 +337,6 @@ async def get_performance_holding_profile_attribution(
     edge_expr = (
         "NULLIF(td.decision_json#>>'{expected_value_gate,edge_after_cost_bps}', '')::numeric"
     )
-    actionable_expr = (
-        "LOWER(COALESCE(td.decision_type::text, '')) IN ('approve', 'buy', 'sell', 'exit', 'reduce')"
-    )
     filled_expr = (
         "LOWER(CAST(COALESCE(o.status, 'unknown') AS text)) IN ('filled', 'partially_filled')"
     )

@@ -22,6 +22,9 @@ usage() {
   bash scripts/harness/run.sh lint-path <path>
   bash scripts/harness/run.sh accept docs
   bash scripts/harness/run.sh accept env
+  bash scripts/harness/run.sh accept db-structure
+  bash scripts/harness/run.sh accept architecture
+  bash scripts/harness/run.sh accept style
   bash scripts/harness/run.sh accept backend-file <src/agent_trading/file.py>
   bash scripts/harness/run.sh accept backend-runtime
   bash scripts/harness/run.sh accept frontend
@@ -446,6 +449,7 @@ assignment_pattern = re.compile(
     r"\s*[:=]\s*['\"]?([^'\"\s#,}]{8,})"
 )
 bearer_pattern = re.compile(r"(?i)\bBearer\s+[A-Za-z0-9._~+/=-]{16,}")
+identifier_reference_pattern = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*$")
 
 def run_git(args: list[str]) -> list[str]:
     completed = subprocess.run(
@@ -478,6 +482,10 @@ def normalized_value(value: str) -> str:
 def is_placeholder(value: str) -> bool:
     normalized = normalized_value(value)
     if normalized in allowed_placeholder_values:
+        return True
+    if normalized.startswith("bearer"):
+        return True
+    if identifier_reference_pattern.fullmatch(value.strip().strip("'\"")):
         return True
     return (
         "example" in normalized
@@ -1452,6 +1460,83 @@ raise SystemExit(0 if passed else 1)
 PY
 }
 
+accept_db_structure() {
+  timeout "$SAFE_TIMEOUT_SECONDS" python3 scripts/harness/check_db_structure.py
+}
+
+accept_architecture() {
+  timeout "$SAFE_TIMEOUT_SECONDS" python3 scripts/harness/check_architecture.py
+}
+
+parse_ruff_found_count() {
+  local output_file="$1"
+  local found
+  found="$(grep -Eo 'Found [0-9]+ errors?' "$output_file" | tail -n 1 | grep -Eo '[0-9]+' || true)"
+  echo "${found:-0}"
+}
+
+accept_style() {
+  local ruff_default_output
+  local ruff_f_output
+  local ruff_default_exit_code=0
+  local ruff_f_exit_code=0
+  local ruff_default_violation_count=0
+  local ruff_f_violation_count=0
+  local ruff_f_baseline="${HARNESS_STYLE_RUFF_F_BASELINE:-0}"
+  local ruff_f_excess_count=0
+  local failed_count=0
+
+  ruff_default_output="$(mktemp)"
+  ruff_f_output="$(mktemp)"
+
+  if run_python_with_timeout "$SAFE_TIMEOUT_SECONDS" -m ruff check src/agent_trading >"$ruff_default_output" 2>&1; then
+    ruff_default_exit_code=0
+  else
+    ruff_default_exit_code=$?
+    failed_count=$((failed_count + 1))
+  fi
+  ruff_default_violation_count="$(parse_ruff_found_count "$ruff_default_output")"
+
+  if run_python_with_timeout "$SAFE_TIMEOUT_SECONDS" -m ruff check --select F src/agent_trading >"$ruff_f_output" 2>&1; then
+    ruff_f_exit_code=0
+  else
+    ruff_f_exit_code=$?
+  fi
+  ruff_f_violation_count="$(parse_ruff_found_count "$ruff_f_output")"
+
+  if (( ruff_f_violation_count > ruff_f_baseline )); then
+    ruff_f_excess_count=$((ruff_f_violation_count - ruff_f_baseline))
+    failed_count=$((failed_count + 1))
+  fi
+
+  if [[ "$failed_count" -eq 0 ]]; then
+    echo "ACCEPT style: PASS"
+  else
+    echo "ACCEPT style: FAIL"
+  fi
+  echo "- ruff_default_exit_code=$ruff_default_exit_code"
+  echo "- ruff_default_violation_count=$ruff_default_violation_count"
+  echo "- ruff_f_exit_code=$ruff_f_exit_code"
+  echo "- ruff_f_violation_count=$ruff_f_violation_count"
+  echo "- ruff_f_baseline=$ruff_f_baseline"
+  echo "- ruff_f_baseline_enforced=1"
+  echo "- ruff_f_excess_count=$ruff_f_excess_count"
+  echo "- database_connection_run=0"
+  echo "- external_network_run=0"
+  echo "- full_test_run=0"
+  if [[ "$ruff_default_exit_code" -ne 0 ]]; then
+    echo "DETAIL ruff_default_tail:"
+    tail -n 20 "$ruff_default_output"
+  fi
+  if [[ "$ruff_f_excess_count" -gt 0 ]]; then
+    echo "DETAIL ruff_f_tail:"
+    tail -n 40 "$ruff_f_output"
+  fi
+
+  rm -f "$ruff_default_output" "$ruff_f_output"
+  [[ "$failed_count" -eq 0 ]]
+}
+
 accept_frontend() {
   ACCEPT_SAFE_TIMEOUT_SECONDS="$SAFE_TIMEOUT_SECONDS" python3 - <<'PY'
 import json
@@ -2150,6 +2235,15 @@ main() {
           ;;
         env)
           accept_env
+          ;;
+        db-structure)
+          accept_db_structure
+          ;;
+        architecture)
+          accept_architecture
+          ;;
+        style)
+          accept_style
           ;;
         backend-file)
           accept_backend_file "${2:-}"

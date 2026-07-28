@@ -78,6 +78,20 @@ export function setOnUnauthorized(cb: () => void): void {
   _onUnauthorized = cb;
 }
 
+export async function verifyToken(token: string): Promise<void> {
+  const res = await fetch(`${API_BASE_URL}/orders`, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+
+  if (res.status === 401) {
+    throw new UnauthorizedError();
+  }
+
+  if (!res.ok) {
+    throw new ApiResponseError(res.status, res.statusText);
+  }
+}
+
 async function request<T>(
   path: string,
   options: RequestInit = {}

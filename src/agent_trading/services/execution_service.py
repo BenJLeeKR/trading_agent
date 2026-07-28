@@ -81,19 +81,7 @@ from agent_trading.services.validators import (
 
 if TYPE_CHECKING:
     from agent_trading.domain.entities import (
-        CashBalanceSnapshotEntity,
-        ConfigVersionEntity,
-        DecisionContextEntity,
         ExecutionAttemptEntity,
-        ExternalEventEntity,
-        InstrumentEntity,
-        PositionSnapshotEntity,
-        RiskLimitSnapshotEntity,
-        TradeDecisionEntity,
-    )
-    from agent_trading.services.ai_agents.schemas import (
-        ExecutionPreferences,
-        SizingHint,
     )
 
 logger = logging.getLogger(__name__)
@@ -1651,8 +1639,6 @@ class ExecutionService:
             MAX_RETRIES = 2
             BACKOFF_BASE = 0.5
             BACKOFF_MAX = 5.0
-            last_exc: Exception | None = None
-
             for attempt in range(MAX_RETRIES):
                 try:
                     quote = await asyncio.wait_for(
@@ -1670,7 +1656,6 @@ class ExecutionService:
                     _add_phase(f"quote_resolution/{symbol}", "ok")
                     break  # 성공 → retry 루프 탈출
                 except (asyncio.TimeoutError, Exception) as exc:
-                    last_exc = exc
                     # EGW00201 (KIS rate limit)인 경우에만 retry
                     if "EGW00201" in str(exc) and attempt < MAX_RETRIES - 1:
                         wait = min(BACKOFF_BASE * (2 ** attempt), BACKOFF_MAX)

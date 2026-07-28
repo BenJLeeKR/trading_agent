@@ -26,6 +26,7 @@ import time
 from datetime import datetime, timezone
 from decimal import Decimal
 from typing import TYPE_CHECKING, Sequence
+from uuid import UUID
 from zoneinfo import ZoneInfo
 
 from agent_trading.domain.enums import OrderSide, OrderStatus, TimeInForce

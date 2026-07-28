@@ -17,7 +17,7 @@ from typing import Any
 
 import httpx
 
-from agent_trading.services.ai_agents.base import AIProviderClient, RawProviderResponse
+from agent_trading.services.ai_agents.base import RawProviderResponse
 
 logger = logging.getLogger(__name__)
 
@@ -299,7 +299,7 @@ class OpenAICompatibleClient:
                 # 마지막 시도도 실패 → 원본 예외 throw
                 raise
 
-            except (json.JSONDecodeError, TypeError, ValueError) as e:
+            except (json.JSONDecodeError, TypeError, ValueError):
                 # 파싱 에러는 retry 불필요 → 즉시 실패
                 raise
 

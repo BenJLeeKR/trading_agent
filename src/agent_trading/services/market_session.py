@@ -18,7 +18,7 @@ from __future__ import annotations
 import logging
 from abc import ABC, abstractmethod
 from contextlib import asynccontextmanager
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import date, datetime
 from typing import AsyncGenerator
 

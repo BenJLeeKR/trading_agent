@@ -13,6 +13,7 @@ from typing import Any
 from uuid import UUID, uuid4
 from zoneinfo import ZoneInfo
 
+import asyncpg
 import pytest
 from unittest.mock import AsyncMock
 
@@ -2137,6 +2138,36 @@ class TestPostSubmitSyncRunnerSavepointIsolation:
         assert updated2 is not None
         assert updated2.status == OrderStatus.ACKNOWLEDGED
 
+    async def test_runner_sync_single_postgres_error_reraises(
+        self,
+        repos: RepositoryContainer,
+    ) -> None:
+        """DB 예외는 savepoint rollback 경계로 전달되도록 재전파한다."""
+        order = _make_order(repos, status=OrderStatus.SUBMITTED, client_order_id="DB-ERR-001")
+        broker_order = _make_broker_order(
+            repos,
+            order,
+            broker_native_order_id="BRK-DB-ERR-001",
+        )
+
+        class _PostgresErrorSyncService:
+            async def sync_order_post_submit(self, **kwargs: Any) -> SyncOrderResult:
+                raise asyncpg.PostgresError("simulated database failure")
+
+        runner = PostSubmitSyncRunner(
+            repos=repos,
+            sync_service=_PostgresErrorSyncService(),  # type: ignore[arg-type]
+            broker=_StubBroker(OrderStatus.ACKNOWLEDGED),  # type: ignore[arg-type]
+        )
+
+        with pytest.raises(asyncpg.PostgresError):
+            await runner._sync_single_order(
+                order=order,
+                broker_order=broker_order,
+                resolved_account_ref="test-account",
+                after_hours=False,
+            )
+
 
 # ═════════════════════════════════════════════════════════════════════
 # Test: PostSubmitSyncRunner — EOD orphan cleanup (Step 4)
@@ -3053,7 +3084,7 @@ class TestTransitionToAuthoritativeIsAfterHours:
         sync_service: OrderSyncService,
         repos: RepositoryContainer,
     ) -> None:
-        """Path A (resolve_unknown_state 예외) + after-hours + old order (age >= 30min)
+        """Path A (resolve_unknown_state 예외) + SELL + old order (age >= 30min)
         → Grace period 초과로 EXPIRED fallback 허용."""
         now = datetime.now(timezone.utc)
         old_created_at = now - timedelta(minutes=45)  # 45분 전 생성 (old, >= 30min)
@@ -3064,7 +3095,7 @@ class TestTransitionToAuthoritativeIsAfterHours:
         )
         order = replace(
             order,
-            side=OrderSide.BUY,
+            side=OrderSide.SELL,
             requested_quantity=Decimal("10"),
             created_at=old_created_at,
         )
@@ -3158,7 +3189,7 @@ class TestTransitionToAuthoritativeIsAfterHours:
         sync_service: OrderSyncService,
         repos: RepositoryContainer,
     ) -> None:
-        """Broker no record 경로 + after-hours + old order (age >= 30min)
+        """Broker no record 경로 + SELL + old order (age >= 30min)
         → Grace period 초과로 EXPIRED fallback 허용."""
         now = datetime.now(timezone.utc)
         old_created_at = now - timedelta(minutes=45)  # 45분 전 생성 (old, >= 30min)
@@ -3169,7 +3200,7 @@ class TestTransitionToAuthoritativeIsAfterHours:
         )
         order = replace(
             order,
-            side=OrderSide.BUY,
+            side=OrderSide.SELL,
             requested_quantity=Decimal("10"),
             created_at=old_created_at,
         )

@@ -20,14 +20,11 @@ Parsing rules
 
 from __future__ import annotations
 
-import base64
 import json
-import struct
 from collections.abc import Mapping
 from typing import Any
 
 from agent_trading.domain.enums import OrderSide
-from agent_trading.domain.models import FillEvent
 
 
 # ---------------------------------------------------------------------------

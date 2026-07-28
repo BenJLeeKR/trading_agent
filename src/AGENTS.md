@@ -27,6 +27,9 @@
 - 단일 백엔드 파일의 정답 판정은 `bash scripts/harness/run.sh accept backend-file <file>` 또는 `make accept-backend-file FILE=<file>`을 사용한다.
 - 직접 대응 테스트가 없는 백엔드 파일은 기본 실패로 판정한다. 테스트 추가가 불가능한 경우에만 `HARNESS_ALLOW_NO_TEST=1`로 명시 우회하고 이유를 보고한다.
 - 백엔드 런타임 조립, API factory, 설정 import를 건드린 경우 `bash scripts/harness/run.sh accept backend-runtime` 또는 `make accept-backend-runtime`을 사용한다.
+- DB schema, migration, repository contract, repository 구현, repository container wiring을 건드린 경우 `bash scripts/harness/run.sh accept db-structure` 또는 `make accept-db-structure`를 사용한다.
+- backend 계층 import 경계를 건드린 경우 `bash scripts/harness/run.sh accept architecture` 또는 `make accept-architecture`를 사용한다.
+- 백엔드 코드 스타일 baseline을 확인할 때 `bash scripts/harness/run.sh accept style` 또는 `make accept-style`을 사용한다.
 - Python 명령은 `python3`를 사용한다.
 - 셸 명령은 `bash`에서 실행한다.
 - 단일 파일 문법 확인: `python3 -m py_compile <changed_file>`

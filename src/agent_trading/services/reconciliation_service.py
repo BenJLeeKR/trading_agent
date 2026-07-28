@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 from datetime import datetime, timezone, timedelta
+from typing import TYPE_CHECKING
 from uuid import UUID, uuid4
 
 from agent_trading.brokers.base import BrokerAdapter
@@ -14,6 +15,9 @@ from agent_trading.domain.enums import OrderStatus
 from agent_trading.domain.models import OrderStatusResult
 from agent_trading.repositories.container import RepositoryContainer
 from agent_trading.repositories.filters import OrderQuery
+
+if TYPE_CHECKING:
+    from agent_trading.services.order_manager import OrderManager
 
 logger = logging.getLogger(__name__)
 

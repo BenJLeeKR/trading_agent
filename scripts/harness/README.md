@@ -27,6 +27,9 @@
 | read-only 보안 검사 | `bash scripts/harness/run.sh security scan` | `make security-scan` |
 | 환경 계약 | `bash scripts/harness/run.sh accept env` | `make accept-env` |
 | 문서 계약 | `bash scripts/harness/run.sh accept docs` | `make accept-docs` |
+| DB 저장소 구조 계약 | `bash scripts/harness/run.sh accept db-structure` | `make accept-db-structure` |
+| 아키텍처 계층 구조 계약 | `bash scripts/harness/run.sh accept architecture` | `make accept-architecture` |
+| 코드 스타일 baseline 계약 | `bash scripts/harness/run.sh accept style` | `make accept-style` |
 | 단일 백엔드 파일 | `bash scripts/harness/run.sh accept backend-file <file>` | `make accept-backend-file FILE=<file>` |
 | 백엔드 런타임 계약 | `bash scripts/harness/run.sh accept backend-runtime` | `make accept-backend-runtime` |
 | Admin UI 계약 | `bash scripts/harness/run.sh accept frontend` | `make accept-admin-ui` |
@@ -124,6 +127,47 @@ Makefile에서는 승인 필요 명령을 `heavy-*` target으로 노출한다. �
 - `no_test_policy`: 직접 대응 테스트가 없을 때의 판정 정책.
 
 직접 대응 테스트가 없으면 기본적으로 실패한다. 불가피한 경우에만 `HARNESS_ALLOW_NO_TEST=1`로 명시 우회하고 보고서에 사유를 남긴다.
+
+### `accept db-structure`
+
+- `migration_file_count`: 검사한 SQL migration 파일 수.
+- `migration_filename_violation_count`: `0001_name.sql` 형식에 맞지 않는 migration 파일 수.
+- `migration_duplicate_number_count`: 같은 번호를 사용하는 migration 번호 수.
+- `migration_sequence_gap_count`: migration 번호 연속성 누락 수.
+- `repository_protocol_count`: `contracts.py`의 Repository Protocol 수.
+- `container_bound_protocol_count`: `RepositoryContainer`에 연결된 Repository Protocol 수.
+- `memory_bound_protocol_count`: InMemory 구현이 존재하는 Repository Protocol 수.
+- `postgres_class_bound_protocol_count`: Postgres 구현 class가 존재하는 Repository Protocol 수.
+- `postgres_bootstrap_bound_protocol_count`: Postgres bootstrap에서 wiring된 Repository Protocol 수.
+- `database_connection_run`, `external_network_run`, `full_test_run`: 이 검사가 DB 접속, 외부 네트워크, 전체 테스트를 실행하지 않았음을 나타내는 0/1 지표.
+
+### `accept architecture`
+
+- `python_source_file_count`: 검사한 backend Python 파일 수.
+- `backend_import_checked_count`: `agent_trading.*` 또는 `asyncpg` import 검사 건수.
+- `domain_forbidden_import_count`: `domain/`에서 상위 계층을 import한 건수.
+- `repository_forbidden_import_count`: `repositories/`에서 service, api, broker, runtime 계층을 import한 건수.
+- `service_api_import_violation_count`: `services/`에서 API 계층을 import한 건수.
+- `broker_forbidden_import_observed_count`: `brokers/`에서 api, repository, service 계층을 import한 관측 건수. 현재는 실패 조건이 아니다.
+- `broker_forbidden_import_baseline`: 허용되는 기존 broker 계층 역참조 baseline 수.
+- `broker_forbidden_import_excess_count`: broker 계층 역참조가 baseline보다 증가한 수. 실패 조건이다.
+- `db_forbidden_import_count`: `db/`에서 api, broker, service 계층을 import한 건수.
+- `legacy_direct_db_import_observed_count`: service/API 계층의 기존 직접 DB import 관측 건수.
+- `legacy_direct_db_import_baseline`: 허용되는 기존 service/API 직접 DB import baseline 수.
+- `legacy_direct_db_import_excess_count`: service/API 직접 DB import가 baseline보다 증가한 수. 실패 조건이다.
+- `api_db_boundary_import_observed_count`: 명시 허용된 API DB 경계(`src/agent_trading/api/deps.py`)의 DB import 관측 건수. 실패 조건이 아니다.
+- `frontend_direct_fetch_observed_count`: `admin_ui/src/api/`와 테스트를 제외한 직접 `fetch()` 관측 건수. 실패 조건이다.
+- `architecture_violation_count`: 현재 실패 조건으로 강제하는 계층 위반 총수.
+- `database_connection_run`, `external_network_run`, `full_test_run`: 이 검사가 DB 접속, 외부 네트워크, 전체 테스트를 실행하지 않았음을 나타내는 0/1 지표.
+
+### `accept style`
+
+- `ruff_default_exit_code`: `pyproject.toml` 기본 ruff 규칙 실행 exit code.
+- `ruff_default_violation_count`: 기본 ruff 규칙 위반 수.
+- `ruff_f_violation_count`: `ruff --select F` 관측 위반 수.
+- `ruff_f_baseline`: 허용되는 기존 `F` 계열 baseline 수.
+- `ruff_f_excess_count`: `F` 계열 위반이 baseline보다 증가한 수. 실패 조건이다.
+- `database_connection_run`, `external_network_run`, `full_test_run`: 이 검사가 DB 접속, 외부 네트워크, 전체 테스트를 실행하지 않았음을 나타내는 0/1 지표.
 
 ### `accept backend-runtime`
 

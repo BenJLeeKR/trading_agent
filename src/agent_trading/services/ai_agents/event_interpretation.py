@@ -23,19 +23,16 @@ import socket
 import sys
 from dataclasses import replace
 from datetime import datetime, timezone
-from typing import Any
 
 import httpx
 
 from agent_trading.config.settings import _resolve_provider_model_id
 from agent_trading.services.ai_agents._prompt_config import (
     MAX_EVENTS_EI,
-    MAX_INTERPRETED_EVENTS,
 )
 from agent_trading.services.ai_agents.base import (
     AIProviderClient,
     AgentExecutionRequest,
-    ProviderAIAgent,
     RawProviderResponse,
 )
 from agent_trading.domain.entities import ExternalEventEntity

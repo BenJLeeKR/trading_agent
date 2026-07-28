@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 from agent_trading.domain.entities import InstrumentEntity, SignalFeatureSnapshotEntity
 from agent_trading.repositories.container import RepositoryContainer

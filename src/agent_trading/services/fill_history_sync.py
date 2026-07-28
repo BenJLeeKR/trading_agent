@@ -120,8 +120,8 @@ def _parse_decimal(raw: Any) -> Decimal | None:
 
 
 def _get_kis_value(item: dict[str, Any], *fields: str, default: Any = "") -> Any:
-    for field in fields:
-        value = _GF(item, field, None)
+    for field_name in fields:
+        value = _GF(item, field_name, None)
         if value not in (None, ""):
             return value
     return default

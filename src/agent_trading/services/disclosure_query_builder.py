@@ -12,7 +12,6 @@ from __future__ import annotations
 
 import logging
 import re
-from collections.abc import Sequence
 
 from agent_trading.domain.models import DisclosureTitleDTO
 

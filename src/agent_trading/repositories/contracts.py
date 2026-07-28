@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import date, datetime
+from decimal import Decimal
 from typing import Any, Protocol
 from uuid import UUID
 
@@ -46,7 +47,6 @@ from agent_trading.domain.entities import (
     UniverseFreezeRunEntity,
     UniverseFreezeRunItemEntity,
 )
-from agent_trading.domain.entities import ExecutionAttemptEntity
 from agent_trading.domain.enums import Environment, OrderStatus
 from agent_trading.repositories.filters import AccountLookup, DecisionContextQuery, OrderQuery
 

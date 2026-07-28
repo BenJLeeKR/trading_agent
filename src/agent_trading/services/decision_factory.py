@@ -11,31 +11,23 @@ from datetime import datetime, timezone
 from decimal import Decimal
 from uuid import UUID, uuid4
 
-import asyncpg
-
 from agent_trading.domain.entities import (
-    AccountEntity,
     CashBalanceSnapshotEntity,
-    ConfigVersionEntity,
     DecisionContextEntity,
-    InstrumentEntity,
-    PositionSnapshotEntity,
     TradeDecisionEntity,
 )
 from agent_trading.domain.models import SubmitOrderRequest
 from agent_trading.repositories.container import RepositoryContainer
+from agent_trading.repositories.exceptions import is_unique_violation
 from agent_trading.repositories.filters import AccountLookup
 from agent_trading.services.ai_agents.korean_normalizer import (
     validate_or_normalize_korean,
 )
 from agent_trading.services.ai_agents.schemas import (
-    AIRiskOutput,
     FinalDecisionComposerOutput,
 )
 from agent_trading.services.common_types import (
-    AIDecisionInputs,
     AssembledContext,
-    ScoreResult,
 )
 from agent_trading.services.common_types import (
     dataclass_to_dict,  # noqa: F401  (moved from decision_orchestrator in Phase 4 Subtask 3/5)
@@ -689,13 +681,15 @@ class DecisionContextService:
                         saved = await self._repos.decision_contexts.add(context)
                 else:
                     saved = await self._repos.decision_contexts.add(context)
-            except asyncpg.exceptions.UniqueViolationError:
-                self._logger.warning(
-                    "correlation_id=%s already exists — savepoint rollback, "
-                    "continuing with decision_context_id=None",
-                    correlation_id,
-                )
-                return None
+            except Exception as exc:
+                if is_unique_violation(exc):
+                    self._logger.warning(
+                        "correlation_id=%s already exists — savepoint rollback, "
+                        "continuing with decision_context_id=None",
+                        correlation_id,
+                    )
+                    return None
+                raise
 
             self._logger.info(
                 "Created decision context: id=%s account_id=%s strategy_id=%s "

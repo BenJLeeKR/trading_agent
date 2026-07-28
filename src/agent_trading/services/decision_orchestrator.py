@@ -11,8 +11,6 @@ from decimal import Decimal, InvalidOperation
 from typing import Any
 from uuid import UUID, uuid4
 
-import asyncpg
-
 from agent_trading.brokers.base import BrokerAdapter
 from agent_trading.domain.entities import (
     AccountEntity,
@@ -20,17 +18,15 @@ from agent_trading.domain.entities import (
     ConfigVersionEntity,
     DecisionContextEntity,
     ExternalEventEntity,
-    GuardrailEvaluationEntity,
     InstrumentEntity,
-    OrderRequestEntity,
     PositionSnapshotEntity,
     RiskLimitSnapshotEntity,
     SignalFeatureSnapshotEntity,
     SymbolTradeStateEntity,
     TradeDecisionEntity,
 )
-from agent_trading.domain.enums import DecisionType, EntryStyle, OrderSide, OrderStatus, OrderType
-from agent_trading.domain.models import Quote, SubmitOrderRequest
+from agent_trading.domain.enums import DecisionType, OrderSide
+from agent_trading.domain.models import SubmitOrderRequest
 from agent_trading.services.order_manager import OrderManager
 from agent_trading.services.order_sync_service import OrderSyncService
 from agent_trading.services.reverse_trade_hysteresis import (
@@ -51,12 +47,8 @@ from agent_trading.services.ai_agents.ai_compliance import StubAIComplianceAgent
 from agent_trading.services.ai_agents.final_decision_composer import (
     StubFinalDecisionComposerAgent,
 )
-from agent_trading.services.ai_agents.korean_normalizer import (
-    validate_or_normalize_korean,
-)
 from agent_trading.services.ai_agents.recorder import AgentRunRecorder
 from agent_trading.services.ai_agents.schemas import (
-    AIComplianceOutput,
     AIRiskOutput,
     EventInterpretationOutput,
     FinalDecisionComposerOutput,
@@ -69,11 +61,10 @@ from agent_trading.services.common_types import (
     OrderIntent,
     PhaseTraceEntry,
     ScoreCalculator,
-    ScoreResult,
+    ScoreResult as ScoreResult,
     StubScoreCalculator,
     SubmitResult,
     dataclass_to_dict,
-    dict_to_dataclass,
     event_sort_key,
 )
 from agent_trading.services.decision_factory import (
@@ -107,23 +98,11 @@ from agent_trading.services.portfolio_allocation import assess_portfolio_allocat
 from agent_trading.services.source_policy import evaluate_action_envelope
 from agent_trading.services.sizing_engine import (
     SizingInputs,
-    calculate_sizing,
 )
 from agent_trading.services.strategy_selection import select_strategy
-from agent_trading.services.subprocess_helpers import (
-    build_fallback_bundle,
-    deserialize_agent_output,
-    serialize_agent_input,
-)
 from agent_trading.services.translation import (
-    build_submit_order_request_from_decision,
+    build_submit_order_request_from_decision as build_submit_order_request_from_decision,
     calculate_max_order_value,
-    decimal_or_none,
-    is_missing_agent_symbol,
-    normalize_decision_type,
-    resolve_decision_type,
-    resolve_entry_style,
-    resolve_order_side,
 )
 from agent_trading.services.decision_agent_runner import DecisionAgentRunner
 from agent_trading.services.validators import ValidationContext, ValidationResult
@@ -2186,7 +2165,7 @@ class DecisionOrchestratorService:
             logger.info(
                 "Held position sell override: symbol=%s source_type=%s "
                 "decision_type=%s side=%s rationale=%s",
-                request.symbol, source_type, override_dt, override_side,
+                request.symbol, derivation.source_type, override_dt, override_side,
                 override_rationale,
             )
 

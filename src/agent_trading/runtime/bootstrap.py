@@ -1,9 +1,9 @@
 from __future__ import annotations
 
 import logging
-from collections.abc import AsyncIterator, Sequence
+from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from agent_trading.brokers.koreainvestment.adapter import KoreaInvestmentAdapter
 from agent_trading.brokers.koreainvestment.rest_client import KISRestClient
@@ -35,6 +35,10 @@ from agent_trading.services.seeded_news_service import (
 )
 from agent_trading.services.order_manager import OrderManager
 from agent_trading.services.reconciliation_service import ReconciliationService
+
+if TYPE_CHECKING:
+    from agent_trading.brokers.naver_news_adapter import NaverNewsSearchAdapter
+    from agent_trading.services.kis_realtime_quote_source import KisRealtimeQuoteSource
 
 logger = logging.getLogger(__name__)
 

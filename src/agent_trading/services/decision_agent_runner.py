@@ -10,22 +10,11 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-import os
 import subprocess  # noqa: F401 — used by subprocess-based execution
 import sys
 import time as time_module
 from dataclasses import replace
-from datetime import datetime, timezone
-from decimal import Decimal
-from typing import Any, cast
-from uuid import UUID, uuid4
 
-from agent_trading.domain.entities import (
-    AccountEntity,
-    AgentRunEntity,
-    InstrumentEntity,
-    TradeDecisionEntity,
-)
 from agent_trading.repositories.container import RepositoryContainer
 from agent_trading.services.ai_agents.base import (
     AgentExecutionRequest,
@@ -42,13 +31,9 @@ from agent_trading.services.common_types import (
     AgentExecutionBundle,
     AIDecisionInputs,
     AIPolicyContextView,
-    AssembledContext,
     ScoreCalculator,
-    ScoreResult,
     StubScoreCalculator,
     dataclass_to_dict,
-    dict_to_dataclass,
-    event_sort_key,
 )
 from agent_trading.services.subprocess_helpers import (
     build_fallback_bundle,
@@ -59,7 +44,6 @@ from agent_trading.services.expected_value_gate import (
     evaluate_expected_value_gate,
 )
 from agent_trading.services.translation import (
-    calculate_max_order_value,
     is_missing_agent_symbol,
     normalize_decision_type,
 )
@@ -234,7 +218,6 @@ class DecisionAgentRunner:
         decision_context_id = request.decision_context_id
         correlation_id = request.correlation_id
         symbol = request.symbol
-        market = request.market
 
         # Log when no decision context is available — agent runs will be
         # recorded in-memory only (not persisted to Postgres) because

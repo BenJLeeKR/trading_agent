@@ -13,7 +13,6 @@ from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from pathlib import Path
 from typing import Any, ClassVar
-from uuid import UUID, uuid4
 
 import httpx
 
@@ -1263,7 +1262,6 @@ class KISRestClient:
         output = data.get("output", data)
         # KIS order response: ODNO (주문번호), ORD_TMD (주문시각)
         broker_order_id = str(output.get("ODNO", ""))
-        order_time = str(output.get("ORD_TMD", ""))
 
         return SubmitOrderResult(
             accepted=True,
@@ -2534,8 +2532,6 @@ class KISRestClient:
             - ``kor_isnm1``~``kor_isnm10``: 종목명
             Returns ``[]`` on any error (graceful fallback).
         """
-        tr_id = self._get_tr_id("disclosure_title")
-
         # KIS FHKST01011800 requires all these query params (many must be empty)
         params: dict[str, str] = {
             "FID_COND_MRKT_CLS_CODE": "",       # 조건 시장 구분 코드 (공백 필수)

@@ -24,6 +24,11 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.responses import Response
 from starlette.types import Scope
 
+from agent_trading.api.deps import (
+    close_postgres_api_pool,
+    lookup_instrument_info_from_postgres,
+    start_postgres_api_pool,
+)
 from agent_trading.repositories.bootstrap import build_in_memory_repositories
 from agent_trading.repositories.container import RepositoryContainer
 
@@ -83,15 +88,7 @@ def _build_instrument_info_lookup(app: FastAPI, runtime_mode: str):
         if repos is not None:
             entity = await repos.instruments.get_by_symbol_any_market(symbol)
         elif runtime_mode == "postgres":
-            from agent_trading.db.transaction import TransactionManager
-            from agent_trading.repositories.postgres.instruments import (
-                PostgresInstrumentRepository,
-            )
-
-            async with TransactionManager() as tx:
-                entity = await PostgresInstrumentRepository(tx).get_by_symbol_any_market(
-                    symbol
-                )
+            return await lookup_instrument_info_from_postgres(symbol)
         else:
             return None
 
@@ -257,16 +254,13 @@ def create_app(
                 return
 
             if runtime_mode == "postgres":
-                from agent_trading.db.connection import DatabaseConfig, close_pool, create_pool
-
-                db_config = DatabaseConfig()
-                await create_pool(db_config)
+                db_config = await start_postgres_api_pool()
                 _app.state._db_config = db_config
                 _app.state.runtime_mode = "postgres"
                 try:
                     yield
                 finally:
-                    await close_pool()
+                    await close_postgres_api_pool()
             else:
                 # Default in-memory
                 _app.state.repos = build_in_memory_repositories()

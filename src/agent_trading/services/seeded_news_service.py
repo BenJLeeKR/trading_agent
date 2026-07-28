@@ -17,7 +17,6 @@ import logging
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Any
 
 from agent_trading.brokers.naver_news_adapter import (
     NaverNewsItem,

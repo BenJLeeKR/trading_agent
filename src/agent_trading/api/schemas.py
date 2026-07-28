@@ -474,13 +474,6 @@ def _map_attempt_status_to_execution_status(attempt_status: str) -> str:
         "reconcile_required": "reconcile_required",
     }
     return mapping.get(attempt_status, "pipeline_stopped")
-    """'broker_submit/AAPL' → ('broker_submit', 'AAPL')
-    'ai_assemble' → ('ai_assemble', None)
-    """
-    if "/" in phase:
-        parts = phase.split("/", maxsplit=1)
-        return parts[0], parts[1]
-    return phase, None
 
 
 class TradeDecisionDetail(BaseModel):

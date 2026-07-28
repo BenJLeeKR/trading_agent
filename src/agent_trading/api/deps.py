@@ -6,15 +6,28 @@ Postgres mode: creates request-scoped ``TransactionManager`` + repos per request
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from typing import AsyncIterator
 
 from fastapi import Depends, HTTPException, Request
 
+from agent_trading.api.schemas import SchedulerHealth
 from agent_trading.brokers.koreainvestment.rest_client import KISRestClient
+from agent_trading.db.connection import (
+    DatabaseConfig,
+    close_pool,
+    create_pool,
+    get_pool,
+    health_check,
+)
+from agent_trading.db.transaction import TransactionManager
 from agent_trading.repositories.container import RepositoryContainer
 from agent_trading.services.order_manager import OrderManager
 from agent_trading.services.realtime_quote_broadcaster import QuoteBroadcaster
-from agent_trading.services.realtime_quote_source import RealtimeQuoteSource
+from agent_trading.services.realtime_quote_source import (
+    InstrumentInfo,
+    RealtimeQuoteSource,
+)
 
 
 async def get_repos(request: Request) -> AsyncIterator[RepositoryContainer]:
@@ -36,7 +49,6 @@ async def get_repos(request: Request) -> AsyncIterator[RepositoryContainer]:
     runtime_mode: str = getattr(request.app.state, "runtime_mode", "in_memory")
 
     if runtime_mode == "postgres":
-        from agent_trading.db.transaction import TransactionManager
         from agent_trading.repositories.postgres.bootstrap import (
             build_postgres_repositories,
         )
@@ -51,6 +63,37 @@ async def get_repos(request: Request) -> AsyncIterator[RepositoryContainer]:
     else:
         # In-memory: yield the pre‑built singleton repos from app state.
         yield request.app.state.repos
+
+
+async def start_postgres_api_pool() -> DatabaseConfig:
+    """API lifespan에서 사용하는 Postgres pool을 생성하고 설정을 반환한다."""
+    db_config = DatabaseConfig()
+    await create_pool(db_config)
+    return db_config
+
+
+async def close_postgres_api_pool() -> None:
+    """API lifespan에서 생성한 Postgres pool을 닫는다."""
+    await close_pool()
+
+
+async def lookup_instrument_info_from_postgres(symbol: str) -> InstrumentInfo | None:
+    """구독 시점의 1회성 종목 메타데이터 조회를 API DB 경계 안에서 수행한다."""
+    from agent_trading.repositories.postgres.instruments import (
+        PostgresInstrumentRepository,
+    )
+
+    async with TransactionManager() as tx:
+        entity = await PostgresInstrumentRepository(tx).get_by_symbol_any_market(symbol)
+
+    if entity is None:
+        return None
+    market = (
+        entity.market_segment
+        if entity.market_segment in {"KOSPI", "KOSDAQ"}
+        else "UNKNOWN"
+    )
+    return InstrumentInfo(symbol=entity.symbol, name=entity.name, market=market)
 
 
 async def get_db(request: Request):
@@ -78,11 +121,58 @@ async def get_db(request: Request):
             "get_db requires API_RUNTIME_MODE=postgres. "
             "Market-session endpoints are not available in in_memory mode."
         )
-    from agent_trading.db.connection import get_pool
-
     pool = await get_pool()
     async with pool.acquire() as conn:
         yield conn
+
+
+async def check_database_health() -> bool:
+    """Return Postgres connectivity status for lightweight API health probes."""
+    return await health_check()
+
+
+async def get_scheduler_health(database_status: str) -> SchedulerHealth | None:
+    """Return latest scheduler freshness from the active Postgres pool."""
+    if database_status != "connected":
+        return None
+    try:
+        pool = await get_pool()
+        async with pool.acquire() as conn:
+            row = await conn.fetchrow(
+                "SELECT last_heartbeat_at, checked_at, is_trading_day, market_phase "
+                "FROM trading.market_sessions ORDER BY updated_at DESC LIMIT 1"
+            )
+
+        if row is None:
+            return SchedulerHealth()
+
+        last_heartbeat = row["last_heartbeat_at"]
+        checked_at = row["checked_at"]
+        is_trading_day = row["is_trading_day"]
+        market_phase = row["market_phase"]
+        now = datetime.now(timezone.utc)
+
+        healthy: bool | None = None
+        if market_phase in ("after_hours", "idle"):
+            healthy = True
+        elif is_trading_day and last_heartbeat and (now - last_heartbeat).total_seconds() < 120:
+            healthy = True
+        elif is_trading_day:
+            healthy = False
+        elif not is_trading_day and checked_at and (now - checked_at).total_seconds() < 86400:
+            healthy = True
+        elif not is_trading_day:
+            healthy = False
+
+        return SchedulerHealth(
+            last_heartbeat_at=last_heartbeat,
+            is_trading_day=is_trading_day,
+            checked_at=checked_at,
+            phase=market_phase,
+            healthy=healthy,
+        )
+    except Exception:
+        return None
 
 
 async def get_order_manager(

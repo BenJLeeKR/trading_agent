@@ -13,7 +13,6 @@ from __future__ import annotations
 import logging
 from collections.abc import Sequence
 from datetime import datetime, timezone
-from typing import Any
 from uuid import UUID, uuid4
 
 from agent_trading.domain.entities import AgentRunEntity

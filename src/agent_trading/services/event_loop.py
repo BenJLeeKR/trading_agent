@@ -30,7 +30,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from collections.abc import AsyncIterator, Callable
+from collections.abc import Awaitable, Callable
 from datetime import datetime, timezone
 from decimal import Decimal
 from typing import Any
@@ -40,7 +40,6 @@ from agent_trading.brokers.koreainvestment.adapter import KoreaInvestmentAdapter
 from agent_trading.domain.entities import ExternalEventEntity, FillEventEntity
 from agent_trading.domain.enums import (
     EventSource,
-    OrderSide,
     OrderStatus,
     SourceReliabilityTier,
 )
@@ -264,7 +263,6 @@ class RealTimeEventLoop:
         filled_qty_str = data.get("filled_qty", "0")
         filled_price_str = data.get("filled_price", "0")
         filled_time = data.get("filled_time", "")
-        side_raw = data.get("side", OrderSide.BUY)
         order_qty_str = data.get("order_qty", "0")
 
         now = datetime.now(tz=timezone.utc)

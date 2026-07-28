@@ -36,7 +36,7 @@ from uuid import uuid4
 import httpx
 
 from agent_trading.brokers.dedup import DedupKeyGenerator
-from agent_trading.brokers.source_adapter import RawEvent, SourceAdapter
+from agent_trading.brokers.source_adapter import RawEvent
 from agent_trading.domain.entities import ExternalEventEntity
 from agent_trading.domain.enums import SourceReliabilityTier
 from agent_trading.services.symbol_resolver import OpenDartSymbolResolver

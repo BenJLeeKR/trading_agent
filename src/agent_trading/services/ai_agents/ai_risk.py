@@ -20,7 +20,6 @@ import json
 import logging
 from datetime import datetime, timezone
 from decimal import Decimal
-from typing import Any
 
 from agent_trading.config.settings import _resolve_provider_model_id
 from agent_trading.services.ai_agents._prompt_config import (
@@ -33,10 +32,9 @@ from agent_trading.services.ai_agents.prompt_context_projection import (
 from agent_trading.services.ai_agents.base import (
     AIProviderClient,
     AgentExecutionRequest,
-    ProviderAIAgent,
     RawProviderResponse,
 )
-from agent_trading.services.ai_agents.schemas import AIRiskOutput, EventInterpretationOutput, generate_json_schema
+from agent_trading.services.ai_agents.schemas import AIRiskOutput, generate_json_schema
 
 logger = logging.getLogger(__name__)
 

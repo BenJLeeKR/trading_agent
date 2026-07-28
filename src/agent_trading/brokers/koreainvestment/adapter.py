@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 import logging
 from collections.abc import AsyncIterator, Sequence
 from datetime import datetime, timezone
@@ -13,7 +12,6 @@ from agent_trading.brokers.koreainvestment.rest_client import KISRestClient
 from agent_trading.brokers.koreainvestment.websocket_client import KISWebSocketClient
 from agent_trading.brokers.rate_limit import (
     BudgetExhaustedError,
-    RateLimitBudgetManager,
 )
 from agent_trading.domain.enums import (
     AssetClass,
@@ -253,7 +251,7 @@ class KoreaInvestmentAdapter(BrokerAdapter):
         # --- Submit via REST client (with budget check + circuit breaker) ---
         try:
             result = await self._rest.submit_order(request)
-        except BudgetExhaustedError as exc:
+        except BudgetExhaustedError:
             # Held-position sell special lane: retry with reserved budget
             if self._is_held_position_sell(request):
                 logger.info(

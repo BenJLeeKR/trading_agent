@@ -3,32 +3,38 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections.abc import Awaitable, Callable, Sequence
+from contextlib import AbstractAsyncContextManager
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from enum import Enum
-from typing import Any
+from typing import Protocol
 from uuid import UUID, uuid4
 from zoneinfo import ZoneInfo
 
-import asyncpg
-
 from agent_trading.brokers.base import BrokerAdapter
-from agent_trading.db.transaction import TransactionManager
 from agent_trading.domain.entities import (
     BrokerFillSnapshotEntity,
     BrokerOrderEntity,
     FillEventEntity,
-    InstrumentEntity,
     OrderRequestEntity,
 )
 from agent_trading.domain.enums import OrderSide, OrderStatus, OrderType, TimeInForce
 from agent_trading.domain.models import FillEvent, OrderStatusResult
 from agent_trading.repositories.container import RepositoryContainer
+from agent_trading.repositories.exceptions import is_postgres_error
 from agent_trading.repositories.filters import OrderQuery
 from agent_trading.services.order_manager import OrderManager
 
 logger = logging.getLogger(__name__)
+
+
+class SupportsSavepoint(Protocol):
+    """주문 동기화가 요구하는 transaction savepoint 최소 계약."""
+
+    def savepoint(self, name: str | None = None) -> AbstractAsyncContextManager[str]:
+        """단일 주문 동기화를 격리하는 async context manager를 반환한다."""
+
 
 # ── Statuses that OrderSyncService will attempt to sync ──
 _SYNCABLE_STATUSES: frozenset[OrderStatus] = frozenset(
@@ -550,7 +556,7 @@ class OrderSyncService:
                 log_fn = logger.info if probe_reason in (None, TruthProbeReason.POSITION_CONFLICT, TruthProbeReason.BUY_POSITION_FILL) else logger.warning
                 if probe_reason is not None:
                     log_fn(
-                        "Truth probe resolved order %s: %s (%s, ODNO=%s)",
+                        "Truth probe resolved order %s: %s (conflict: %s, ODNO=%s)",
                         order.order_request_id, probe_status.value,
                         probe_reason.value,
                         broker_order.broker_native_order_id,
@@ -1415,21 +1421,22 @@ class OrderSyncService:
         """
         raw_message = (result.raw_message or "").lower()
         raw_code = (result.raw_code or "").lower()
+        raw_probe_text = f"{raw_code} {raw_message}"
 
         # MULTI_ODNO: Same ODNO matched multiple records
-        if "multi" in raw_message or "duplicate" in raw_message:
+        if "multi" in raw_probe_text or "duplicate" in raw_probe_text:
             return TruthProbeReason.MULTI_ODNO
 
         # PAPER_EMPTY: ODNO match 성공 but all fields empty (paper env)
-        if "empty" in raw_message or "no data" in raw_message:
+        if "empty" in raw_probe_text or "no data" in raw_probe_text:
             return TruthProbeReason.PAPER_EMPTY
 
         # POSITION_CONFLICT: CCLD_QTY=0 but position delta > 0
-        if "ccld_qty=0" in raw_message or "ccld_qty 0" in raw_message:
+        if "ccld_qty=0" in raw_probe_text or "ccld_qty 0" in raw_probe_text:
             return TruthProbeReason.POSITION_CONFLICT
 
         # QTY_MISMATCH: KIS truth qty ≠ DB requested_quantity
-        if "qty" in raw_message and ("mismatch" in raw_message or "diff" in raw_message):
+        if "qty" in raw_probe_text and ("mismatch" in raw_probe_text or "diff" in raw_probe_text):
             return TruthProbeReason.QTY_MISMATCH
 
         # 기본값: 명확한 패턴 없음
@@ -1552,7 +1559,7 @@ class OrderSyncService:
 
         Raises
         ------
-        asyncpg.PostgresError
+        PostgreSQL driver error
             Re-raised so the caller (or savepoint boundary) can handle
             transaction-aborting DB errors rather than silently hiding them.
         """
@@ -1562,15 +1569,15 @@ class OrderSyncService:
                 last_synced_at=sync_time,
                 updated_at=sync_time,
             )
-        except asyncpg.PostgresError:
-            logger.error(
-                "DB write failed in _update_last_synced_at for "
-                "broker_order=%s — transaction may be aborted",
-                broker_order_id,
-                exc_info=True,
-            )
-            raise
-        except Exception:
+        except Exception as exc:
+            if is_postgres_error(exc):
+                logger.error(
+                    "DB write failed in _update_last_synced_at for "
+                    "broker_order=%s — transaction may be aborted",
+                    broker_order_id,
+                    exc_info=True,
+                )
+                raise
             logger.error(
                 "DB write failed in _update_last_synced_at for "
                 "broker_order=%s — re-raising to trigger savepoint rollback",
@@ -1813,7 +1820,7 @@ class OrderSyncService:
             # (Phase 4 fix: budget exhaustion/rate limit 등으로 broker 조회가
             #  불가능한 경우에도 RECONCILE_REQUIRED 상태를 해소)
             # Intraday (08:50~15:30 KST) 중에는 EXPIRED fallback 금지.
-            # 장마감 후 after-hours(15:30~)에만 허용.
+            # 장마감 후 after-hours(15:30~)에는 SELL 주문만 grace period 초과 시 허용.
             if order.side != OrderSide.SELL:
                 logger.warning(
                     "BUY order broker truth exception for order %s "
@@ -2271,7 +2278,7 @@ class OrderSyncService:
         #    이런 경우 EXPIRED로 fallback 전이하여 RECONCILE_REQUIRED 상태를 해소한다.
         #    (Phase 4 fix: broker truth 부재 시 자동 해소)
         # Intraday (08:50~15:30 KST) 중에는 EXPIRED fallback 금지.
-        # 장마감 후 after-hours(15:30~)에만 허용.
+        # 장마감 후 after-hours(15:30~)에는 SELL 주문만 grace period 초과 시 허용.
         if order.side != OrderSide.SELL:
             logger.warning(
                 "BUY order remains RECONCILE_REQUIRED after broker truth inquiry "
@@ -3208,7 +3215,7 @@ class PostSubmitSyncRunner:
         account_ref: str | None = None,
         *,
         limit: int = _DEFAULT_BATCH_LIMIT,
-        tx_manager: TransactionManager | None = None,
+        tx_manager: SupportsSavepoint | None = None,
         after_hours: bool | None = None,
         recovery_mode: bool = False,
     ) -> SyncCycleResult:
@@ -3229,10 +3236,10 @@ class PostSubmitSyncRunner:
         limit:
             Maximum number of orders to poll in a single cycle.
         tx_manager:
-            Optional ``TransactionManager`` instance.  If provided, the
-            cycle uses savepoints on this transaction for per-order
-            isolation.  If ``None``, no savepoint isolation is applied
-            (fallback for callers that don't use transactions).
+            Optional savepoint provider.  If provided, the cycle uses
+            savepoints on this transaction for per-order isolation.  If
+            ``None``, no savepoint isolation is applied (fallback for callers
+            that don't use transactions).
         recovery_mode:
             If ``True``, also includes EXPIRED orders and filters
             to today's orders only (used for after-hours recovery batch).
@@ -3310,19 +3317,21 @@ class PostSubmitSyncRunner:
                                 resolved_account_ref=resolved_account_ref,
                                 after_hours=_is_after_hours,
                             )
-                    except asyncpg.PostgresError as exc:
-                        # Savepoint rolled back the failed order's writes.
-                        # The outer transaction remains valid for remaining orders.
-                        err_msg = (
-                            f"{broker_order.broker_order_id}: "
-                            f"DB error isolated by savepoint: {exc}"
-                        )
-                        errors.append(err_msg)
-                        logger.warning(
-                            "Savepoint rolled back for broker_order=%s: %s",
-                            broker_order.broker_order_id, exc,
-                        )
-                        continue
+                    except Exception as exc:
+                        if is_postgres_error(exc):
+                            # Savepoint rolled back the failed order's writes.
+                            # The outer transaction remains valid for remaining orders.
+                            err_msg = (
+                                f"{broker_order.broker_order_id}: "
+                                f"DB error isolated by savepoint: {exc}"
+                            )
+                            errors.append(err_msg)
+                            logger.warning(
+                                "Savepoint rolled back for broker_order=%s: %s",
+                                broker_order.broker_order_id, exc,
+                            )
+                            continue
+                        raise
                 else:
                     # Fallback: no savepoint isolation (legacy path).
                     order_result = await self._sync_single_order(
@@ -3432,7 +3441,16 @@ class PostSubmitSyncRunner:
                 snapshot_refresh_cb=self.snapshot_refresh_cb,
                 after_hours=after_hours,
             )
-        except asyncpg.PostgresError as exc:
+        except Exception as exc:
+            if not is_postgres_error(exc):
+                err_msg = (
+                    f"{broker_order.broker_order_id}: {exc}"
+                )
+                logger.warning(
+                    "sync_order_post_submit failed for broker_order=%s: %s",
+                    broker_order.broker_order_id, exc,
+                )
+                return None, err_msg
             # DB-level error (e.g. constraint violation, aborted transaction).
             # Re-raise so the savepoint boundary can roll back and isolate
             # this failure from the rest of the cycle.
@@ -3448,15 +3466,6 @@ class PostSubmitSyncRunner:
                 exc_info=True,
             )
             raise
-        except Exception as exc:
-            err_msg = (
-                f"{broker_order.broker_order_id}: {exc}"
-            )
-            logger.warning(
-                "sync_order_post_submit failed for broker_order=%s: %s",
-                broker_order.broker_order_id, exc,
-            )
-            return None, err_msg
 
         err_msg: str | None = None
         if result.error is not None:

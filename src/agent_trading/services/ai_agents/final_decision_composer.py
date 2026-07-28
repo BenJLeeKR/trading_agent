@@ -16,8 +16,6 @@ import json
 import logging
 from datetime import datetime, timezone
 
-from decimal import Decimal
-
 from agent_trading.config.settings import _resolve_provider_model_id
 from agent_trading.services.ai_agents._prompt_config import (
     MAX_EVENTS_FDC,
@@ -29,7 +27,6 @@ from agent_trading.services.ai_agents.prompt_context_projection import (
 from agent_trading.services.ai_agents.base import (
     AgentExecutionRequest,
     AIProviderClient,
-    ProviderAIAgent,
     RawProviderResponse,
 )
 from agent_trading.services.ai_agents.schemas import (

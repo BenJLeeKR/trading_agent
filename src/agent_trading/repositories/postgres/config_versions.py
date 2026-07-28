@@ -1,9 +1,8 @@
 from __future__ import annotations
 
 import json
+from datetime import datetime
 from uuid import UUID
-
-import asyncpg
 
 from agent_trading.db.row_mapper import row_to_entity
 from agent_trading.db.transaction import TransactionManager

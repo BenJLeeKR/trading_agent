@@ -15,20 +15,18 @@ Paper (모의투자) 환경에서는 WebSocket 연결을 건너뛰고
 from __future__ import annotations
 
 import asyncio
-import hashlib
-import hmac
 import json
 import logging
 import time
 from abc import ABC, abstractmethod
-from collections.abc import Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from enum import Enum
 from pathlib import Path
 from typing import Any, Protocol
 
 import httpx
+from websockets.exceptions import ConnectionClosed
 
 from agent_trading.brokers.koreainvestment.token_cache import (
     KisTokenCache,
@@ -550,7 +548,7 @@ class KisMarketStateClient(MarketStateProvider):
                 # Check for H0UNMKO0 data
                 await self._process_message(data)
 
-        except websockets.exceptions.ConnectionClosed:
+        except ConnectionClosed:
             logger.info("KisMarketStateClient: WebSocket connection closed")
         except Exception as exc:
             logger.warning(

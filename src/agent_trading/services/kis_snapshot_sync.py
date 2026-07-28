@@ -10,7 +10,6 @@ from typing import Any
 from uuid import UUID, uuid4
 
 from agent_trading.brokers.koreainvestment.rest_client import (
-    CashAndPositionsResult,
     KISRestClient,
 )
 from agent_trading.brokers.rate_limit import BudgetExhaustedError

@@ -11,11 +11,10 @@ and cash balance come from the **exact same sync run** whenever FK data is
 available. Falls back to timestamp-based alignment for legacy data.
 """
 
-from datetime import datetime, timezone
+from datetime import datetime
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from pydantic import TypeAdapter
 
 from agent_trading.api.deps import get_repos
 from agent_trading.api.schemas import (

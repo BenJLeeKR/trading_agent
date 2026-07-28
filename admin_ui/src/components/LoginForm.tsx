@@ -1,7 +1,7 @@
 import { useState, type FormEvent } from "react";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
-import { API_BASE_URL, ApiResponseError, UnauthorizedError } from "../api/client";
+import { ApiResponseError, UnauthorizedError, verifyToken } from "../api/client";
 import { ShieldAlert } from "lucide-react";
 
 export function LoginForm() {
@@ -24,17 +24,7 @@ export function LoginForm() {
 
     // Verify token by making a health check call
     try {
-      const res = await fetch(`${API_BASE_URL}/orders`, {
-        headers: { Authorization: `Bearer ${trimmed}` },
-      });
-
-      if (res.status === 401) {
-        throw new UnauthorizedError();
-      }
-
-      if (!res.ok) {
-        throw new ApiResponseError(res.status, res.statusText);
-      }
+      await verifyToken(trimmed);
 
       // Token is valid
       login(trimmed);

@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-from collections.abc import Sequence
 from datetime import datetime, timezone
 from uuid import UUID
 
@@ -10,7 +9,6 @@ from agent_trading.db.transaction import TransactionManager
 from agent_trading.domain.entities import SnapshotSyncRunEntity
 from agent_trading.repositories.contracts import (
     SnapshotSyncHealthSummary,
-    SnapshotSyncRunRepository,
 )
 
 

@@ -1,7 +1,8 @@
 from __future__ import annotations
 
+from collections import defaultdict
 from collections.abc import Sequence
-from dataclasses import dataclass, field, replace
+from dataclasses import replace
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 from typing import Any
@@ -54,11 +55,6 @@ from agent_trading.repositories.contracts import (
     TradeDecisionRow,
 )
 from agent_trading.repositories.filters import AccountLookup, DecisionContextQuery, OrderQuery
-
-from collections import defaultdict
-from dataclasses import replace
-from datetime import datetime, timedelta, timezone
-from uuid import UUID
 
 from agent_trading.repositories.postgres.orders import VersionConflictError
 
@@ -1190,13 +1186,6 @@ class InMemoryReconciliationRepository:
             r for r in self._runs.values()
             if r.status == "started"
         ]
-        # Filter: runs WITH order links excluded
-        runs_with_links = {
-            link_info["reconciliation_run_id"]
-            for links in self._order_links.values()
-            for link_info in links
-            if isinstance(link_info, dict) and "reconciliation_run_id" in link_info
-        }
         # The _order_links dict is keyed by reconciliation_run_id,
         # so any run with entries has links.
         runs = [

@@ -245,21 +245,6 @@ async def get_order_daily_summary(
     """Return KST day-bounded order counts for the dashboard."""
     kst_now = datetime.now(_KST)
     kst_date = target_date or kst_now.date()
-    is_in_memory = type(repos.trade_decisions).__name__.startswith("InMemory")
-    in_memory_order_decision_ids: set[UUID] = set()
-    if is_in_memory:
-        day_orders = await repos.orders.list(
-            OrderQuery(
-                created_from=datetime.combine(kst_date, datetime.min.time(), tzinfo=_KST).astimezone(timezone.utc),
-                created_to=(datetime.combine(kst_date, datetime.min.time(), tzinfo=_KST) + timedelta(days=1) - timedelta(microseconds=1)).astimezone(timezone.utc),
-                limit=5000,
-            )
-        )
-        in_memory_order_decision_ids = {
-            order.trade_decision_id
-            for order in day_orders
-            if order.trade_decision_id is not None
-        }
     kst_start = datetime.combine(kst_date, datetime.min.time(), tzinfo=_KST)
     kst_end = kst_start + timedelta(days=1) - timedelta(microseconds=1)
     query = OrderQuery(
@@ -867,10 +852,6 @@ async def get_sell_availability(
     from the snapshot (useful for manual inspection with hypothetical values).
     """
     resolver = AvailableSellQtyResolver(repos=repos)
-
-    # Resolve symbol → instrument_id
-    instrument = await repos.instruments.get_by_symbol_any_market(symbol)
-    instrument_id: UUID | None = instrument.instrument_id if instrument else None
 
     # Determine the requested_qty for the resolver.
     # When position_qty is provided as an override, use it as the requested_qty

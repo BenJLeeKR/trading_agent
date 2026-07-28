@@ -15,7 +15,6 @@ from typing import Any
 from uuid import UUID, uuid4, uuid7
 
 from agent_trading.brokers.koreainvestment.rest_client import (
-    CashAndPositionsResult,
     KISRestClient,
 )
 from agent_trading.brokers.rate_limit import BudgetExhaustedError
@@ -32,7 +31,6 @@ from agent_trading.services.deterministic_var_engine import (
 )
 from agent_trading.services.snapshot_sync import (
     FetchedSnapshot,
-    SnapshotFetchProvider,
     inc_budget_fallback,
     safe_decimal,
     safe_optional_decimal,

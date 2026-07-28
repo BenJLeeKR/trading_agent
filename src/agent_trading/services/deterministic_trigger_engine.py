@@ -1299,7 +1299,6 @@ def _build_watch_score(
     reason_codes: list[str],
 ) -> float:
     buy_gap = max(0.0, 0.65 - entry_score)
-    sell_gap = max(0.0, 0.75 - exit_score)
     score = 0.0
 
     if 0.45 <= entry_score < 0.65:

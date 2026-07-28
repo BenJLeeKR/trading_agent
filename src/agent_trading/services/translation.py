@@ -18,15 +18,13 @@ or the quantity is zero/negative, the function returns ``None``.
 from __future__ import annotations
 
 from datetime import datetime, timezone
-from decimal import Decimal, ROUND_DOWN
+from decimal import Decimal
 
 from agent_trading.domain.enums import DecisionType, EntryStyle, OrderSide, OrderType
 from agent_trading.domain.models import SubmitOrderRequest
 from agent_trading.services.common_types import (
     AIDecisionInputs,
-    AssembledContext,
     OrderIntent,
-    ScoreResult,
 )
 
 __all__ = [

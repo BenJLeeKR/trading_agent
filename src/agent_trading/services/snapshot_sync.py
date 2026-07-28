@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from decimal import Decimal
 from typing import Protocol
@@ -23,7 +23,6 @@ from agent_trading.domain.entities import (
     CashBalanceSnapshotEntity,
     PositionSnapshotEntity,
     RiskLimitSnapshotEntity,
-    SnapshotSyncRunEntity,
 )
 from agent_trading.domain.enums import Environment
 from agent_trading.repositories.contracts import (
@@ -39,7 +38,7 @@ from agent_trading.repositories.contracts import (
 from agent_trading.services.kis_snapshot_sync import (
     BatchSyncResult,
     SyncResult,
-    build_sync_run_entity,
+    build_sync_run_entity as build_sync_run_entity,
 )
 from agent_trading.services.symbol_trade_state_machine import (
     reconcile_account_symbol_trade_states,

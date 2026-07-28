@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import datetime, time
-from math import sqrt
 from statistics import mean, pstdev
 from decimal import Decimal
 from uuid import UUID, uuid4
@@ -142,7 +141,6 @@ def _build_component_scores_payload(
     score_card: SignalScoreCard,
 ) -> dict[str, object]:
     shadow_v2_score_card = _build_shadow_v2_score_card(features)
-    shadow_v5_score_card = _build_shadow_v5_score_card(features)
     payload: dict[str, object] = {
         key: float(value) for key, value in score_card.component_scores.items()
     }

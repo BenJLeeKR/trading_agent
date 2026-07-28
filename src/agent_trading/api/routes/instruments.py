@@ -1,7 +1,7 @@
 """Instrument inspection endpoints."""
 
-from datetime import date, datetime, timedelta, timezone
 from collections import Counter
+from datetime import datetime, timedelta, timezone
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
