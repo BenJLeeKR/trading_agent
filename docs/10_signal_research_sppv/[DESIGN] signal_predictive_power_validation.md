@@ -2290,6 +2290,21 @@ entry 설계 검토로 전환**을 확정했다. 별도 문서
   `docs/10_signal_research_sppv/[DESIGN] regime_conditional_entry_
   signal_v1.md` §98.
 
+- 작성자: Codex
+- 수정일자: 2026-07-28 KST (112차, `risk_tone` 100% `risk_off`
+  원인 규명, 코드/설정 변경 없음)
+- 수정내용: `classify_market_regime` 코드 로직 확인 결과 정상(4,030건
+  전수 공식 재계산 0건 불일치). `high_volatility`(atr14≥4.5)/
+  `bearish_trend` 임계값이 전체 `signal_feature_snapshots` 이력
+  (2,315행)의 중앙값 부근 또는 그 이하에 있어 각각 89.8%/63.6%가
+  이미 충족 — OR 결합으로 risk_off가 사실상 상시 성립하는 구조.
+  risk_off는 001450 특이 현상이 아니라 시장 전체(30종목,
+  2026-06-24부터 3주 이상 연속 100%)에 균일. 판정: 코드는 정상,
+  임계값이 데이터 분포와 정렬되지 않았을 가능성이 있는 설계
+  미스매치 후보(추가 검증 필요, 완화안 미제시). Full pytest
+  미실행, 신규 KIS 호출 0건. 상세: `docs/10_signal_research_sppv/
+  [DESIGN] regime_conditional_entry_signal_v1.md` §99.
+
 ---
 
 ## 진행 체크리스트
@@ -5337,6 +5352,17 @@ canonical),
     로직 변경 없음, 신규 KIS 호출 0건(shadow 재호출은 `kis_
     client=None`). 상세: `docs/10_signal_research_sppv/[DESIGN]
     regime_conditional_entry_signal_v1.md` §94.
+- [x] **SPPV-2.112(신설)** `risk_tone` 100% `risk_off` 원인 규명
+  (완료, 2026-07-28 KST, 작성자: Codex, 코드/설정 변경 없음)
+  - `classify_market_regime` 로직 정상 확인(4,030건 전수 0건
+    불일치). `high_volatility`/`bearish_trend` 임계값이 전체
+    스냅샷 이력(2,315행)의 중앙값 부근 또는 그 이하 — 89.8%/63.6%
+    가 이미 충족, OR 결합으로 risk_off 상시 성립. 시장 전체
+    (30종목, 2026-06-24부터 3주+ 연속 100%)에 균일 — 001450
+    특이 현상 아님. 판정: 코드 정상, 임계값 설계 미스매치 가능성
+    있는 추가 검증 대상(완화안 없음). 상세: `docs/10_signal_
+    research_sppv/[DESIGN] regime_conditional_entry_signal_v1.md`
+    §99.
 - [x] **SPPV-2.111(신설)** `001450` 층3 정밀 분해 + 시장 전체 비교
   (완료, 2026-07-28 KST, 작성자: Codex, 코드/설정 변경 없음)
   - 최근 3거래일(07-24/27/28) 중 buy_candidate&eligibility_passed

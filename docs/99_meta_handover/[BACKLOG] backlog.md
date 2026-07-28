@@ -1608,6 +1608,16 @@
   호출 0건. 상세: `docs/10_signal_research_sppv/[DESIGN] regime_
   conditional_entry_signal_v1.md` §98.
 
+- 2026-07-28 KST(SPPV-2.112): `risk_tone` 100% `risk_off` 원인
+  규명. 코드 로직은 정상(4,030건 전수 공식 일치). `high_volatility`/
+  `bearish_trend` 임계값이 전체 스냅샷 이력 분포의 중앙값 부근
+  또는 그 이하에 있어 대부분(89.8%/63.6%)이 충족, OR 결합으로
+  risk_off가 상시 성립. 001450 특이 현상 아니고 시장 전체(30종목,
+  2026-06-24부터 3주+ 연속 100%)에 균일. 판정: 설계 미스매치
+  가능성이 있는 추가 검증 대상(완화안 없음). 코드 변경 없음,
+  신규 KIS 호출 0건. 상세: `docs/10_signal_research_sppv/[DESIGN]
+  regime_conditional_entry_signal_v1.md` §99.
+
 ---
 
 ## 관리 원칙

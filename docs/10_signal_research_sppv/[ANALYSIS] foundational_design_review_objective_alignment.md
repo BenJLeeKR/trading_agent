@@ -2101,6 +2101,20 @@ value/compliance/broker가 아니라 `entry_score < 0.65`다.
   과잉 방어 가능성이 남은 미확정. 코드 변경 없음, 신규 KIS 호출
   0건. 상세: `docs/10_signal_research_sppv/[DESIGN] regime_
   conditional_entry_signal_v1.md` §98.
+- 2026-07-28 KST(SPPV-2.112, 코드/설정 변경 없음): `risk_tone`
+  100% `risk_off` 원인 규명. 코드(`classify_market_regime`) 확인
+  결과 로직 자체는 버그 없이 정확(공식 재계산 4,030건 전수 0건
+  불일치). 다만 `high_volatility`(atr14≥4.5) 임계값이 전체
+  `signal_feature_snapshots` 이력(2,315행)의 p10(4.47%)/p50
+  (6.82%) 부근에 있어 약 90%가 이미 충족, `bearish_trend` 임계값도
+  63.6%가 충족 — OR 결합이라 risk_off가 사실상 항상 성립하는
+  구조. risk_off는 001450 특이 현상이 아니라 시장 전체(30종목
+  전부, 2026-06-24부터 3주 이상 연속 100%)에 균일하게 나타남.
+  판정: 코드는 정상, 임계값이 데이터 분포와 정렬되지 않았을
+  가능성이 있는 설계 미스매치 후보 — 추가 검증 필요(완화안 제시
+  안 함). 코드 변경 없음, 신규 KIS 호출 0건. 상세: `docs/10_
+  signal_research_sppv/[DESIGN] regime_conditional_entry_signal_
+  v1.md` §99.
 - **3순위(보류 유지, 형태 재정의 — 우선순위 재조정)**: **`entry_
   score`와 BUY funnel 재현** — §2.7 확장 검증에서 하락장 안정성이
   확인되지 않아 단순 재현으로는 착수하지 않는다. §2.16~§2.21에서

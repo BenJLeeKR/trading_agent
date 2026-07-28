@@ -12221,3 +12221,178 @@ volatility_regime` 종합, 키워드 계열 집계)
 2. **2순위**: `max_cap` env 값 실제 반영/`ops-scheduler` 재기동/
    다음 거래일 실측(§97.3 체크리스트) — 이번 턴에서 미룬 항목,
    사용자 결정 이후 진행.
+
+
+---
+
+## §99. `risk_tone` 100% `risk_off` 원인 규명(SPPV-2.112, 2026-07-28 KST)
+
+**전제**: 이번 턴은 완화안 제안 금지, 코드 미수정, `.env`/
+`ops-scheduler` 미변경. 목적은 `risk_off`를 줄이는 것이 아니라
+왜 100%로 고정됐는지 구조를 닫는 것이다.
+
+### 99.1 `risk_tone` 계산 코드 경로(read-only 코드 확인)
+
+- **결정 함수**: `src/agent_trading/services/market_regime.py`의
+  `classify_market_regime(snapshot)`. 입력은 종목별
+  `SignalFeatureSnapshotEntity`(1개, 벤치마크나 시장 공통 객체
+  아님) 단 하나.
+- **분기 규칙**:
+  ```
+  regime_label:
+    bullish_trend  : slow>=0.35 and ret_3m>=5.0 and px_sma60>=2.0
+    bearish_trend  : slow<=-0.25 and ret_3m<=-3.0 and px_sma60<=-2.0
+    event_driven_unstable : fast>=0.2 and volume_surge>=1.5
+    range_bound    : |ret_1m|<=3.0 and |px_sma20|<=2.0
+
+  volatility_regime:
+    high_volatility : vol20>=4.0 or atr14>=4.5
+    low_volatility  : 0<vol20<=1.5 and 0<atr14<=1.5
+    (그 외 normal_volatility)
+
+  risk_tone:
+    risk_on  : regime_label=='bullish_trend' and volatility_regime!='high_volatility'
+    risk_off : regime_label=='bearish_trend' or volatility_regime=='high_volatility'
+    (그 외 neutral)
+  ```
+- **저장 경로**: `decision_orchestrator.py`의
+  `_derive_deterministic_context_components()` →
+  `classify_market_regime(signal_feature_snapshot)` 호출 →
+  `deterministic_trigger_engine.py:324`에서
+  `decision_json["deterministic_trigger"]["metadata"]["risk_tone"]`에
+  그대로 저장. `strategy_selection.py`는 이 값을 그대로 재사용할
+  뿐, 자체적으로 risk_off를 강제하는 별도 분기가 없다.
+- **입력 데이터 원천**: 종목별 `signal_feature_snapshots`
+  (`timeframe='1d'`) 최신 1행 — `build_signal_feature_snapshots.py`
+  배치가 **거래일당 1회**(장 마감 후, KST 20:00 근처, UTC 11:00)
+  갱신한다. 여러 decision loop 사이클이 같은 하루 안에서는 **같은
+  스냅샷 값을 그대로 재사용**한다(사이클마다 재계산 아님).
+  `market_common_label`/벤치마크(069500) 기반 값은 `scripts/`
+  검증용 코드에만 존재하며, 실제 운영 경로에는 개입하지 않는다.
+- `snapshot is None`인 경우 `classify_market_regime`은 `None`을
+  반환하고 `risk_tone`도 `None`이 된다 — `risk_off`로 기본값
+  처리되는 fallback은 코드에 없다(사실, 코드 read 확인).
+
+### 99.2 최근 3거래일(KST) 실측 집계 — `risk_tone` 필드 기준
+
+(주의: 이 절의 수치는 `deterministic_trigger.metadata.risk_tone`
+필드 기준이며, 지난 턴(§98)의 `reason_codes` 키워드 기반 집계와는
+**다른 필드·다른 기준**이다 — 두 기준의 모수가 다르므로 숫자 차이는
+필드 차이 때문이지 오류가 아니다.)
+
+| 항목 | 값 |
+|---|---|
+| 전체 `trade_decisions` row 수(07-24/27/28) | 4,030 |
+| `risk_tone='risk_off'` | 4,030(100%) |
+| `risk_tone='neutral'`/`'risk_on'`/`null` | 0 |
+| distinct symbol 수 | 30 |
+| `regime_label` 분포 | bearish_trend 2,871 / range_bound 853 / bullish_trend 306 |
+| `volatility_regime` 분포 | high_volatility 3,418 / normal_volatility 612 |
+| 001450 개별 row 수(같은 창) | 151 |
+
+거래일별: 07-24(1,278건·21종목), 07-27(1,646건·30종목),
+07-28(1,106건·30종목) — 3일 모두 `risk_off` 100%.
+
+**공식 재검증**: `regime_label`×`volatility_regime` 교차표로
+`risk_tone` 재계산 시 4,030건 전수와 **0건 불일치**(공식이 저장값과
+정확히 일치, 계산 로직 자체의 버그는 없음). 다만 교차표를 보면
+**(bullish_trend, normal_volatility)와 (range_bound,
+normal_volatility) 조합이 이 창에서 단 1건도 없다** — 즉 "risk_on
+또는 neutral이 될 수 있었던" 조합 자체가 관측되지 않았다.
+
+### 99.3 시장 전체/core universe/candidate pool 공통 여부
+
+`001450`만의 현상이 아니다. 같은 창의 30개 관측 종목 전부에서
+`risk_tone='risk_off'`가 예외 없이 나타난다(4,030/4,030, 종목 수
+30/30). `eligibility_passed`까지 도달한 종목(001450/000240/003230)과
+그렇지 못한 종목 사이에도 차이가 없다 — `risk_tone`은 candidate
+pool 통과 여부와 무관하게 시장 전체에 균일하게 적용된다.
+
+### 99.4 입력 원인 추적 — 시장 사실 vs 입력 정체 vs 코드 구조
+
+세 갈래를 분리해서 확인했다.
+
+1. **입력 정체(캐시 staleness) 여부**: `001450`의 `signal_feature_
+   snapshots`를 직접 조회한 결과, 07-24와 07-27 두 스냅샷의
+   `slow_score`(0.86, 변화 없음)는 동일하지만 `return_3m_pct`
+   (32.08→30.33), `vol20`(3.06→2.89), `atr14`(5.61→5.79) 등은
+   실제로 값이 변하고 있다 — **완전히 정체된 캐시는 아니다.**
+   다만 07-28 스냅샷 자체가 조회되지 않아(동일 창에서 07-24/07-27
+   두 시점만 확인됨), 그날의 decision들이 07-27 스냅샷을 그대로
+   재사용했을 가능성이 있다(배치 주기상 하루 1회 갱신 구조이므로
+   정상 동작 범위 — 이상 징후로 보기는 이름).
+2. **시장 사실인지 확인(임계값 대비 전체 분포)**: `signal_feature_
+   snapshots` 테이블 전체 이력(2,315행, timeframe='1d', 최근
+   3거래일에 한정하지 않은 전체 기간)을 기준으로:
+   - `atr14` 중앙값(p50)=**6.82%**, p10(하위 10%)=**4.47%** —
+     `high_volatility` 임계값(atr14≥4.5)이 데이터 분포의
+     **10번째 백분위수 부근**에 있다. 즉 "고변동성"이 예외적
+     상태가 아니라 데이터 전체의 **압도적 다수(약 90%)**가 이미
+     충족하는 조건이다(`high_vol_hits`=2,079/2,315=89.8%).
+   - `vol20` 중앙값=4.12%도 임계값(4.0) 바로 위에 위치.
+   - `slow_score` 중앙값=**-0.80**(임계값 -0.25보다 훨씬 낮음),
+     `return_3m_pct` 중앙값=**-11.81%**(임계값 -3.0보다 훨씬
+     낮음), `price_vs_sma_60_pct` 중앙값=**-11.76%**(임계값
+     -2.0보다 훨씬 낮음) — `bearish_trend` 조건도 전체 데이터의
+     **63.6%**(1,473/2,315)가 충족한다.
+   - 이는 "이번 3거래일만 우연히 시장이 나빴다"는 설명보다,
+     **전체 관측 기간(수 개월) 동안 두 조건(고변동성/약세) 모두
+     데이터 분포의 중앙값 근처 또는 그 이상에서 상시 충족되는
+     구조**라는 사실을 가리킨다.
+3. **코드 구조 자체의 결함 여부**: §99.1에서 확인한 대로
+   `classify_market_regime`의 분기 로직 자체에는 버그/always-true
+   조건/기본값 fallback이 없다(공식 재계산 0건 불일치). 코드는
+   입력값을 정확히 그대로 반영하고 있을 뿐이다.
+
+### 99.5 비교 기준 — 다른 필드도 동일하게 단일 상태로 고정됐는가
+
+- `risk_tone`: 100% `risk_off`(위 §99.2).
+- `regime_label`: **고정 아님** — bearish_trend(71.2%)/
+  range_bound(21.2%)/bullish_trend(7.6%) 3개 값이 모두 관측됨.
+- `volatility_regime`: **고정 아님** — high_volatility(84.8%)/
+  normal_volatility(15.2%) 둘 다 관측됨.
+- `strategy_selection.preferred_strategy`: **거의 고정** —
+  `defensive_low_volatility_rotation`(3,861건, 95.8%) /
+  `event_continuation`(169건, 4.2%) — `risk_tone`만큼 완전한
+  100%는 아니지만 매우 편향돼 있다(risk_tone의 하류 결과이므로
+  당연한 전파).
+
+**즉 `risk_tone`만 유독 완전한 단일 상태(100%)이고, 그 상류
+구성요소인 `regime_label`/`volatility_regime`은 다양하게 관측된다
+— 이는 `risk_tone`의 OR 결합 규칙(`bearish_trend` **또는**
+`high_volatility` 둘 중 하나만 충족해도 risk_off) 자체가, 각각
+독립적으로도 이미 과반을 차지하는 두 조건을 OR로 묶어 검출력을
+낮추는 구조적 효과를 낳고 있음을 시사한다(사실 기반 관찰, 완화안
+아님).**
+
+### 99.6 최종 판정
+
+- **정상 동작 범위인가, 이상 징후인가**: 코드 로직(`classify_
+  market_regime`의 분기/OR 결합)은 **버그 없이 설계된 대로 정확히
+  동작**하고 있다(정상). 다만 그 **임계값이 실제 데이터 분포와
+  정렬돼 있지 않을 가능성**이 데이터로 뒷받침된다 —
+  `high_volatility`/`bearish_trend` 임계값이 각각 전체 관측치의
+  중앙값 부근 또는 그 이상에 위치해, "예외적 상태"가 아니라
+  "기본 상태"를 검출하는 것에 가깝다. 이는 **설계 미스매치(임계값
+  보정 필요) 가능성이 있는 추가 검증 대상**으로 판정한다 — "정상"
+  이라고 단정하지도, "버그"라고 단정하지도 않는다.
+- 이 현상은 `001450`에 국한된 것이 아니라 **시장 전체(30개 관측
+  종목 전부)에 균일하게 적용되는 구조적 현상**이다.
+- `risk_off`가 3주 이상(2026-06-24~) 연속 100%로 관측된 것은 이번
+  3거래일만의 일시적 현상이 아니라 **장기 지속된 상태**다(추가
+  사실, 완화안과 무관하게 기록만 남김).
+
+### 99.7 다음 우선 작업(완화안 아님, 원인 규명 후속 과제로만 제시)
+
+1. **1순위**: `high_volatility`/`bearish_trend` 임계값이 실제
+   기초자산 가격/변동성 데이터 자체의 분포 특성(예: 이 페이퍼
+   환경의 종목 유니버스가 원래 변동성이 큰 종목군인지, 또는
+   `vol20`/`atr14` 계산 단위·스케일이 의도와 다른지)과 정렬돼
+   있는지 원인만 더 좁혀서 검증(완화안 설계 아님, 정렬 여부
+   진단까지만).
+2. **2순위**: `signal_feature_snapshots` 배치가 실제로 일별 1회
+   정확히 갱신되는지(사이클 간 동일 값 재사용이 의도된 설계인지)
+   `build_signal_feature_snapshots.py` 실행 이력 확인.
+3. **3순위(후순위, 이전 턴에서 미룸)**: `max_cap` env 값 실제
+   반영/`ops-scheduler` 재기동/다음 거래일 실측(§97.3), `001450`
+   층3 관찰 지속.

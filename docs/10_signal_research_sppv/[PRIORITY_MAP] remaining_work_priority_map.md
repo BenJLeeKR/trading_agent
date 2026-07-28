@@ -9782,17 +9782,31 @@ agent 설계 문서 기준으로도 순서는 다음이 맞다.
      판정: 과잉 방어 가능성이 남은 미확정(라벨 부여 안 함). 상세:
      `docs/10_signal_research_sppv/[DESIGN] regime_conditional_
      entry_signal_v1.md` §98.
-   - **SPPV-3(다음 착수: [1순위] `risk_tone`(`deterministic_
-     trigger.metadata.risk_tone`)이 관찰 창 전체에서 예외 없이
-     `risk_off`만 산출하는 원인을 코드 read-only로 추적(완화안이
-     아니라 원인 규명 우선) +
-     [2순위] 사용자가 `.env`에 `TRADING_UNIVERSE_MAX_CAP` 설정 후
+   - **SPPV-2.112(완료, 2026-07-28 KST, `risk_tone` 100% `risk_off`
+     원인 규명, 작성자: Codex, 코드/설정 변경 없음)**: `classify_
+     market_regime` 로직 정상 확인(4,030건 전수 공식 재계산 0건
+     불일치). `high_volatility`(atr14≥4.5)/`bearish_trend` 임계값이
+     전체 `signal_feature_snapshots` 이력(2,315행)의 중앙값 부근
+     또는 그 이하에 있어 89.8%/63.6%가 이미 충족 — OR 결합으로
+     risk_off가 사실상 상시 성립. 시장 전체(30종목, 2026-06-24부터
+     3주+ 연속 100%)에 균일 — 001450 특이 현상 아님. 판정: 코드
+     정상, 임계값이 데이터 분포와 정렬되지 않았을 가능성이 있는
+     설계 미스매치 후보(완화안 미제시, 추가 검증 필요). 상세:
+     `docs/10_signal_research_sppv/[DESIGN] regime_conditional_
+     entry_signal_v1.md` §99.
+   - **SPPV-3(다음 착수: [1순위] `high_volatility`/`bearish_trend`
+     임계값이 실제 기초자산 가격/변동성 데이터 분포·계산 스케일과
+     정렬돼 있는지 원인만 더 좁혀서 진단(완화안 설계 아님) +
+     [2순위] `signal_feature_snapshots` 배치의 일별 1회 갱신
+     주기·재사용 설계 확인(`build_signal_feature_snapshots.py`
+     실행 이력) +
+     [3순위] 사용자가 `.env`에 `TRADING_UNIVERSE_MAX_CAP` 설정 후
      `ops-scheduler` 재기동 → 다음 거래일 실측(§97.3 체크리스트:
      universe 크기/009150 진입/candidate pool 확대/buy_candidate~
      submit_request 변화) +
-     [3순위] 001450의 층3(AI downgrade, risk_off+volatility 축)
+     [4순위] 001450의 층3(AI downgrade, risk_off+volatility 축)
      관찰 지속(정당/과잉 여부 미확정, 완화 제안 아님) +
-     [4순위, 후순위 조정] eligibility_low_relative_activity 조건부
+     [5순위, 후순위 조정] eligibility_low_relative_activity 조건부
      완화(entry_score≥0.70 예외) 코드 diff 초안 설계 검토 — 신규
      진입 종목들의 entry_score가 낮아(0.36) 실익이 낮아짐, 전면
      완화 금지 +
