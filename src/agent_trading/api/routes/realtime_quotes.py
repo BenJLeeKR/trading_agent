@@ -29,6 +29,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import StreamingResponse
 
 from agent_trading.api.deps import get_realtime_quote_broadcaster, get_realtime_quote_source
+from agent_trading.api.errors import build_http_exception
 from agent_trading.api.schemas import (
     RealtimeQuoteBootstrapResponse,
     RealtimeQuoteConnectionInfo,
@@ -201,7 +202,16 @@ async def get_snapshot(
     """
     symbol_list = [s.strip().upper() for s in symbols.split(",") if s.strip()]
     if not symbol_list:
-        raise HTTPException(status_code=422, detail="symbols query parameter must not be empty")
+        raise build_http_exception(
+            status_code=422,
+            error_code="empty_symbols_query",
+            message="symbols query parameter must not be empty",
+            field="symbols",
+            expected="comma-separated non-empty symbol codes",
+            received=symbols,
+            request_path="/realtime-quotes/snapshot",
+            next_action="provide at least one symbol",
+        )
 
     raw_snapshots = source.get_snapshots(symbol_list)
     quotes = {symbol: _to_snapshot_view(quote) for symbol, quote in raw_snapshots.items()}

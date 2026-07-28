@@ -6,6 +6,7 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException
 
 from agent_trading.api.deps import get_repos
+from agent_trading.api.errors import build_http_exception
 from agent_trading.api.schemas import ClientDetail
 from agent_trading.config.settings import AppSettings
 from agent_trading.domain.enums import Environment
@@ -86,7 +87,16 @@ async def get_client(
     try:
         cid = UUID(client_id)
     except ValueError:
-        raise HTTPException(status_code=400, detail="Invalid client_id UUID")
+        raise build_http_exception(
+            status_code=400,
+            error_code="invalid_client_id",
+            message="Invalid client_id UUID",
+            field="client_id",
+            expected="UUID string",
+            received=client_id,
+            request_path="/clients/{client_id}",
+            next_action="check client_id format",
+        )
 
     client = await repos.clients.get(cid)
     if client is None:

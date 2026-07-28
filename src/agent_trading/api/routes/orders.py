@@ -17,6 +17,7 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 
 from agent_trading.api.deps import get_kis_client, get_order_manager, get_repos
+from agent_trading.api.errors import build_http_exception
 from agent_trading.api.schemas import (
     BrokerOrderView,
     BrokerTruthResponse,
@@ -425,7 +426,16 @@ async def get_order(
     try:
         uid = UUID(order_request_id)
     except ValueError as exc:
-        raise HTTPException(status_code=400, detail=f"Invalid UUID: {order_request_id}") from exc
+        raise build_http_exception(
+            status_code=400,
+            error_code="invalid_order_request_id",
+            message=f"Invalid UUID: {order_request_id}",
+            field="order_request_id",
+            expected="UUID string",
+            received=order_request_id,
+            request_path="/orders/{order_request_id}",
+            next_action="check order_request_id format",
+        ) from exc
 
     order = await repos.orders.get(uid)
     if order is None:
@@ -488,7 +498,16 @@ async def get_order_events(
     try:
         uid = UUID(order_request_id)
     except ValueError as exc:
-        raise HTTPException(status_code=400, detail=f"Invalid UUID: {order_request_id}") from exc
+        raise build_http_exception(
+            status_code=400,
+            error_code="invalid_order_request_id",
+            message=f"Invalid UUID: {order_request_id}",
+            field="order_request_id",
+            expected="UUID string",
+            received=order_request_id,
+            request_path="/orders/{order_request_id}/events",
+            next_action="check order_request_id format",
+        ) from exc
 
     # Validate order exists
     order = await repos.orders.get(uid)
@@ -523,7 +542,16 @@ async def get_broker_orders(
     try:
         uid = UUID(order_request_id)
     except ValueError as exc:
-        raise HTTPException(status_code=400, detail=f"Invalid UUID: {order_request_id}") from exc
+        raise build_http_exception(
+            status_code=400,
+            error_code="invalid_order_request_id",
+            message=f"Invalid UUID: {order_request_id}",
+            field="order_request_id",
+            expected="UUID string",
+            received=order_request_id,
+            request_path="/orders/{order_request_id}/broker-orders",
+            next_action="check order_request_id format",
+        ) from exc
 
     # Validate order exists first
     order = await repos.orders.get(uid)
@@ -601,7 +629,16 @@ async def manual_resolve_order_status(
     try:
         uid = UUID(order_request_id)
     except ValueError:
-        raise HTTPException(status_code=400, detail=f"Invalid UUID: {order_request_id}")
+        raise build_http_exception(
+            status_code=400,
+            error_code="invalid_order_request_id",
+            message=f"Invalid UUID: {order_request_id}",
+            field="order_request_id",
+            expected="UUID string",
+            received=order_request_id,
+            request_path="/orders/{order_request_id}/status",
+            next_action="check order_request_id format",
+        )
 
     # 2. Find order
     order = await repos.orders.get(uid)
@@ -767,7 +804,16 @@ async def get_order_broker_truth(
     try:
         uid = UUID(order_request_id)
     except ValueError:
-        raise HTTPException(status_code=400, detail=f"Invalid UUID: {order_request_id}")
+        raise build_http_exception(
+            status_code=400,
+            error_code="invalid_order_request_id",
+            message=f"Invalid UUID: {order_request_id}",
+            field="order_request_id",
+            expected="UUID string",
+            received=order_request_id,
+            request_path="/orders/{order_request_id}/broker-truth",
+            next_action="check order_request_id format",
+        )
 
     # 2. Find order
     order = await repos.orders.get(uid)

@@ -2,13 +2,34 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
+from typing import Any
 from unittest.mock import AsyncMock
 from uuid import uuid4
 
+import pytest
+from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
 from agent_trading.api.app import create_app
 from agent_trading.api.deps import get_db
+from agent_trading.api.routes import performance as performance_routes
+
+
+def _capture_build_http_exception(
+    monkeypatch: pytest.MonkeyPatch,
+) -> list[dict[str, Any]]:
+    captured_calls: list[dict[str, Any]] = []
+    original_build_http_exception: Callable[..., HTTPException] = (
+        performance_routes.build_http_exception
+    )
+
+    def capture_call(**kwargs: Any) -> HTTPException:
+        captured_calls.append(kwargs)
+        return original_build_http_exception(**kwargs)
+
+    monkeypatch.setattr(performance_routes, "build_http_exception", capture_call)
+    return captured_calls
 
 
 class TestPerformanceTriggerAttribution:
@@ -96,7 +117,10 @@ class TestPerformanceTriggerAttribution:
 
         app.dependency_overrides.clear()
 
-    def test_invalid_account_id_returns_400(self) -> None:
+    def test_invalid_account_id_returns_400(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        captured_calls = _capture_build_http_exception(monkeypatch)
         app = create_app(auth_enabled=False)
         dummy_conn = AsyncMock()
 
@@ -110,7 +134,10 @@ class TestPerformanceTriggerAttribution:
                 params={"account_id": "not-a-uuid", "lookback_days": 14},
             )
         assert response.status_code == 400
-        assert "Invalid account_id UUID" in response.json()["detail"]
+        assert response.json()["detail"] == "Invalid account_id UUID"
+        assert len(captured_calls) == 1
+        assert captured_calls[0]["error_code"] == "invalid_account_id"
+        assert captured_calls[0]["request_path"] == "/performance-trigger-attribution"
         app.dependency_overrides.clear()
 
 
@@ -230,7 +257,10 @@ class TestPerformanceHoldingProfileAttribution:
 
         app.dependency_overrides.clear()
 
-    def test_invalid_account_id_returns_400(self) -> None:
+    def test_invalid_account_id_returns_400(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        captured_calls = _capture_build_http_exception(monkeypatch)
         app = create_app(auth_enabled=False)
         dummy_conn = AsyncMock()
 
@@ -244,5 +274,11 @@ class TestPerformanceHoldingProfileAttribution:
                 params={"account_id": "not-a-uuid", "lookback_days": 14},
             )
         assert response.status_code == 400
-        assert "Invalid account_id UUID" in response.json()["detail"]
+        assert response.json()["detail"] == "Invalid account_id UUID"
+        assert len(captured_calls) == 1
+        assert captured_calls[0]["error_code"] == "invalid_account_id"
+        assert (
+            captured_calls[0]["request_path"]
+            == "/performance-holding-profile-attribution"
+        )
         app.dependency_overrides.clear()

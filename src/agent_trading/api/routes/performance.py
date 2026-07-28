@@ -13,9 +13,10 @@
 from datetime import date
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, Query
 
 from agent_trading.api.deps import get_db, get_repos
+from agent_trading.api.errors import build_http_exception
 from agent_trading.api.schemas import (
     AccountPerformanceSummaryView,
     BenchmarkComparisonView,
@@ -116,7 +117,16 @@ async def get_performance_summary(
     try:
         aid = UUID(account_id)
     except ValueError:
-        raise HTTPException(status_code=400, detail="Invalid account_id UUID")
+        raise build_http_exception(
+            status_code=400,
+            error_code="invalid_account_id",
+            message="Invalid account_id UUID",
+            field="account_id",
+            expected="UUID string",
+            received=account_id,
+            request_path="/performance-summary",
+            next_action="check account_id format",
+        )
 
     service = PerformanceSummaryService(repos)
 
@@ -124,7 +134,16 @@ async def get_performance_summary(
         try:
             sid = UUID(strategy_id)
         except ValueError:
-            raise HTTPException(status_code=400, detail="Invalid strategy_id UUID")
+            raise build_http_exception(
+                status_code=400,
+                error_code="invalid_strategy_id",
+                message="Invalid strategy_id UUID",
+                field="strategy_id",
+                expected="UUID string",
+                received=strategy_id,
+                request_path="/performance-summary",
+                next_action="check strategy_id format",
+            )
 
         summary = await service.get_strategy_summary(aid, sid)
         return StrategyPerformanceSummaryView.model_validate(summary)
@@ -146,7 +165,16 @@ async def get_performance_trigger_attribution(
     try:
         aid = UUID(account_id)
     except ValueError:
-        raise HTTPException(status_code=400, detail="Invalid account_id UUID")
+        raise build_http_exception(
+            status_code=400,
+            error_code="invalid_account_id",
+            message="Invalid account_id UUID",
+            field="account_id",
+            expected="UUID string",
+            received=account_id,
+            request_path="/performance-trigger-attribution",
+            next_action="check account_id format",
+        )
 
     since_sql = "NOW() - ($2::int * INTERVAL '1 day')"
     candidate_expr = "jsonb_typeof(td.decision_json->'candidate_vs_final') = 'object'"
@@ -294,7 +322,16 @@ async def get_performance_holding_profile_attribution(
     try:
         aid = UUID(account_id)
     except ValueError:
-        raise HTTPException(status_code=400, detail="Invalid account_id UUID")
+        raise build_http_exception(
+            status_code=400,
+            error_code="invalid_account_id",
+            message="Invalid account_id UUID",
+            field="account_id",
+            expected="UUID string",
+            received=account_id,
+            request_path="/performance-holding-profile-attribution",
+            next_action="check account_id format",
+        )
 
     since_sql = "NOW() - ($2::int * INTERVAL '1 day')"
     edge_expr = (
@@ -687,22 +724,54 @@ async def get_performance_history(
     try:
         aid = UUID(account_id)
     except ValueError:
-        raise HTTPException(status_code=400, detail="Invalid account_id UUID")
+        raise build_http_exception(
+            status_code=400,
+            error_code="invalid_account_id",
+            message="Invalid account_id UUID",
+            field="account_id",
+            expected="UUID string",
+            received=account_id,
+            request_path="/performance-history",
+            next_action="check account_id format",
+        )
 
     try:
         sd = date.fromisoformat(start_date)
     except ValueError:
-        raise HTTPException(status_code=400, detail="Invalid start_date (use YYYY-MM-DD)")
+        raise build_http_exception(
+            status_code=400,
+            error_code="invalid_start_date",
+            message="Invalid start_date (use YYYY-MM-DD)",
+            field="start_date",
+            expected="YYYY-MM-DD",
+            received=start_date,
+            request_path="/performance-history",
+            next_action="check start_date format",
+        )
 
     try:
         ed = date.fromisoformat(end_date)
     except ValueError:
-        raise HTTPException(status_code=400, detail="Invalid end_date (use YYYY-MM-DD)")
+        raise build_http_exception(
+            status_code=400,
+            error_code="invalid_end_date",
+            message="Invalid end_date (use YYYY-MM-DD)",
+            field="end_date",
+            expected="YYYY-MM-DD",
+            received=end_date,
+            request_path="/performance-history",
+            next_action="check end_date format",
+        )
 
     if sd > ed:
-        raise HTTPException(
+        raise build_http_exception(
             status_code=400,
-            detail="start_date must be on or before end_date",
+            error_code="invalid_date_range",
+            message="start_date must be on or before end_date",
+            field="start_date,end_date",
+            expected="start_date <= end_date",
+            request_path="/performance-history",
+            next_action="check date range",
         )
 
     sid: UUID | None = None
@@ -710,7 +779,16 @@ async def get_performance_history(
         try:
             sid = UUID(strategy_id)
         except ValueError:
-            raise HTTPException(status_code=400, detail="Invalid strategy_id UUID")
+            raise build_http_exception(
+                status_code=400,
+                error_code="invalid_strategy_id",
+                message="Invalid strategy_id UUID",
+                field="strategy_id",
+                expected="UUID string",
+                received=strategy_id,
+                request_path="/performance-history",
+                next_action="check strategy_id format",
+            )
 
     service = PerformanceSummaryService(repos)
     points = await service.get_daily_history(aid, sd, ed, strategy_id=sid)
@@ -763,26 +841,54 @@ async def get_performance_metrics(
     try:
         aid = UUID(account_id)
     except ValueError:
-        raise HTTPException(status_code=400, detail="Invalid account_id UUID")
+        raise build_http_exception(
+            status_code=400,
+            error_code="invalid_account_id",
+            message="Invalid account_id UUID",
+            field="account_id",
+            expected="UUID string",
+            received=account_id,
+            request_path="/performance-metrics",
+            next_action="check account_id format",
+        )
 
     try:
         sd = date.fromisoformat(start_date)
     except ValueError:
-        raise HTTPException(
-            status_code=400, detail="Invalid start_date (use YYYY-MM-DD)"
+        raise build_http_exception(
+            status_code=400,
+            error_code="invalid_start_date",
+            message="Invalid start_date (use YYYY-MM-DD)",
+            field="start_date",
+            expected="YYYY-MM-DD",
+            received=start_date,
+            request_path="/performance-metrics",
+            next_action="check start_date format",
         )
 
     try:
         ed = date.fromisoformat(end_date)
     except ValueError:
-        raise HTTPException(
-            status_code=400, detail="Invalid end_date (use YYYY-MM-DD)"
+        raise build_http_exception(
+            status_code=400,
+            error_code="invalid_end_date",
+            message="Invalid end_date (use YYYY-MM-DD)",
+            field="end_date",
+            expected="YYYY-MM-DD",
+            received=end_date,
+            request_path="/performance-metrics",
+            next_action="check end_date format",
         )
 
     if sd > ed:
-        raise HTTPException(
+        raise build_http_exception(
             status_code=400,
-            detail="start_date must be on or before end_date",
+            error_code="invalid_date_range",
+            message="start_date must be on or before end_date",
+            field="start_date,end_date",
+            expected="start_date <= end_date",
+            request_path="/performance-metrics",
+            next_action="check date range",
         )
 
     sid: UUID | None = None
@@ -790,7 +896,16 @@ async def get_performance_metrics(
         try:
             sid = UUID(strategy_id)
         except ValueError:
-            raise HTTPException(status_code=400, detail="Invalid strategy_id UUID")
+            raise build_http_exception(
+                status_code=400,
+                error_code="invalid_strategy_id",
+                message="Invalid strategy_id UUID",
+                field="strategy_id",
+                expected="UUID string",
+                received=strategy_id,
+                request_path="/performance-metrics",
+                next_action="check strategy_id format",
+            )
 
     service = PerformanceSummaryService(repos)
     metrics = await service.get_performance_metrics(aid, sd, ed, strategy_id=sid)
@@ -848,35 +963,71 @@ async def get_performance_benchmark(
     try:
         aid = UUID(account_id)
     except ValueError:
-        raise HTTPException(status_code=400, detail="Invalid account_id UUID")
+        raise build_http_exception(
+            status_code=400,
+            error_code="invalid_account_id",
+            message="Invalid account_id UUID",
+            field="account_id",
+            expected="UUID string",
+            received=account_id,
+            request_path="/performance-benchmark",
+            next_action="check account_id format",
+        )
 
     # -- Validate dates --
     try:
         sd = date.fromisoformat(start_date)
     except ValueError:
-        raise HTTPException(
-            status_code=400, detail="Invalid start_date (use YYYY-MM-DD)"
+        raise build_http_exception(
+            status_code=400,
+            error_code="invalid_start_date",
+            message="Invalid start_date (use YYYY-MM-DD)",
+            field="start_date",
+            expected="YYYY-MM-DD",
+            received=start_date,
+            request_path="/performance-benchmark",
+            next_action="check start_date format",
         )
 
     try:
         ed = date.fromisoformat(end_date)
     except ValueError:
-        raise HTTPException(
-            status_code=400, detail="Invalid end_date (use YYYY-MM-DD)"
+        raise build_http_exception(
+            status_code=400,
+            error_code="invalid_end_date",
+            message="Invalid end_date (use YYYY-MM-DD)",
+            field="end_date",
+            expected="YYYY-MM-DD",
+            received=end_date,
+            request_path="/performance-benchmark",
+            next_action="check end_date format",
         )
 
     if sd > ed:
-        raise HTTPException(
+        raise build_http_exception(
             status_code=400,
-            detail="start_date must be on or before end_date",
+            error_code="invalid_date_range",
+            message="start_date must be on or before end_date",
+            field="start_date,end_date",
+            expected="start_date <= end_date",
+            request_path="/performance-benchmark",
+            next_action="check date range",
         )
 
     # -- Validate benchmark_code --
     if benchmark_code not in VALID_BENCHMARK_CODES:
-        raise HTTPException(
+        raise build_http_exception(
             status_code=400,
-            detail=f"Invalid benchmark_code={benchmark_code!r}. "
-            f"Valid codes: {sorted(VALID_BENCHMARK_CODES)}",
+            error_code="invalid_benchmark_code",
+            message=(
+                f"Invalid benchmark_code={benchmark_code!r}. "
+                f"Valid codes: {sorted(VALID_BENCHMARK_CODES)}"
+            ),
+            field="benchmark_code",
+            expected=f"one of {sorted(VALID_BENCHMARK_CODES)}",
+            received=benchmark_code,
+            request_path="/performance-benchmark",
+            next_action="check benchmark_code value",
         )
 
     # -- Validate optional strategy_id --
@@ -885,7 +1036,16 @@ async def get_performance_benchmark(
         try:
             sid = UUID(strategy_id)
         except ValueError:
-            raise HTTPException(status_code=400, detail="Invalid strategy_id UUID")
+            raise build_http_exception(
+                status_code=400,
+                error_code="invalid_strategy_id",
+                message="Invalid strategy_id UUID",
+                field="strategy_id",
+                expected="UUID string",
+                received=strategy_id,
+                request_path="/performance-benchmark",
+                next_action="check strategy_id format",
+            )
 
     # -- Build service with in-memory benchmark price repo --
     benchmark_price_repo = InMemoryBenchmarkPriceRepository(
@@ -953,35 +1113,71 @@ async def get_performance_benchmark_history(
     try:
         aid = UUID(account_id)
     except ValueError:
-        raise HTTPException(status_code=400, detail="Invalid account_id UUID")
+        raise build_http_exception(
+            status_code=400,
+            error_code="invalid_account_id",
+            message="Invalid account_id UUID",
+            field="account_id",
+            expected="UUID string",
+            received=account_id,
+            request_path="/performance-benchmark-history",
+            next_action="check account_id format",
+        )
 
     # -- Validate dates --
     try:
         sd = date.fromisoformat(start_date)
     except ValueError:
-        raise HTTPException(
-            status_code=400, detail="Invalid start_date (use YYYY-MM-DD)"
+        raise build_http_exception(
+            status_code=400,
+            error_code="invalid_start_date",
+            message="Invalid start_date (use YYYY-MM-DD)",
+            field="start_date",
+            expected="YYYY-MM-DD",
+            received=start_date,
+            request_path="/performance-benchmark-history",
+            next_action="check start_date format",
         )
 
     try:
         ed = date.fromisoformat(end_date)
     except ValueError:
-        raise HTTPException(
-            status_code=400, detail="Invalid end_date (use YYYY-MM-DD)"
+        raise build_http_exception(
+            status_code=400,
+            error_code="invalid_end_date",
+            message="Invalid end_date (use YYYY-MM-DD)",
+            field="end_date",
+            expected="YYYY-MM-DD",
+            received=end_date,
+            request_path="/performance-benchmark-history",
+            next_action="check end_date format",
         )
 
     if sd > ed:
-        raise HTTPException(
+        raise build_http_exception(
             status_code=400,
-            detail="start_date must be on or before end_date",
+            error_code="invalid_date_range",
+            message="start_date must be on or before end_date",
+            field="start_date,end_date",
+            expected="start_date <= end_date",
+            request_path="/performance-benchmark-history",
+            next_action="check date range",
         )
 
     # -- Validate benchmark_code --
     if benchmark_code not in VALID_BENCHMARK_CODES:
-        raise HTTPException(
+        raise build_http_exception(
             status_code=400,
-            detail=f"Invalid benchmark_code={benchmark_code!r}. "
-            f"Valid codes: {sorted(VALID_BENCHMARK_CODES)}",
+            error_code="invalid_benchmark_code",
+            message=(
+                f"Invalid benchmark_code={benchmark_code!r}. "
+                f"Valid codes: {sorted(VALID_BENCHMARK_CODES)}"
+            ),
+            field="benchmark_code",
+            expected=f"one of {sorted(VALID_BENCHMARK_CODES)}",
+            received=benchmark_code,
+            request_path="/performance-benchmark-history",
+            next_action="check benchmark_code value",
         )
 
     # -- Validate optional strategy_id --
@@ -990,7 +1186,16 @@ async def get_performance_benchmark_history(
         try:
             sid = UUID(strategy_id)
         except ValueError:
-            raise HTTPException(status_code=400, detail="Invalid strategy_id UUID")
+            raise build_http_exception(
+                status_code=400,
+                error_code="invalid_strategy_id",
+                message="Invalid strategy_id UUID",
+                field="strategy_id",
+                expected="UUID string",
+                received=strategy_id,
+                request_path="/performance-benchmark-history",
+                next_action="check strategy_id format",
+            )
 
     # -- Build service with in-memory benchmark price repo --
     benchmark_price_repo = InMemoryBenchmarkPriceRepository(
@@ -1063,25 +1268,53 @@ async def get_paper_go_no_go(
     try:
         aid = UUID(account_id)
     except ValueError:
-        raise HTTPException(status_code=400, detail="Invalid account_id UUID")
+        raise build_http_exception(
+            status_code=400,
+            error_code="invalid_account_id",
+            message="Invalid account_id UUID",
+            field="account_id",
+            expected="UUID string",
+            received=account_id,
+            request_path="/paper-go-no-go",
+            next_action="check account_id format",
+        )
 
     # -- Validate dates --
     try:
         sd = date.fromisoformat(start_date)
     except ValueError:
-        raise HTTPException(
-            status_code=400, detail="Invalid start_date (use YYYY-MM-DD)"
+        raise build_http_exception(
+            status_code=400,
+            error_code="invalid_start_date",
+            message="Invalid start_date (use YYYY-MM-DD)",
+            field="start_date",
+            expected="YYYY-MM-DD",
+            received=start_date,
+            request_path="/paper-go-no-go",
+            next_action="check start_date format",
         )
     try:
         ed = date.fromisoformat(end_date)
     except ValueError:
-        raise HTTPException(
-            status_code=400, detail="Invalid end_date (use YYYY-MM-DD)"
+        raise build_http_exception(
+            status_code=400,
+            error_code="invalid_end_date",
+            message="Invalid end_date (use YYYY-MM-DD)",
+            field="end_date",
+            expected="YYYY-MM-DD",
+            received=end_date,
+            request_path="/paper-go-no-go",
+            next_action="check end_date format",
         )
     if sd > ed:
-        raise HTTPException(
+        raise build_http_exception(
             status_code=400,
-            detail="start_date must be on or before end_date",
+            error_code="invalid_date_range",
+            message="start_date must be on or before end_date",
+            field="start_date,end_date",
+            expected="start_date <= end_date",
+            request_path="/paper-go-no-go",
+            next_action="check date range",
         )
 
     # -- Validate optional strategy_id --
@@ -1090,7 +1323,16 @@ async def get_paper_go_no_go(
         try:
             sid = UUID(strategy_id)
         except ValueError:
-            raise HTTPException(status_code=400, detail="Invalid strategy_id UUID")
+            raise build_http_exception(
+                status_code=400,
+                error_code="invalid_strategy_id",
+                message="Invalid strategy_id UUID",
+                field="strategy_id",
+                expected="UUID string",
+                received=strategy_id,
+                request_path="/paper-go-no-go",
+                next_action="check strategy_id format",
+            )
 
     # -- Build service --
     settings = AppSettings()

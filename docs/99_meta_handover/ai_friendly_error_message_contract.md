@@ -87,8 +87,9 @@ API 오류 응답은 다음 순서로 개선한다.
 
 1. 기존 문자열 `detail` 호환성을 깨지 않는다.
 2. 공통 오류 응답 스키마를 먼저 문서화하고 테스트를 추가한다.
-3. 신규 또는 변경 endpoint부터 구조화된 `detail` 객체를 적용한다.
-4. Admin UI가 사용하는 endpoint는 UI 영향 범위를 먼저 확인한다.
+3. `build_http_exception()` 기본 모드는 문자열 `detail`을 유지한다.
+4. 신규 또는 변경 endpoint에서 구조화 응답이 필요할 때만 `structured_detail=True`로 opt-in한다.
+5. Admin UI가 사용하는 endpoint는 UI 영향 범위를 먼저 확인한다.
 
 권장 구조는 다음 필드를 포함하는 객체다.
 
@@ -159,6 +160,8 @@ API 오류 응답은 다음 순서로 개선한다.
 3. `orders`, `decisions`, `performance`처럼 식별자 검증 오류가 많은 route부터 테스트를 추가한다.
 4. `order_manager`, `order_sync_service`, `reconciliation_worker`의 운영 로그에 `event`, `error_code`, 핵심 ID를 보강한다.
 5. 하네스에 오류 메시지 계약 정적 점검을 추가할지 별도 결정한다.
+
+API 오류 분류 현황은 [`api_error_message_inventory.md`](./api_error_message_inventory.md)를 기준으로 갱신한다.
 
 ## 이번 단계의 비목표
 

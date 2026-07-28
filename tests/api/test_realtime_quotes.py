@@ -8,12 +8,16 @@ from __future__ import annotations
 
 import asyncio
 import json
+from collections.abc import Callable
+from typing import Any
 
 import pytest
+from fastapi import HTTPException
 from fastapi.responses import StreamingResponse
 from fastapi.testclient import TestClient
 
 from agent_trading.api.app import create_app
+from agent_trading.api.routes import realtime_quotes as realtime_quote_routes
 from agent_trading.api.routes.realtime_quotes import stream_quote
 
 
@@ -23,6 +27,22 @@ def client() -> TestClient:
     app = create_app(auth_enabled=False)
     with TestClient(app) as tc:
         yield tc
+
+
+def _capture_build_http_exception(
+    monkeypatch: pytest.MonkeyPatch,
+) -> list[dict[str, Any]]:
+    captured_calls: list[dict[str, Any]] = []
+    original_build_http_exception: Callable[..., HTTPException] = (
+        realtime_quote_routes.build_http_exception
+    )
+
+    def capture_call(**kwargs: Any) -> HTTPException:
+        captured_calls.append(kwargs)
+        return original_build_http_exception(**kwargs)
+
+    monkeypatch.setattr(realtime_quote_routes, "build_http_exception", capture_call)
+    return captured_calls
 
 
 class TestBootstrap:
@@ -171,9 +191,16 @@ class TestSnapshot:
         quotes = resp.json()["quotes"]
         assert set(quotes.keys()) == {"005930", "000660"}
 
-    def test_snapshot_empty_symbols_returns_422(self, client: TestClient) -> None:
+    def test_snapshot_empty_symbols_returns_422(
+        self, client: TestClient, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        captured_calls = _capture_build_http_exception(monkeypatch)
         resp = client.get("/realtime-quotes/snapshot", params={"symbols": ""})
         assert resp.status_code == 422
+        assert resp.json()["detail"] == "symbols query parameter must not be empty"
+        assert len(captured_calls) == 1
+        assert captured_calls[0]["request_path"] == "/realtime-quotes/snapshot"
+        assert captured_calls[0]["error_code"] == "empty_symbols_query"
 
 
 class TestDailyPrice:

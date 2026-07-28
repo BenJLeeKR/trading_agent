@@ -24,8 +24,14 @@ Validates (12 tests, 4 groups):
 
 from __future__ import annotations
 
+from collections.abc import Callable
+from typing import Any
+
+import pytest
+from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
+from agent_trading.api.routes import performance as performance_routes
 from tests.api.conftest import client  # noqa: F401
 from tests.api.conftest import empty_client  # noqa: F401
 
@@ -46,6 +52,31 @@ def _get_account_id(tc: TestClient) -> str:
     accounts = acct_resp.json()
     assert len(accounts) >= 1
     return accounts[0]["account_id"]
+
+
+def _capture_build_http_exception(
+    monkeypatch: pytest.MonkeyPatch,
+) -> list[dict[str, Any]]:
+    captured_calls: list[dict[str, Any]] = []
+    original_build_http_exception: Callable[..., HTTPException] = (
+        performance_routes.build_http_exception
+    )
+
+    def capture_call(**kwargs: Any) -> HTTPException:
+        captured_calls.append(kwargs)
+        return original_build_http_exception(**kwargs)
+
+    monkeypatch.setattr(performance_routes, "build_http_exception", capture_call)
+    return captured_calls
+
+
+def _assert_validation_helper_call(
+    captured_calls: list[dict[str, Any]],
+    expected_error_code: str,
+) -> None:
+    assert len(captured_calls) == 1
+    assert captured_calls[0]["request_path"] == "/performance-benchmark-history"
+    assert captured_calls[0]["error_code"] == expected_error_code
 
 
 # ---------------------------------------------------------------------------
@@ -194,8 +225,11 @@ class TestPerformanceBenchmarkHistory:
     # Group C: Validation Error (6 tests)
     # ------------------------------------------------------------------
 
-    def test_invalid_account_id_400(self, client: TestClient) -> None:
+    def test_invalid_account_id_400(
+        self, client: TestClient, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         """Invalid account_id UUID → 400."""
+        captured_calls = _capture_build_http_exception(monkeypatch)
         response = client.get(
             "/performance-benchmark-history",
             params={
@@ -205,10 +239,14 @@ class TestPerformanceBenchmarkHistory:
             },
         )
         assert response.status_code == 400
-        assert "Invalid account_id" in response.json()["detail"]
+        assert response.json()["detail"] == "Invalid account_id UUID"
+        _assert_validation_helper_call(captured_calls, "invalid_account_id")
 
-    def test_invalid_start_date_400(self, client: TestClient) -> None:
+    def test_invalid_start_date_400(
+        self, client: TestClient, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         """Invalid start_date format → 400."""
+        captured_calls = _capture_build_http_exception(monkeypatch)
         acct_id = _get_account_id(client)
         response = client.get(
             "/performance-benchmark-history",
@@ -219,10 +257,14 @@ class TestPerformanceBenchmarkHistory:
             },
         )
         assert response.status_code == 400
-        assert "Invalid start_date" in response.json()["detail"]
+        assert response.json()["detail"] == "Invalid start_date (use YYYY-MM-DD)"
+        _assert_validation_helper_call(captured_calls, "invalid_start_date")
 
-    def test_invalid_end_date_400(self, client: TestClient) -> None:
+    def test_invalid_end_date_400(
+        self, client: TestClient, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         """Invalid end_date format → 400."""
+        captured_calls = _capture_build_http_exception(monkeypatch)
         acct_id = _get_account_id(client)
         response = client.get(
             "/performance-benchmark-history",
@@ -233,10 +275,14 @@ class TestPerformanceBenchmarkHistory:
             },
         )
         assert response.status_code == 400
-        assert "Invalid end_date" in response.json()["detail"]
+        assert response.json()["detail"] == "Invalid end_date (use YYYY-MM-DD)"
+        _assert_validation_helper_call(captured_calls, "invalid_end_date")
 
-    def test_start_date_after_end_date_400(self, client: TestClient) -> None:
+    def test_start_date_after_end_date_400(
+        self, client: TestClient, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         """start_date > end_date → 400."""
+        captured_calls = _capture_build_http_exception(monkeypatch)
         acct_id = _get_account_id(client)
         response = client.get(
             "/performance-benchmark-history",
@@ -247,10 +293,14 @@ class TestPerformanceBenchmarkHistory:
             },
         )
         assert response.status_code == 400
-        assert "start_date must be on or before end_date" in response.json()["detail"]
+        assert response.json()["detail"] == "start_date must be on or before end_date"
+        _assert_validation_helper_call(captured_calls, "invalid_date_range")
 
-    def test_invalid_benchmark_code_400(self, client: TestClient) -> None:
+    def test_invalid_benchmark_code_400(
+        self, client: TestClient, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         """존재하지 않는 benchmark_code → 400."""
+        captured_calls = _capture_build_http_exception(monkeypatch)
         acct_id = _get_account_id(client)
         response = client.get(
             "/performance-benchmark-history",
@@ -262,10 +312,16 @@ class TestPerformanceBenchmarkHistory:
             },
         )
         assert response.status_code == 400
-        assert "Invalid benchmark_code" in response.json()["detail"]
+        assert response.json()["detail"] == (
+            "Invalid benchmark_code='INVALID'. Valid codes: ['KOSDAQ', 'KOSPI']"
+        )
+        _assert_validation_helper_call(captured_calls, "invalid_benchmark_code")
 
-    def test_invalid_strategy_id_400(self, client: TestClient) -> None:
+    def test_invalid_strategy_id_400(
+        self, client: TestClient, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         """Invalid strategy_id UUID → 400."""
+        captured_calls = _capture_build_http_exception(monkeypatch)
         acct_id = _get_account_id(client)
         response = client.get(
             "/performance-benchmark-history",
@@ -277,7 +333,8 @@ class TestPerformanceBenchmarkHistory:
             },
         )
         assert response.status_code == 400
-        assert "Invalid strategy_id" in response.json()["detail"]
+        assert response.json()["detail"] == "Invalid strategy_id UUID"
+        _assert_validation_helper_call(captured_calls, "invalid_strategy_id")
 
     # ------------------------------------------------------------------
     # Group D: Empty Result (1 test)

@@ -44,3 +44,4 @@ Thumbs.db
 reorganize_docs.sh
 node_modules/
 postgres_data/
+tmp/naver_daily_quota.json
