@@ -2218,6 +2218,21 @@ value/compliance/broker가 아니라 `entry_score < 0.65`다.
   품질 문제에 가까움(라벨 미부여). 완화안 미제시. 상세: `docs/10_
   signal_research_sppv/[DESIGN] regime_conditional_entry_signal_
   v1.md` §106.
+- 2026-07-28 KST(SPPV-2.120, 코드 미수정, threshold/diff/완화안
+  없음, 신규 KIS 호출 0건): `ranking_score` 산식 구성요소 분해.
+  실제 코드 공식은 `0.55*entry_score+0.10*relative_activity+
+  0.20*coverage_score+0.10*allocation_quality+0.03*regime_
+  tailwind+0.02*strategy_alignment`(설계 문서 §7.2 제안식과
+  다름). 이 모집단은 정의상 `regime_tailwind`/`strategy_
+  alignment`가 **100% 고정 0**, `coverage_score`(1.0)/
+  `allocation_quality`(0.25)도 **완전 무분산**(고정) — 실질
+  변별력은 entry_score(관측 상한 0.2479)/relative_activity
+  (관측 상한 0.6830) 두 항목뿐. 이 둘의 관측 상한을 모두 결합한
+  이론적 상한도 0.4296(고정항목 0.05 회복 가정해도 0.4796)으로
+  threshold(0.48) 미달. 판정: **1순위 원인 = 산식 구조 문제,
+  2순위 원인 = 모집단 정의 문제, threshold 재측정은 근본 원인이
+  아님**(완화안 미제시). 상세: `docs/10_signal_research_sppv/
+  [DESIGN] regime_conditional_entry_signal_v1.md` §107.
 - **3순위(보류 유지, 형태 재정의 — 우선순위 재조정)**: **`entry_
   score`와 BUY funnel 재현** — §2.7 확장 검증에서 하락장 안정성이
   확인되지 않아 단순 재현으로는 착수하지 않는다. §2.16~§2.21에서

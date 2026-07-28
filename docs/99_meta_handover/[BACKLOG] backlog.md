@@ -1691,6 +1691,19 @@
   문제에 가까움. 완화안 미제시. 상세: `docs/10_signal_research_
   sppv/[DESIGN] regime_conditional_entry_signal_v1.md` §106.
 
+- 2026-07-28 KST(SPPV-2.120, 신규 KIS 호출 0건): `ranking_score`
+  산식 구성요소 분해. 실제 공식은 설계 문서 제안식과 다름
+  (0.55*entry_score+0.10*relative_activity+0.20*coverage_score+
+  0.10*allocation_quality+0.03*regime_tailwind+0.02*strategy_
+  alignment). 이 모집단은 regime_tailwind/strategy_alignment
+  100% 고정 0, coverage_score/allocation_quality도 완전 무분산.
+  실질 변별력 있는 entry_score/relative_activity 관측 상한을
+  모두 결합해도 이론적 상한 0.4296(고정항목 회복 가정해도
+  0.4796)으로 threshold 미달. 판정: 1순위=산식 구조 문제,
+  2순위=모집단 정의 문제, threshold 재측정은 근본 원인 아님.
+  완화안 미제시. 상세: `docs/10_signal_research_sppv/[DESIGN]
+  regime_conditional_entry_signal_v1.md` §107.
+
 ---
 
 ## 관리 원칙
