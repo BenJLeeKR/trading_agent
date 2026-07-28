@@ -360,6 +360,10 @@ services:
       # 기본값은 scripts/run_decision_loop.py의 DEFAULT_TRADING_UNIVERSE_
       # CORE_CAP(=12)와 동일하게 유지해 하위 호환을 보존한다.
       TRADING_UNIVERSE_CORE_CAP: "${TRADING_UNIVERSE_CORE_CAP:-12}"
+      # universe 전체(non-held) 상한. 기본값은 scripts/run_decision_loop.py의
+      # DEFAULT_TRADING_UNIVERSE_MAX_CAP(=30)과 동일하게 유지해 하위 호환을
+      # 보존한다(SPPV-2.110).
+      TRADING_UNIVERSE_MAX_CAP: "${TRADING_UNIVERSE_MAX_CAP:-30}"
       # Scheduler Specific
       SCHEDULER_AFTER_HOURS_WINDOW: "${SCHEDULER_AFTER_HOURS_WINDOW:-3600}"
       SCHEDULER_INSTANCE_ID: "${SCHEDULER_INSTANCE_ID:-default}"

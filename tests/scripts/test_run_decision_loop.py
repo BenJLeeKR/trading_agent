@@ -78,8 +78,10 @@ from agent_trading.services.validators import ValidationResult
 # Module under test
 from scripts.run_decision_loop import (
     DEFAULT_TRADING_UNIVERSE_CORE_CAP,
+    DEFAULT_TRADING_UNIVERSE_MAX_CAP,
     DEFAULT_DECISION_LOOP_INTRADAY_FREEZE_PURPOSE,
     ENV_TRADING_UNIVERSE_CORE_CAP,
+    ENV_TRADING_UNIVERSE_MAX_CAP,
     ENV_TRADING_UNIVERSE,
     KISRestClient,
     UniverseAnchorMetadata,
@@ -3335,6 +3337,98 @@ class TestTradingUniverse:
             assert len(result) == 1
 
         assert DEFAULT_TRADING_UNIVERSE_CORE_CAP == 12
+
+    @pytest.mark.asyncio
+    async def test_read_trading_universe_max_cap_env_override(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """TRADING_UNIVERSE_MAX_CAP env가 명시적 인자 없이도 universe
+        전체 상한(max_cap)에 반영돼야 한다(core_cap과 동일한 배선 패턴,
+        SPPV-2.110)."""
+        monkeypatch.delenv(ENV_TRADING_UNIVERSE, raising=False)
+        monkeypatch.setenv(ENV_TRADING_UNIVERSE_MAX_CAP, "1")
+
+        repos = build_in_memory_repositories()
+        from agent_trading.domain.entities import InstrumentEntity
+
+        for instrument_id, symbol in (
+            (UUID("11111111-1111-1111-1111-111111111111"), "005930"),
+            (UUID("22222222-2222-2222-2222-222222222222"), "000660"),
+            (UUID("33333333-3333-3333-3333-333333333333"), "035420"),
+        ):
+            await repos.instruments.add(
+                InstrumentEntity(
+                    instrument_id=instrument_id,
+                    symbol=symbol,
+                    market_code="KRX",
+                    name=f"Test-{symbol}",
+                    is_active=True,
+                    asset_class="KR_STOCK",
+                    currency="KRW",
+                    tick_size=Decimal("50"),
+                )
+            )
+
+        @asynccontextmanager
+        async def _mock_postgres_runtime(run_migrations: bool = False) -> AsyncIterator[dict[str, Any]]:
+            yield {"repositories": repos}
+
+        with (
+            patch(
+                "scripts.run_decision_loop.postgres_runtime",
+                new=_mock_postgres_runtime,
+            ),
+            patch(
+                "scripts.run_decision_loop._HAS_KIS",
+                False,
+            ),
+        ):
+            result = await _read_trading_universe()
+            assert len(result) == 1
+
+        assert DEFAULT_TRADING_UNIVERSE_MAX_CAP == 30
+
+    @pytest.mark.asyncio
+    async def test_read_trading_universe_max_cap_default_unchanged(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """env 미설정 시 기존 동작(하드코딩 30)과 동일해야 한다
+        (하위 호환 확인, SPPV-2.110)."""
+        monkeypatch.delenv(ENV_TRADING_UNIVERSE, raising=False)
+        monkeypatch.delenv(ENV_TRADING_UNIVERSE_MAX_CAP, raising=False)
+
+        repos = build_in_memory_repositories()
+        from agent_trading.domain.entities import InstrumentEntity
+
+        await repos.instruments.add(
+            InstrumentEntity(
+                instrument_id=UUID("11111111-1111-1111-1111-111111111111"),
+                symbol="005930",
+                market_code="KRX",
+                name="Samsung Electronics",
+                is_active=True,
+                asset_class="KR_STOCK",
+                currency="KRW",
+                tick_size=Decimal("50"),
+            )
+        )
+
+        @asynccontextmanager
+        async def _mock_postgres_runtime(run_migrations: bool = False) -> AsyncIterator[dict[str, Any]]:
+            yield {"repositories": repos}
+
+        with (
+            patch(
+                "scripts.run_decision_loop.postgres_runtime",
+                new=_mock_postgres_runtime,
+            ),
+            patch(
+                "scripts.run_decision_loop._HAS_KIS",
+                False,
+            ),
+        ):
+            result = await _read_trading_universe()
+            assert len(result) == 1
 
     @pytest.mark.asyncio
     async def test_universe_selection_service_with_kis_market_overlay(

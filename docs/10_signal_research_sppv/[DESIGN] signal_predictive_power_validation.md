@@ -2258,6 +2258,24 @@ entry 설계 검토로 전환**을 확정했다. 별도 문서
   신규 KIS 호출 0건. 상세: `docs/10_signal_research_sppv/[DESIGN] regime_
   conditional_entry_signal_v1.md` §95.
 
+- 작성자: Codex
+- 수정일자: 2026-07-27 KST (110차, `TRADING_UNIVERSE_MAX_CAP` env
+  배선 실제 반영 — 코드 변경 있음)
+- 수정내용: `TRADING_UNIVERSE_CORE_CAP`과 동일 패턴으로
+  `DEFAULT_TRADING_UNIVERSE_MAX_CAP=30`/`ENV_TRADING_UNIVERSE_MAX_CAP`
+  추가, `scripts/run_decision_loop.py`의 `CompositionContext.max_cap`
+  하드코딩 `30`을 env-aware 계산식으로 대체. `docker-compose.yml`
+  (ops-scheduler)/`.env.example` 배선(`.env` 실 파일 미수정). 좁은
+  테스트(`pytest tests/scripts/test_run_decision_loop.py -k
+  trading_universe`) 7 passed(기존 5 + 신규 2, 전부 통과). shadow
+  검증(compose() 직접 호출, kis_client=None, 신규 KIS 호출 0건):
+  max_cap=30→universe 30개(009150 미포함), max_cap=60→universe
+  60개(009150 포함) — shadow 결과이며 runtime 반영 아님(intraday
+  freeze 캐시 우선순위로 실제 반영은 다음 신규 freeze 사이클
+  이후). 값 자체는 이번 턴에 변경하지 않음. Full pytest 미실행.
+  상세: `docs/10_signal_research_sppv/[DESIGN] regime_conditional_
+  entry_signal_v1.md` §97.
+
 ---
 
 ## 진행 체크리스트
@@ -5305,6 +5323,15 @@ canonical),
     로직 변경 없음, 신규 KIS 호출 0건(shadow 재호출은 `kis_
     client=None`). 상세: `docs/10_signal_research_sppv/[DESIGN]
     regime_conditional_entry_signal_v1.md` §94.
+- [x] **SPPV-2.110(신설)** `TRADING_UNIVERSE_MAX_CAP` env 배선 실제
+  반영 (완료, 2026-07-27 KST, 작성자: Codex, 코드 변경 있음)
+  - `core_cap`과 동일 패턴(기본값 30, 하위 호환 유지). 좁은 테스트
+    7 passed. shadow 검증(compose() 직접 호출, kis_client=None):
+    max_cap=60 시 `009150` universe 진입 확인. runtime 반영은
+    intraday freeze 캐시 우선순위로 다음 신규 freeze 사이클 이후.
+    값 자체는 미변경(`.env` 실 파일 미수정). eligibility/층3/EV
+    gate 미착수. 상세: `docs/10_signal_research_sppv/[DESIGN]
+    regime_conditional_entry_signal_v1.md` §97.
 - [x] **SPPV-2.109(신설)** 서술 정밀도 보정 — risk_off+volatility
   55건 전수(100%)→54건(사실상 공통 축), max_cap 호출부 "2곳
   모두 인자 없이"→래퍼 경로 존재 반영 정정 (완료, 2026-07-27

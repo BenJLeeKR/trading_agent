@@ -1590,6 +1590,15 @@
   signal_research_sppv/[DESIGN] regime_conditional_entry_signal_
   v1.md` §96.6.
 
+- 2026-07-27 KST(SPPV-2.110): `TRADING_UNIVERSE_MAX_CAP` env 배선
+  실제 반영(코드 변경 있음) — `core_cap`과 동일 패턴, 기본값 30
+  유지. `run_decision_loop.py`/`docker-compose.yml`/`.env.example`
+  수정(`.env` 실 파일 미수정). 좁은 테스트 7 passed. shadow 검증:
+  max_cap=60 시 `009150` universe 진입 확인(compose() 직접 호출,
+  신규 KIS 호출 0건) — runtime 반영은 다음 신규 freeze 사이클
+  이후. 값 자체는 미변경. 상세: `docs/10_signal_research_sppv/
+  [DESIGN] regime_conditional_entry_signal_v1.md` §97.
+
 ---
 
 ## 관리 원칙

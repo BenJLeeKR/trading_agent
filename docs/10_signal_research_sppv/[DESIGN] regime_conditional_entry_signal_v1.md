@@ -11985,3 +11985,113 @@ KST 하루 — 최근 3거래일 창 전체를 조회해도 이 55건이 유일�
    대상이며 이번 턴에 확정하지 않는다).
 4. `001450 downgrade 관찰 지속`은 여전히 2순위다 — 라벨이나 순서
    변경 근거는 이번 정정에서 발견되지 않았다.
+
+
+---
+
+## §97. `max_cap=30` env 배선 실제 반영(SPPV-2.110, 2026-07-27 KST)
+
+**전제**: 직전 턴(§96)까지 결론을 그대로 유지한 위에서, 이번 턴은
+"상류에서 universe 상한을 실제로 조정 가능하게 만드는 최소 diff"를
+설계에서 그치지 않고 실제 반영까지 완료한다. `eligibility`/층3 AI
+downgrade/EV gate/near-miss override는 이번 턴 범위 밖이며 손대지
+않았다.
+
+### 97.1 구현 내용
+
+`TRADING_UNIVERSE_CORE_CAP`과 완전히 동일한 패턴으로 배선했다:
+
+- `scripts/run_decision_loop.py`: `DEFAULT_TRADING_UNIVERSE_MAX_CAP = 30`,
+  `ENV_TRADING_UNIVERSE_MAX_CAP = "TRADING_UNIVERSE_MAX_CAP"` 상수
+  추가. `_load_trading_universe_with_anchor()` 내부에
+  `resolved_core_cap`과 동일한 방식으로 `resolved_max_cap`을 계산해
+  `CompositionContext(max_cap=resolved_max_cap, ...)`에 전달하도록
+  변경(하드코딩 `30` 리터럴을 env-aware 계산식으로 대체).
+- `docker-compose.yml`의 `ops-scheduler` 서비스 env 블록에
+  `TRADING_UNIVERSE_MAX_CAP: "${TRADING_UNIVERSE_MAX_CAP:-30}"` 추가
+  (`core_cap` 배선 라인 바로 아래, 기본값 30으로 하위 호환 유지).
+- `.env.example`에 `TRADING_UNIVERSE_MAX_CAP=30` 예시 + 설명 주석
+  추가(**`.env` 실 파일은 수정하지 않음** — 표준 원칙 유지).
+- `tests/scripts/test_run_decision_loop.py`에 2개 테스트 추가:
+  `test_read_trading_universe_max_cap_env_override`(env=1일 때
+  실제로 1개로 제한되는지), `test_read_trading_universe_max_cap_default_unchanged`
+  (env 미설정 시 기존 동작과 동일한지).
+
+### 97.2 최소 검증 결과
+
+**단위 테스트(코드 변경에 직접 대응하는 가장 좁은 범위만 실행,
+Full pytest 미실행)**: `pytest tests/scripts/test_run_decision_loop.py
+-k trading_universe` → **7 passed**(기존 5개 + 신규 2개 전부 통과).
+
+**shadow 검증(코드 read 수준 아님, 실제 `UniverseSelectionService.
+compose()` 직접 호출 — `kis_client=None`으로 신규 KIS 호출 0건,
+컨테이너 내부에서 실행. `.env`는 건드리지 않고 프로세스 로컬
+`CompositionContext.max_cap` 인자만 30/60으로 바꿔 비교):**
+
+| max_cap | core_cap | universe len | `009150` 포함 |
+|---|---|---|---|
+| 30(기존 기본값) | 60 | 30 | 아니오 |
+| 60 | 60 | 60 | **예** |
+
+이는 코드 diff가 의도대로 동작함을 **shadow 수준에서** 확인한
+것이며, 실제 운영(runtime) 효과 확인이 아니다 — shadow와 runtime을
+섞지 않는다는 원칙에 따라 구분한다.
+
+**runtime 관찰(사실, 한계 명시)**: `_load_trading_universe_with_anchor()`를
+직접 호출(env override 적용, `.env` 미수정, 프로세스 로컬)해
+보았을 때, 오늘(2026-07-27) 이미 생성된 `intraday_freeze`(주간
+캐시) universe가 우선 반환되어 env 변경이 **즉시 반영되지
+않았다**(이는 함수의 우선순위 구조 — `env_override` >
+`intraday_freeze` > 라이브 `compose()` — 상 정상 동작이며, 이번
+diff의 결함이 아니다). 즉 env로 `max_cap`을 바꾼 효과가 실제
+decision loop 사이클에 반영되려면 **다음 신규 freeze 사이클**(보통
+다음 거래일 장 시작 시 재생성)까지 기다려야 한다.
+
+### 97.3 반영 후 무엇을 관찰해야 하는지(다음 턴 실측 체크리스트)
+
+`.env`에 `TRADING_UNIVERSE_MAX_CAP`이 사용자에 의해 설정되고
+`ops-scheduler`가 재기동된 이후, 다음 거래일 첫 사이클에서:
+
+1. 실제 프로덕션 로그의 `Trading universe (N)`에서 `N`이 설정값과
+   일치하는지, `009150`(또는 그에 상응하는 31~60위 신규 후보)이
+   실제로 목록에 포함되는지.
+2. R3b candidate pool 크기가 §95/§96 대비 더 확대되는지(percentile
+   discreteness 완화 여부).
+3. 신규로 진입한 종목들의 `buy_candidate`/`eligibility_passed`/
+   `candidate_vs_final.final_intent`/`decision_type`/`submit_request`
+   각 단계 통과 여부 — 특히 `APPROVE`나 `submit_request`까지
+   도달하는 사례가 발생하는지(발생 시 §96에서 다룬 층3 downgrade
+   패턴이 신규 종목에도 동일하게 나타나는지 비교 가능).
+
+### 97.4 남은 리스크/미확인 사항
+
+- `.env`에 실제 값을 설정하고 `ops-scheduler`를 재기동하는 것은
+  이번 턴 범위 밖이다(값 강제 변경 금지 원칙 준수) — 사용자가
+  `.env`에서 직접 조절해야 한다.
+- `max_cap`을 올리면 `core_cap`뿐 아니라 held position/event
+  overlay/market overlay 등 다른 소스도 함께 total-cap 안에서
+  경쟁하므로, `max_cap` 확대가 항상 core 후보 확대로만 이어진다는
+  보장은 없다(이번 턴 shadow는 held/event/market overlay가 없는
+  단순 core-only 조건에서만 검증됨).
+- `intraday_freeze` 캐시 우선순위 때문에 env 변경 후 첫 반영까지
+  최소 하루(다음 신규 freeze 사이클)가 걸릴 수 있음 — 즉시 효과
+  기대 금지.
+
+### 97.5 최종 판정
+
+`max_cap` env 배선은 **실제 반영 완료**(코드 diff + docker-compose
+배선 + `.env.example` 문서화 + 좁은 테스트 통과) — 기본값은 기존과
+100% 동일하게 유지되며, 값 변경은 사용자의 `.env` 설정과 이후
+`ops-scheduler` 재기동을 통해 이루어진다(이번 턴에서 값 자체를
+강제 변경하지 않음).
+
+`001450` 층3 downgrade는 이번 턴에서 완화하지 않았다 — 계속 관찰
+대상으로만 유지.
+
+### 97.6 다음 우선 작업
+
+1. **1순위**: 사용자가 `.env`에 `TRADING_UNIVERSE_MAX_CAP` 값을
+   설정하면, `ops-scheduler` 재기동 후 §97.3 체크리스트대로 다음
+   거래일 실측을 진행한다(이번 턴은 코드 반영까지만, 실제 값
+   변경/재기동은 사용자 결정 이후).
+2. **2순위**: `001450` 층3(`risk_off`/`volatility` 축) 관찰 지속.

@@ -9758,8 +9758,23 @@ agent 설계 문서 기준으로도 순서는 다음이 맞다.
      결론 변경 없음. 코드 변경 없음, 신규 KIS 호출 0건. 상세:
      `docs/10_signal_research_sppv/[DESIGN] regime_conditional_
      entry_signal_v1.md` §96.6.
-   - **SPPV-3(다음 착수: [1순위] max_cap=30 env 배선 코드 diff
-     초안 작성(실제 값 변경/배포는 별도 승인 후) +
+   - **SPPV-2.110(완료, 2026-07-27 KST, `TRADING_UNIVERSE_MAX_CAP`
+     env 배선 실제 반영, 작성자: Codex, 코드 변경 있음)**:
+     `core_cap`과 동일 패턴(기본값 30, 하위 호환 유지)으로
+     `run_decision_loop.py`/`docker-compose.yml`(ops-scheduler)/
+     `.env.example` 수정(`.env` 실 파일 미수정). 좁은 테스트
+     7 passed. shadow 검증(compose() 직접 호출, kis_client=None,
+     신규 KIS 호출 0건): max_cap=30→universe 30개(009150
+     미포함), max_cap=60→universe 60개(009150 포함) 확인 — shadow
+     결과이며 runtime 반영은 intraday freeze 캐시 우선순위로
+     다음 신규 freeze 사이클 이후. 값 자체는 미변경.
+     eligibility/층3/EV gate 미착수. 상세: `docs/10_signal_
+     research_sppv/[DESIGN] regime_conditional_entry_signal_v1.md`
+     §97.
+   - **SPPV-3(다음 착수: [1순위] 사용자가 `.env`에
+     `TRADING_UNIVERSE_MAX_CAP` 설정 후 `ops-scheduler` 재기동 →
+     다음 거래일 실측(§97.3 체크리스트: universe 크기/009150
+     진입/candidate pool 확대/buy_candidate~submit_request 변화) +
      [2순위] 001450의 층3(AI downgrade, risk_off+volatility 축)
      관찰 지속(정당/과잉 여부 미확정, 완화 제안 아님) +
      [3순위, 후순위 조정] eligibility_low_relative_activity 조건부

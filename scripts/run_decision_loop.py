@@ -304,10 +304,12 @@ DEFAULT_EVENT_LOOKBACK_HOURS: int = 24
 장 시작 직후/휴장일 경계에서는 실제 '1거래일'과 다를 수 있음.
 P2.1+에서 trading calendar 기반 lookback으로 개선 필요."""
 DEFAULT_TRADING_UNIVERSE_CORE_CAP = 12
+DEFAULT_TRADING_UNIVERSE_MAX_CAP = 30
 ENV_INTERVAL = "PAPER_DECISION_LOOP_INTERVAL_SECONDS"
 ENV_TRADING_UNIVERSE = "TRADING_UNIVERSE_SYMBOLS"
 ENV_MANUAL_WATCHLIST = "TRADING_UNIVERSE_MANUAL_SYMBOLS"
 ENV_TRADING_UNIVERSE_CORE_CAP = "TRADING_UNIVERSE_CORE_CAP"
+ENV_TRADING_UNIVERSE_MAX_CAP = "TRADING_UNIVERSE_MAX_CAP"
 DEFAULT_DECISION_LOOP_INTRADAY_FREEZE_PURPOSE = "decision_loop_intraday"
 KST = ZoneInfo("Asia/Seoul")
 _APPLY_CORE_RISK_OFF_TOPK = (
@@ -630,6 +632,16 @@ async def _load_trading_universe_with_anchor(
                 )
             )
         )
+        resolved_max_cap = (
+            max_cap
+            if max_cap is not None
+            else int(
+                os.getenv(
+                    ENV_TRADING_UNIVERSE_MAX_CAP,
+                    str(DEFAULT_TRADING_UNIVERSE_MAX_CAP),
+                )
+            )
+        )
         async with postgres_runtime(run_migrations=False) as runtime:
             repos: RepositoryContainer = runtime["repositories"]
 
@@ -708,7 +720,7 @@ async def _load_trading_universe_with_anchor(
                 account_id=account_id,
                 since=datetime.now(timezone.utc) - timedelta(hours=DEFAULT_EVENT_LOOKBACK_HOURS),
                 # P2 minimum: market overlay cap and pre-pool size
-                max_cap=max_cap if max_cap is not None else 30,
+                max_cap=resolved_max_cap,
                 core_cap=resolved_core_cap,
                 exclude_held_from_cap=(
                     exclude_held_from_cap

@@ -2073,6 +2073,21 @@ value/compliance/broker가 아니라 `entry_score < 0.65`다.
   병목/중심 축/우선순위 1·2순위) 변경 없음. 코드 변경 없음,
   신규 KIS 호출 0건. 상세: `docs/10_signal_research_sppv/
   [DESIGN] regime_conditional_entry_signal_v1.md` §96.6.
+- 2026-07-27 KST(SPPV-2.110, 코드 변경 있음 — max_cap env 배선):
+  `TRADING_UNIVERSE_CORE_CAP`과 동일한 패턴으로
+  `TRADING_UNIVERSE_MAX_CAP`(기본값 30, 하위 호환 유지) env 배선을
+  실제 코드에 반영 — `scripts/run_decision_loop.py`,
+  `docker-compose.yml`(ops-scheduler), `.env.example`(`.env` 실
+  파일은 미수정). 좁은 범위 테스트(`pytest ... -k trading_universe`)
+  7 passed(기존 5 + 신규 2). shadow 검증(compose() 직접 호출,
+  kis_client=None): max_cap=30→universe 30개(009150 미포함),
+  max_cap=60→universe 60개(009150 포함) 확인 — shadow 결과이며
+  runtime 반영은 아직 아님(intraday_freeze 캐시 우선순위로 env
+  변경이 다음 신규 freeze 사이클까지 지연됨). 값 자체는 이번 턴에
+  변경하지 않음(사용자 `.env` 설정 + ops-scheduler 재기동 이후
+  다음 거래일 실측 필요). eligibility/층3/EV gate는 미착수. 상세:
+  `docs/10_signal_research_sppv/[DESIGN] regime_conditional_entry_
+  signal_v1.md` §97.
 - **3순위(보류 유지, 형태 재정의 — 우선순위 재조정)**: **`entry_
   score`와 BUY funnel 재현** — §2.7 확장 검증에서 하락장 안정성이
   확인되지 않아 단순 재현으로는 착수하지 않는다. §2.16~§2.21에서
