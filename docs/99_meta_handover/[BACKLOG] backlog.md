@@ -1671,6 +1671,18 @@
   전환 제안. 상세: `docs/10_signal_research_sppv/[DESIGN] regime_
   conditional_entry_signal_v1.md` §104.
 
+- **[SPPV-2.118에서 정정]** 이전 §102~§104의 "§36 문서 예견"
+  인용은 오표기 — 올바른 출처는 `[DESIGN] deterministic_trigger_
+  eligibility_and_ranking_v1.md` §3.0/§3.6.
+- 2026-07-28 KST(SPPV-2.118, 신규 KIS 호출 0건): `0.48` 설정
+  근거·정합성 검증. 0.48은 2026-07-01 커밋에서 최초 등장, 같은
+  커밋의 설계 문서가 도입 시점에 이미 평균 ranking_score 0.24로
+  "실측 bucket을 거의 살리지 못한다"고 기록. 현재 평균도
+  0.257~0.264로 당시와 동일 — 분포 이동 없음. 근접 표본 0건.
+  판정: C(당시부터 실측 근거 약한 운영 상수)에 가장 근접. 완화안
+  미제시. 상세: `docs/10_signal_research_sppv/[DESIGN] regime_
+  conditional_entry_signal_v1.md` §105.
+
 ---
 
 ## 관리 원칙

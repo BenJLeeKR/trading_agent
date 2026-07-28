@@ -9861,19 +9861,33 @@ agent 설계 문서 기준으로도 순서는 다음이 맞다.
      volatility` 단독 경로(001450형)의 층3(AI downgrade) 쪽으로
      방향 전환 제안. 상세: `docs/10_signal_research_sppv/[DESIGN]
      regime_conditional_entry_signal_v1.md` §104.
-   - **SPPV-3(다음 착수: [1순위] `high_volatility` 단독(=
-     `regime_label≠bearish_trend`) 경로로 이미 eligibility를
-     통과한 종목(001450형)의 층3(AI downgrade) 완화 검토 방향으로
-     전환 — 이 하드 게이트(core+bearish_trend) 내부 탐색은
-     3턴 연속 후보 없음으로 종료 +
-     [2순위] `core_risk_off_topk_v1` override가 실제로 어느
+   - **[SPPV-2.118에서 정정]** "§36 문서 예견" 인용은 오표기 —
+     올바른 출처는 `[DESIGN] deterministic_trigger_eligibility_
+     and_ranking_v1.md` §3.0/§3.6.
+   - **SPPV-2.118(완료, 2026-07-28 KST, `0.48` 설정 근거·정합성
+     검증, 작성자: Codex, 코드 미수정, threshold 변경 없음, 신규
+     KIS 호출 0건)**: `0.48`은 2026-07-01 커밋에서 최초 등장,
+     같은 커밋의 설계 문서가 도입 시점에 이미 평균 ranking_score
+     0.24로 "실측 bucket을 거의 살리지 못한다"고 기록. 현재 평균도
+     0.257~0.264로 동일 — 4주 가까이 분포 이동 없음. 근접 표본
+     0건(±0.05), shadow top-k 예외 경로도 4주간 발동 이력 0건.
+     판정: C(당시부터 실측 근거 약한 운영 상수, 현재도 재검증
+     필요)에 가장 근접. 완화안 미제시. 상세: `docs/10_signal_
+     research_sppv/[DESIGN] regime_conditional_entry_signal_
+     v1.md` §105.
+   - **SPPV-3(다음 착수: [1순위] `shadow_topk_exception_v2`
+     경로가 4주간 한 번도 발동하지 않은 이유가 전제조건 자체가
+     좁게 설계된 것인지 시장 조건 때문인지 원인만 더 좁혀서
+     확인(완화안 설계 아님) +
+     [2순위] `high_volatility` 단독(=`regime_label≠bearish_
+     trend`) 경로로 이미 eligibility를 통과한 종목(001450형)의
+     층3(AI downgrade) 완화 검토 방향으로 전환 — 이 하드 게이트
+     (core+bearish_trend) 내부 탐색은 4턴 연속 후보 없음으로
+     종료 +
+     [3순위] `core_risk_off_topk_v1` override가 실제로 어느
      호출부에서 `deterministic_trigger_override`를 채워야
      활성화되는지 코드 경로만 확인(활성화 여부 결정은 별도 승인
      필요, 활성화해도 즉시 효과 없음이 이미 확인됨) +
-     [3순위] `eligibility_core_risk_off_ranking_blocked` 하드
-     게이트의 원 설계 시점(§36) 시장 조건과 현재(§99~§101 상시
-     risk_off) 차이, "하락 국면 한정" 스코프 제약의 코드 미반영
-     여부만 추가 확인(완화안 설계 아님) +
      [4순위] `risk_off_exception_eligible` 경로가 0.02%로 거의
      발동하지 않는 정확한 사유를 조건별로 분해 +
      [5순위] `KIS_ENV`(paper/real) 실제 설정 확인 및 KIS 모의투자

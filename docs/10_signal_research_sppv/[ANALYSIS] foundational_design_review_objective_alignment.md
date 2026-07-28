@@ -2189,6 +2189,24 @@ value/compliance/broker가 아니라 `entry_score < 0.65`다.
   `high_volatility` 단독 경로(001450형)의 층3(AI downgrade)
   쪽으로 방향 전환 제안. 상세: `docs/10_signal_research_sppv/
   [DESIGN] regime_conditional_entry_signal_v1.md` §104.
+- **[SPPV-2.118에서 정정]** 위 및 §102~§104에서 "§36 문서가
+  eligibility 하드 게이트를 병목으로 예견"이라 인용한 것은
+  오표기였다 — 실제 §36은 반대 방향(R3b pool 내 eligibility
+  risk_off 축은 비활성)의 narrow-context 관찰이다. 올바른 출처는
+  `[DESIGN] deterministic_trigger_eligibility_and_ranking_v1.md`
+  §3.0/§3.6이다.
+- 2026-07-28 KST(SPPV-2.118, 코드 미수정, threshold 변경 없음,
+  신규 KIS 호출 0건): `_CORE_RISK_OFF_RANKING_MIN_SCORE=0.48`
+  설정 근거·정합성 검증. git 확인 결과 0.48은 커밋 e10ec05d
+  (2026-07-01)에서 최초 등장, 같은 커밋이 신설한 설계 문서
+  자체가 도입 시점에 이미 "core_risk_off_ranking_blocked 평균
+  ranking_score 약 0.24"이며 "0.48→penalty→0.40 구조가 실측
+  bucket을 거의 살리지 못한다"고 기록. 현재(최근 3거래일/전체
+  이력) 평균 0.257~0.264로 당시와 거의 동일 — 분포 이동 없음.
+  0.48±0.05 근접 표본 0건(양 창 모두). 판정: C(당시부터 실측
+  근거 약한 운영 상수, 현재도 재검증 필요)에 가장 근접. 완화안
+  미제시. 상세: `docs/10_signal_research_sppv/[DESIGN] regime_
+  conditional_entry_signal_v1.md` §105.
 - **3순위(보류 유지, 형태 재정의 — 우선순위 재조정)**: **`entry_
   score`와 BUY funnel 재현** — §2.7 확장 검증에서 하락장 안정성이
   확인되지 않아 단순 재현으로는 착수하지 않는다. §2.16~§2.21에서

@@ -2381,6 +2381,29 @@ entry 설계 검토로 전환**을 확정했다. 별도 문서
   방향 전환 제안. 상세: `docs/10_signal_research_sppv/[DESIGN]
   regime_conditional_entry_signal_v1.md` §104.
 
+- **[SPPV-2.118에서 정정]** 이전 §102~§104(및 이 문서의 108차
+  entry)의 "§36 문서가 eligibility 병목을 예견" 인용은 오표기 —
+  실제 §36은 반대 방향(R3b pool 내 비활성)의 narrow-context
+  관찰이다. 올바른 출처는 `[DESIGN] deterministic_trigger_
+  eligibility_and_ranking_v1.md` §3.0/§3.6.
+- 작성자: Codex
+- 수정일자: 2026-07-28 KST (118차, `0.48` 설정 근거·정합성
+  검증, 코드 미수정, threshold 변경 없음, 신규 KIS 호출 0건)
+- 수정내용: git 확인 결과 `_CORE_RISK_OFF_RANKING_MIN_SCORE=0.48`
+  은 커밋 e10ec05d(2026-07-01)에서 최초 등장, 같은 커밋이 신설한
+  설계 문서(`deterministic_trigger_eligibility_and_ranking_v1.md`)
+  자체가 도입 시점에 이미 "core_risk_off_ranking_blocked 평균
+  ranking_score 약 0.24"이며 "0.48→penalty→0.40 구조가 실측
+  bucket을 거의 살리지 못한다"고 기록. 현재(최근 3거래일/전체
+  이력) 평균 0.257~0.264로 당시와 거의 동일 — 4주 가까이 분포
+  이동 없음. 0.48±0.05 근접 표본 0건(양 창 모두), 0.40 이상은
+  단일 종목(002790) 56건뿐. shadow top-k 예외 경로(0.22 이상,
+  overall≥0/slow≥−0.05 전제)도 설계된 지 4주가 지났으나
+  `shadow_topk_candidate=true` 이력 0건. 판정: C(당시부터 실측
+  근거 약한 운영 상수, 현재도 재검증 필요)에 가장 근접. 완화안
+  미제시. 상세: `docs/10_signal_research_sppv/[DESIGN] regime_
+  conditional_entry_signal_v1.md` §105.
+
 ---
 
 ## 진행 체크리스트
@@ -5428,6 +5451,15 @@ canonical),
     로직 변경 없음, 신규 KIS 호출 0건(shadow 재호출은 `kis_
     client=None`). 상세: `docs/10_signal_research_sppv/[DESIGN]
     regime_conditional_entry_signal_v1.md` §94.
+- [x] **SPPV-2.118(신설)** `0.48` 설정 근거·정합성 검증 (완료,
+  2026-07-28 KST, 작성자: Codex, 코드 미수정, threshold 변경
+  없음, 신규 KIS 호출 0건)
+  - `0.48`은 2026-07-01 커밋에서 최초 등장, 같은 커밋의 설계
+    문서가 도입 시점에 이미 평균 ranking_score 0.24로 불일치
+    기록. 현재 평균도 0.257~0.264로 동일 — 분포 이동 없음. 판정:
+    C(당시부터 실측 근거 약한 운영 상수)에 가장 근접. §36 오표기
+    정정 포함. 상세: `docs/10_signal_research_sppv/[DESIGN]
+    regime_conditional_entry_signal_v1.md` §105.
 - [x] **SPPV-2.117(신설)** `ranking_blocked` 제외 후 경계 표본
   탐색 (완료, 2026-07-28 KST, 작성자: Codex, 코드 미수정, diff
   초안 없음, 신규 KIS 호출 0건)
