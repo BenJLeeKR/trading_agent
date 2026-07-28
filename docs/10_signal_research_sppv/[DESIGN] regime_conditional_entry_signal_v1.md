@@ -14298,14 +14298,21 @@ DB read-only/코드 read-only만 사용.
   **완전히 일치**(불일치 0건, 신규 전수 재확인) — 두 필드가
   같은 값의 반올림/원본 관계임을 확정.
 - **"상위 50건=단일 종목(`002790`)" 재확인 결과: 동일하게
-  재현됨**(distinct symbol=1).
+  재현됨**(distinct symbol=1). **[SPPV-2.126에서 명시 보정]**
+  이 결론은 전체 `deterministic_trigger.ranking_score` 모집단
+  (38,667건)의 최상위가 아니라, **`eligibility_core_risk_off_
+  ranking_blocked` 하드 게이트 모집단 내부(n=11,971)의 상위
+  50건**에 한정된다 — 조건을 붙이지 않고 "top50=002790"이라고만
+  쓰면 일반 BUY ranking 전체를 가리키는 것으로 오독될 수 있어
+  이후부터는 항상 게이트 모집단 조건을 함께 표기한다.
 
 ### 113.4 Q4 — 문서 정정 판정
 
 핵심 수치(`allocation_quality distinct 1,929`, `coverage_score
-distinct 2`, `top50=002790 단독`)는 **전부 재현됐다** — 값
-자체는 정정 대상이 아니다. 정정이 필요한 것은 **분모 표기**
-뿐이다:
+distinct 2`, `top50=002790 단독`[`eligibility_core_risk_off_
+ranking_blocked` 게이트 모집단 내부 한정, n=11,971])는 **전부
+재현됐다** — 값 자체는 정정 대상이 아니다. 정정이 필요한 것은
+**분모 표기** 및 **`top50` 모집단 조건 명시**다:
 
 | 항목 | §112가 쓴 분모 | 정확한 분모(SPPV-2.125) | distinct 값(재현됨, 불변) |
 |---|---|---:|---|
@@ -14338,3 +14345,38 @@ distinct 2`, `top50=002790 단독`)는 **전부 재현됐다** — 값
    특정 종목의 반복 등장 원인 확인(완화안 아님).
 3. **3순위(이전 턴 이월)**: `high_volatility` 단독 경로(001450형)
    층3 관찰 지속.
+
+---
+
+## §114. `top50=002790` 문구 모집단 조건 명시 보정(SPPV-2.126, 2026-07-28 KST)
+
+**전제**: §113(SPPV-2.125)의 "top50=002790 단독"이라는 요약
+문구가 어느 모집단 기준인지 조건 없이 축약돼 있어, 전체 BUY
+`ranking_score` 모집단의 최상위처럼 오독될 수 있었다. 코드
+미수정, Full pytest 미실행, 신규 KIS 호출 0건, DB/코드 read-only
+재확인만 사용.
+
+**정정 사실(§113.3에서 이미 확인된 사실 재확인, 신규 조회 없음)**:
+`eligibility_core_risk_off_ranking_blocked` 하드 게이트 모집단
+(n=11,971)에서 `deterministic_trigger.ranking_score` 기준
+상위 50건을 뽑았을 때 distinct symbol=1(`002790`)이었다 — 이는
+**이 하드 게이트 모집단 내부에서만** 성립하는 사실이며, 전체
+`deterministic_trigger.ranking_score` 존재 모집단(38,667건,
+core_cap/held_position/event_overlay 등 다른 source_type과
+다른 regime 포함)의 최상위 50건이 `002790`이라는 뜻이 아니다.
+
+**정정 반영**: §113.3/§113.4의 "top50=002790 단독" 문구와
+`[PLAN] ranking_score_formula_validation.md` §6.9의 동일 문구에
+"`eligibility_core_risk_off_ranking_blocked` 게이트 모집단
+내부 한정(n=11,971)"이라는 조건을 명시적으로 추가했다(이력
+보존형, 원문은 그대로 두고 조건 문구만 추가).
+
+**유지되는 수치(변경 없음)**: `allocation_quality distinct=
+1,929`(분모 38,762), `coverage_score distinct=2`(분모 36,598,
+1.0: 35,873/0.1429: 725), `risk_tone` 분포(risk_off 36,433/
+risk_on 42/neutral 232/null 1,960, 분모 38,667) — 이번 정정은
+이 수치들을 바꾸지 않는다.
+
+**최종 판정에 대한 영향**: 없음 — §107.7/§110.8/§111.4/§112.5/
+§113.5의 "1순위=산식 재검토, 2순위=중복 차단 정리" 판정은
+`top50` 문구의 모집단 조건 명시와 무관하게 유지된다.

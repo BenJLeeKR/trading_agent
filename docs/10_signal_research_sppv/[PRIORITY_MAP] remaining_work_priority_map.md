@@ -9971,6 +9971,18 @@ agent 설계 문서 기준으로도 순서는 다음이 맞다.
      표기뿐. 최종 판정 무관하게 유지. 상세: `docs/10_signal_
      research_sppv/[DESIGN] regime_conditional_entry_signal_
      v1.md` §113.
+   - **SPPV-2.126(완료, 2026-07-28 KST, `top50=002790` 문구
+     모집단 조건 명시 보정, 작성자: Codex, 코드 미수정, Full
+     pytest 미실행, 신규 KIS 호출 0건)**: "top50=002790"이 전체
+     `deterministic_trigger.ranking_score` 모집단(38,667건)이
+     아니라 `eligibility_core_risk_off_ranking_blocked` 하드
+     게이트 모집단(n=11,971) 내부 한정임을 [PLAN] 문서 §6.9와
+     canonical 문서에 명시적으로 추가(이력 보존형). `allocation_
+     quality`=1,929, `coverage_score`=35,873/725, `risk_tone`=
+     36,433/232/42/null 1,960, 분모 38,762/36,598/38,667은 그대로
+     유지. 최종 판정 무관하게 유지. 상세: `docs/10_signal_
+     research_sppv/[DESIGN] regime_conditional_entry_signal_
+     v1.md` §114.
    - **SPPV-3(다음 착수: [1순위] distinct symbol 기준으로 구성
      요소 기여도를 재계산해 "상위 50건 평균 기여도" 수치를 종목
      중복 제거 버전으로 교체(§6.8 잔여) +

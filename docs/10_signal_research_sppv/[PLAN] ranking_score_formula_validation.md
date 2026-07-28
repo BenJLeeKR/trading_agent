@@ -521,13 +521,21 @@ SPPV-2.124에서 전체 이력까지 확장·재판정)
   같은 값의 다른 표현(반올림 vs 원본)임을 확정한다.
 - **"상위 50건=단일 종목 `002790`" 결론을 이 필드(`ranking_
   score`) 기준으로 재현했다 — distinct symbol=1, 재확인 결과
-  동일(재현됨).**
+  동일(재현됨). [SPPV-2.126에서 명시 보정] 이 결론은 전체
+  `deterministic_trigger.ranking_score` 모집단(38,667건)이
+  아니라 `eligibility_core_risk_off_ranking_blocked` 하드 게이트
+  모집단 내부(n=11,971, §6.7/§109.2/§109.3 동일 모집단)의 상위
+  50건에 한정된다 — 조건 없이 "top50=002790"이라고만 쓰면
+  일반 BUY ranking 전체의 최상위권이 이 종목이라는 뜻으로
+  오독될 수 있어, 이번 턴부터 항상 게이트 모집단 조건을 함께
+  표기한다.**
 
 **Q4. 문서 정정 필요 여부 판정**
 
 - 핵심 수치(`allocation_quality distinct 1,929`, `coverage_
-  score distinct 2`, `top50=002790 단독`)는 **모두 그대로
-  재현됐다** — 값 자체를 정정할 필요는 없다.
+  score distinct 2`, `top50=002790 단독`[`eligibility_core_
+  risk_off_ranking_blocked` 게이트 모집단 내부 한정, n=11,971])
+  는 **모두 그대로 재현됐다** — 값 자체를 정정할 필요는 없다.
 - 다만 §6.7의 "전체 이력 일반 모집단(n=68,724)"이라는 표기는
   **coverage_score/risk_tone 분석에는 정확한 분모가 아니다** —
   정확한 분모는 아래와 같이 필드별로 다르다(정밀화):
@@ -555,9 +563,12 @@ SPPV-2.124에서 전체 이력까지 확장·재판정)
 | `regime_tailwind`(`risk_tone`) | 38,667(`deterministic_trigger` 존재, 이 중 1,960건은 값 자체가 null) | risk_off 36,433/risk_on 42/neutral 232/null 1,960 | 부분 확정 |
 
 **재현 여부 요약**: `allocation_quality distinct=1,929`(재현),
-`coverage_score distinct=2`(재현), `top50=002790 단독`(재현) —
-**값은 전부 재현됨**. `n=68,724`라는 분모 표기(재현 안 됨,
-정밀화 필요 — 위 보정표로 대체).
+`coverage_score distinct=2`(재현), `top50=002790 단독`(재현,
+단 `eligibility_core_risk_off_ranking_blocked` 게이트 모집단
+내부 한정, n=11,971 — 전체 `deterministic_trigger.ranking_
+score` 모집단 38,667건 전체의 최상위가 아님) — **값은 전부
+재현됨**. `n=68,724`라는 분모 표기(재현 안 됨, 정밀화 필요 —
+위 보정표로 대체).
 
 ## 7. 완료 기준
 

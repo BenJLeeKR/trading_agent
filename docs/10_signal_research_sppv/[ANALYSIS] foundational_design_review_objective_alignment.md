@@ -2575,8 +2575,23 @@ entry_signal_v1.md` §112.
   정확한 분모는 **36,598**, `risk_tone`의 정확한 분모는
   **38,667**이다.
 - **재현 여부**: distinct 값 수치(`allocation_quality`=1,929,
-  `coverage_score`=2, `top50=002790` 단독)는 **전부 재현됨** —
-  값 자체는 정정 대상이 아니다. 정정 대상은 **분모 표기**뿐이다.
+  `coverage_score`=2, `top50=002790` 단독[`eligibility_core_
+  risk_off_ranking_blocked` 게이트 모집단 내부 한정, n=11,971 —
+  전체 `deterministic_trigger.ranking_score` 모집단 38,667건
+  전체의 최상위가 아님])는 **전부 재현됨** — 값 자체는 정정
+  대상이 아니다. 정정 대상은 **분모 표기**와 **`top50` 모집단
+  조건 명시**다.
 - 최종 판정(1순위 산식 재검토, 2순위 중복 차단 정리)에 영향
   없음. 상세: `docs/10_signal_research_sppv/[DESIGN] regime_
-  conditional_entry_signal_v1.md` §113.
+  conditional_entry_signal_v1.md` §113/§114.
+
+## 12. `top50=002790` 문구 모집단 조건 명시 보정(SPPV-2.126, 2026-07-28 KST)
+
+§11(SPPV-2.125)의 "top50=002790 단독" 요약 문구가 어느 모집단
+기준인지 조건 없이 축약돼, 전체 BUY `ranking_score` 모집단
+최상위처럼 오독될 수 있었다(코드 미수정, Full pytest 미실행,
+신규 KIS 호출 0건). 이 사실은 `eligibility_core_risk_off_
+ranking_blocked` 하드 게이트 모집단(n=11,971) 내부 한정이며,
+전체 `deterministic_trigger.ranking_score` 모집단(38,667건)의
+최상위가 아니다 — [PLAN] 문서와 §113/§114에 조건을 명시적으로
+추가했다. 수치·최종 판정 변경 없음.

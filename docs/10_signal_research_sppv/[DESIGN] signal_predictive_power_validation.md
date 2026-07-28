@@ -2525,6 +2525,22 @@ entry 설계 검토로 전환**을 확정했다. 별도 문서
   research_sppv/[DESIGN] regime_conditional_entry_signal_v1.md`
   §113.
 
+- 작성자: Codex
+- 수정일자: 2026-07-28 KST (126차, `top50=002790` 문구 모집단
+  조건 명시 보정, 코드 미수정, Full pytest 미실행, 신규 KIS
+  호출 0건)
+- 수정내용: "top50=002790 단독"이라는 요약 문구가 조건 없이
+  축약돼 전체 BUY `ranking_score` 모집단 최상위처럼 오독될 수
+  있었음을 확인 — 이 사실은 `eligibility_core_risk_off_ranking_
+  blocked` 하드 게이트 모집단(n=11,971) 내부 한정이며, 전체
+  `deterministic_trigger.ranking_score` 모집단(38,667건)의
+  최상위가 아니다. [PLAN] 문서 §6.9와 §113/§114에 조건을 명시
+  적으로 추가(이력 보존형). `allocation_quality`=1,929,
+  `coverage_score`=35,873/725, `risk_tone`=36,433/232/42/null
+  1,960, 분모 38,762/36,598/38,667은 그대로 유지. 최종 판정
+  무관하게 유지. 상세: `docs/10_signal_research_sppv/[DESIGN]
+  regime_conditional_entry_signal_v1.md` §114.
+
 ---
 
 ## 진행 체크리스트
@@ -5572,6 +5588,13 @@ canonical),
     로직 변경 없음, 신규 KIS 호출 0건(shadow 재호출은 `kis_
     client=None`). 상세: `docs/10_signal_research_sppv/[DESIGN]
     regime_conditional_entry_signal_v1.md` §94.
+- [x] **SPPV-2.126(신설)** `top50=002790` 문구 모집단 조건 명시
+  보정 (완료, 2026-07-28 KST, 작성자: Codex, 코드 미수정, Full
+  pytest 미실행, 신규 KIS 호출 0건)
+  - "top50=002790"이 `eligibility_core_risk_off_ranking_
+    blocked` 게이트 모집단(n=11,971) 내부 한정임을 명시. 수치·
+    최종 판정 변경 없음. 상세: `docs/10_signal_research_sppv/
+    [DESIGN] regime_conditional_entry_signal_v1.md` §114.
 - [x] **SPPV-2.125(신설)** 모집단 정의·필드 경로 정밀 재검증
   (완료, 2026-07-28 KST, 작성자: Codex, 코드 미수정, Full pytest
   미실행, 신규 KIS 호출 0건)

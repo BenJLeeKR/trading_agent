@@ -1759,6 +1759,15 @@
   완화안 미제시. 상세: `docs/10_signal_research_sppv/[DESIGN]
   regime_conditional_entry_signal_v1.md` §113.
 
+- 2026-07-28 KST(SPPV-2.126, 신규 KIS 호출 0건): `top50=002790`
+  문구 모집단 조건 명시 보정. "top50=002790"이 전체
+  `deterministic_trigger.ranking_score` 모집단(38,667건)이 아니라
+  `eligibility_core_risk_off_ranking_blocked` 하드 게이트 모집단
+  (n=11,971) 내부 한정임을 [PLAN] 문서와 canonical 문서에 명시
+  추가(이력 보존형). 수치·최종 판정 변경 없음. 완화안 미제시.
+  상세: `docs/10_signal_research_sppv/[DESIGN] regime_
+  conditional_entry_signal_v1.md` §114.
+
 ---
 
 ## 관리 원칙
