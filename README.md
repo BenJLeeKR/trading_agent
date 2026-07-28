@@ -254,6 +254,7 @@ docker compose up -d db api
 | `make lint-path TARGET=...` | 지정 경로 ruff 정적 분석 |
 | `make docs-check` | `make accept-docs`의 호환 alias |
 | `make accept-docs` | 핵심 문서 하네스 판정기 실행 |
+| `make accept-ci` | CI workflow가 같은 하네스를 쓰는지 판정 |
 | `make accept-env` | 운영 환경 재현성 하네스 판정기 실행 |
 | `make accept-backend-file FILE=...` | 단일 백엔드 Python 파일 하네스 판정기 실행 |
 | `make accept-backend-runtime` | 백엔드 런타임 import/factory 계약 판정기 실행 |
@@ -281,6 +282,12 @@ docker compose up -d db api
 `make accept-ops-report`는 기본적으로 `failed_count=0`, `timed_out_count=0`을 요구한다. 운영상 허용 범위가 필요한 경우 `HARNESS_OPS_ALLOWED_FAILED_COUNT`, `HARNESS_OPS_ALLOWED_TIMED_OUT_COUNT`를 명시한다.
 `make dump-ops-report`는 DB를 조회하므로 기본 차단한다. 필요한 경우 `HARNESS_ALLOW_OPS_DUMP=1`을 명시하고, 출력 파일을 `accept-ops-report`에 전달한다.
 전체 테스트, smoke, Admin UI 전체 빌드/테스트는 `make heavy-*` target을 우선 사용한다. 기존 `make full-test`, `make docker-test-safe`, `make smoke-safe`, `make admin-build`, `make admin-test-all`은 호환 alias다.
+
+## CI 검증 기준
+
+GitHub Actions는 사람과 AI가 쓰는 동일한 하네스를 사용한다. 기본 PR/push gate는 [`.github/workflows/harness.yml`](./.github/workflows/harness.yml)에서 `bash scripts/harness/run.sh ...`를 호출하며, 개별 `pytest`, `ruff`, `npm test` 명령을 CI 정답 판정기로 중복 정의하지 않는다.
+
+L4/L5 계층의 전체 테스트, smoke, Admin UI 전체 빌드/테스트는 기본 PR/push에서 실행하지 않고 `workflow_dispatch`와 `HARNESS_ALLOW_HEAVY=1`이 있을 때만 실행한다.
 
 ## 환경 재현성 기준
 

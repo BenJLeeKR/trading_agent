@@ -21,6 +21,7 @@ usage() {
   bash scripts/harness/run.sh test-file <tests/path.py>
   bash scripts/harness/run.sh lint-path <path>
   bash scripts/harness/run.sh accept docs
+  bash scripts/harness/run.sh accept ci
   bash scripts/harness/run.sh accept env
   bash scripts/harness/run.sh accept db-structure
   bash scripts/harness/run.sh accept architecture
@@ -143,10 +144,153 @@ env_check() {
   accept_env
 }
 
+accept_ci() {
+  python3 - <<'PY'
+import os
+import re
+from pathlib import Path
+
+root = Path(os.environ["HARNESS_ROOT_DIR"])
+workflow = root / ".github" / "workflows" / "harness.yml"
+readme = root / "README.md"
+harness_readme = root / "scripts" / "harness" / "README.md"
+agents = root / "AGENTS.md"
+makefile = root / "Makefile"
+
+required_files = [workflow, readme, harness_readme, agents, makefile]
+missing_files = [path for path in required_files if not path.exists()]
+
+workflow_text = workflow.read_text() if workflow.exists() else ""
+workflow_lines = workflow_text.splitlines()
+
+def contains(path: Path, *needles: str) -> bool:
+    if not path.exists():
+        return False
+    text = path.read_text()
+    return all(needle in text for needle in needles)
+
+def section_between(text: str, start: str, end: str) -> str:
+    start_index = text.find(start)
+    if start_index < 0:
+        return ""
+    end_index = text.find(end, start_index + len(start))
+    return text[start_index:] if end_index < 0 else text[start_index:end_index]
+
+harness_command_lines = [
+    line for line in workflow_lines
+    if "bash scripts/harness/run.sh" in line
+]
+
+required_harness_commands = [
+    "bash scripts/harness/run.sh check quick",
+    "bash scripts/harness/run.sh accept db-structure",
+    "bash scripts/harness/run.sh accept architecture",
+    "bash scripts/harness/run.sh accept style",
+    "bash scripts/harness/run.sh type-check backend",
+    "bash scripts/harness/run.sh type-check frontend",
+    "bash scripts/harness/run.sh security scan",
+]
+missing_harness_commands = [
+    command for command in required_harness_commands
+    if command not in workflow_text
+]
+
+direct_verifier_pattern = re.compile(
+    r"\b("
+    r"python3\s+-m\s+pytest|pytest\b|"
+    r"python3\s+-m\s+ruff|ruff\s+check|"
+    r"npm\s+(test|run\s+(test|test:run|build))|"
+    r"vitest\b|tsc\s+--noEmit"
+    r")"
+)
+direct_verifier_lines = []
+for line_no, line in enumerate(workflow_lines, 1):
+    if "bash scripts/harness/run.sh" in line:
+        continue
+    if direct_verifier_pattern.search(line):
+        direct_verifier_lines.append((line_no, line.strip()))
+
+safe_section = section_between(workflow_text, "  safe:", "  heavy:")
+safe_forbidden_heavy_pattern = re.compile(
+    r"(HARNESS_ALLOW_HEAVY|full-test|docker-test|smoke|admin-build|admin-test-all)"
+)
+safe_forbidden_heavy_lines = [
+    (line_no, line.strip())
+    for line_no, line in enumerate(safe_section.splitlines(), 1)
+    if safe_forbidden_heavy_pattern.search(line)
+]
+
+contract_checks = [
+    ("workflow_declares_pull_request", "pull_request:" in workflow_text),
+    ("workflow_declares_main_push", "push:" in workflow_text and "- main" in workflow_text),
+    ("workflow_declares_manual_heavy", "workflow_dispatch:" in workflow_text and "run_heavy:" in workflow_text),
+    ("workflow_safe_job_present", "  safe:" in workflow_text),
+    ("workflow_heavy_job_present", "  heavy:" in workflow_text),
+    ("workflow_uses_setup_python_pin", "python-version-file: .python-version" in workflow_text),
+    ("workflow_uses_setup_node_pin", "node-version-file: admin_ui/.nvmrc" in workflow_text),
+    ("workflow_uses_postgres_pin", "POSTGRES_VERSION=\"$(cat .postgres-version)\"" in workflow_text and "\"postgres:${POSTGRES_VERSION}\"" in workflow_text),
+    ("workflow_heavy_requires_dispatch", "if: github.event_name == 'workflow_dispatch' && inputs.run_heavy == 'true'" in workflow_text),
+    ("workflow_heavy_sets_allow_flag", 'HARNESS_ALLOW_HEAVY: "1"' in workflow_text),
+    ("readme_declares_ci_harness", contains(readme, "CI 검증 기준", ".github/workflows/harness.yml", "bash scripts/harness/run.sh")),
+    ("harness_readme_declares_ci_harness", contains(harness_readme, "CI 공동 사용 원칙", "safe", "workflow_dispatch", "HARNESS_ALLOW_HEAVY=1")),
+    ("agents_declares_ci_harness", contains(agents, ".github/workflows/harness.yml", "bash scripts/harness/run.sh")),
+    ("makefile_declares_accept_ci", contains(makefile, "accept-ci:", "bash scripts/harness/run.sh accept ci")),
+]
+failed_contract_checks = [name for name, passed in contract_checks if not passed]
+
+metrics = {
+    "required_file_missing_count": len(missing_files),
+    "harness_command_count": len(harness_command_lines),
+    "required_harness_command_missing_count": len(missing_harness_commands),
+    "direct_verifier_command_count": len(direct_verifier_lines),
+    "safe_forbidden_heavy_command_count": len(safe_forbidden_heavy_lines),
+    "ci_contract_failed_count": len(failed_contract_checks),
+}
+
+passed = all(value == 0 for key, value in metrics.items() if key != "harness_command_count") and metrics["harness_command_count"] > 0
+
+print(f"ACCEPT ci: {'PASS' if passed else 'FAIL'}")
+for key, value in metrics.items():
+    print(f"- {key}={value}")
+print("- full_test_run=0")
+print("- full_build_run=0")
+print("- database_connection_run=0")
+print("- external_network_run=0")
+
+if missing_files:
+    print("DETAIL missing_files:")
+    for path in missing_files:
+        print(f"- {path.relative_to(root)}")
+
+if missing_harness_commands:
+    print("DETAIL missing_harness_commands:")
+    for command in missing_harness_commands:
+        print(f"- {command}")
+
+if direct_verifier_lines:
+    print("DETAIL direct_verifier_commands:")
+    for line_no, line in direct_verifier_lines:
+        print(f"- {workflow.relative_to(root)}:{line_no}: {line}")
+
+if safe_forbidden_heavy_lines:
+    print("DETAIL safe_forbidden_heavy_commands:")
+    for line_no, line in safe_forbidden_heavy_lines:
+        print(f"- safe_section:{line_no}: {line}")
+
+if failed_contract_checks:
+    print("DETAIL failed_contract_checks:")
+    for name in failed_contract_checks:
+        print(f"- {name}")
+
+raise SystemExit(0 if passed else 1)
+PY
+}
+
 check_quick() {
-  local step_count=6
+  local step_count=7
   local failed_step_count=0
   local accept_docs_exit_code=0
+  local accept_ci_exit_code=0
   local accept_env_exit_code=0
   local accept_backend_runtime_exit_code=0
   local accept_frontend_exit_code=0
@@ -159,6 +303,13 @@ check_quick() {
     accept_docs_exit_code=0
   else
     accept_docs_exit_code=$?
+    failed_step_count=$((failed_step_count + 1))
+  fi
+
+  if accept_ci; then
+    accept_ci_exit_code=0
+  else
+    accept_ci_exit_code=$?
     failed_step_count=$((failed_step_count + 1))
   fi
 
@@ -205,6 +356,7 @@ check_quick() {
   echo "- step_count=$step_count"
   echo "- failed_step_count=$failed_step_count"
   echo "- accept_docs_exit_code=$accept_docs_exit_code"
+  echo "- accept_ci_exit_code=$accept_ci_exit_code"
   echo "- accept_env_exit_code=$accept_env_exit_code"
   echo "- accept_backend_runtime_exit_code=$accept_backend_runtime_exit_code"
   echo "- accept_frontend_exit_code=$accept_frontend_exit_code"
@@ -795,19 +947,21 @@ else:
     runtime_versions["python"] = output if code == 0 else ""
     runtime_sources["python"] = "host-python3"
 
-code, output = run_command(["docker", "run", "--rm", "node:20-slim", "node", "--version"])
+pinned_node_image = f"node:{expected['node']}-slim" if expected["node"] else "node:20-slim"
+
+code, output = run_command(["docker", "run", "--rm", pinned_node_image, "node", "--version"])
 if code == 0 and output:
     runtime_versions["node"] = output.removeprefix("v")
-    runtime_sources["node"] = "node:20-slim"
+    runtime_sources["node"] = pinned_node_image
 else:
     code, output = run_command(["node", "--version"])
     runtime_versions["node"] = output.removeprefix("v") if code == 0 else ""
     runtime_sources["node"] = "host-node"
 
-code, output = run_command(["docker", "run", "--rm", "node:20-slim", "npm", "--version"])
+code, output = run_command(["docker", "run", "--rm", pinned_node_image, "npm", "--version"])
 if code == 0 and output:
     runtime_versions["npm"] = output
-    runtime_sources["npm"] = "node:20-slim"
+    runtime_sources["npm"] = pinned_node_image
 else:
     code, output = run_command(["npm", "--version"])
     runtime_versions["npm"] = output if code == 0 else ""
@@ -1646,19 +1800,21 @@ missing_state_components = [path for path in common_state_components if not path
 
 runtime_versions: dict[str, str] = {}
 runtime_sources: dict[str, str] = {}
-code, output = run_command(["docker", "run", "--rm", "node:20-slim", "node", "--version"])
+pinned_node_image = f"node:{expected_node}-slim" if expected_node else "node:20-slim"
+
+code, output = run_command(["docker", "run", "--rm", pinned_node_image, "node", "--version"])
 if code == 0 and output:
     runtime_versions["node"] = output.removeprefix("v")
-    runtime_sources["node"] = "node:20-slim"
+    runtime_sources["node"] = pinned_node_image
 else:
     code, output = run_command(["node", "--version"])
     runtime_versions["node"] = output.removeprefix("v") if code == 0 else ""
     runtime_sources["node"] = "host-node"
 
-code, output = run_command(["docker", "run", "--rm", "node:20-slim", "npm", "--version"])
+code, output = run_command(["docker", "run", "--rm", pinned_node_image, "npm", "--version"])
 if code == 0 and output:
     runtime_versions["npm"] = output
-    runtime_sources["npm"] = "node:20-slim"
+    runtime_sources["npm"] = pinned_node_image
 else:
     code, output = run_command(["npm", "--version"])
     runtime_versions["npm"] = output if code == 0 else ""
@@ -2232,6 +2388,9 @@ main() {
       case "$profile" in
         docs)
           accept_docs
+          ;;
+        ci)
+          accept_ci
           ;;
         env)
           accept_env

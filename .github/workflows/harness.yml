@@ -1,0 +1,123 @@
+name: Harness
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+    inputs:
+      run_heavy:
+        description: "Run HARNESS_ALLOW_HEAVY gated checks"
+        required: false
+        default: "false"
+        type: choice
+        options:
+          - "false"
+          - "true"
+
+concurrency:
+  group: harness-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  safe:
+    name: Safe harness contracts
+    runs-on: ubuntu-latest
+    env:
+      HARNESS_CI: "1"
+      HARNESS_SAFE_TIMEOUT_SECONDS: "180"
+      PIP_DISABLE_PIP_VERSION_CHECK: "1"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version-file: .python-version
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: admin_ui/.nvmrc
+          cache: npm
+          cache-dependency-path: admin_ui/package-lock.json
+
+      - name: Install backend dependencies
+        run: python3 -m pip install -e ".[dev]"
+
+      - name: Install Admin UI dependencies
+        working-directory: admin_ui
+        run: npm ci
+
+      - name: Start pinned PostgreSQL container
+        run: |
+          POSTGRES_VERSION="$(cat .postgres-version)"
+          docker run --detach --name trading_db \
+            --env POSTGRES_USER=trading \
+            --env POSTGRES_PASSWORD=trading \
+            --env POSTGRES_DB=trading \
+            "postgres:${POSTGRES_VERSION}"
+          for attempt in {1..30}; do
+            if docker exec trading_db pg_isready -U trading -d trading >/dev/null 2>&1; then
+              exit 0
+            fi
+            sleep 1
+          done
+          docker logs trading_db
+          exit 1
+
+      - name: Run quick harness snapshot
+        run: bash scripts/harness/run.sh check quick
+
+      - name: Run architecture and style contracts
+        run: |
+          bash scripts/harness/run.sh accept db-structure
+          bash scripts/harness/run.sh accept architecture
+          bash scripts/harness/run.sh accept style
+
+      - name: Run type-check contracts
+        run: |
+          bash scripts/harness/run.sh type-check backend
+          bash scripts/harness/run.sh type-check frontend
+
+      - name: Run read-only security snapshot
+        run: bash scripts/harness/run.sh security scan
+
+  heavy:
+    name: Heavy harness contracts
+    runs-on: ubuntu-latest
+    if: github.event_name == 'workflow_dispatch' && inputs.run_heavy == 'true'
+    env:
+      HARNESS_CI: "1"
+      HARNESS_ALLOW_HEAVY: "1"
+      HARNESS_HEAVY_TIMEOUT_SECONDS: "900"
+      PIP_DISABLE_PIP_VERSION_CHECK: "1"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version-file: .python-version
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: admin_ui/.nvmrc
+          cache: npm
+          cache-dependency-path: admin_ui/package-lock.json
+
+      - name: Install backend dependencies
+        run: python3 -m pip install -e ".[dev]"
+
+      - name: Install Admin UI dependencies
+        working-directory: admin_ui
+        run: npm ci
+
+      - name: Run heavy harness checks
+        run: |
+          bash scripts/harness/run.sh full-test
+          bash scripts/harness/run.sh admin-build

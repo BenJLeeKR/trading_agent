@@ -31,11 +31,13 @@
 변경한 동작을 증명할 수 있는 가장 좁은 검증을 우선 실행한다. 가능한 경우 명령은 직접 조합하지 말고 `bash scripts/harness/run.sh <command>` 또는 대응하는 `make` target을 사용한다.
 
 - 검증 계층과 출력 지표 기준은 [`scripts/harness/README.md`](scripts/harness/README.md)를 따른다.
+- CI도 사람·AI와 같은 `bash scripts/harness/run.sh ...` 진입점을 사용하며, GitHub Actions 기준은 `.github/workflows/harness.yml`에 둔다.
 - 커밋 전 빠른 스냅샷: `bash scripts/harness/run.sh check quick` 또는 `make check-quick`.
 - 변경 백엔드 파일 스냅샷: `bash scripts/harness/run.sh check changed` 또는 `make check-changed`.
 - 타입 검사 스냅샷: `bash scripts/harness/run.sh type-check backend`, `bash scripts/harness/run.sh type-check frontend`, `make type-check-backend`, `make type-check-frontend`.
 - read-only 보안 스냅샷: `bash scripts/harness/run.sh security scan` 또는 `make security-scan`.
 - 문서 정합성: `bash scripts/harness/run.sh accept docs` 또는 `make accept-docs`.
+- CI 정합성: `bash scripts/harness/run.sh accept ci` 또는 `make accept-ci`.
 - 운영 환경 재현성: `bash scripts/harness/run.sh accept env` 또는 `make accept-env`. `env-check`는 호환 alias다.
 - DB 저장소 구조: `bash scripts/harness/run.sh accept db-structure` 또는 `make accept-db-structure`.
 - 아키텍처 계층 구조: `bash scripts/harness/run.sh accept architecture` 또는 `make accept-architecture`.

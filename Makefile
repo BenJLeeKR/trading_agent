@@ -2,7 +2,7 @@ SHELL := /usr/bin/bash
 .SHELLFLAGS := -e -o pipefail -c
 
 .PHONY: install run migrate test lint smoke \
-        harness-status check-quick check-changed type-check-backend type-check-frontend security-scan env-check check-file test-one test-file lint-path docs-check accept-docs accept-env accept-db-structure accept-architecture accept-style accept-backend-file accept-backend-runtime accept-admin-ui accept-ops-report dump-ops-report admin-test-one \
+        harness-status check-quick check-changed type-check-backend type-check-frontend security-scan env-check check-file test-one test-file lint-path docs-check accept-docs accept-ci accept-env accept-db-structure accept-architecture accept-style accept-backend-file accept-backend-runtime accept-admin-ui accept-ops-report dump-ops-report admin-test-one \
         heavy-full-test heavy-docker-test heavy-smoke heavy-admin-build heavy-admin-test-all \
         full-test docker-test-safe smoke-safe smoke-all admin-build admin-test-all \
         docker-up docker-down docker-build docker-migrate docker-test docker-shell \
@@ -81,6 +81,9 @@ docs-check:
 
 accept-docs:
 	bash scripts/harness/run.sh accept docs
+
+accept-ci:
+	bash scripts/harness/run.sh accept ci
 
 accept-env:
 	bash scripts/harness/run.sh accept env

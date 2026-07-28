@@ -41,6 +41,7 @@ Claude Code는 이 저장소에서 코드, 문서, 스크립트, 테스트를 �
 세부 판정 기준은 `AGENTS.md`와 `scripts/harness/run.sh`를 따른다. Claude Code는 검증 명령을 직접 조합하기보다 아래 진입점을 우선 사용한다.
 
 - 문서 정합성: `bash scripts/harness/run.sh accept docs` 또는 `make accept-docs`
+- CI 정합성: `bash scripts/harness/run.sh accept ci` 또는 `make accept-ci`
 - 환경 재현성: `bash scripts/harness/run.sh accept env` 또는 `make accept-env`
 - 단일 백엔드 파일: `bash scripts/harness/run.sh accept backend-file <file>` 또는 `make accept-backend-file FILE=<file>`
 - 백엔드 런타임 계약: `bash scripts/harness/run.sh accept backend-runtime` 또는 `make accept-backend-runtime`

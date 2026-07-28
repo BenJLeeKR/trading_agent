@@ -15,6 +15,17 @@
 - 기본 timeout은 `HARNESS_SAFE_TIMEOUT_SECONDS`이며 기본값은 `90`초다.
 - 무거운 검증 timeout은 `HARNESS_HEAVY_TIMEOUT_SECONDS`이며 기본값은 `900`초다.
 
+## CI 공동 사용 원칙
+
+GitHub Actions도 사람과 AI가 쓰는 동일한 하네스를 사용한다. CI workflow는 `pytest`, `ruff`, `npm`, `docker` 기반 검증 명령을 직접 정답 판정기로 삼지 않고, 준비 단계 이후 `bash scripts/harness/run.sh ...`만 호출한다.
+
+- 기본 PR/push gate는 `.github/workflows/harness.yml`의 `safe` job이다.
+- `safe` job은 `check quick`, `accept db-structure`, `accept architecture`, `accept style`, `type-check backend`, `type-check frontend`, `security scan`을 실행한다.
+- CI workflow 자체의 정합성 판정은 `accept ci`가 담당한다.
+- CI의 PostgreSQL 버전 판정은 `.postgres-version`과 같은 버전의 `trading_db` 컨테이너를 시작한 뒤 `accept env`가 확인한다.
+- CI의 Node.js/npm 판정은 `.nvmrc`, `.npm-version`과 일치하는 pin 이미지 또는 setup-node 환경을 기준으로 확인한다.
+- `HARNESS_ALLOW_HEAVY=1`이 필요한 L4/L5 검증은 기본 PR/push에서 실행하지 않고 `workflow_dispatch` 입력으로만 실행한다.
+
 ## 승인 없이 실행 가능한 명령
 
 | 목적 | 표준 명령 | Make alias |
@@ -27,6 +38,7 @@
 | read-only 보안 검사 | `bash scripts/harness/run.sh security scan` | `make security-scan` |
 | 환경 계약 | `bash scripts/harness/run.sh accept env` | `make accept-env` |
 | 문서 계약 | `bash scripts/harness/run.sh accept docs` | `make accept-docs` |
+| CI 계약 | `bash scripts/harness/run.sh accept ci` | `make accept-ci` |
 | DB 저장소 구조 계약 | `bash scripts/harness/run.sh accept db-structure` | `make accept-db-structure` |
 | 아키텍처 계층 구조 계약 | `bash scripts/harness/run.sh accept architecture` | `make accept-architecture` |
 | 코드 스타일 baseline 계약 | `bash scripts/harness/run.sh accept style` | `make accept-style` |
@@ -54,7 +66,7 @@
 | L5 | E2E·smoke 테스트 | `HARNESS_ALLOW_HEAVY=1` 필요 | `smoke`, broker/KIS 연동 테스트 |
 | L6 | 성능·보안 검사 | read-only secret scan은 승인 없이 실행, dependency audit·성능 검사는 별도 승인 필요 | `security scan` |
 
-`check quick`은 커밋 전 기본 스냅샷용 계층 묶음이다. 현재 범위는 `accept docs`, `accept env`, `accept backend-runtime`, `accept frontend`, `lint-path src/agent_trading`, `git diff --check`이며 전체 테스트, 전체 빌드, DB 연결, 외부 네트워크 호출을 실행하지 않는다.
+`check quick`은 커밋 전 기본 스냅샷용 계층 묶음이다. 현재 범위는 `accept docs`, `accept ci`, `accept env`, `accept backend-runtime`, `accept frontend`, `lint-path src/agent_trading`, `git diff --check`이며 전체 테스트, 전체 빌드, DB 연결, 외부 네트워크 호출을 실행하지 않는다.
 
 `check changed`는 Git 변경 목록에서 `src/agent_trading/**/*.py` 파일만 골라 각 파일에 `accept backend-file`을 적용한다. 문서만 변경된 경우 `changed_backend_file_count=0`으로 보고하며 전체 테스트를 실행하지 않는다.
 
@@ -106,6 +118,15 @@ Makefile에서는 승인 필요 명령을 `heavy-*` target으로 노출한다. �
 - `deprecated_reference_count`: 오래된 문서 경로 참조 수.
 - `documented_make_target_missing_count`: 핵심 문서가 안내하지만 `Makefile`에 없는 target 수.
 - `semantic_check_failed_count`: Harness Engineering 필수 문구와 라우팅 규칙 실패 수.
+
+### `accept ci`
+
+- `required_file_missing_count`: CI workflow와 관련 문서·Makefile 누락 수.
+- `harness_command_count`: CI workflow에서 `bash scripts/harness/run.sh ...`를 호출한 수.
+- `required_harness_command_missing_count`: 기본 CI gate에 필요한 하네스 명령 누락 수.
+- `direct_verifier_command_count`: CI workflow가 `pytest`, `ruff`, `npm test`, `tsc`, `vitest` 같은 정답 판정기를 직접 호출한 수.
+- `safe_forbidden_heavy_command_count`: 기본 PR/push `safe` job에 L4/L5 heavy 명령 또는 `HARNESS_ALLOW_HEAVY`가 섞인 수.
+- `ci_contract_failed_count`: workflow trigger, version pin, heavy 수동 실행 조건, 문서 연결 실패 수.
 
 ### `accept env`
 
