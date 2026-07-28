@@ -1650,6 +1650,17 @@
   완화안 미제시. 상세: `docs/10_signal_research_sppv/[DESIGN]
   regime_conditional_entry_signal_v1.md` §102.
 
+- 2026-07-28 KST(SPPV-2.116, 신규 KIS 호출 0건): `risk_off AND
+  bearish_trend` 하드 게이트 완화 후보 사전 정밀 검증.
+  `eligibility_core_risk_off_ranking_blocked` 모집단(3거래일
+  n=2,563, 전체 이력 n=11,831) 실측 — `raw_ranking_score` 전체
+  이력 최댓값 0.417(threshold 0.48 근접 0건), 기존 완화 시뮬레이션
+  3종(v2/v3/v5)도 0% 통과 — 신호/순위 모두 깊게 음인 표본으로만
+  구성. 판정: 이 게이트 자체에는 안전한 완화 지점 없음 — 유일한
+  저리스크 후보는 기존 top-k override 활성화뿐(즉시 효과 없음).
+  2번째 후보는 제시하지 않음. 상세: `docs/10_signal_research_
+  sppv/[DESIGN] regime_conditional_entry_signal_v1.md` §103.
+
 ---
 
 ## 관리 원칙

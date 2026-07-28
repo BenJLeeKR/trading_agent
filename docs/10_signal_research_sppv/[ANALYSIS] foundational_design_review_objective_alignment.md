@@ -2158,6 +2158,22 @@ value/compliance/broker가 아니라 `entry_score < 0.65`다.
   판정: 설계 의도와 실동작 부분 불일치. 완화안 미제시. 상세:
   `docs/10_signal_research_sppv/[DESIGN] regime_conditional_
   entry_signal_v1.md` §102.
+- 2026-07-28 KST(SPPV-2.116, 코드/설정 변경 없음, 신규 KIS 호출
+  0건): `risk_off AND bearish_trend` 하드 게이트 완화 후보 사전
+  정밀 검증. `eligibility_core_risk_off_ranking_blocked` 모집단
+  실측(최근 3거래일 n=2,563, 전체 이력 n=11,831) 결과 `raw_
+  ranking_score` 전체 이력 최댓값도 0.417(threshold 0.48 대비
+  근접 0건), 기존에 코드로 심어둔 완화 시뮬레이션 3종(shadow_
+  floor_relax_v2/v3/v5)조차 전체 이력 0% 통과 — 이 모집단은
+  threshold 경계의 "아쉽게 막힌" 표본이 아니라 신호/순위 양쪽
+  모두 깊게 음(deep_negative)인 표본으로만 구성됨을 확인. 판정:
+  이 게이트 자체에는 안전하게 풀 수 있는 지점이 현재 데이터상
+  없음 — 유일한 저리스크 후보는 이미 구현된 `core_risk_off_
+  topk_v1` top-k override(현재 비활성)를 켜는 것뿐이나, 이것도
+  즉시 주문 증가를 보장하지 않음(게이트 2 신호 조건이 모집단
+  전원 실패). 2번째 후보는 데이터 미지지로 제시하지 않음. 상세:
+  `docs/10_signal_research_sppv/[DESIGN] regime_conditional_
+  entry_signal_v1.md` §103.
 - **3순위(보류 유지, 형태 재정의 — 우선순위 재조정)**: **`entry_
   score`와 BUY funnel 재현** — §2.7 확장 검증에서 하락장 안정성이
   확인되지 않아 단순 재현으로는 착수하지 않는다. §2.16~§2.21에서

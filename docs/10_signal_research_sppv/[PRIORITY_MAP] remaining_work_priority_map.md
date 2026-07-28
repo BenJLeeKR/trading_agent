@@ -9834,31 +9834,49 @@ agent 설계 문서 기준으로도 순서는 다음이 맞다.
      불일치, 사실상 상시 봉쇄. 완화안 미제시. 상세: `docs/10_
      signal_research_sppv/[DESIGN] regime_conditional_entry_
      signal_v1.md` §102.
-   - **SPPV-3(다음 착수: [1순위] `eligibility_core_risk_off_
-     ranking_blocked` 하드 게이트의 원 설계 시점(§36) 시장 조건과
-     현재(§99~§101 상시 risk_off) 차이, "하락 국면 한정" 스코프
-     제약의 코드 미반영 여부만 추가 확인(완화안 설계 아님) +
-     [2순위] `risk_off_exception_eligible` 경로가 0.02%로 거의
+   - **SPPV-2.116(완료, 2026-07-28 KST, `risk_off AND bearish_
+     trend` 하드 게이트 완화 후보 사전 정밀 검증, 작성자: Codex,
+     코드/설정 변경 없음, 신규 KIS 호출 0건)**: `eligibility_
+     core_risk_off_ranking_blocked` 모집단(3거래일 n=2,563,
+     전체 이력 n=11,831) 실측 — `raw_ranking_score` 전체 이력
+     최댓값 0.417(threshold 0.48 근접 0건), 기존 완화 시뮬레이션
+     3종(shadow_floor_relax_v2/v3/v5)도 전체 이력 0% 통과 — 모집단
+     이 신호/순위 모두 깊게 음(deep_negative)인 표본으로만
+     구성됨을 확인. 판정: 이 게이트 자체에는 안전한 완화 지점이
+     데이터상 없음 — 유일한 저리스크 후보는 기존 `core_risk_off_
+     topk_v1` top-k override(현재 비활성) 활성화뿐이나 즉시 효과는
+     없음(게이트 2 신호 조건 100% 실패). 2번째 후보는 데이터
+     미지지로 제시하지 않음. 상세: `docs/10_signal_research_sppv/
+     [DESIGN] regime_conditional_entry_signal_v1.md` §103.
+   - **SPPV-3(다음 착수: [1순위] `core_risk_off_topk_v1` override가
+     실제로 어느 호출부에서 `deterministic_trigger_override`를
+     채워야 활성화되는지 코드 경로만 확인(활성화 여부 결정은 별도
+     승인 필요) +
+     [2순위] `eligibility_core_risk_off_ranking_blocked` 하드
+     게이트의 원 설계 시점(§36) 시장 조건과 현재(§99~§101 상시
+     risk_off) 차이, "하락 국면 한정" 스코프 제약의 코드 미반영
+     여부만 추가 확인(완화안 설계 아님) +
+     [3순위] `risk_off_exception_eligible` 경로가 0.02%로 거의
      발동하지 않는 정확한 사유를 조건별로 분해 +
-     [3순위] `KIS_ENV`(paper/real) 실제 설정 확인 및 KIS 모의투자
+     [5순위] `KIS_ENV`(paper/real) 실제 설정 확인 및 KIS 모의투자
      서버 일봉 데이터 특성이 실전 서버와 다른지 공식 자료 기준
      별도 검증(사용자 확인 필요, `.env` 직접 열람 없이) +
-     [4순위] 가능하면 실전 서버/공개 시세로 같은 기간 KODEX200
+     [6순위] 가능하면 실전 서버/공개 시세로 같은 기간 KODEX200
      실제 스프레드 대조(신규 호출 필요 — 별도 턴·사용자 승인
      하에) +
-     [5순위] `market_regime.py`의 `bearish_trend` 조건이 `slow_
+     [7순위] `market_regime.py`의 `bearish_trend` 조건이 `slow_
      score`(파생)와 원시 지표를 동시 검사하는 중복 구조가 설계
      의도인지 확인 +
-     [6순위] `signal_feature_snapshots` 배치의 일별 1회 갱신
+     [8순위] `signal_feature_snapshots` 배치의 일별 1회 갱신
      주기·재사용 설계 확인(`build_signal_feature_snapshots.py`
      실행 이력) +
-     [7순위] 사용자가 `.env`에 `TRADING_UNIVERSE_MAX_CAP` 설정 후
+     [9순위] 사용자가 `.env`에 `TRADING_UNIVERSE_MAX_CAP` 설정 후
      `ops-scheduler` 재기동 → 다음 거래일 실측(§97.3 체크리스트:
      universe 크기/009150 진입/candidate pool 확대/buy_candidate~
      submit_request 변화) +
-     [8순위] 001450의 층3(AI downgrade, risk_off+volatility 축)
+     [10순위] 001450의 층3(AI downgrade, risk_off+volatility 축)
      관찰 지속(정당/과잉 여부 미확정, 완화 제안 아님) +
-     [9순위, 후순위 조정] eligibility_low_relative_activity 조건부
+     [11순위, 후순위 조정] eligibility_low_relative_activity 조건부
      완화(entry_score≥0.70 예외) 코드 diff 초안 설계 검토 — 신규
      진입 종목들의 entry_score가 낮아(0.36) 실익이 낮아짐, 전면
      완화 금지 +
