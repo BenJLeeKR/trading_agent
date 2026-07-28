@@ -9955,6 +9955,22 @@ agent 설계 문서 기준으로도 순서는 다음이 맞다.
      판정(1순위 산식 재검토, 2순위 중복 차단 정리)은 무관하게
      유지. 상세: `docs/10_signal_research_sppv/[DESIGN] regime_
      conditional_entry_signal_v1.md` §112.
+   - **SPPV-2.125(완료, 2026-07-28 KST, 모집단 정의·필드 경로
+     정밀 재검증, 작성자: Codex, 코드 미수정, Full pytest 미실행,
+     신규 KIS 호출 0건)**: 사용자가 §112의 "n=68,724" 분모가
+     `decision_json ? 'deterministic_trigger'` 기준(38,667)과
+     다르다고 지적 — 재검증 결과 python 집계 코드가 "키 자체
+     없음"과 "값 null"을 구분 없이 합산한 것이 원인이었음을
+     확인. `allocation_quality`(경로 재확인: `portfolio_
+     allocation.max_new_capital_pct`, ranking_score 실사용 경로와
+     동일)의 정확한 분모는 38,762, `coverage_score`는 36,598,
+     `risk_tone`은 38,667. "상위 50건=단일 종목 002790"은
+     `deterministic_trigger.ranking_score`(top-level) 기준이며
+     shadow 필드와 전수 대조로 완전 일치 재확인. distinct 값
+     수치(1,929/2/002790)는 전부 재현됨 — 정정 대상은 분모
+     표기뿐. 최종 판정 무관하게 유지. 상세: `docs/10_signal_
+     research_sppv/[DESIGN] regime_conditional_entry_signal_
+     v1.md` §113.
    - **SPPV-3(다음 착수: [1순위] distinct symbol 기준으로 구성
      요소 기여도를 재계산해 "상위 50건 평균 기여도" 수치를 종목
      중복 제거 버전으로 교체(§6.8 잔여) +

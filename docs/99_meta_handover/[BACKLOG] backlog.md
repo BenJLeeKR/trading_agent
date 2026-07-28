@@ -1749,6 +1749,16 @@
   `docs/10_signal_research_sppv/[DESIGN] regime_conditional_
   entry_signal_v1.md` §112.
 
+- 2026-07-28 KST(SPPV-2.125, 신규 KIS 호출 0건): 모집단 정의·
+  필드 경로 정밀 재검증. §112의 "n=68,724" 분모가
+  `deterministic_trigger` 키 부재(30,057건)와 값 null(1,960건)을
+  구분 없이 합산한 것이 원인임을 확인 — 정확한 분모는 필드별로
+  `allocation_quality` 38,762/`coverage_score` 36,598/`risk_
+  tone` 38,667. distinct 값 수치(1,929/2/top50=002790)는 전부
+  재현됨 — 정정 대상은 분모 표기뿐. 최종 판정 무관하게 유지.
+  완화안 미제시. 상세: `docs/10_signal_research_sppv/[DESIGN]
+  regime_conditional_entry_signal_v1.md` §113.
+
 ---
 
 ## 관리 원칙

@@ -1,11 +1,12 @@
 # ranking_score 공식 검증 계획
 
 작성일: 2026-07-28  
-상태: [SPPV-2.124에서 재판정] §6.1/§6.5/§6.6 실제 완료, §6.2/§6.3/
-§6.4 부분 완료(§6.2는 SPPV-2.123의 "실제 완료 격상"을 되돌림 —
-관측 창을 명시하지 않은 일반화가 과했음이 확인됨). 트랙 E(§6.7)
-전체 이력까지 확장해 재판정 완료, 트랙 F(§6.8) 부분 착수. 완화안/
-코드 diff는 여전히 미착수(SPPV-2.119~2.124 참고)
+상태: [SPPV-2.125에서 정밀화] §6.1/§6.5/§6.6 실제 완료, §6.2/§6.3/
+§6.4 부분 완료. 트랙 E(§6.7)의 distinct-값 수치는 전부 재현됐으나
+분모("일반 모집단 n=68,724")가 필드별로 부정확했던 것을 §6.9에서
+정밀화(정확한 분모: coverage_score 36,598 / allocation_quality
+38,762 / risk_tone 38,667). 트랙 F(§6.8) 부분 착수. 완화안/코드
+diff는 여전히 미착수(SPPV-2.119~2.125 참고)
 
 ## 1. 문서 목적
 
@@ -460,6 +461,103 @@ SPPV-2.124에서 전체 이력까지 확장·재판정)
 - [ ] `002790`/`000720` 등 반복 종목이 왜 같은 사이클에 반복
       등장하는지(스케줄러 재평가 주기 특성인지 종목 특이성인지)
       원인 확인(미완료 — 다음 턴 과제, 완화안 아님).
+
+### 6.9 SPPV-2.125 재검증 — 모집단 정의·필드 경로 정밀화(신규,
+2026-07-28 KST, 완료)
+
+**[SPPV-2.125에서 정밀화]** SPPV-2.124가 "전체 이력 일반
+모집단 n=68,724"라고 단일 숫자로 표기한 것은 **`trade_decisions`
+테이블 전체 행 수(사실, 정확)**이지만, 각 필드(`coverage_score`/
+`allocation_quality`/`risk_tone`)의 **실제 유효값 존재 모집단은
+서로 다르며 68,724보다 작다**는 점이 명시되지 않아 오해를 낳을
+수 있었다. read-only 재조회로 정확한 경로·모집단·재현성을
+다시 닫는다(코드 미수정, Full pytest 미실행, 신규 KIS 호출 0건).
+
+**Q1. `n=68,724`가 어떤 조건으로 집계됐는지**
+
+- `select count(*) from trading.trade_decisions` → **68,724**
+  (WHERE 조건 없음, `trade_decisions` 테이블 전체 행, 사실).
+- `decision_json ? 'deterministic_trigger'`(JSONB 키 존재 연산자)
+  → **38,667**(사실, 신규 재확인). 즉 68,724건 중 **30,057건은
+  `deterministic_trigger` 키 자체가 없다**(사실).
+- `decision_json ? 'portfolio_allocation'` → **38,762**(사실) —
+  `deterministic_trigger`(38,667)와 정확히 같지 않다(95건 차이,
+  두 키의 존재 조건이 완전히 동일하지 않음).
+- SPPV-2.124의 python 집계 코드는 `dj.get('deterministic_
+  trigger') or {}`처럼 **키가 없으면 빈 dict로 대체**한 뒤 하위
+  필드를 조회했다 — 이 때문에 "값이 원래 없음(키 자체 부재)"과
+  "값이 null임(키는 있으나 값이 null)"이 한 버킷(`None`)으로
+  뭉쳐졌다. **이것이 사용자가 발견한 불일치의 정확한 원인이다.**
+
+**Q2. `allocation_quality distinct 1,929`의 정확한 추출 경로**
+
+- 코드: `deterministic_trigger_engine.py:1110-1113`
+  `allocation_quality = _clamp((portfolio_allocation.max_new_
+  capital_pct or 0.0) / 10.0)` — `_build_buy_ranking_score()`
+  내부에서 `ranking_score` 계산에 실제로 쓰이는 것과 **동일한
+  경로**임을 코드로 재확인(사실).
+- JSON 경로: `decision_json.portfolio_allocation.max_new_
+  capital_pct` — `portfolio_allocation`은 `decision_factory.py:
+  251`에서 **`deterministic_trigger`와 별개의 top-level 형제
+  키**로 직렬화된다(사실, 코드 확인) — 따라서 `deterministic_
+  trigger`가 없어도 `portfolio_allocation`은 존재할 수 있다.
+- **정확한 유효 모집단**: `decision_json ? 'portfolio_
+  allocation'`인 **38,762건** 전부가 `max_new_capital_pct`
+  non-null(사실, 재확인 — 결측 0건). **distinct 1,929값은 이
+  38,762건 기준으로 재현됐다**(재확인 완료, 68,724 전체가
+  아니라 38,762가 정확한 분모).
+
+**Q3. "상위 50건=단일 종목(`002790`)" 주장의 필드 재확인**
+
+- 사용한 필드: `decision_json.deterministic_trigger.ranking_score`
+  (top-level 저장 필드, `round(ranking_score, 4)`로 반올림된
+  값) — **shadow 필드가 아니다**(사실, 코드 재확인).
+- 이 필드가 `eligibility_core_risk_off_ranking_blocked` 모집단
+  (n=11,971) **전원에게 존재**함을 재확인(결측 0건, 사실).
+- 같은 레코드의 shadow 필드(`deterministic_trigger.metadata.
+  core_risk_off_experiment.raw_ranking_score`, 반올림 없는
+  전체 정밀도)와 반올림 오차(1e-9) 이내로 **완전히 일치**함을
+  10,444건 전수 대조로 재확인(불일치 0건, 사실) — 두 필드가
+  같은 값의 다른 표현(반올림 vs 원본)임을 확정한다.
+- **"상위 50건=단일 종목 `002790`" 결론을 이 필드(`ranking_
+  score`) 기준으로 재현했다 — distinct symbol=1, 재확인 결과
+  동일(재현됨).**
+
+**Q4. 문서 정정 필요 여부 판정**
+
+- 핵심 수치(`allocation_quality distinct 1,929`, `coverage_
+  score distinct 2`, `top50=002790 단독`)는 **모두 그대로
+  재현됐다** — 값 자체를 정정할 필요는 없다.
+- 다만 §6.7의 "전체 이력 일반 모집단(n=68,724)"이라는 표기는
+  **coverage_score/risk_tone 분석에는 정확한 분모가 아니다** —
+  정확한 분모는 아래와 같이 필드별로 다르다(정밀화):
+  - `allocation_quality`: 분모 **38,762**(`portfolio_allocation`
+    존재, `deterministic_trigger`와 무관).
+  - `coverage_score`: 분모 **36,598**(`deterministic_trigger`
+    존재 38,667건 중 `coverage_score` non-null인 건수).
+  - `risk_tone`(`regime_tailwind`): `deterministic_trigger`
+    존재 38,667건 기준 `risk_off` 36,433 / `risk_on` 42 /
+    `neutral` 232 / **null(값 자체가 없음)** 1,960 — SPPV-2.124가
+    "None: 32,017"이라고 쓴 것은 **"deterministic_trigger 키
+    자체가 없는 30,057건" + "키는 있으나 risk_tone 값이 null인
+    1,960건"이 합쳐진 수치**였다(정밀화, 완전히 틀린 것은
+    아니나 두 종류의 "없음"을 구분하지 않아 부정확했다).
+- **결론: 표에 적힌 distinct-값 수치들은 재현됐으나, 분모
+  ("n=68,724")는 3개 필드 각각 다른 정확한 값(38,762/36,598/
+  38,667)으로 대체해야 한다** — 아래 §6.7 보정표 참고.
+
+**§6.7 보정표(SPPV-2.125, 정확한 분모 반영)**:
+
+| 항목 | 정확한 유효 모집단 분모 | distinct 값 | 최종 판정(불변) |
+|---|---:|---|---|
+| `coverage_score` | 36,598(`deterministic_trigger` 존재 38,667건 중 non-null) | 2(1.0: 35,873 / 0.1429: 725) | 부분 확정 |
+| `allocation_quality` | 38,762(`portfolio_allocation` 존재, 전부 non-null) | 1,929 | 확정 |
+| `regime_tailwind`(`risk_tone`) | 38,667(`deterministic_trigger` 존재, 이 중 1,960건은 값 자체가 null) | risk_off 36,433/risk_on 42/neutral 232/null 1,960 | 부분 확정 |
+
+**재현 여부 요약**: `allocation_quality distinct=1,929`(재현),
+`coverage_score distinct=2`(재현), `top50=002790 단독`(재현) —
+**값은 전부 재현됨**. `n=68,724`라는 분모 표기(재현 안 됨,
+정밀화 필요 — 위 보정표로 대체).
 
 ## 7. 완료 기준
 

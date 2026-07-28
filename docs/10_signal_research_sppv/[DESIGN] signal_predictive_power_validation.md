@@ -2506,6 +2506,25 @@ entry 설계 검토로 전환**을 확정했다. 별도 문서
   완화안 미제시. 상세: `docs/10_signal_research_sppv/[DESIGN]
   regime_conditional_entry_signal_v1.md` §112.
 
+- 작성자: Codex
+- 수정일자: 2026-07-28 KST (125차, 모집단 정의·필드 경로 정밀
+  재검증, 코드 미수정, Full pytest 미실행, 신규 KIS 호출 0건)
+- 수정내용: 사용자가 §112의 "n=68,724"가 `decision_json ?
+  'deterministic_trigger'` 기준(38,667)과 다르다고 지적 —
+  재검증 결과 python 집계 코드가 "키 자체 없음"(30,057건)과
+  "키는 있으나 값이 null"(1,960건)을 구분 없이 합산한 것이
+  원인이었음을 확인. `allocation_quality`(경로: `portfolio_
+  allocation.max_new_capital_pct`, `_build_buy_ranking_score`
+  실사용 경로와 동일, 코드 재확인)의 정확한 분모는 38,762,
+  `coverage_score`는 36,598, `risk_tone`은 38,667. "상위 50건=
+  단일 종목 002790"은 `deterministic_trigger.ranking_score`
+  (top-level, shadow 아님) 기준이며 shadow `raw_ranking_score`
+  와 10,444건 전수 대조 시 완전히 일치함을 재확인. distinct 값
+  수치(1,929/2/top50=002790)는 전부 재현됨 — 정정 대상은 분모
+  표기뿐. 최종 판정 무관하게 유지. 상세: `docs/10_signal_
+  research_sppv/[DESIGN] regime_conditional_entry_signal_v1.md`
+  §113.
+
 ---
 
 ## 진행 체크리스트
@@ -5553,6 +5572,14 @@ canonical),
     로직 변경 없음, 신규 KIS 호출 0건(shadow 재호출은 `kis_
     client=None`). 상세: `docs/10_signal_research_sppv/[DESIGN]
     regime_conditional_entry_signal_v1.md` §94.
+- [x] **SPPV-2.125(신설)** 모집단 정의·필드 경로 정밀 재검증
+  (완료, 2026-07-28 KST, 작성자: Codex, 코드 미수정, Full pytest
+  미실행, 신규 KIS 호출 0건)
+  - "n=68,724" 분모가 키 부재/값 null을 혼합 집계한 것이 원인임을
+    확인, 정확한 분모(38,762/36,598/38,667)로 정밀화. distinct
+    값 수치는 전부 재현, 정정 대상은 분모 표기뿐. 상세: `docs/10_
+    signal_research_sppv/[DESIGN] regime_conditional_entry_
+    signal_v1.md` §113.
 - [x] **SPPV-2.124(신설)** `allocation_quality` 일반 모집단
   분산 재검증 + §111(123차) 과대해석 정정 (완료, 2026-07-28
   KST, 작성자: Codex, 코드 미수정, threshold/diff/완화안 없음,

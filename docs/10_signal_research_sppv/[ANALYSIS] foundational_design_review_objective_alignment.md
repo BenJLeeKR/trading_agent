@@ -2558,3 +2558,25 @@ research_sppv/[DESIGN] regime_conditional_entry_signal_v1.md`
 재검토, 2순위 중복 차단 정리)은 이 정정과 무관하게 유지된다.
 상세: `docs/10_signal_research_sppv/[DESIGN] regime_conditional_
 entry_signal_v1.md` §112.
+
+## 11. 모집단 정의·필드 경로 정밀 재검증(SPPV-2.125, 2026-07-28 KST)
+
+사용자가 §10(SPPV-2.124)의 "전체 이력 일반 모집단 n=68,724"가
+`decision_json ? 'deterministic_trigger'` 기준(38,667)과 다르다고
+지적해 재검증했다(코드 미수정, Full pytest 미실행, 신규 KIS
+호출 0건).
+
+- 원인: python 집계 코드가 `deterministic_trigger` 키 부재를
+  빈 dict로 대체해, "키 자체 없음"(30,057건)과 "키는 있으나 값이
+  null"(1,960건)을 구분 없이 합산했다.
+- `allocation_quality`(경로: `portfolio_allocation.max_new_
+  capital_pct`, `deterministic_trigger`와 무관한 top-level
+  형제 키)의 정확한 분모는 **38,762**, `coverage_score`의
+  정확한 분모는 **36,598**, `risk_tone`의 정확한 분모는
+  **38,667**이다.
+- **재현 여부**: distinct 값 수치(`allocation_quality`=1,929,
+  `coverage_score`=2, `top50=002790` 단독)는 **전부 재현됨** —
+  값 자체는 정정 대상이 아니다. 정정 대상은 **분모 표기**뿐이다.
+- 최종 판정(1순위 산식 재검토, 2순위 중복 차단 정리)에 영향
+  없음. 상세: `docs/10_signal_research_sppv/[DESIGN] regime_
+  conditional_entry_signal_v1.md` §113.

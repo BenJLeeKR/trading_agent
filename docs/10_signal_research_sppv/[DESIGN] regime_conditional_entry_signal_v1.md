@@ -14245,3 +14245,96 @@ KIS 호출 0건.
    특정 종목의 반복 등장 원인 확인(완화안 아님).
 3. **3순위(이전 턴 이월)**: `high_volatility` 단독 경로(001450형)
    층3 관찰 지속.
+
+
+---
+
+## §113. 모집단 정의·필드 경로 정밀 재검증 — `n=68,724` 분모 정밀화(SPPV-2.125, 2026-07-28 KST)
+
+**전제**: 사용자가 `decision_json ? 'deterministic_trigger'`
+기준 전체 이력 수가 §112(SPPV-2.124)의 `n=68,724`와 다르다고
+지적했다. 코드 미수정, Full pytest 미실행, 신규 KIS 호출 0건,
+DB read-only/코드 read-only만 사용.
+
+### 113.1 Q1 — `n=68,724`의 정확한 집계 조건
+
+- `select count(*) from trading.trade_decisions`(조건 없음) →
+  **68,724**(사실, 재확인) — 이 값 자체는 정확하다(`trade_
+  decisions` 테이블 전체 행 수).
+- `decision_json ? 'deterministic_trigger'` → **38,667**(사실,
+  신규 재확인 — 사용자가 지적한 수치와 일치).
+- `decision_json ? 'portfolio_allocation'` → **38,762**(사실).
+- **원인**: §112의 python 집계 코드가 `dj.get('deterministic_
+  trigger') or {}`로 **키 부재를 빈 dict로 대체**한 뒤 하위
+  필드를 조회해, "키 자체가 없음"(30,057건)과 "키는 있으나 값이
+  null"(1,960건, `risk_tone` 기준)을 구분 없이 `None` 한 버킷에
+  합산했다 — 이것이 사용자가 발견한 불일치의 정확한 원인이다
+  (사실, 코드 재검토로 확인).
+
+### 113.2 Q2 — `allocation_quality` 추출 경로 재검증
+
+- 코드: `deterministic_trigger_engine.py:1110-1113` —
+  `allocation_quality = _clamp((portfolio_allocation.max_new_
+  capital_pct or 0.0) / 10.0)`. `_build_buy_ranking_score()`가
+  `ranking_score` 계산에 실제로 쓰는 것과 **동일 경로**임을
+  재확인(사실, 코드 read).
+- `portfolio_allocation`은 `decision_factory.py:251`에서
+  `deterministic_trigger`와 별개의 top-level 형제 키로 직렬화됨
+  (사실) — 즉 `deterministic_trigger`가 없어도 존재 가능.
+- **정확한 분모는 68,724가 아니라 38,762**(`portfolio_
+  allocation` 존재 건수, 전부 `max_new_capital_pct` non-null) —
+  이 분모 기준으로 **distinct 1,929값은 정확히 재현됐다**(재확인
+  완료).
+
+### 113.3 Q3 — 상위 50건 필드 재검증
+
+- 사용 필드: `decision_json.deterministic_trigger.ranking_score`
+  (top-level, `round(...,4)` 반올림값) — **shadow 필드
+  (`core_risk_off_experiment.raw_ranking_score`)가 아니다**(사실).
+- `eligibility_core_risk_off_ranking_blocked` 모집단(n=11,971)
+  전원에게 이 필드가 존재함(결측 0건, 재확인).
+- 같은 레코드의 shadow 필드(`raw_ranking_score`, 반올림 없는
+  전체 정밀도)와 10,444건 전수 대조 시 반올림 오차(1e-9) 이내로
+  **완전히 일치**(불일치 0건, 신규 전수 재확인) — 두 필드가
+  같은 값의 반올림/원본 관계임을 확정.
+- **"상위 50건=단일 종목(`002790`)" 재확인 결과: 동일하게
+  재현됨**(distinct symbol=1).
+
+### 113.4 Q4 — 문서 정정 판정
+
+핵심 수치(`allocation_quality distinct 1,929`, `coverage_score
+distinct 2`, `top50=002790 단독`)는 **전부 재현됐다** — 값
+자체는 정정 대상이 아니다. 정정이 필요한 것은 **분모 표기**
+뿐이다:
+
+| 항목 | §112가 쓴 분모 | 정확한 분모(SPPV-2.125) | distinct 값(재현됨, 불변) |
+|---|---|---:|---|
+| `coverage_score` | 68,724 | **36,598**(`deterministic_trigger` 존재 38,667건 중 non-null) | 2(1.0: 35,873/0.1429: 725) |
+| `allocation_quality` | 68,724 | **38,762**(`portfolio_allocation` 존재) | 1,929 |
+| `regime_tailwind`(`risk_tone`) | 68,724("None: 32,017"로 뭉뚱그림) | **38,667**(`deterministic_trigger` 존재, 이 중 null 1,960건 별도 구분) | risk_off 36,433/risk_on 42/neutral 232/null 1,960 |
+
+**[SPPV-2.125에서 정정]** §112(SPPV-2.124)의 "전체 이력 일반
+모집단 n=68,724"라는 단일 분모 표기는 `coverage_score`/
+`risk_tone` 분석에는 부정확했다 — 정확한 분모는 위 표와 같이
+필드별로 다르다(38,762/36,598/38,667). `allocation_quality`
+쪽은 분모(38,762)가 이미 `n=68,724`와 다름을 알고도 명시하지
+않은 것이 문제였다. 이 정정은 §112/§111의 distinct-값 결론
+자체를 바꾸지 않는다 — "재현된 것"(수치)과 "재현되지 않은
+것"(분모 라벨의 정밀도)을 분리해서 기록한다.
+
+### 113.5 최종 판정에 대한 영향
+
+이번 정밀화는 §107.7/§110.8/§111.4/§112.5의 "1순위=산식 재검토,
+2순위=중복 차단 정리" 판정에 **영향을 주지 않는다** — 그 판정의
+핵심 근거(`coverage_score`가 `ranking_blocked` 게이트 모집단
+내부에서 무분산)는 분모 정밀화와 무관하게 그대로 유지된다.
+
+### 113.6 다음 우선 작업(완화안 아님, 후속 규명 과제로만 제시)
+
+1. **1순위(이전 턴 이월, §6.8 잔여)**: distinct symbol 기준으로
+   구성요소 기여도를 재계산해 §109.3의 "상위 50건 평균 기여도"
+   수치를 종목 중복 제거 버전으로 교체.
+2. **2순위(이전 턴 이월, §6.8 잔여)**: `002790`/`000720` 등
+   특정 종목의 반복 등장 원인 확인(완화안 아님).
+3. **3순위(이전 턴 이월)**: `high_volatility` 단독 경로(001450형)
+   층3 관찰 지속.
