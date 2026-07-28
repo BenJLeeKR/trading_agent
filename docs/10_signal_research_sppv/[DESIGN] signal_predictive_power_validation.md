@@ -2474,6 +2474,22 @@ entry 설계 검토로 전환**을 확정했다. 별도 문서
   research_sppv/[DESIGN] regime_conditional_entry_signal_v1.md`
   §110.
 
+- 작성자: Codex
+- 수정일자: 2026-07-28 KST (123차, `[PLAN]` §6 체크리스트 재판정,
+  코드 미수정, threshold/diff/완화안 없음, 신규 KIS 호출 0건)
+- 수정내용: §6.1/§6.2/§6.5/§6.6 실제 완료(§6.2는 일반 모집단
+  대조로 격상 — `coverage_score`/`regime_tailwind`는 일반적으로도
+  무분산 확정, `allocation_quality`/`strategy_alignment`는 일반
+  모집단에서는 분산이 존재하며 이 게이트에서만 우연히 고정됐음을
+  확인). §6.3/§6.4는 부분 완료로 하향 — "상위 50건"이 실제로는
+  단일 종목(`002790`) 반복 관측이었음을 확인, 중복 정당성 최종
+  판정도 `coverage_score`/`regime` 하드 게이트 2개가 여전히
+  미확정. 신규 트랙 E(일반 모집단 대조) 완료, 트랙 F(표본 반복성
+  보정) 부분 착수. 최종 판정(1순위 산식 재검토, 2순위 중복 차단
+  정리)은 변경 없음, 오히려 근거 강화. 완화안 미제시. 상세:
+  `docs/10_signal_research_sppv/[DESIGN] regime_conditional_
+  entry_signal_v1.md` §111.
+
 ---
 
 ## 진행 체크리스트
@@ -5521,6 +5537,14 @@ canonical),
     로직 변경 없음, 신규 KIS 호출 0건(shadow 재호출은 `kis_
     client=None`). 상세: `docs/10_signal_research_sppv/[DESIGN]
     regime_conditional_entry_signal_v1.md` §94.
+- [x] **SPPV-2.123(신설)** `[PLAN] ranking_score_formula_
+  validation.md` §6 체크리스트 재판정 (완료, 2026-07-28 KST,
+  작성자: Codex, 코드 미수정, threshold/diff/완화안 없음, 신규
+  KIS 호출 0건)
+  - §6.2 실제 완료 격상(일반 모집단 대조), §6.3/§6.4 부분 완료
+    하향(표본 반복성 발견, 정당성 판정 일부 미확정 유지). 최종
+    판정 불변, 근거 강화. 상세: `docs/10_signal_research_sppv/
+    [DESIGN] regime_conditional_entry_signal_v1.md` §111.
 - [x] **SPPV-2.122(신설)** 산식 재검토(1순위)+중복 차단 정리
   (2순위) 관점 항목별 분류 (완료, 2026-07-28 KST, 작성자: Codex,
   코드 미수정, threshold/diff/완화안 없음, 신규 KIS 호출 0건)

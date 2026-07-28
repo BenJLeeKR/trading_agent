@@ -9930,47 +9930,63 @@ agent 설계 문서 기준으로도 순서는 다음이 맞다.
      score_formula_validation.md` §6 체크리스트 전 항목 완료
      처리. 상세: `docs/10_signal_research_sppv/[DESIGN] regime_
      conditional_entry_signal_v1.md` §110.
-   - **SPPV-3(다음 착수: [1순위] `regime_tailwind`/`strategy_
-     alignment`가 `risk_off`/방어적 전략 상태에서 항상 0으로
-     고정되는 것이 설계 의도인지 단순 부산물인지 확인(완화안
-     설계 아님) +
-     [2순위] 이 모집단(core+bearish_trend)이 신호 품질(overall/
+   - **SPPV-2.123(완료, 2026-07-28 KST, `[PLAN]` §6 체크리스트
+     재판정, 작성자: Codex, 코드 미수정, threshold/diff/완화안
+     없음, 신규 KIS 호출 0건)**: §6.1/§6.2/§6.5/§6.6 실제 완료
+     (§6.2는 일반 모집단 대조로 격상 — `coverage_score`/`regime_
+     tailwind`는 일반적으로도 무분산 확정, `allocation_quality`/
+     `strategy_alignment`는 일반 모집단에서는 분산이 존재하며
+     이 게이트에서만 우연히 고정됐음을 확인). §6.3/§6.4는 부분
+     완료로 하향 — "상위 50건"이 실제로는 단일 종목(`002790`)
+     반복이었음을 확인, 중복 정당성 최종판정도 `coverage_score`/
+     `regime` 하드 게이트 2개가 여전히 미확정. 최종 판정 불변,
+     오히려 근거 강화. 상세: `docs/10_signal_research_sppv/
+     [DESIGN] regime_conditional_entry_signal_v1.md` §111.
+   - **SPPV-3(다음 착수: [1순위] distinct symbol 기준으로 구성
+     요소 기여도를 재계산해 "상위 50건 평균 기여도" 수치를 종목
+     중복 제거 버전으로 교체(§6.8 잔여) +
+     [2순위] `002790`/`000720` 등 특정 종목이 반복 등장하는 원인
+     확인(완화안 아님, §6.8 잔여) +
+     [3순위] `regime_tailwind`/`strategy_alignment`가 `risk_off`/
+     방어적 전략 상태에서 항상 0으로 고정되는 것이 설계 의도인지
+     단순 부산물인지 확인(완화안 설계 아님) +
+     [4순위] 이 모집단(core+bearish_trend)이 신호 품질(overall/
      slow)이 항상 깊은 음수로만 나오는 원인을 `atr_14_pct`/
      `bearish_trend` 판정과의 연결고리 관점에서 "모집단 구성"
      문제로 추가 좁힘(완화안 설계 아님) +
-     [3순위] `shadow_topk_exception_v2` 경로가 4주간 한 번도
+     [5순위] `shadow_topk_exception_v2` 경로가 4주간 한 번도
      발동하지 않은 이유가 전제조건 자체가 좁게 설계된 것인지
      시장 조건 때문인지 원인만 더 좁혀서 확인(완화안 설계 아님) +
-     [4순위] `high_volatility` 단독(=`regime_label≠bearish_
+     [6순위] `high_volatility` 단독(=`regime_label≠bearish_
      trend`) 경로로 이미 eligibility를 통과한 종목(001450형)의
      층3(AI downgrade) 완화 검토 방향으로 전환 — 이 하드 게이트
      (core+bearish_trend) 내부 탐색은 4턴 연속 후보 없음으로
      종료 +
-     [5순위] `core_risk_off_topk_v1` override가 실제로 어느
+     [7순위] `core_risk_off_topk_v1` override가 실제로 어느
      호출부에서 `deterministic_trigger_override`를 채워야
      활성화되는지 코드 경로만 확인(활성화 여부 결정은 별도 승인
      필요, 활성화해도 즉시 효과 없음이 이미 확인됨) +
-     [6순위] `risk_off_exception_eligible` 경로가 0.02%로 거의
+     [8순위] `risk_off_exception_eligible` 경로가 0.02%로 거의
      발동하지 않는 정확한 사유를 조건별로 분해 +
-     [7순위] `KIS_ENV`(paper/real) 실제 설정 확인 및 KIS 모의투자
+     [9순위] `KIS_ENV`(paper/real) 실제 설정 확인 및 KIS 모의투자
      서버 일봉 데이터 특성이 실전 서버와 다른지 공식 자료 기준
      별도 검증(사용자 확인 필요, `.env` 직접 열람 없이) +
-     [8순위] 가능하면 실전 서버/공개 시세로 같은 기간 KODEX200
+     [10순위] 가능하면 실전 서버/공개 시세로 같은 기간 KODEX200
      실제 스프레드 대조(신규 호출 필요 — 별도 턴·사용자 승인
      하에) +
-     [9순위] `market_regime.py`의 `bearish_trend` 조건이 `slow_
+     [11순위] `market_regime.py`의 `bearish_trend` 조건이 `slow_
      score`(파생)와 원시 지표를 동시 검사하는 중복 구조가 설계
      의도인지 확인 +
-     [10순위] `signal_feature_snapshots` 배치의 일별 1회 갱신
+     [12순위] `signal_feature_snapshots` 배치의 일별 1회 갱신
      주기·재사용 설계 확인(`build_signal_feature_snapshots.py`
      실행 이력) +
-     [11순위] 사용자가 `.env`에 `TRADING_UNIVERSE_MAX_CAP` 설정 후
+     [13순위] 사용자가 `.env`에 `TRADING_UNIVERSE_MAX_CAP` 설정 후
      `ops-scheduler` 재기동 → 다음 거래일 실측(§97.3 체크리스트:
      universe 크기/009150 진입/candidate pool 확대/buy_candidate~
      submit_request 변화) +
-     [12순위] 001450의 층3(AI downgrade, risk_off+volatility 축)
+     [14순위] 001450의 층3(AI downgrade, risk_off+volatility 축)
      관찰 지속(정당/과잉 여부 미확정, 완화 제안 아님) +
-     [13순위, 후순위 조정] eligibility_low_relative_activity 조건부
+     [15순위, 후순위 조정] eligibility_low_relative_activity 조건부
      완화(entry_score≥0.70 예외) 코드 diff 초안 설계 검토 — 신규
      진입 종목들의 entry_score가 낮아(0.36) 실익이 낮아짐, 전면
      완화 금지 +

@@ -1728,6 +1728,16 @@
   미제시. 상세: `docs/10_signal_research_sppv/[DESIGN] regime_
   conditional_entry_signal_v1.md` §110.
 
+- 2026-07-28 KST(SPPV-2.123, 신규 KIS 호출 0건): `[PLAN]` §6
+  체크리스트 재판정. §6.1/§6.2/§6.5/§6.6 실제 완료(§6.2는 일반
+  모집단 대조로 격상). §6.3/§6.4 부분 완료로 하향 — "상위 50건"이
+  실제로는 단일 종목(002790) 반복이었음을 확인, 중복 정당성
+  최종판정도 coverage_score/regime 하드 게이트 2개 미확정 유지.
+  신규 트랙 E(일반 모집단 대조) 완료, 트랙 F(표본 반복성 보정)
+  부분 착수. 최종 판정(1순위 산식 재검토)은 변경 없음, 오히려
+  근거 강화. 완화안 미제시. 상세: `docs/10_signal_research_sppv/
+  [DESIGN] regime_conditional_entry_signal_v1.md` §111.
+
 ---
 
 ## 관리 원칙

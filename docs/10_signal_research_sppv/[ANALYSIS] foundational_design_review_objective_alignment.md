@@ -2514,3 +2514,26 @@ conditional_entry_signal_v1.md` §109.
 분류까지만이며, 구체적 diff는 다음 턴 이후 별도 승인 대상이다.
 상세: `docs/10_signal_research_sppv/[DESIGN] regime_conditional_
 entry_signal_v1.md` §110.
+
+## 9. `ranking_score` 검증 트랙 체크리스트 재판정 결과(SPPV-2.123, 2026-07-28 KST)
+
+`[PLAN] ranking_score_formula_validation.md` §6의 "완료" 표시를
+실제 검증 강도 기준으로 재검증했다(코드 미수정, threshold/diff/
+완화안 없음, 신규 KIS 호출 0건).
+
+- §6.1(임계치)/§6.5(문서반영)/§6.6(최종기준): **실제 완료** 유지.
+- §6.2(구성항목): **실제 완료로 격상** — 일반 모집단(같은 3거래일
+  창 전체, n=4,510) 대조 결과 `coverage_score`/`regime_
+  tailwind`는 일반적으로도 무분산 확정, `allocation_quality`/
+  `strategy_alignment`는 일반 모집단에서는 분산이 존재하며 이
+  게이트에서만 우연히 고정됐음을 확인해 이전 "미확정"을 닫았다.
+- §6.3(가중치)/§6.4(중복): **부분 완료로 하향** — "상위 50건"이
+  실제로는 단일 종목(`002790`)의 반복 관측이었고, "중복 정당성
+  최종판정"도 `coverage_score`/`regime` 하드 게이트 2개가 여전히
+  열려 있음을 확인.
+
+**최종 판정에 대한 영향**: 1순위=산식 재검토, 2순위=중복 차단
+정리라는 기존 판정은 표본 반복 편향과 무관하게 유지되며, 오히려
+일반 모집단 대조로 근거가 더 강해졌다. 상세: `docs/10_signal_
+research_sppv/[DESIGN] regime_conditional_entry_signal_v1.md`
+§111.
