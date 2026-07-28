@@ -12693,3 +12693,141 @@ snapshot의 저장값 `5.61161267`은 §99에서 이미 조회한 값과 동일)
    `bearish_trend` 파생/원시 중복 검사 구조 확인, `max_cap` env
    값 실제 반영/`ops-scheduler` 재기동/다음 거래일 실측(§97.3),
    `001450` 층3 관찰 지속.
+
+
+---
+
+## §102. `risk_off` 연쇄 — 설계 의도 vs 실동작 정합성 검증(SPPV-2.115, 2026-07-28 KST)
+
+**전제**: threshold 완화안/`atr_14_pct` 값 변경/`001450` 개별
+완화/`max_cap`·`core_cap` 재논의/재기동·배포 절차는 이번 턴 범위
+밖. 코드 미수정, `.env` 미수정, `ops-scheduler` 미재기동, 신규
+KIS 호출 0건.
+
+### 102.1 설계 문서 기준 `risk_off` 의도(Q-A, read-only 문서 확인)
+
+- **시스템 전체 목표(사실, `[ANALYSIS] foundational_design_review_
+  objective_alignment.md` §3.1, 2026-07-14 사용자 확정)**: "이
+  시스템의 근본 목적은 최고 기대수익률이다... 일정 부분의 손실을
+  감내하면서 투자하는 것이 목적" — **손실 제약 아래의 net expected
+  return 극대화**가 1순위 목적함수이고, VaR/drawdown/exposure/
+  liquidity/compliance는 "감내 불가능한 손실과 위반을 막는
+  제약조건"으로 명시돼 있다. 같은 문서는 "매수 0건은 옳은
+  방어"라는 과거 판정의 **유효 범위를 "이 하락 국면 한정"으로
+  한정**했고, "모든 시장 국면에서 이 gate가 항구적으로 옳다"로
+  확대 해석하면 안 된다고 명시했다.
+- **risk_off가 실제로 무엇을 하도록 설계됐는지**: 설계 문서에는
+  "변동성 확대 시 크기만 줄이고 진입은 유지"라는 (b)형 서술은
+  없다. 대신 §36.1(`regime_conditional_entry_signal_v1.md`)이
+  코드상 **두 개의 독립적 억제 축이 같은 방향으로 겹쳐 있음**을
+  이미 문서화했다: ① `entry_score` 축(−0.15 flat penalty, 소프트
+  조정) ② `eligibility` 축(`risk_off` AND `bearish_trend` 동시
+  충족 시 core 종목 **예외 없이 즉시 하드 차단**). 같은 트랙의
+  `[ANALYSIS] foundational_design_review_objective_alignment.md`
+  §2.3은 "실측 297건 중 294건에 penalty가 적용돼 리스크 제약이
+  사실상 상시 진입 금지로 동작했다"고 이미 기록했고, §36
+  ablation(entry_score penalty만 제거)은 eligible/selected count에
+  거의 변화가 없었다고 기록했다 — **즉 설계 문서 자체가 이미
+  "score penalty가 아니라 eligibility 하드 게이트가 실제 병목"
+  이라고 진단해 놓은 상태였다.**
+- **전략별 선택 차단(옵션 c)이 "의도된 설계"라는 서술은 문서에
+  없다** — `strategy_selection.py`의 방어적 전략 축소는 문서상
+  부차적 파생 효과로만 다뤄진다.
+
+### 102.2 코드 기준 `risk_off` 전파 경로(Q-B, read-only 코드 확인)
+
+| 단계 | 코드 위치 | 역할 |
+|---|---|---|
+| entry_score | `deterministic_trigger_engine.py`(~L1207) | `risk_off`면 `score -= 0.15`(소프트 페널티) |
+| eligibility | `deterministic_trigger_engine.py`(`_assess_buy_eligibility`, ~L421~) | **`risk_off` AND `bearish_trend` 동시 충족 시 하드 차단**(`eligibility_core_risk_off_ranking_blocked` 등) — `buy_candidate`/`eligibility_passed`를 직접 `False`로 만듦 |
+| strategy_selection | `strategy_selection.py`(L41-49) | `preferred_strategy`를 방어적 전략으로 축소(차단 아님, 좁힘) |
+| decision_orchestrator(사전 AI 차단) | `decision_orchestrator.py`(~L1737-1746) | eligibility 하드 차단이 걸리고 예외 미충족이면 **AI 호출 전에 코드 레벨로 HOLD/WATCH 확정** — AI 판단이 아니라 코드 게이트 |
+| AI 판단 경로 | event interpretation/AI risk/final decision composer | eligibility를 통과한 이후에는 `risk_tone`/`regime_label`이 **컨텍스트로만 전달** — 이 경로 자체에 별도의 명시적 risk_off 하드 규칙은 발견되지 않음(001450처럼 eligibility를 통과한 사례의 층3 downgrade는 AI의 자체 판단, §98/§99 참고) |
+| expected_value_gate | `expected_value_gate.py`(L98-99,128-129) | `risk_off` 직접 게이트 아님 — `risk_off_exception_path`일 때 `minimum_required_edge_bps`를 +7.5bps 상향(더 엄격한 EV 기준) |
+| execution_service | `execution_service.py`(L427-430,513-520) | `market_regime.risk_tone`이 아니라 **AI 자체 산출값**(`risk_opinion!='allow'` 또는 `risk_score>=0.6`)을 별도로 참조하는 독립적인 하드 게이트(`probe_churn_single_share_blocked`) — deterministic risk_tone과는 다른 필드 |
+| translation.py | — | `risk_off`/`risk_tone` 참조 없음 |
+
+**결론(Q-B)**: `risk_off`는 **단순 참고 신호가 아니라, `bearish_
+trend`와 동시 충족 시 실질적인 하드 차단 신호**다. 다만 이 하드
+차단은 `risk_off` 단독으로는 발동하지 않고 `bearish_trend`와의
+**AND 조건**에서만 발동한다 — `risk_off`가 `high_volatility`만으로
+성립한 경우(`bearish_trend`가 아닌 경우)는 소프트 페널티(−0.15)와
+전략 축소만 적용되고 eligibility 하드 차단은 걸리지 않는다.
+
+**우회/예외 경로 존재 여부**: `risk_off_exception_eligible`
+(`_assess_core_risk_off_buy_guard`, `deterministic_trigger_
+engine.py` ~L586-650)이 실제로 존재한다 — ranking_score/overall/
+slow/활동성 조건을 모두 만족하면 core 종목도 하드 차단을 우회할
+수 있다. `ENV_`로 배선된 온오프 플래그는 없음(항상 코드 경로는
+살아있으나, 발동 조건이 매우 좁다).
+
+### 102.3 목표 대조(Q-C)
+
+`[ANALYSIS] foundational_design_review_objective_alignment.md`가
+명시한 "손실 제약 아래 기대수익률 극대화"(공격적 창) 목표와,
+현재 `risk_off AND bearish_trend → eligibility 하드 차단`
+구조("고변동성+하락국면에서는 원칙적으로 진입 억제", 방패 쪽)는
+**설계 문서 스스로 이미 긴장 관계로 인식하고 있다** — "매수 0건은
+이 하락 국면 한정으로만 유효"라는 문구 자체가, 하드 차단이 모든
+국면에 항구적으로 적용되면 목표와 충돌한다는 것을 문서가 사전에
+경고해 둔 것이다. SPPV/R3b 트랙의 방향(percentile floor 완화,
+core_cap 확대, max_cap 검토 등)은 모두 **상류 candidate pool을
+넓히는 쪽**으로 진행돼 왔는데, 그 확대된 pool이 실제로 도달하는
+지점(eligibility 층)에는 이 하드 차단이 그대로 남아 있다 — 즉
+**두 방향(상류 확대 vs 하류 하드 차단)이 서로 상쇄**되는 구조적
+긴장이 실측으로 재확인됐다(사실, 해석 아님 — 완화안은 제시하지
+않음).
+
+### 102.4 "상시 봉쇄" 여부 실측(Q-D, 최근 3거래일 KST, `trade_decisions` 기준)
+
+| 단계 | 건수(4,240건 중) | 비율 |
+|---|---:|---:|
+| `risk_tone='risk_off'` | 4,240 | 100% |
+| `buy_candidate=True` | 55 | 1.3% |
+| `eligibility_passed=True` | 160 | 3.8% |
+| `candidate_vs_final.final_intent='buy'` | 0 | 0% |
+| `decision_type='APPROVE'` | 0 | 0% |
+| `order_requests`(같은 3거래일 전체) | 0 | — |
+
+`reason_codes` 중 `eligibility_core_risk_off_ranking_blocked`가
+**2,523건**(전체의 59.5%)으로 압도적 최다 — 설계 문서(§102.1)가
+이미 예견한 "eligibility가 실제 병목"이라는 진단과 실측이 정확히
+일치한다. 반면 예외 우회 경로가 실제로 발동한 사례
+(`risk_off_overrides`)는 **1건**(0.02%) 뿐이다.
+
+**판정**: `atr_14_pct` 기반 `risk_off`가 `bearish_trend`와 겹치는
+구간에서는, 예외 경로가 사실상 발동하지 않는 수준(0.02%)으로
+막혀 있어 **"위험 회피"라는 설계 의도보다 "상시 봉쇄"에 훨씬
+가까운 결과**로 실동작하고 있다(수치·경로 근거 확보). 다만
+`risk_off`가 `bearish_trend`와 겹치지 않는 경우(`high_volatility`
+단독)는 소프트 페널티/전략 축소 수준에 머물러 완전한 봉쇄는
+아니다 — 001450의 55건 buy_candidate 통과가 이 경로에 해당한다.
+
+### 102.5 최종 판정
+
+- **설계 의도와 실동작 정합성**: 부분적으로 **불일치**한다. 설계
+  문서 자체가 "손실 제약 아래 기대수익률 극대화"를 1순위로,
+  "하락 국면 한정" 방어를 명시했음에도, 현재 코드는 `risk_off AND
+  bearish_trend` 조건에서 예외가 거의 발동하지 않는 하드 차단을
+  전체 관찰 기간(3주 이상) 동안 사실상 상시 적용하고 있다 — 이는
+  "하락 국면 한정"이라는 설계 문서의 스코프 제약과, `risk_off`가
+  구조적으로 거의 항상 성립하는 최근 데이터 특성(§99~§101)이
+  결합해 **의도치 않게 항구화된 결과**로 보인다.
+- `atr_14_pct`/`high_volatility` 자체는 "위험 회피" 설계 의도를
+  유지하고 있으나(소프트 페널티 수준에서는), `bearish_trend`와의
+  AND 결합 지점에서는 **사실상 상시 봉쇄**로 작동한다고 판정한다.
+
+### 102.6 다음 우선 작업(완화안 아님, 구조 괴리 추가 규명 과제로만 제시)
+
+1. **1순위**: `eligibility_core_risk_off_ranking_blocked`가 전체의
+   59.5%를 차지하는 이 하드 게이트의 원 설계 시점(§36 문서 작성
+   시점)의 시장 조건과, 지금(§99~§101에서 확인한 상시 risk_off
+   조건)이 실제로 얼마나 다른지 — "하락 국면 한정"이라는 스코프
+   제약이 코드에는 반영돼 있지 않다는 사실만 추가로 명시 확인
+   (완화안 설계 아님, 스코프 미반영 여부 확인까지만).
+2. **2순위**: `risk_off_exception_eligible` 경로가 0.02%로 거의
+   발동하지 않는 정확한 사유(조건 조합 자체가 좁은지, 실제 후보
+   군이 그 조건에 도달 못 하는지)를 조건별로 분해.
+3. **3순위(후순위, 이전 턴에서 이월)**: `KIS_ENV` 실제 설정 확인,
+   `max_cap` env 값 실제 반영/재기동/실측, `001450` 층3 관찰
+   지속.

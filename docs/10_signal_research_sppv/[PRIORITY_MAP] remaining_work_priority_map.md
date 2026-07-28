@@ -9820,26 +9820,45 @@ agent 설계 문서 기준으로도 순서는 다음이 맞다.
      특성)에 가장 근접, E(미확정) 여지 일부 남음. 완화안 미제시.
      상세: `docs/10_signal_research_sppv/[DESIGN] regime_
      conditional_entry_signal_v1.md` §101.
-   - **SPPV-3(다음 착수: [1순위] `KIS_ENV`(paper/real) 실제 설정
-     확인 및 KIS 모의투자 서버 일봉 데이터 특성이 실전 서버와
-     다른지 공식 자료 기준 별도 검증(사용자 확인 필요, `.env`
-     직접 열람 없이) +
-     [2순위] 가능하면 실전 서버/공개 시세로 같은 기간 KODEX200
+   - **SPPV-2.115(완료, 2026-07-28 KST, `risk_off` 연쇄 설계
+     의도 vs 실동작 정합성 검증, 작성자: Codex, 코드/설정 변경
+     없음, 신규 KIS 호출 0건)**: `risk_off`+`bearish_trend` AND
+     결합 시에만 eligibility 하드 차단(예외 발동 실측 0.02%),
+     `high_volatility` 단독은 소프트 페널티(-0.15)+전략 축소에
+     그침. 최근 3거래일(4,240건): risk_off 100%, buy_candidate
+     1.3%, eligibility_passed 3.8%, final_intent=buy/APPROVE 0%,
+     order_requests 0건. `eligibility_core_risk_off_ranking_
+     blocked` 59.5%로 최다(§36 문서가 이미 예견). 설계 문서
+     (§3.1)는 "매수 0건 방어"를 "하락 국면 한정"으로 스코프
+     제한했으나 코드에는 미반영 — 판정: 설계 의도와 실동작 부분
+     불일치, 사실상 상시 봉쇄. 완화안 미제시. 상세: `docs/10_
+     signal_research_sppv/[DESIGN] regime_conditional_entry_
+     signal_v1.md` §102.
+   - **SPPV-3(다음 착수: [1순위] `eligibility_core_risk_off_
+     ranking_blocked` 하드 게이트의 원 설계 시점(§36) 시장 조건과
+     현재(§99~§101 상시 risk_off) 차이, "하락 국면 한정" 스코프
+     제약의 코드 미반영 여부만 추가 확인(완화안 설계 아님) +
+     [2순위] `risk_off_exception_eligible` 경로가 0.02%로 거의
+     발동하지 않는 정확한 사유를 조건별로 분해 +
+     [3순위] `KIS_ENV`(paper/real) 실제 설정 확인 및 KIS 모의투자
+     서버 일봉 데이터 특성이 실전 서버와 다른지 공식 자료 기준
+     별도 검증(사용자 확인 필요, `.env` 직접 열람 없이) +
+     [4순위] 가능하면 실전 서버/공개 시세로 같은 기간 KODEX200
      실제 스프레드 대조(신규 호출 필요 — 별도 턴·사용자 승인
      하에) +
-     [3순위] `market_regime.py`의 `bearish_trend` 조건이 `slow_
+     [5순위] `market_regime.py`의 `bearish_trend` 조건이 `slow_
      score`(파생)와 원시 지표를 동시 검사하는 중복 구조가 설계
      의도인지 확인 +
-     [4순위] `signal_feature_snapshots` 배치의 일별 1회 갱신
+     [6순위] `signal_feature_snapshots` 배치의 일별 1회 갱신
      주기·재사용 설계 확인(`build_signal_feature_snapshots.py`
      실행 이력) +
-     [5순위] 사용자가 `.env`에 `TRADING_UNIVERSE_MAX_CAP` 설정 후
+     [7순위] 사용자가 `.env`에 `TRADING_UNIVERSE_MAX_CAP` 설정 후
      `ops-scheduler` 재기동 → 다음 거래일 실측(§97.3 체크리스트:
      universe 크기/009150 진입/candidate pool 확대/buy_candidate~
      submit_request 변화) +
-     [6순위] 001450의 층3(AI downgrade, risk_off+volatility 축)
+     [8순위] 001450의 층3(AI downgrade, risk_off+volatility 축)
      관찰 지속(정당/과잉 여부 미확정, 완화 제안 아님) +
-     [7순위, 후순위 조정] eligibility_low_relative_activity 조건부
+     [9순위, 후순위 조정] eligibility_low_relative_activity 조건부
      완화(entry_score≥0.70 예외) 코드 diff 초안 설계 검토 — 신규
      진입 종목들의 entry_score가 낮아(0.36) 실익이 낮아짐, 전면
      완화 금지 +

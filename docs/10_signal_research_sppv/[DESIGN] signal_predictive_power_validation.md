@@ -2335,6 +2335,22 @@ entry 설계 검토로 전환**을 확정했다. 별도 문서
   상세: `docs/10_signal_research_sppv/[DESIGN] regime_conditional_
   entry_signal_v1.md` §101.
 
+- 작성자: Codex
+- 수정일자: 2026-07-28 KST (115차, `risk_off` 연쇄 설계 의도 vs
+  실동작 정합성 검증, 코드/설정 변경 없음, 신규 KIS 호출 0건)
+- 수정내용: `risk_off`는 `bearish_trend`와 AND 결합 시에만
+  eligibility 하드 차단(예외 경로 실측 발동 0.02%), `high_
+  volatility` 단독은 소프트 페널티(-0.15)+전략 축소에 그침. 최근
+  3거래일(4,240건): risk_off 100%, buy_candidate 1.3%,
+  eligibility_passed 3.8%, final_intent=buy/APPROVE 0%,
+  order_requests 0건. `eligibility_core_risk_off_ranking_blocked`
+  59.5%로 최다(설계 문서 §36이 이미 예견한 병목과 일치). 설계
+  문서(§3.1)는 "매수 0건 방어"를 "하락 국면 한정"으로 스코프
+  제한했으나 코드에는 미반영 — 판정: 설계 의도와 실동작 부분
+  불일치, 사실상 상시 봉쇄. 완화안 미제시. 상세: `docs/10_signal_
+  research_sppv/[DESIGN] regime_conditional_entry_signal_v1.md`
+  §102.
+
 ---
 
 ## 진행 체크리스트
@@ -5382,6 +5398,17 @@ canonical),
     로직 변경 없음, 신규 KIS 호출 0건(shadow 재호출은 `kis_
     client=None`). 상세: `docs/10_signal_research_sppv/[DESIGN]
     regime_conditional_entry_signal_v1.md` §94.
+- [x] **SPPV-2.115(신설)** `risk_off` 연쇄 설계 의도 vs 실동작
+  정합성 검증 (완료, 2026-07-28 KST, 작성자: Codex, 코드/설정
+  변경 없음, 신규 KIS 호출 0건)
+  - `risk_off`+`bearish_trend` AND 결합 시에만 eligibility 하드
+    차단(예외 발동 0.02%), 단독은 소프트 페널티. 최근 3거래일
+    (4,240건): buy_candidate 1.3%, eligibility_passed 3.8%,
+    final_intent=buy/APPROVE 0%. `eligibility_core_risk_off_
+    ranking_blocked` 59.5%로 최다. 판정: 설계 의도(하락 국면
+    한정)와 실동작(상시 봉쇄) 부분 불일치. 완화안 미제시. 상세:
+    `docs/10_signal_research_sppv/[DESIGN] regime_conditional_
+    entry_signal_v1.md` §102.
 - [x] **SPPV-2.114(신설)** `atr_14_pct` 상시 고값 원인 진단 —
   실물 특성 vs 페이퍼 데이터 소스 (완료, 2026-07-28 KST, 작성자:
   Codex, 코드/설정 변경 없음, 신규 KIS 호출 0건)

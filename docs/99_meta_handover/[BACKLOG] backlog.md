@@ -1637,6 +1637,19 @@
   미제시. 상세: `docs/10_signal_research_sppv/[DESIGN] regime_
   conditional_entry_signal_v1.md` §101.
 
+- 2026-07-28 KST(SPPV-2.115, 신규 KIS 호출 0건): `risk_off` 연쇄
+  설계 의도 vs 실동작 검증. `risk_off`는 `bearish_trend`와 AND
+  결합 시에만 eligibility 하드 차단(예외 경로 실측 발동 0.02%),
+  `high_volatility` 단독은 소프트 페널티에 그침. 최근 3거래일
+  (4,240건): risk_off 100%, buy_candidate 1.3%, eligibility_
+  passed 3.8%, final_intent=buy/APPROVE 0%, order_requests 0건.
+  `eligibility_core_risk_off_ranking_blocked` 59.5%로 최다 —
+  설계 문서가 이미 예견한 병목과 일치. 설계 문서는 "매수 0건
+  방어"를 "하락 국면 한정"으로 스코프 제한했으나 코드에는 미반영
+  — 판정: 설계 의도와 실동작 부분 불일치, 사실상 상시 봉쇄.
+  완화안 미제시. 상세: `docs/10_signal_research_sppv/[DESIGN]
+  regime_conditional_entry_signal_v1.md` §102.
+
 ---
 
 ## 관리 원칙

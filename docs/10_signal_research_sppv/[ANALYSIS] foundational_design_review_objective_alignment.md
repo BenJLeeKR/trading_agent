@@ -2141,6 +2141,23 @@ value/compliance/broker가 아니라 `entry_score < 0.65`다.
   판정: B(페이퍼 환경 데이터 소스 특성)에 가장 근접, E(미확정)
   여지 일부 남음. 완화안 미제시. 상세: `docs/10_signal_research_
   sppv/[DESIGN] regime_conditional_entry_signal_v1.md` §101.
+- 2026-07-28 KST(SPPV-2.115, 코드/설정 변경 없음, 신규 KIS 호출
+  0건): `risk_off` 연쇄 — 설계 의도 vs 실동작 정합성 검증.
+  코드 확인 결과 `risk_off`는 `bearish_trend`와 AND 결합될 때만
+  eligibility 하드 차단(예외 경로 존재하나 `risk_off_overrides`
+  실측 1건/0.02%), `high_volatility` 단독일 때는 소프트 페널티
+  (-0.15)+전략 축소에 그침. 최근 3거래일 실측(4,240건): risk_off
+  100%, buy_candidate 1.3%, eligibility_passed 3.8%, final_intent
+  =buy 0%, APPROVE 0%, order_requests 0건 — `eligibility_core_
+  risk_off_ranking_blocked`가 59.5%로 압도적 최다(§36 문서가
+  이미 "eligibility가 실제 병목"이라고 예견한 것과 일치). 설계
+  문서(§3.1)는 "손실 제약 하 기대수익률 극대화"를 1순위로,
+  "매수 0건 방어"를 "이 하락 국면 한정"으로 스코프 제한했으나,
+  코드의 하드 차단에는 이 스코프 제약이 반영돼 있지 않아 최근
+  3주+ 상시 risk_off 조건과 결합해 사실상 상시 봉쇄로 실동작 —
+  판정: 설계 의도와 실동작 부분 불일치. 완화안 미제시. 상세:
+  `docs/10_signal_research_sppv/[DESIGN] regime_conditional_
+  entry_signal_v1.md` §102.
 - **3순위(보류 유지, 형태 재정의 — 우선순위 재조정)**: **`entry_
   score`와 BUY funnel 재현** — §2.7 확장 검증에서 하락장 안정성이
   확인되지 않아 단순 재현으로는 착수하지 않는다. §2.16~§2.21에서
