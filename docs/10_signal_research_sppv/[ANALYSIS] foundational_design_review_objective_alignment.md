@@ -2115,6 +2115,21 @@ value/compliance/broker가 아니라 `entry_score < 0.65`다.
   안 함). 코드 변경 없음, 신규 KIS 호출 0건. 상세: `docs/10_
   signal_research_sppv/[DESIGN] regime_conditional_entry_signal_
   v1.md` §99.
+- 2026-07-28 KST(SPPV-2.113, 코드/설정 변경 없음): threshold-분포
+  정렬 원인 진단. 계산식(atr_14_pct/volatility_20d_pct/return_3m_
+  pct/price_vs_sma_60_pct/slow_score)은 최초 커밋 이후 변경 이력
+  없음(D 배제). 3거래일/2주/1개월/전체 이력 4개 창 모두 high_
+  volatility 82.7~90.6%, bearish_trend 63.6~70.6%로 거의 동일 —
+  최근 현상이 아니라 상시 구조. high_volatility는 atr_14_pct가
+  지배(89.7%, vol20 단독 기여 0.1%). bearish_trend의 slow_score
+  조건은 단독 병목 0건 — return_3m_pct/price_vs_sma_60_pct의
+  파생값이라 중복 반영 구조. 3주 전 문서(signal_backbone_slow_
+  score_threshold_tuning.md)에 이미 "threshold 예측력 미검증"
+  경고와 deep_negative 쏠림 기록 존재. 판정: B(지표 자체 분포
+  특성)+C(threshold 미검증 상태로 얕게 설정)의 결합에 가장 근접,
+  A는 확인 불가, D는 배제. 완화안 미제시. 코드 변경 없음, 신규
+  KIS 호출 0건. 상세: `docs/10_signal_research_sppv/[DESIGN]
+  regime_conditional_entry_signal_v1.md` §100.
 - **3순위(보류 유지, 형태 재정의 — 우선순위 재조정)**: **`entry_
   score`와 BUY funnel 재현** — §2.7 확장 검증에서 하락장 안정성이
   확인되지 않아 단순 재현으로는 착수하지 않는다. §2.16~§2.21에서

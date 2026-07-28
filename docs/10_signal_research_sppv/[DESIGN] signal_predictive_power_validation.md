@@ -2305,6 +2305,23 @@ entry 설계 검토로 전환**을 확정했다. 별도 문서
   미실행, 신규 KIS 호출 0건. 상세: `docs/10_signal_research_sppv/
   [DESIGN] regime_conditional_entry_signal_v1.md` §99.
 
+- 작성자: Codex
+- 수정일자: 2026-07-28 KST (113차, threshold-분포 정렬 원인 진단,
+  코드/설정 변경 없음)
+- 수정내용: 계산식(atr_14_pct 등 5개) 최초 커밋 이후 변경 이력
+  없음(D 배제). 3거래일/2주/1개월/전체 이력 4개 창 모두 high_
+  volatility 82.7~90.6%, bearish_trend 63.6~70.6%로 동일 — 상시
+  구조. high_volatility는 atr_14_pct가 지배(89.7% 단독 기여,
+  vol20 단독 기여 0.1%). bearish_trend의 slow_score 조건은
+  return_3m_pct/price_vs_sma_60_pct의 파생값이라 단독 병목 0건
+  (중복 반영 구조). 3주 전 문서(signal_backbone_slow_score_
+  threshold_tuning.md)에 이미 threshold 미검증 경고와 deep_
+  negative 쏠림 기록 존재. 판정: B(지표 자체 분포 특성)+C
+  (threshold 미검증 상태로 얕게 설정)의 결합에 가장 근접, A는
+  확인 불가, D는 배제. 완화안 미제시. Full pytest 미실행, 신규
+  KIS 호출 0건. 상세: `docs/10_signal_research_sppv/[DESIGN]
+  regime_conditional_entry_signal_v1.md` §100.
+
 ---
 
 ## 진행 체크리스트
@@ -5352,6 +5369,15 @@ canonical),
     로직 변경 없음, 신규 KIS 호출 0건(shadow 재호출은 `kis_
     client=None`). 상세: `docs/10_signal_research_sppv/[DESIGN]
     regime_conditional_entry_signal_v1.md` §94.
+- [x] **SPPV-2.113(신설)** threshold-분포 정렬 원인 진단 (완료,
+  2026-07-28 KST, 작성자: Codex, 코드/설정 변경 없음)
+  - 계산식 변경 이력 없음(D 배제). 4개 창(3일/2주/1개월/전체) 모두
+    high_volatility 82.7~90.6%, bearish_trend 63.6~70.6%로 동일 —
+    상시 구조. atr_14_pct가 high_volatility 지배(89.7%). slow_score
+    조건은 파생값이라 단독 병목 0건. 3주 전 문서에 threshold
+    미검증 경고 기록 존재. 판정: B+C 결합에 가장 근접, 완화안
+    미제시. 상세: `docs/10_signal_research_sppv/[DESIGN] regime_
+    conditional_entry_signal_v1.md` §100.
 - [x] **SPPV-2.112(신설)** `risk_tone` 100% `risk_off` 원인 규명
   (완료, 2026-07-28 KST, 작성자: Codex, 코드/설정 변경 없음)
   - `classify_market_regime` 로직 정상 확인(4,030건 전수 0건

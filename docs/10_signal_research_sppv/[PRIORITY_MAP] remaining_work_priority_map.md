@@ -9794,19 +9794,36 @@ agent 설계 문서 기준으로도 순서는 다음이 맞다.
      설계 미스매치 후보(완화안 미제시, 추가 검증 필요). 상세:
      `docs/10_signal_research_sppv/[DESIGN] regime_conditional_
      entry_signal_v1.md` §99.
-   - **SPPV-3(다음 착수: [1순위] `high_volatility`/`bearish_trend`
-     임계값이 실제 기초자산 가격/변동성 데이터 분포·계산 스케일과
-     정렬돼 있는지 원인만 더 좁혀서 진단(완화안 설계 아님) +
-     [2순위] `signal_feature_snapshots` 배치의 일별 1회 갱신
+   - **SPPV-2.113(완료, 2026-07-28 KST, threshold-분포 정렬 원인
+     진단, 작성자: Codex, 코드/설정 변경 없음)**: 계산식(atr_14_pct
+     등 5개) 변경 이력 없음(D 배제). 4개 창(3일/2주/1개월/전체
+     이력) 모두 high_volatility 82.7~90.6%, bearish_trend
+     63.6~70.6%로 동일 — 최근 현상이 아니라 상시 구조. high_
+     volatility는 `atr_14_pct`가 지배(89.7% 단독 기여, vol20 단독
+     기여 0.1%). `bearish_trend`의 `slow_score` 조건은 `return_3m_
+     pct`/`price_vs_sma_60_pct`의 파생값이라 단독 병목 0건(중복
+     반영 구조). 3주 전 문서(signal_backbone_slow_score_threshold_
+     tuning.md)에 이미 threshold 예측력 미검증 경고와 deep_negative
+     쏠림 기록 존재. 판정: B(지표 자체 분포 특성)+C(threshold
+     미검증 상태로 얕게 설정)의 결합에 가장 근접, A는 확인 불가,
+     D는 배제. 완화안 미제시. 상세: `docs/10_signal_research_sppv/
+     [DESIGN] regime_conditional_entry_signal_v1.md` §100.
+   - **SPPV-3(다음 착수: [1순위] `atr_14_pct`가 이 유니버스에서
+     상시 4.5% 이상으로 분포하는 원인이 실제 기초자산 특성인지
+     페이퍼 환경 가격 데이터 소스 특성인지 원인만 더 좁혀서 확인 +
+     [2순위] `market_regime.py`의 `bearish_trend` 조건이 `slow_
+     score`(파생)와 원시 지표를 동시 검사하는 중복 구조가 설계
+     의도인지 확인 +
+     [3순위] `signal_feature_snapshots` 배치의 일별 1회 갱신
      주기·재사용 설계 확인(`build_signal_feature_snapshots.py`
      실행 이력) +
-     [3순위] 사용자가 `.env`에 `TRADING_UNIVERSE_MAX_CAP` 설정 후
+     [4순위] 사용자가 `.env`에 `TRADING_UNIVERSE_MAX_CAP` 설정 후
      `ops-scheduler` 재기동 → 다음 거래일 실측(§97.3 체크리스트:
      universe 크기/009150 진입/candidate pool 확대/buy_candidate~
      submit_request 변화) +
-     [4순위] 001450의 층3(AI downgrade, risk_off+volatility 축)
+     [5순위] 001450의 층3(AI downgrade, risk_off+volatility 축)
      관찰 지속(정당/과잉 여부 미확정, 완화 제안 아님) +
-     [5순위, 후순위 조정] eligibility_low_relative_activity 조건부
+     [6순위, 후순위 조정] eligibility_low_relative_activity 조건부
      완화(entry_score≥0.70 예외) 코드 diff 초안 설계 검토 — 신규
      진입 종목들의 entry_score가 낮아(0.36) 실익이 낮아짐, 전면
      완화 금지 +

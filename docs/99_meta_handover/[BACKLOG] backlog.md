@@ -1618,6 +1618,16 @@
   신규 KIS 호출 0건. 상세: `docs/10_signal_research_sppv/[DESIGN]
   regime_conditional_entry_signal_v1.md` §99.
 
+- 2026-07-28 KST(SPPV-2.113): threshold-분포 정렬 원인 진단.
+  계산식 변경 이력 없음(D 배제). 4개 창(3일/2주/1개월/전체)
+  모두 high_volatility 82.7~90.6%, bearish_trend 63.6~70.6%로
+  동일 — 상시 구조. high_volatility는 atr_14_pct가 지배(89.7%).
+  slow_score 조건은 파생값이라 단독 병목 0건. 3주 전 문서에
+  이미 threshold 미검증 경고 존재. 판정: B+C 결합에 가장 근접,
+  완화안 미제시. 코드 변경 없음, 신규 KIS 호출 0건. 상세: `docs/
+  10_signal_research_sppv/[DESIGN] regime_conditional_entry_
+  signal_v1.md` §100.
+
 ---
 
 ## 관리 원칙
