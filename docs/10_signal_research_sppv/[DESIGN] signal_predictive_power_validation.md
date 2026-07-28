@@ -2490,6 +2490,22 @@ entry 설계 검토로 전환**을 확정했다. 별도 문서
   `docs/10_signal_research_sppv/[DESIGN] regime_conditional_
   entry_signal_v1.md` §111.
 
+- 작성자: Codex
+- 수정일자: 2026-07-28 KST (124차, `allocation_quality` 일반
+  모집단 분산 재검증 및 §111 과대해석 정정, 코드 미수정,
+  threshold/diff/완화안 없음, 신규 KIS 호출 0건)
+- 수정내용: §111(123차)이 "3거래일 일반 모집단"만 조회하고
+  이를 "일반적" 결론으로 확대한 것을 전체 이력(n=68,724)까지
+  넓혀 재검증. `allocation_quality`만 distinct 1,929값의 풍부한
+  분산으로 **확정**, `coverage_score`/`regime_tailwind`/
+  `strategy_alignment`는 최근 관측 창에서는 무분산이나 전체
+  이력에는 드문 예외(각각 distinct 2값/`risk_on`·`neutral`
+  소수/드문 발동 3.7%)가 있어 **부분 확정**으로 하향. "미확정
+  4개를 모두 닫았다"는 123차 서술은 과했음을 정정. 최종 판정
+  (1순위 산식 재검토, 2순위 중복 차단 정리)은 무관하게 유지.
+  완화안 미제시. 상세: `docs/10_signal_research_sppv/[DESIGN]
+  regime_conditional_entry_signal_v1.md` §112.
+
 ---
 
 ## 진행 체크리스트
@@ -5537,6 +5553,14 @@ canonical),
     로직 변경 없음, 신규 KIS 호출 0건(shadow 재호출은 `kis_
     client=None`). 상세: `docs/10_signal_research_sppv/[DESIGN]
     regime_conditional_entry_signal_v1.md` §94.
+- [x] **SPPV-2.124(신설)** `allocation_quality` 일반 모집단
+  분산 재검증 + §111(123차) 과대해석 정정 (완료, 2026-07-28
+  KST, 작성자: Codex, 코드 미수정, threshold/diff/완화안 없음,
+  신규 KIS 호출 0건)
+  - 전체 이력(n=68,724) 재검증 — `allocation_quality`만 확정
+    (풍부한 분산), 나머지 3개는 부분 확정으로 하향. 최종 판정
+    불변. 상세: `docs/10_signal_research_sppv/[DESIGN] regime_
+    conditional_entry_signal_v1.md` §112.
 - [x] **SPPV-2.123(신설)** `[PLAN] ranking_score_formula_
   validation.md` §6 체크리스트 재판정 (완료, 2026-07-28 KST,
   작성자: Codex, 코드 미수정, threshold/diff/완화안 없음, 신규

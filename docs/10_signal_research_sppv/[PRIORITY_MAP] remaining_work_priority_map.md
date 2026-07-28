@@ -9942,6 +9942,19 @@ agent 설계 문서 기준으로도 순서는 다음이 맞다.
      `regime` 하드 게이트 2개가 여전히 미확정. 최종 판정 불변,
      오히려 근거 강화. 상세: `docs/10_signal_research_sppv/
      [DESIGN] regime_conditional_entry_signal_v1.md` §111.
+   - **SPPV-2.124(완료, 2026-07-28 KST, `allocation_quality`
+     일반 모집단 분산 재검증 + §111 과대해석 정정, 작성자: Codex,
+     코드 미수정, threshold/diff/완화안 없음, 신규 KIS 호출
+     0건)**: §111(123차)이 "3거래일 일반 모집단"만 조회하고 이를
+     "일반적" 결론으로 확대했음을 발견 — 전체 이력(n=68,724)까지
+     넓혀 재검증한 결과 `allocation_quality`만 distinct 1,929값의
+     풍부한 분산으로 **확정**, `coverage_score`/`regime_
+     tailwind`/`strategy_alignment`는 최근 관측 창에서는 무분산
+     이나 전체 이력에는 드문 예외가 있어 **부분 확정**으로 하향.
+     "미확정 4개를 모두 닫았다"는 서술은 과했음을 정정. 최종
+     판정(1순위 산식 재검토, 2순위 중복 차단 정리)은 무관하게
+     유지. 상세: `docs/10_signal_research_sppv/[DESIGN] regime_
+     conditional_entry_signal_v1.md` §112.
    - **SPPV-3(다음 착수: [1순위] distinct symbol 기준으로 구성
      요소 기여도를 재계산해 "상위 50건 평균 기여도" 수치를 종목
      중복 제거 버전으로 교체(§6.8 잔여) +

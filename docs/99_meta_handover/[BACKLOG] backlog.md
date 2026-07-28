@@ -1738,6 +1738,17 @@
   근거 강화. 완화안 미제시. 상세: `docs/10_signal_research_sppv/
   [DESIGN] regime_conditional_entry_signal_v1.md` §111.
 
+- 2026-07-28 KST(SPPV-2.124, 신규 KIS 호출 0건): `allocation_
+  quality` 일반 모집단 분산 재검증 — §111(SPPV-2.123)의 "일반
+  모집단 대조로 미확정 4개 모두 닫음" 서술 정정. 전체 이력
+  (n=68,724)까지 넓혀 재확인한 결과 `allocation_quality`만
+  distinct 1,929값의 풍부한 분산으로 **확정**, `coverage_score`/
+  `regime_tailwind`/`strategy_alignment`는 최근 창에서는 무분산
+  이나 전체 이력엔 드문 예외가 있어 **부분 확정**으로 하향. 최종
+  판정(1순위 산식 재검토)은 무관하게 유지. 완화안 미제시. 상세:
+  `docs/10_signal_research_sppv/[DESIGN] regime_conditional_
+  entry_signal_v1.md` §112.
+
 ---
 
 ## 관리 원칙
