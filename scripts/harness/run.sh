@@ -11,6 +11,10 @@ usage() {
   cat <<'EOF'
 사용법:
   bash scripts/harness/run.sh status
+  bash scripts/harness/run.sh check quick
+  bash scripts/harness/run.sh check changed
+  bash scripts/harness/run.sh type-check backend
+  bash scripts/harness/run.sh type-check frontend
   bash scripts/harness/run.sh py-compile <python_file>
   bash scripts/harness/run.sh test-one <tests/path.py::test_name>
   bash scripts/harness/run.sh test-file <tests/path.py>
@@ -135,6 +139,257 @@ env_check() {
   accept_env
 }
 
+check_quick() {
+  local step_count=6
+  local failed_step_count=0
+  local accept_docs_exit_code=0
+  local accept_env_exit_code=0
+  local accept_backend_runtime_exit_code=0
+  local accept_frontend_exit_code=0
+  local lint_exit_code=0
+  local diff_check_exit_code=0
+
+  echo "CHECK quick: start"
+
+  if accept_docs; then
+    accept_docs_exit_code=0
+  else
+    accept_docs_exit_code=$?
+    failed_step_count=$((failed_step_count + 1))
+  fi
+
+  if accept_env; then
+    accept_env_exit_code=0
+  else
+    accept_env_exit_code=$?
+    failed_step_count=$((failed_step_count + 1))
+  fi
+
+  if accept_backend_runtime; then
+    accept_backend_runtime_exit_code=0
+  else
+    accept_backend_runtime_exit_code=$?
+    failed_step_count=$((failed_step_count + 1))
+  fi
+
+  if accept_frontend; then
+    accept_frontend_exit_code=0
+  else
+    accept_frontend_exit_code=$?
+    failed_step_count=$((failed_step_count + 1))
+  fi
+
+  if run_python_with_timeout "$SAFE_TIMEOUT_SECONDS" -m ruff check src/agent_trading; then
+    lint_exit_code=0
+  else
+    lint_exit_code=$?
+    failed_step_count=$((failed_step_count + 1))
+  fi
+
+  if git diff --check; then
+    diff_check_exit_code=0
+  else
+    diff_check_exit_code=$?
+    failed_step_count=$((failed_step_count + 1))
+  fi
+
+  if [[ "$failed_step_count" -eq 0 ]]; then
+    echo "CHECK quick: PASS"
+  else
+    echo "CHECK quick: FAIL"
+  fi
+  echo "- step_count=$step_count"
+  echo "- failed_step_count=$failed_step_count"
+  echo "- accept_docs_exit_code=$accept_docs_exit_code"
+  echo "- accept_env_exit_code=$accept_env_exit_code"
+  echo "- accept_backend_runtime_exit_code=$accept_backend_runtime_exit_code"
+  echo "- accept_frontend_exit_code=$accept_frontend_exit_code"
+  echo "- lint_exit_code=$lint_exit_code"
+  echo "- diff_check_exit_code=$diff_check_exit_code"
+  echo "- full_test_run=0"
+  echo "- full_build_run=0"
+  echo "- database_connection_run=0"
+  echo "- external_network_run=0"
+
+  [[ "$failed_step_count" -eq 0 ]]
+}
+
+check_changed() {
+  local changed_paths=()
+  local deleted_backend_paths=()
+  local path
+  local changed_backend_file_count=0
+  local deleted_backend_file_count=0
+  local skipped_non_backend_file_count=0
+  local failed_backend_file_count=0
+  local total_changed_path_count=0
+
+  mapfile -t changed_paths < <(
+    {
+      git diff --name-only --diff-filter=ACMR
+      git ls-files --others --exclude-standard
+    } | sort -u
+  )
+  mapfile -t deleted_backend_paths < <(
+    git diff --name-only --diff-filter=D -- src/agent_trading | awk '/\.py$/ {print}' | sort -u
+  )
+
+  total_changed_path_count="${#changed_paths[@]}"
+  deleted_backend_file_count="${#deleted_backend_paths[@]}"
+
+  echo "CHECK changed: start"
+
+  for path in "${changed_paths[@]}"; do
+    case "$path" in
+      src/agent_trading/*.py|src/agent_trading/**/*.py)
+        if [[ -f "$path" ]]; then
+          changed_backend_file_count=$((changed_backend_file_count + 1))
+          if accept_backend_file "$path"; then
+            :
+          else
+            failed_backend_file_count=$((failed_backend_file_count + 1))
+          fi
+        fi
+        ;;
+      *)
+        skipped_non_backend_file_count=$((skipped_non_backend_file_count + 1))
+        ;;
+    esac
+  done
+
+  if [[ "$failed_backend_file_count" -eq 0 && "$deleted_backend_file_count" -eq 0 ]]; then
+    echo "CHECK changed: PASS"
+  else
+    echo "CHECK changed: FAIL"
+  fi
+  echo "- total_changed_path_count=$total_changed_path_count"
+  echo "- changed_backend_file_count=$changed_backend_file_count"
+  echo "- deleted_backend_file_count=$deleted_backend_file_count"
+  echo "- skipped_non_backend_file_count=$skipped_non_backend_file_count"
+  echo "- failed_backend_file_count=$failed_backend_file_count"
+  echo "- full_test_run=0"
+  echo "- full_build_run=0"
+  echo "- database_connection_run=0"
+  echo "- external_network_run=0"
+
+  if [[ "$deleted_backend_file_count" -gt 0 ]]; then
+    echo "DETAIL deleted_backend_files:"
+    for path in "${deleted_backend_paths[@]}"; do
+      echo "- $path"
+    done
+  fi
+
+  [[ "$failed_backend_file_count" -eq 0 && "$deleted_backend_file_count" -eq 0 ]]
+}
+
+type_check_backend() {
+  local mypy_available=0
+  local pyright_available=0
+  local backend_type_tool_missing_count=0
+  local backend_type_check_run=0
+  local backend_type_check_failed_count=0
+  local selected_tool="none"
+  local exit_code=0
+
+  if run_python_with_timeout "$SAFE_TIMEOUT_SECONDS" -c "import importlib.util; raise SystemExit(0 if importlib.util.find_spec('mypy') else 1)" >/dev/null 2>&1; then
+    mypy_available=1
+  fi
+  if run_python_with_timeout "$SAFE_TIMEOUT_SECONDS" -c "import importlib.util; raise SystemExit(0 if importlib.util.find_spec('pyright') else 1)" >/dev/null 2>&1; then
+    pyright_available=1
+  fi
+
+  if [[ "$mypy_available" -eq 1 ]]; then
+    selected_tool="mypy"
+    backend_type_check_run=1
+    if run_python_with_timeout "$SAFE_TIMEOUT_SECONDS" -m mypy src/agent_trading; then
+      exit_code=0
+    else
+      exit_code=$?
+      backend_type_check_failed_count=1
+    fi
+  elif [[ "$pyright_available" -eq 1 ]]; then
+    selected_tool="pyright"
+    backend_type_check_run=1
+    if run_python_with_timeout "$SAFE_TIMEOUT_SECONDS" -m pyright src/agent_trading; then
+      exit_code=0
+    else
+      exit_code=$?
+      backend_type_check_failed_count=1
+    fi
+  else
+    backend_type_tool_missing_count=1
+  fi
+
+  if [[ "$backend_type_check_failed_count" -eq 0 ]]; then
+    echo "TYPE-CHECK backend: PASS"
+  else
+    echo "TYPE-CHECK backend: FAIL"
+  fi
+  echo "- selected_tool=$selected_tool"
+  echo "- mypy_available=$mypy_available"
+  echo "- pyright_available=$pyright_available"
+  echo "- backend_type_tool_missing_count=$backend_type_tool_missing_count"
+  echo "- backend_type_check_run=$backend_type_check_run"
+  echo "- backend_type_check_failed_count=$backend_type_check_failed_count"
+  echo "- full_test_run=0"
+  echo "- database_connection_run=0"
+  echo "- external_network_run=0"
+
+  return "$exit_code"
+}
+
+type_check_frontend() {
+  local script_name="none"
+  local frontend_typecheck_script_missing_count=0
+  local frontend_type_check_run=0
+  local frontend_type_check_failed_count=0
+  local exit_code=0
+
+  [[ -d admin_ui ]] || fail "admin_ui 디렉터리가 없습니다."
+
+  script_name="$(
+    python3 - <<'PY'
+import json
+from pathlib import Path
+
+scripts = json.loads(Path("admin_ui/package.json").read_text()).get("scripts", {})
+for candidate in ("typecheck", "type-check", "check:types"):
+    if candidate in scripts:
+        print(candidate)
+        break
+else:
+    print("none")
+PY
+  )"
+
+  if [[ "$script_name" == "none" ]]; then
+    frontend_typecheck_script_missing_count=1
+  else
+    frontend_type_check_run=1
+    if run_with_timeout "$SAFE_TIMEOUT_SECONDS" bash -lc "cd '$ROOT_DIR/admin_ui' && npm run '$script_name'"; then
+      exit_code=0
+    else
+      exit_code=$?
+      frontend_type_check_failed_count=1
+    fi
+  fi
+
+  if [[ "$frontend_type_check_failed_count" -eq 0 ]]; then
+    echo "TYPE-CHECK frontend: PASS"
+  else
+    echo "TYPE-CHECK frontend: FAIL"
+  fi
+  echo "- selected_script=$script_name"
+  echo "- frontend_typecheck_script_missing_count=$frontend_typecheck_script_missing_count"
+  echo "- frontend_type_check_run=$frontend_type_check_run"
+  echo "- frontend_type_check_failed_count=$frontend_type_check_failed_count"
+  echo "- full_build_run=0"
+  echo "- full_test_run=0"
+  echo "- external_network_run=0"
+
+  return "$exit_code"
+}
+
 accept_docs() {
   python3 - <<'PY'
 import os
@@ -230,6 +485,7 @@ semantic_checks = [
     ("workspace_guide_declares_project_root", contains(root / "docs" / "99_meta_handover" / "agent_workspace_guide.md", f"{root}/", "문서 역할 분리")),
     ("workspace_guide_prefers_accept_env", contains(root / "docs" / "99_meta_handover" / "agent_workspace_guide.md", "accept env", "make accept-env")),
     ("harness_readme_declares_metrics", contains(root / "scripts" / "harness" / "README.md", "accept backend-file", "tests_run_count", "secret_key_hit_count")),
+    ("harness_readme_declares_validation_layers", contains(root / "scripts" / "harness" / "README.md", "L0", "L6", "check quick", "make check-quick", "check changed", "make check-changed", "type-check backend", "make type-check-backend")),
     ("harness_readme_declares_api_run", contains(root / "scripts" / "harness" / "README.md", "run api-postgres", "INSPECTION_API_TOKEN")),
     ("harness_readme_declares_compat_aliases", contains(root / "scripts" / "harness" / "README.md", "docs-check", "env-check", "호환 alias")),
     ("root_agents_declares_api_run", contains(root / "AGENTS.md", "run api-inmemory", "run api-postgres")),
@@ -1632,6 +1888,36 @@ main() {
       echo "root=$ROOT_DIR"
       python3 --version
       git status --short
+      ;;
+    check)
+      local profile="${1:-}"
+      require_arg "$profile" "check_profile"
+      case "$profile" in
+        quick)
+          check_quick
+          ;;
+        changed)
+          check_changed
+          ;;
+        *)
+          fail "지원하지 않는 check profile입니다: $profile"
+          ;;
+      esac
+      ;;
+    type-check)
+      local profile="${1:-}"
+      require_arg "$profile" "type_check_profile"
+      case "$profile" in
+        backend)
+          type_check_backend
+          ;;
+        frontend)
+          type_check_frontend
+          ;;
+        *)
+          fail "지원하지 않는 type-check profile입니다: $profile"
+          ;;
+      esac
       ;;
     env-check)
       env_check

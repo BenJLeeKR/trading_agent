@@ -47,6 +47,14 @@
 2. 매매·리스크·주문·정합성 경계가 테스트와 로그로 검증 가능해야 한다.
 3. 운영 성공은 exit code가 아니라 처리량, 저장 레코드, 상태 변화, 오류 카운트 같은 증거로 보고해야 한다.
 
+런타임 또는 운영 변경에서는 다음 증거 경로를 보존하거나 추가한다.
+
+- 가능한 경우 저장된 실행 레코드.
+- 명시적인 처리·스킵·오류 카운트.
+- decision ID, context ID, order ID, account ID, symbol 식별자.
+- pre-submit 검증, submit, post-submit sync, reconciliation, inspection 경계의 분리.
+- 테스트, 로그, 요약 파일, DB 상태 중 하나 이상으로 확인 가능한 실패 모드.
+
 ## 기본 작업 규칙
 
 - 작업 전 루트 지침 파일을 확인한다.
@@ -66,6 +74,10 @@
 
 - Ubuntu 서버 작업 영역에서는 `python` 대신 `python3`를 사용한다.
 - 서버 환경 특성상 `sh` 실행은 실패하므로 셸 명령은 `bash`에서 실행한다.
+- 검증 계층은 `scripts/harness/README.md`의 L0~L6 정의를 따른다.
+- 커밋 전 빠른 스냅샷은 `bash scripts/harness/run.sh check quick` 또는 `make check-quick`을 사용한다.
+- 변경 백엔드 파일 스냅샷은 `bash scripts/harness/run.sh check changed` 또는 `make check-changed`를 사용한다.
+- 타입 검사 스냅샷은 `bash scripts/harness/run.sh type-check backend`, `bash scripts/harness/run.sh type-check frontend`, `make type-check-backend`, `make type-check-frontend`를 사용한다.
 - 문서 정합성의 정답 판정은 `bash scripts/harness/run.sh accept docs` 또는 `make accept-docs`를 사용한다.
 - 운영 환경 재현성의 정답 판정은 `bash scripts/harness/run.sh accept env` 또는 `make accept-env`를 사용한다.
 - 단일 백엔드 파일의 정답 판정은 `bash scripts/harness/run.sh accept backend-file <file>` 또는 `make accept-backend-file FILE=<file>`을 사용한다.
@@ -106,3 +118,20 @@ README에는 프로젝트 실행에 필요한 최신 정보만 남긴다.
 - 실행한 검증 명령과 결과.
 - 검증하지 못한 가정.
 - 운영 작업인 경우 기대한 작업이 실제로 수행됐는지 보여주는 구체적 지표.
+
+## 프롬프트 및 계획 리뷰 규칙
+
+설계안이나 구현 계획 리뷰를 요청받으면, 사용자가 구현을 명시하지 않는 한 기본 산출물은 재사용 가능한 프롬프트다.
+
+- 하나의 승인 프롬프트로 정리한다.
+- `추가 보정사항`, `그 외 유지해야할 원칙`, `완료 후 보고에 대한 가이드`를 포함한다.
+- 구현 완료 보고가 주어지면 다음 추천 구현 프롬프트를 생성한다.
+- 오래된 프로젝트 제목 접두사는 프롬프트에 붙이지 않는다.
+
+## 코드 스타일
+
+- 새 추상화를 도입하기 전에 기존 패턴을 우선 따른다.
+- 축약어보다 명시적인 이름을 선호한다.
+- 국소 버그를 고치기 위해 광범위한 프레임워크 변경을 추가하지 않는다.
+- 비자명한 런타임 제약을 설명할 때만 주석을 추가한다.
+- 관련 없는 파일을 수정하거나 별도 결함을 기회주의적으로 고치지 않는다.

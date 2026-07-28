@@ -10,6 +10,7 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
+    "typecheck": "tsc --noEmit --pretty false",
     "preview": "vite preview",
     "test": "vitest",
     "test:run": "vitest run"

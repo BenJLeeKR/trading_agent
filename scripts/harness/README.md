@@ -20,6 +20,10 @@
 | 목적 | 표준 명령 | Make alias |
 |------|-----------|------------|
 | 하네스 사용법 | `bash scripts/harness/run.sh status` | `make harness-status` |
+| 빠른 계층 검증 | `bash scripts/harness/run.sh check quick` | `make check-quick` |
+| 변경 백엔드 파일 검증 | `bash scripts/harness/run.sh check changed` | `make check-changed` |
+| 백엔드 타입 검사 | `bash scripts/harness/run.sh type-check backend` | `make type-check-backend` |
+| Frontend 타입 검사 | `bash scripts/harness/run.sh type-check frontend` | `make type-check-frontend` |
 | 환경 계약 | `bash scripts/harness/run.sh accept env` | `make accept-env` |
 | 문서 계약 | `bash scripts/harness/run.sh accept docs` | `make accept-docs` |
 | 단일 백엔드 파일 | `bash scripts/harness/run.sh accept backend-file <file>` | `make accept-backend-file FILE=<file>` |
@@ -33,6 +37,24 @@
 | 단일 Admin UI 테스트 | `bash scripts/harness/run.sh admin-test-one <selector>` | `make admin-test-one TEST=<selector>` |
 
 `docs-check`와 `env-check`는 각각 `accept docs`, `accept env`의 호환 alias다. 신규 문서와 보고에서는 `accept ...` 이름을 우선 사용한다.
+
+## 검증 계층
+
+| 계층 | 목적 | 기본 실행 조건 | 현재 진입점 |
+|------|------|----------------|-------------|
+| L0 | 문법·포맷 검사 | 승인 없이 실행 | `py-compile`, `git diff --check` |
+| L1 | Lint | 승인 없이 실행 | `lint-path`, `make lint` |
+| L2 | 타입 검사 | 승인 없이 실행, 도구 미설치·스크립트 누락은 카운트로 보고 | `type-check backend`, `type-check frontend` |
+| L3 | 단위 테스트 | 단일 파일·단일 selector만 승인 없이 실행 | `test-one`, `test-file`, `admin-test-one` |
+| L4 | 통합 테스트 | `HARNESS_ALLOW_HEAVY=1` 필요 | `full-test`, `docker-test` |
+| L5 | E2E·smoke 테스트 | `HARNESS_ALLOW_HEAVY=1` 필요 | `smoke`, broker/KIS 연동 테스트 |
+| L6 | 성능·보안 검사 | read-only secret scan 외에는 별도 승인 필요 | 다음 단계에서 `security` 계열로 검토 |
+
+`check quick`은 커밋 전 기본 스냅샷용 계층 묶음이다. 현재 범위는 `accept docs`, `accept env`, `accept backend-runtime`, `accept frontend`, `lint-path src/agent_trading`, `git diff --check`이며 전체 테스트, 전체 빌드, DB 연결, 외부 네트워크 호출을 실행하지 않는다.
+
+`check changed`는 Git 변경 목록에서 `src/agent_trading/**/*.py` 파일만 골라 각 파일에 `accept backend-file`을 적용한다. 문서만 변경된 경우 `changed_backend_file_count=0`으로 보고하며 전체 테스트를 실행하지 않는다.
+
+`type-check backend`는 `mypy` 또는 `pyright`가 설치된 경우에만 실행한다. 둘 다 없으면 `backend_type_tool_missing_count=1`, `backend_type_check_run=0`으로 보고한다. `type-check frontend`는 `admin_ui/package.json`의 `typecheck`, `type-check`, `check:types` script 중 하나가 있을 때만 실행한다. script가 없으면 `frontend_typecheck_script_missing_count=1`, `frontend_type_check_run=0`으로 보고한다.
 
 ## 수동 실행 명령
 
@@ -65,6 +87,7 @@ Makefile에서는 승인 필요 명령을 `heavy-*` target으로 노출한다. �
 - `required_file_missing_count`: 필수 문서와 하네스 파일 누락 수.
 - `markdown_link_missing_count`: 핵심 문서의 깨진 상대 링크 수.
 - `deprecated_reference_count`: 오래된 문서 경로 참조 수.
+- `documented_make_target_missing_count`: 핵심 문서가 안내하지만 `Makefile`에 없는 target 수.
 - `semantic_check_failed_count`: Harness Engineering 필수 문구와 라우팅 규칙 실패 수.
 
 ### `accept env`

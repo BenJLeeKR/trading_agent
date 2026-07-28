@@ -2,7 +2,7 @@ SHELL := /usr/bin/bash
 .SHELLFLAGS := -e -o pipefail -c
 
 .PHONY: install run migrate test lint smoke \
-        harness-status env-check check-file test-one test-file lint-path docs-check accept-docs accept-env accept-backend-file accept-backend-runtime accept-admin-ui accept-ops-report dump-ops-report admin-test-one \
+        harness-status check-quick check-changed type-check-backend type-check-frontend env-check check-file test-one test-file lint-path docs-check accept-docs accept-env accept-backend-file accept-backend-runtime accept-admin-ui accept-ops-report dump-ops-report admin-test-one \
         heavy-full-test heavy-docker-test heavy-smoke heavy-admin-build heavy-admin-test-all \
         full-test docker-test-safe smoke-safe smoke-all admin-build admin-test-all \
         docker-up docker-down docker-build docker-migrate docker-test docker-shell \
@@ -41,6 +41,18 @@ lint:
 
 harness-status:
 	bash scripts/harness/run.sh status
+
+check-quick:
+	bash scripts/harness/run.sh check quick
+
+check-changed:
+	bash scripts/harness/run.sh check changed
+
+type-check-backend:
+	bash scripts/harness/run.sh type-check backend
+
+type-check-frontend:
+	bash scripts/harness/run.sh type-check frontend
 
 env-check:
 	bash scripts/harness/run.sh env-check
