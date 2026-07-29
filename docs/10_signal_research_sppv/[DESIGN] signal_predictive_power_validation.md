@@ -2637,6 +2637,23 @@ entry 설계 검토로 전환**을 확정했다. 별도 문서
   signal_research_sppv/[DESIGN] regime_conditional_entry_
   signal_v1.md` §119.
 
+- 작성자: Codex
+- 수정일자: 2026-07-29 KST (132차, `coverage_score` threshold
+  연쇄영향 정량 재계산 + `relative_activity` 유지 위치 비교,
+  코드 미수정, `.env` 미수정, Full pytest 미실행, 신규 KIS
+  호출 0건)
+- 수정내용: `coverage_score` A안은 `_CORE_RISK_OFF_RANKING_
+  MIN_SCORE=0.48` 통과율 14.8%→0.34%(단순 차감)/2.2%(재정규화),
+  `_CORE_RISK_OFF_SHADOW_MIN_SCORE=0.22` 통과율 100%→0.4%/1.8%
+  로 급격히 붕괴함을 정량 확인 — threshold 재설계 없이는 단독
+  diff 불가로 판정. `relative_activity`는 案1(entry_score 유지,
+  ranking 제거)/案2(ranking 유지, entry_score 제거) 비교 결과
+  둘 다 threshold 영향은 14.8%→14.3%로 미미하나, 案2는
+  `buy_candidate_threshold=0.65` 공유 함수를 건드려 diff 범위가
+  더 넓음 — 案1이 더 보수적이며 다음 턴 diff 초안 작성 가능으로
+  확정. 상세: `docs/10_signal_research_sppv/[DESIGN] regime_
+  conditional_entry_signal_v1.md` §120.
+
 ---
 
 ## 진행 체크리스트
@@ -5684,6 +5701,17 @@ canonical),
     로직 변경 없음, 신규 KIS 호출 0건(shadow 재호출은 `kis_
     client=None`). 상세: `docs/10_signal_research_sppv/[DESIGN]
     regime_conditional_entry_signal_v1.md` §94.
+- [x] **SPPV-2.132(신설)** `coverage_score` threshold 연쇄영향
+  정량 재계산 + `relative_activity` 유지 위치 비교 (완료,
+  2026-07-29 KST, 작성자: Codex, 코드 미수정, `.env` 미수정,
+  Full pytest 미실행, 신규 KIS 호출 0건)
+  - `coverage_score` A안은 `0.48`/`0.22` threshold 통과율이
+    각각 14.8%→0.34~2.2%, 100%→0.4~1.8%로 붕괴함을 정량 확인
+    — diff 보류, threshold 재설계 별도 트랙 필요. `relative_
+    activity`는 案1(entry_score 유지, ranking 제거)이 threshold
+    영향 미미(14.8%→14.3%) + diff 범위 최소임을 확인 — 다음 턴
+    diff 초안 작성 가능. 상세: `docs/10_signal_research_sppv/
+    [DESIGN] regime_conditional_entry_signal_v1.md` §120.
 - [x] **SPPV-2.131(신설)** `coverage_score`/`relative_activity`
   설계안 A/B 비교 (완료, 2026-07-29 KST, 작성자: Codex, 코드
   미수정, `.env` 미수정, Full pytest 미실행, 신규 KIS 호출 0건)

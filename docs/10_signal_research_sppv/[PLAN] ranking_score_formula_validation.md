@@ -1,12 +1,14 @@
 # ranking_score 공식 검증 계획
 
 작성일: 2026-07-28  
-상태: [SPPV-2.131에서 갱신] `coverage_score`/`relative_activity`
-설계안 A/B 비교 완료(§6.15) — 둘 다 **A안(제거/단일화) 방향으로
-수렴**했으나, diff 착수 전 각 1개씩 확인 과제가 남아 있어
-"즉시 진입 가능"이었던 §6.14 마지막 판정은 부분 완료로
-재조정됨. 완화안/코드 diff는 여전히 미착수(SPPV-2.119~2.131
-참고)
+상태: [SPPV-2.132에서 갱신] 남은 2개 확인 과제 검증 완료(§6.16).
+`coverage_score` A안은 threshold(`0.48`/`0.22`) 통과율이
+극단적으로 붕괴함을 정량 확인해 **diff 보류**(threshold
+재설계 선행 필요). `relative_activity`는 案1(ranking에서
+제거, entry_score 유지)이 threshold 영향 미미 + diff 범위
+최소임을 확인해 **다음 턴 diff 초안 작성 가능**으로 판정.
+완화안 확정은 아니며 코드 diff는 여전히 미착수(SPPV-2.119~
+2.132 참고)
 
 ## 1. 문서 목적
 
@@ -805,6 +807,34 @@ A/B 비교(신규, 2026-07-29 KST, 완료 — §6.14 마지막 판정 재보정)
 
 상세: `docs/10_signal_research_sppv/[DESIGN] regime_conditional_
 entry_signal_v1.md` §119.
+
+### 6.16 SPPV-2.132 — 남은 2개 확인 과제 검증(신규, 2026-07-29
+KST, 완료 — §6.15의 미확정 2건을 닫음)
+
+- [x] **`coverage_score` A안 threshold 연쇄영향 정량 재계산**:
+      `0.48`/`0.22`(코드 상수 `_CORE_RISK_OFF_RANKING_MIN_SCORE`/
+      `_CORE_RISK_OFF_SHADOW_MIN_SCORE`) 기준 shadow 재계산 결과,
+      단순 제거 시 `0.48` 통과율이 일반 BUY 경로 전체 이력 기준
+      14.8%→0.34%, `0.22` 통과율이 `ranking_blocked` 게이트
+      내부 100%→0.4%로 붕괴함을 확인(사실, 신규 DB 재계산).
+      **판정: A안은 threshold 재설계와 반드시 묶여야 하며, 이번
+      턴 기준 diff 착수 불가.**
+- [x] **`relative_activity` 유지 위치(entry_score vs ranking_
+      score) 비교**: 案1(ranking에서 제거, entry 유지)과 案2
+      (entry에서 제거, ranking 유지) 모두 threshold 통과율
+      영향이 작음(14.8%→14.3%, 양안 동일)을 확인 — `coverage_
+      score`와 달리 이 항목은 **threshold 재설계 없이 안전하게
+      정리 가능**함을 확정(사실, 신규 DB 재계산). diff 범위
+      비교 결과 **案1(ranking에서 제거)이 더 보수적**(entry_
+      score의 `buy_candidate_threshold=0.65` 하드 게이트를
+      건드리지 않음). **판정: 案1은 지금 바로 diff 초안 작성
+      가능.**
+- [x] **최종 판정**: `coverage_score`=diff 보류(threshold
+      재설계 선행 필요), `relative_activity`=**案1으로 diff
+      초안 작성 가능**(이번 턴 첫 실행 가능 판정).
+
+상세: `docs/10_signal_research_sppv/[DESIGN] regime_conditional_
+entry_signal_v1.md` §120.
 
 ## 7. 완료 기준
 

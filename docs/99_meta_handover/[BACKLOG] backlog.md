@@ -1820,6 +1820,15 @@
   signal_research_sppv/[DESIGN] regime_conditional_entry_
   signal_v1.md` §119.
 
+- 2026-07-29 KST(SPPV-2.132, 신규 KIS 호출 0건): `coverage_
+  score` threshold 연쇄영향 정량 재계산 — `0.48`/`0.22` 통과율
+  붕괴(14.8%→0.34~2.2%, 100%→0.4~1.8%) 확인, diff 보류(threshold
+  재설계 선행 필요). `relative_activity` 유지 위치 비교 — 案1
+  (entry_score 유지, ranking 제거)이 threshold 영향 미미 + diff
+  범위 최소로 확인, **다음 턴 diff 초안 작성 가능**. 완화안
+  미제시. 상세: `docs/10_signal_research_sppv/[DESIGN] regime_
+  conditional_entry_signal_v1.md` §120.
+
 ---
 
 ## 관리 원칙
