@@ -271,6 +271,16 @@
 - [x] `runtime_tracked_file_count`는 `33`에서 `12`로 감소했다.
 - [x] 처리 기록은 [`data_runtime_canonical_split_review.md`](../30_work_log/data_runtime_canonical_split_review.md)와 [`runtime_write_path_reference_audit.md`](../30_work_log/runtime_write_path_reference_audit.md)에 남겼다.
 
+### P0 17차 — `data/ar_fdc_*.json` Markdown 링크 전환
+
+- [x] `data/ar_fdc_*.json` tracked 파일 `2`개를 재확인했다.
+- [x] 전환 전 전체 문서의 `data/ar_fdc_*.json` Markdown 링크 `3`개를 확인했다.
+- [x] 전환 대상 문서 `2`개의 Markdown 링크 `3`개를 코드 텍스트로 전환했다.
+- [x] 전환 후 전체 문서의 `data/ar_fdc_*.json` Markdown 링크는 `0`개로 감소했다.
+- [x] 정확 참조된 `data/ar_fdc_*.json` tracked 파일은 `2`개, 정확 참조 라인은 `19`개로 기록했다.
+- [x] 이번 단계에서는 `data/ar_fdc_*.json` tracked 파일 `2`개를 제거하지 않았다.
+- [x] 처리 기록은 [`data_runtime_canonical_split_review.md`](../30_work_log/data_runtime_canonical_split_review.md)와 [`runtime_write_path_reference_audit.md`](../30_work_log/runtime_write_path_reference_audit.md)에 남겼다.
+
 ## 작업 이력
 
 | 일자 | 작업자 | 항목 | 변경 파일 수 | 검증 명령 | 주요 출력 지표 | 후속 조치 |
@@ -293,6 +303,7 @@
 | 2026-07-29 | Codex | P0 14차 — root JSON 기본 입력·분석 산출물 분리 | 3 | `bash scripts/harness/run.sh accept docs`; `bash scripts/harness/run.sh accept ci` | `top_level_root_json_count=24`, `top_level_root_json_exact_referenced_file_count=3`, `top_level_root_json_zero_ref_count=21` | root JSON wildcard 사용 여부 감사 |
 | 2026-07-29 | Codex | P0 15차 — root JSON wildcard 사용 감사 | 3 | `bash scripts/harness/run.sh accept docs`; `bash scripts/harness/run.sh accept ci` | `root_json_zero_ref_candidate_count=21`, `code_wildcard_pattern_line_count=0`, `candidate_basename_partial_ref_count=0` | root JSON 후보 `21`개 추적 제외 |
 | 2026-07-29 | Codex | P0 16차 — root JSON 후보 tracked 파일 추적 제외 | 25 | `bash scripts/harness/run.sh accept docs`; `bash scripts/harness/run.sh accept ci` | `root_json_candidates_tracked_count=0`, `root_json_candidates_on_disk_count=21`, `runtime_tracked_file_count=12` | `data/ar_fdc_*.json` Markdown 링크 정리 |
+| 2026-07-29 | Codex | P0 17차 — `data/ar_fdc_*.json` Markdown 링크 전환 | 5 | `bash scripts/harness/run.sh accept docs`; `bash scripts/harness/run.sh accept ci` | `converted_ar_fdc_markdown_link_count=3`, `remaining_ar_fdc_markdown_link_count=0`, `ar_fdc_exact_reference_line_count=19`, `runtime_tracked_file_count=12` | `data/ar_fdc_*.json` 생성 경로 감사 |
 
 ## 갱신 규칙
 
