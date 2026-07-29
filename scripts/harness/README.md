@@ -20,7 +20,7 @@
 GitHub Actions도 사람과 AI가 쓰는 동일한 하네스를 사용한다. CI workflow는 `pytest`, `ruff`, `npm`, `docker` 기반 검증 명령을 직접 정답 판정기로 삼지 않고, 준비 단계 이후 `bash scripts/harness/run.sh ...`만 호출한다.
 
 - 기본 PR/push gate는 `.github/workflows/harness.yml`의 `safe` job이다.
-- `safe` job은 `check quick`, `accept db-structure`, `accept architecture`, `accept style`, `type-check backend`, `type-check frontend`, `security scan`을 실행한다.
+- `safe` job은 `check quick`, `accept db-structure`, `accept architecture`, `accept style`, `accept no-bypass`, `type-check backend`, `type-check frontend`, `security scan`을 실행한다.
 - CI workflow 자체의 정합성 판정은 `accept ci`가 담당한다.
 - GitHub ruleset `Require Harness on main`은 기본 브랜치에 `Safe harness contracts` 상태 검사를 필수 항목으로 요구한다.
 - CI의 PostgreSQL 버전 판정은 `.postgres-version`과 같은 버전의 `trading_db` 컨테이너를 시작한 뒤 `accept env`가 확인한다.
@@ -43,6 +43,7 @@ GitHub Actions도 사람과 AI가 쓰는 동일한 하네스를 사용한다. CI
 | DB 저장소 구조 계약 | `bash scripts/harness/run.sh accept db-structure` | `make accept-db-structure` |
 | 아키텍처 계층 구조 계약 | `bash scripts/harness/run.sh accept architecture` | `make accept-architecture` |
 | 코드 스타일 baseline 계약 | `bash scripts/harness/run.sh accept style` | `make accept-style` |
+| 우회 행동 검사 | `bash scripts/harness/run.sh accept no-bypass` | `make accept-no-bypass` |
 | 단일 백엔드 파일 | `bash scripts/harness/run.sh accept backend-file <file>` | `make accept-backend-file FILE=<file>` |
 | 백엔드 런타임 계약 | `bash scripts/harness/run.sh accept backend-runtime` | `make accept-backend-runtime` |
 | Admin UI 계약 | `bash scripts/harness/run.sh accept frontend` | `make accept-admin-ui` |
@@ -67,7 +68,7 @@ GitHub Actions도 사람과 AI가 쓰는 동일한 하네스를 사용한다. CI
 | L5 | E2E·smoke 테스트 | `HARNESS_ALLOW_HEAVY=1` 필요 | `smoke`, broker/KIS 연동 테스트 |
 | L6 | 성능·보안 검사 | read-only secret scan은 승인 없이 실행, dependency audit·성능 검사는 별도 승인 필요 | `security scan` |
 
-`check quick`은 커밋 전 기본 스냅샷용 계층 묶음이다. 현재 범위는 `accept docs`, `accept ci`, `accept env`, `accept backend-runtime`, `accept frontend`, `lint-path src/agent_trading`, `git diff --check`이며 전체 테스트, 전체 빌드, DB 연결, 외부 네트워크 호출을 실행하지 않는다.
+`check quick`은 커밋 전 기본 스냅샷용 계층 묶음이다. 현재 범위는 `accept docs`, `accept ci`, `accept no-bypass`, `accept env`, `accept backend-runtime`, `accept frontend`, `lint-path src/agent_trading`, `git diff --check`이며 전체 테스트, 전체 빌드, DB 연결, 외부 네트워크 호출을 실행하지 않는다.
 
 `check changed`는 Git 변경 목록에서 `src/agent_trading/**/*.py` 파일만 골라 각 파일에 `accept backend-file`을 적용한다. 문서만 변경된 경우 `changed_backend_file_count=0`으로 보고하며 전체 테스트를 실행하지 않는다.
 
@@ -191,6 +192,20 @@ Makefile에서는 승인 필요 명령을 `heavy-*` target으로 노출한다. �
 - `ruff_f_excess_count`: `F` 계열 위반이 baseline보다 증가한 수. 실패 조건이다.
 - `database_connection_run`, `external_network_run`, `full_test_run`: 이 검사가 DB 접속, 외부 네트워크, 전체 테스트를 실행하지 않았음을 나타내는 0/1 지표.
 
+### `accept no-bypass`
+
+- `changed_file_count`: 검사 대상으로 잡힌 변경 파일 수.
+- `scanned_file_count`: 텍스트로 판정해 검사한 변경 파일 수.
+- `added_line_count`: 검사한 추가 라인 수.
+- `hard_bypass_count`: 실패 조건으로 강제하는 우회 후보 수.
+- `review_bypass_count`: 실패시키지 않고 검토 대상으로 표시한 우회 후보 수.
+- `allowlisted_bypass_count`: 정책 문서나 하네스 설명에서 발견되어 예외 처리한 설명성 패턴 수.
+- `new_bypass_candidate_count`: `hard_bypass_count + review_bypass_count`.
+- `database_connection_run`, `external_network_run`, `full_test_run`: 이 검사가 DB 접속, 외부 네트워크, 전체 테스트를 실행하지 않았음을 나타내는 0/1 지표.
+
+세부 정책은 `docs/20_harness_engineering/no_bypass_policy.md`를 따른다. 현재는 `hard_bypass_count > 0`일 때만 실패하고, `review_bypass_count > 0`은 보고와 리뷰 대상으로 남긴다.
+CI에서는 PR 기준 `origin/<base>`와 비교하고, `main` push 기준에서는 `HEAD^`와 비교한다. 이를 위해 `safe` job의 checkout은 `fetch-depth: 0`을 사용한다.
+
 ### `accept backend-runtime`
 
 - `static_contract_failed_count`: API factory, runtime mode, auth, dependency pin 정적 계약 실패 수.
@@ -234,7 +249,7 @@ Makefile에서는 승인 필요 명령을 `heavy-*` target으로 노출한다. �
 
 ## 보고 기준
 
-- AI가 완료를 주장할 수 있는 최소 조건은 [`docs/99_meta_handover/definition_of_done.md`](../../docs/99_meta_handover/definition_of_done.md)를 따른다.
+- AI가 완료를 주장할 수 있는 최소 조건은 [`docs/20_harness_engineering/definition_of_done.md`](../../docs/20_harness_engineering/definition_of_done.md)를 따른다.
 - exit code만 보고하지 않는다.
 - `*_count`, `*_run`, `route_count`, `test_file_count`처럼 출력된 원문 지표를 함께 보고한다.
 - `.env` 값, 토큰, 계좌 정보, API secret은 출력하지 않는다.

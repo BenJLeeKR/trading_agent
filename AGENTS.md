@@ -7,7 +7,7 @@
 상세 작업 방식은 다음 문서로 분리한다.
 
 - [`docs/99_meta_handover/agent_workspace_guide.md`](docs/99_meta_handover/agent_workspace_guide.md): 작업 원칙, 문서 역할, 테스트 데이터, 계획 리뷰 규칙.
-- [`docs/99_meta_handover/definition_of_done.md`](docs/99_meta_handover/definition_of_done.md): AI가 완료를 주장할 수 있는 최소 조건.
+- [`docs/20_harness_engineering/definition_of_done.md`](docs/20_harness_engineering/definition_of_done.md): AI가 완료를 주장할 수 있는 최소 조건.
 - [`scripts/harness/README.md`](scripts/harness/README.md): `scripts/harness/run.sh` 진입점, 승인 플래그, 출력 지표.
 - [`src/AGENTS.md`](src/AGENTS.md): 백엔드 런타임 전용 규칙.
 - [`admin_ui/AGENTS.md`](admin_ui/AGENTS.md): Admin UI 전용 규칙.
@@ -45,6 +45,7 @@
 - DB 저장소 구조: `bash scripts/harness/run.sh accept db-structure` 또는 `make accept-db-structure`.
 - 아키텍처 계층 구조: `bash scripts/harness/run.sh accept architecture` 또는 `make accept-architecture`.
 - 코드 스타일 baseline: `bash scripts/harness/run.sh accept style` 또는 `make accept-style`.
+- 우회 행동 검사: `bash scripts/harness/run.sh accept no-bypass` 또는 `make accept-no-bypass`.
 - 단일 백엔드 파일: `bash scripts/harness/run.sh accept backend-file <file>` 또는 `make accept-backend-file FILE=<file>`.
 - 백엔드 런타임 계약: `bash scripts/harness/run.sh accept backend-runtime` 또는 `make accept-backend-runtime`.
 - Admin UI 계약: `bash scripts/harness/run.sh accept frontend` 또는 `make accept-admin-ui`.
@@ -70,6 +71,7 @@ Ubuntu 서버 작업 영역에서는 `python` 명령을 사용하지 않고 `pyt
 ## 트레이딩 안전 불변식
 
 - 테스트를 통과시키기 위해 risk gate, sell guard, submit-lane gate, reconciliation lock, broker contract check를 우회하지 않는다.
+- 우회 행동 금지 기준은 `docs/20_harness_engineering/no_bypass_policy.md`를 따른다. 명확한 안전 위반은 실패로 보고, 맥락 판단이 필요한 항목은 검토 대상으로 카운트한다.
 - 실패한 브로커, KIS, DB, 스케줄러 작업을 조용히 성공으로 변환하지 않는다.
 - REST-only 경로는 REST 인증만 사용한다. 해당 경로가 요구하지 않는 한 WebSocket 또는 전체 브로커 인증을 추가하지 않는다.
 - account lookup, held-position 처리, reconciliation, post-submit sync는 관측 가능하고 테스트 가능해야 한다.
@@ -77,8 +79,8 @@ Ubuntu 서버 작업 영역에서는 `python` 명령을 사용하지 않고 `pyt
 ## 보고 원칙
 
 - 운영 커버리지가 중요한 작업에서는 exit code 0만으로 성공을 판단하지 않는다.
-- AI가 완료를 주장할 수 있는 조건은 `docs/99_meta_handover/definition_of_done.md`를 따른다.
-- 오류 메시지, API 오류 응답, 운영 로그를 보강할 때는 `docs/99_meta_handover/ai_friendly_error_message_contract.md`를 따른다.
+- AI가 완료를 주장할 수 있는 조건은 `docs/20_harness_engineering/definition_of_done.md`를 따른다.
+- 오류 메시지, API 오류 응답, 운영 로그를 보강할 때는 `docs/20_harness_engineering/ai_friendly_error_message_contract.md`를 따른다.
 - 완료 보고에는 변경한 파일, 실행한 검증 명령, 검증하지 못한 가정, 실제 처리·스킵·오류·테스트 카운트를 포함한다.
 - 브랜치 보호 규칙이 있는 저장소에서는 완료 보고에 현재 브랜치, `HEAD`, 원격 추적 브랜치 상태, PR/check 상태를 포함한다.
 - 운영 보고에서는 단순히 “OK”라고 쓰지 말고 실제 처리량과 커버리지 지표를 포함한다.

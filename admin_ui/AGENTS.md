@@ -31,7 +31,7 @@
 - UI 동작 변경 시 관련 컴포넌트나 view 테스트를 우선 실행한다.
 - API contract 변경과 함께 작업했다면 백엔드 schema와 프론트 타입·표시 로직을 함께 확인한다.
 - API client 호출 경계를 건드린 경우 `bash scripts/harness/run.sh accept architecture` 또는 `make accept-architecture`를 사용한다.
-- 완료 보고는 `docs/99_meta_handover/definition_of_done.md` 기준을 따른다.
+- 완료 보고는 `docs/20_harness_engineering/definition_of_done.md` 기준을 따른다.
 
 ## 검증 부하 제한
 

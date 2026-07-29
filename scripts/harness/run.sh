@@ -26,6 +26,7 @@ usage() {
   bash scripts/harness/run.sh accept db-structure
   bash scripts/harness/run.sh accept architecture
   bash scripts/harness/run.sh accept style
+  bash scripts/harness/run.sh accept no-bypass
   bash scripts/harness/run.sh accept backend-file <src/agent_trading/file.py>
   bash scripts/harness/run.sh accept backend-runtime
   bash scripts/harness/run.sh accept frontend
@@ -186,6 +187,7 @@ required_harness_commands = [
     "bash scripts/harness/run.sh accept db-structure",
     "bash scripts/harness/run.sh accept architecture",
     "bash scripts/harness/run.sh accept style",
+    "bash scripts/harness/run.sh accept no-bypass",
     "bash scripts/harness/run.sh type-check backend",
     "bash scripts/harness/run.sh type-check frontend",
     "bash scripts/harness/run.sh security scan",
@@ -233,6 +235,7 @@ contract_checks = [
     ("workflow_heavy_sets_allow_flag", 'HARNESS_ALLOW_HEAVY: "1"' in workflow_text),
     ("readme_declares_ci_harness", contains(readme, "CI 검증 기준", ".github/workflows/harness.yml", "bash scripts/harness/run.sh", "Require Harness on main", "Safe harness contracts")),
     ("harness_readme_declares_ci_harness", contains(harness_readme, "CI 공동 사용 원칙", "safe", "workflow_dispatch", "HARNESS_ALLOW_HEAVY=1", "Require Harness on main", "Safe harness contracts")),
+    ("workflow_fetches_full_history_for_diff_contracts", contains(workflow, "fetch-depth: 0")),
     ("agents_declares_ci_harness", contains(agents, ".github/workflows/harness.yml", "bash scripts/harness/run.sh")),
     ("makefile_declares_accept_ci", contains(makefile, "accept-ci:", "bash scripts/harness/run.sh accept ci")),
 ]
@@ -287,10 +290,11 @@ PY
 }
 
 check_quick() {
-  local step_count=7
+  local step_count=8
   local failed_step_count=0
   local accept_docs_exit_code=0
   local accept_ci_exit_code=0
+  local accept_no_bypass_exit_code=0
   local accept_env_exit_code=0
   local accept_backend_runtime_exit_code=0
   local accept_frontend_exit_code=0
@@ -310,6 +314,13 @@ check_quick() {
     accept_ci_exit_code=0
   else
     accept_ci_exit_code=$?
+    failed_step_count=$((failed_step_count + 1))
+  fi
+
+  if accept_no_bypass; then
+    accept_no_bypass_exit_code=0
+  else
+    accept_no_bypass_exit_code=$?
     failed_step_count=$((failed_step_count + 1))
   fi
 
@@ -357,6 +368,7 @@ check_quick() {
   echo "- failed_step_count=$failed_step_count"
   echo "- accept_docs_exit_code=$accept_docs_exit_code"
   echo "- accept_ci_exit_code=$accept_ci_exit_code"
+  echo "- accept_no_bypass_exit_code=$accept_no_bypass_exit_code"
   echo "- accept_env_exit_code=$accept_env_exit_code"
   echo "- accept_backend_runtime_exit_code=$accept_backend_runtime_exit_code"
   echo "- accept_frontend_exit_code=$accept_frontend_exit_code"
@@ -736,7 +748,9 @@ core_docs = [
     root / "admin_ui" / "AGENTS.md",
     root / "scripts" / "harness" / "README.md",
     root / "docs" / "99_meta_handover" / "agent_workspace_guide.md",
-    root / "docs" / "99_meta_handover" / "definition_of_done.md",
+    root / "docs" / "20_harness_engineering" / "ai_friendly_error_message_contract.md",
+    root / "docs" / "20_harness_engineering" / "definition_of_done.md",
+    root / "docs" / "20_harness_engineering" / "no_bypass_policy.md",
     root / "tests" / "fixtures" / "README.md",
 ]
 required_files = core_docs + [
@@ -815,16 +829,20 @@ semantic_checks = [
     ("root_agents_requires_harness", contains(root / "AGENTS.md", "scripts/harness/run.sh", "검증 부하 제한")),
     ("root_agents_env_secret_policy", contains(root / "AGENTS.md", ".env", "직접 수정하지 않는다", "노출하지 않는다")),
     ("root_agents_routes_to_definition_of_done", contains(root / "AGENTS.md", "definition_of_done.md", "완료를 주장")),
+    ("root_agents_routes_to_no_bypass_policy", contains(root / "AGENTS.md", "no_bypass_policy.md", "accept no-bypass")),
     ("root_agents_prefers_accept_env", contains(root / "AGENTS.md", "accept env", "make accept-env", "env-check", "호환 alias")),
     ("workspace_guide_declares_project_root", contains(root / "docs" / "99_meta_handover" / "agent_workspace_guide.md", "/workspace/agent_trading/", "문서 역할 분리")),
     ("workspace_guide_routes_to_definition_of_done", contains(root / "docs" / "99_meta_handover" / "agent_workspace_guide.md", "definition_of_done.md", "완료를 주장")),
-    ("definition_of_done_declares_completion_contract", contains(root / "docs" / "99_meta_handover" / "definition_of_done.md", "Definition of Done", "완료", "검증하지 못한 가정", "failed_step_count", "full_test", "Safe harness contracts")),
+    ("definition_of_done_declares_completion_contract", contains(root / "docs" / "20_harness_engineering" / "definition_of_done.md", "Definition of Done", "완료", "검증하지 못한 가정", "failed_step_count", "full_test", "Safe harness contracts")),
+    ("no_bypass_policy_declares_two_level_policy", contains(root / "docs" / "20_harness_engineering" / "no_bypass_policy.md", "Hard Fail", "Review Flag", "hard_bypass_count", "review_bypass_count")),
+    ("ai_friendly_error_contract_declares_structured_errors", contains(root / "docs" / "20_harness_engineering" / "ai_friendly_error_message_contract.md", "error_code", "next_action", "count")),
     ("workspace_guide_prefers_accept_env", contains(root / "docs" / "99_meta_handover" / "agent_workspace_guide.md", "accept env", "make accept-env")),
     ("harness_readme_declares_metrics", contains(root / "scripts" / "harness" / "README.md", "accept backend-file", "tests_run_count", "secret_key_hit_count")),
     ("harness_readme_declares_validation_layers", contains(root / "scripts" / "harness" / "README.md", "L0", "L6", "check quick", "make check-quick", "check changed", "make check-changed", "type-check backend", "make type-check-backend", "security scan", "make security-scan")),
     ("harness_readme_declares_api_run", contains(root / "scripts" / "harness" / "README.md", "run api-postgres", "INSPECTION_API_TOKEN")),
     ("harness_readme_declares_compat_aliases", contains(root / "scripts" / "harness" / "README.md", "docs-check", "env-check", "호환 alias")),
     ("harness_readme_routes_to_definition_of_done", contains(root / "scripts" / "harness" / "README.md", "definition_of_done.md", "완료를 주장")),
+    ("harness_readme_declares_no_bypass", contains(root / "scripts" / "harness" / "README.md", "accept no-bypass", "hard_bypass_count", "review_bypass_count")),
     ("root_agents_declares_api_run", contains(root / "AGENTS.md", "run api-inmemory", "run api-postgres")),
     ("fixture_policy_present", contains(root / "tests" / "fixtures" / "README.md", "data/", "logs/", "tmp/")),
     ("pytest_config_single_source", absent(root / "pytest.ini") and contains(root / "pyproject.toml", "[tool.pytest.ini_options]", 'asyncio_default_fixture_loop_scope = "module"', "markers = [")),
@@ -1701,6 +1719,10 @@ accept_style() {
   [[ "$failed_count" -eq 0 ]]
 }
 
+accept_no_bypass() {
+  timeout "$SAFE_TIMEOUT_SECONDS" python3 scripts/harness/check_no_bypass.py
+}
+
 accept_frontend() {
   ACCEPT_SAFE_TIMEOUT_SECONDS="$SAFE_TIMEOUT_SECONDS" python3 - <<'PY'
 import json
@@ -2413,6 +2435,9 @@ main() {
           ;;
         style)
           accept_style
+          ;;
+        no-bypass)
+          accept_no_bypass
           ;;
         backend-file)
           accept_backend_file "${2:-}"
