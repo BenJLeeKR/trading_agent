@@ -28,6 +28,17 @@
 | `data/ar_fdc_*.json` | 2 | 있음 | 스크립트 생성 산출물 | Git 추적 제외 완료 |
 | `data/observations/*.json` | 6 | 있음 | 문서 근거 산출물 | Git 추적 제외 완료 |
 
+## 현재 canonical 입력 허용 목록
+
+2026-07-29 기준 남은 `data/` tracked 파일 `10`개는 [`canonical_data_contract.md`](../20_harness_engineering/canonical_data_contract.md)의 허용 목록으로 관리한다.
+
+| 분류 | 파일 수 | 판정 |
+| --- | ---: | --- |
+| `data/instrument_master/source/` 운영·예시 입력 | 7 | owner와 갱신 절차 문서화 후 유지 |
+| `data/instrument_master/normalized/` 스케줄러 입력 | 1 | 기본 경로 변경 전까지 유지 |
+| `data/signal_feature_snapshot_input.json` | 1 | 스케줄러·테스트 기본 입력으로 임시 유지 |
+| runtime 산출물 | 0 | 허용 목록 밖 신규 `data/` 파일은 추적 제외 |
+
 ## Codex 추천안
 
 1. `data/instrument_master/archive/` `33`개는 정확 참조가 `0`개이므로 Git 추적에서 제외했다.
@@ -37,6 +48,7 @@
 5. top-level root JSON `24`개 중 정확 참조가 없는 `21`개는 코드 wildcard 사용 여부 감사 결과 `0`건이므로 Git 추적에서 제외했다.
 6. `data/ar_fdc_*.json` Markdown 링크 `3`개는 코드 텍스트로 전환했다.
 7. `data/ar_fdc_*.json`은 스크립트가 생성·갱신하는 산출물이므로 Git 추적에서 제외했다.
+8. 남은 `data/` tracked 파일 `10`개는 canonical 입력 허용 목록으로 문서화했다.
 
 ## 금지 사항
 
@@ -54,6 +66,7 @@
 - P0 16차: 정확 참조와 wildcard 사용이 없는 root JSON `21`개를 추적 제외했다.
 - P0 17차: `data/ar_fdc_*.json` Markdown 링크 `3`개를 코드 텍스트로 전환했다.
 - P0 18차: `data/ar_fdc_*.json` 생성 경로를 감사하고 tracked 파일 `2`개를 추적 제외했다.
+- P0 19차: 남은 `data/` tracked 파일 `10`개의 owner와 갱신 절차를 canonical 허용 목록으로 문서화했다.
 
 ## 완료 기록
 
@@ -135,3 +148,12 @@
 - `.gitignore`에 `data/ar_fdc_*.json`을 추가했다.
 - 남은 `data/` tracked 파일은 `10`개다.
 - `runtime_tracked_file_count`는 `12`에서 `10`으로 감소했다.
+
+### 2026-07-29 — 남은 `data/` canonical 입력 허용 목록 문서화
+
+- 남은 `data/` tracked 파일은 `10`개다.
+- 확장자 분포는 `csv=7`, `json=3`이다.
+- 경로 분포는 `data/instrument_master/source=7`, `data/instrument_master/normalized=1`, `data/signal_feature_snapshot_input.json=1`이다.
+- 허용 목록 작성 전 full path 정확 참조가 `0`개였던 constituent CSV `3`개는 manifest의 `csv_path`와 문서 basename 참조가 각각 `3`개 있어 source package 구성 파일로 유지한다.
+- owner 분류는 `운영 데이터 관리자=5`, `스케줄러 운영자=3`, `Harness 문서 관리자=2`로 기록했다.
+- 허용 목록과 갱신 절차는 [`canonical_data_contract.md`](../20_harness_engineering/canonical_data_contract.md)에 기록했다.

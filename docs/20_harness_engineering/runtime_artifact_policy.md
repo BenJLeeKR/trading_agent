@@ -17,6 +17,12 @@
 - 외부 API 호출, 실계좌·브로커·스케줄러 상태, `.env` 값에 의존하는 임시 측정 스크립트는 정식 `scripts/`로 승격하지 않는다.
 - 과거 분석 문서에서 산출물명을 보존해야 할 때는 Markdown 링크가 아니라 코드 텍스트로 남긴다.
 
+## `data/` canonical 입력 정책
+
+`data/`에서 Git 추적을 허용하는 파일은 [`canonical_data_contract.md`](canonical_data_contract.md)의 허용 목록을 따른다.
+
+허용 목록에 없는 신규 `data/` 파일은 runtime 산출물로 보고 Git 추적에서 제외한다. 예외가 필요하면 owner, 갱신 절차, 검증 명령, 참조 목적을 먼저 문서화한다.
+
 ## `logs/` 링크 정책
 
 `logs/`는 기본적으로 Git 추적에서 제거한다. 다만 추적 제거 전에 문서 링크는 다음 기준으로 정리한다.
