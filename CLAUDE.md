@@ -33,6 +33,12 @@ Claude Code는 이 저장소에서 코드, 문서, 스크립트, 테스트를 �
 5. `docs/20_harness_engineering/definition_of_done.md`
    - Claude Code가 완료를 주장하기 전에 확인할 최소 조건
 
+6. `docs/20_harness_engineering/no_bypass_policy.md`
+   - 검증 통과를 위한 우회 행동의 실패 조건과 검토 대상 구분
+
+7. `docs/20_harness_engineering/ai_friendly_error_message_contract.md`
+   - AI가 진단 가능한 오류 메시지, API 오류 응답, 운영 로그 기준
+
 ## 운영 원칙
 
 - 이 파일에는 세부 규칙을 중복 작성하지 않는다.
@@ -45,6 +51,8 @@ Claude Code는 이 저장소에서 코드, 문서, 스크립트, 테스트를 �
 
 - 문서 정합성: `bash scripts/harness/run.sh accept docs` 또는 `make accept-docs`
 - CI 정합성: `bash scripts/harness/run.sh accept ci` 또는 `make accept-ci`
+- 빠른 검증 스냅샷: `bash scripts/harness/run.sh check quick` 또는 `make check-quick`
+- 우회 행동 검사: `bash scripts/harness/run.sh accept no-bypass` 또는 `make accept-no-bypass`
 - 환경 재현성: `bash scripts/harness/run.sh accept env` 또는 `make accept-env`
 - 단일 백엔드 파일: `bash scripts/harness/run.sh accept backend-file <file>` 또는 `make accept-backend-file FILE=<file>`
 - 백엔드 런타임 계약: `bash scripts/harness/run.sh accept backend-runtime` 또는 `make accept-backend-runtime`
