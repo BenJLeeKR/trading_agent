@@ -2541,6 +2541,23 @@ entry 설계 검토로 전환**을 확정했다. 별도 문서
   무관하게 유지. 상세: `docs/10_signal_research_sppv/[DESIGN]
   regime_conditional_entry_signal_v1.md` §114.
 
+- 작성자: Codex
+- 수정일자: 2026-07-29 KST (127차, distinct symbol 기준 기여도
+  재계산 + 반복 등장 원인 규명, `[PLAN]` §6.8 잔여 완료, 코드
+  미수정, Full pytest 미실행, 신규 KIS 호출 0건)
+- 수정내용: 게이트 모집단 내부(distinct symbol=25)에서 상위/
+  하위 10개 종목 기여도 차이의 100.0%, 일반 BUY 경로 전체
+  (`eligibility_path='buy'` 필터, distinct symbol=105, row=
+  35,149)에서 96.2%를 `entry_score`+`relative_activity`가
+  설명 — 종목 반복 편향 제거 후에도 기존 결론 유지. `002790`
+  (6일 산발, 239건)/`000720`(20일+ 연속, 761건) 반복 원인은
+  intraday decision loop 5분 주기(`DEFAULT_INTERVAL_SECONDS=
+  300`)+`signal_feature_snapshot` 1일 1회 갱신+게이트 고정 상태
+  지속의 동일 메커니즘으로 확인 — 정상 반복이며 저장/집계
+  결함 아님. 최종 판정 무관하게 유지. 상세: `docs/10_signal_
+  research_sppv/[DESIGN] regime_conditional_entry_signal_v1.md`
+  §115.
+
 ---
 
 ## 진행 체크리스트
@@ -5588,6 +5605,15 @@ canonical),
     로직 변경 없음, 신규 KIS 호출 0건(shadow 재호출은 `kis_
     client=None`). 상세: `docs/10_signal_research_sppv/[DESIGN]
     regime_conditional_entry_signal_v1.md` §94.
+- [x] **SPPV-2.127(신설)** distinct symbol 기준 기여도 재계산 +
+  `002790`/`000720` 반복 등장 원인 규명 — `[PLAN]` §6.8 잔여
+  완료 (완료, 2026-07-29 KST, 작성자: Codex, 코드 미수정, Full
+  pytest 미실행, 신규 KIS 호출 0건)
+  - 게이트 내부(distinct=25) 100.0%, 일반 BUY 경로(distinct=105)
+    96.2%를 entry_score+relative_activity가 설명 — 기존 결론
+    유지. 반복 원인은 5분 주기 loop+snapshot 1일 1회 갱신+게이트
+    고정 지속(정상 반복). 상세: `docs/10_signal_research_sppv/
+    [DESIGN] regime_conditional_entry_signal_v1.md` §115.
 - [x] **SPPV-2.126(신설)** `top50=002790` 문구 모집단 조건 명시
   보정 (완료, 2026-07-28 KST, 작성자: Codex, 코드 미수정, Full
   pytest 미실행, 신규 KIS 호출 0건)

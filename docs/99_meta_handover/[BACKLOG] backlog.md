@@ -1768,6 +1768,16 @@
   상세: `docs/10_signal_research_sppv/[DESIGN] regime_
   conditional_entry_signal_v1.md` §114.
 
+- 2026-07-29 KST(SPPV-2.127, 신규 KIS 호출 0건): distinct symbol
+  기준 기여도 재계산 + `002790`/`000720` 반복 등장 원인 규명
+  (`[PLAN]` §6.8 잔여 완료). 게이트 내부(distinct=25)에서 차이의
+  100.0%, 일반 BUY 경로(distinct=105)에서 96.2%를 `entry_score`+
+  `relative_activity`가 설명 — 기존 결론 유지. 반복 원인은
+  intraday loop 5분 주기+snapshot 1일 1회 갱신+게이트 고정 지속
+  (정상 반복, 결함 아님). 완화안 미제시. 상세: `docs/10_signal_
+  research_sppv/[DESIGN] regime_conditional_entry_signal_v1.md`
+  §115.
+
 ---
 
 ## 관리 원칙
