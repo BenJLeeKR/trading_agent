@@ -210,3 +210,12 @@ Codex 추천은 다음과 같다.
 - 후보 파일 basename 부분 참조는 `0`건이었다.
 - 문서 예시와 과거 산출물명 참조는 제거 차단 근거로 보지 않는다.
 - root JSON 파일은 이번 단계에서 제거하지 않았고, 다음 별도 PR에서 후보 `21`개를 추적 제외한다.
+
+### 2026-07-29 — root JSON 후보 추적 제외
+
+- 정확 참조와 wildcard 사용이 없는 root JSON 후보 `21`개를 Git 추적에서 제거했다.
+- 후보 구성은 `signal_feature_historical=16`, `trigger_proxy_artifact=5`였다.
+- 작업트리의 후보 실제 파일은 `21`개로 보존됐다.
+- 남은 top-level root JSON tracked 파일은 `3`개다.
+- `runtime_tracked_file_count`는 `33`에서 `12`로 감소했다.
+- `.gitignore`에 `data/signal_feature_snapshot_input_*.json`과 `data/trigger_proxy_attribution_*.json`를 추가했다.
