@@ -47,17 +47,6 @@ Claude Code는 이 저장소에서 코드, 문서, 스크립트, 테스트를 �
 
 ## 하네스 진입점
 
-세부 판정 기준은 `AGENTS.md`와 `scripts/harness/run.sh`를 따른다. Claude Code는 검증 명령을 직접 조합하기보다 아래 진입점을 우선 사용한다.
+세부 명령 목록과 출력 지표는 `scripts/harness/README.md`를 따른다. Claude Code는 검증 명령을 직접 조합하지 말고, 적용 가능한 경우 `bash scripts/harness/run.sh ...` 또는 `Makefile` alias를 우선 사용한다.
 
-- 문서 정합성: `bash scripts/harness/run.sh accept docs` 또는 `make accept-docs`
-- CI 정합성: `bash scripts/harness/run.sh accept ci` 또는 `make accept-ci`
-- 빠른 검증 스냅샷: `bash scripts/harness/run.sh check quick` 또는 `make check-quick`
-- 우회 행동 검사: `bash scripts/harness/run.sh accept no-bypass` 또는 `make accept-no-bypass`
-- 환경 재현성: `bash scripts/harness/run.sh accept env` 또는 `make accept-env`
-- 단일 백엔드 파일: `bash scripts/harness/run.sh accept backend-file <file>` 또는 `make accept-backend-file FILE=<file>`
-- 백엔드 런타임 계약: `bash scripts/harness/run.sh accept backend-runtime` 또는 `make accept-backend-runtime`
-- Admin UI: `bash scripts/harness/run.sh accept frontend` 또는 `make accept-admin-ui`
-- 운영 리포트: `bash scripts/harness/run.sh accept ops-report <summary_json>` 또는 `make accept-ops-report SUMMARY_JSON=<summary_json>`
-- 운영 리포트 덤프: `HARNESS_ALLOW_OPS_DUMP=1 bash scripts/harness/run.sh dump ops-report [YYYY-MM-DD]`
-- API in-memory 실행: `bash scripts/harness/run.sh run api-inmemory` 또는 `make run-api-inmemory`
-- API Postgres/Auth 실행: `bash scripts/harness/run.sh run api-postgres` 또는 `make run-api-postgres`
+완료 주장, 우회 행동, 오류 메시지, 배포/CI 계약은 `docs/20_harness_engineering/` 아래 문서를 기준으로 판정한다.
