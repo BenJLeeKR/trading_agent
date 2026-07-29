@@ -158,3 +158,12 @@ Codex 추천은 다음과 같다.
 - `runtime_tracked_file_count`는 `2632`에서 `72`로 감소했다.
 - 남은 runtime tracked 파일은 `data=72`개다.
 - 전체 문서의 `logs/` Markdown 링크는 `0`개로 유지된다.
+
+### 2026-07-29 — `data/` runtime/canonical 분리 검토
+
+- `data/` tracked 파일은 `72`개다.
+- 경로별 구성은 `data/instrument_master=42`, `data/observations=6`, `data/` 루트 JSON `24`개다.
+- 정확 참조된 tracked `data/` 파일은 `15`개, 정확 참조 라인은 `107`개다.
+- `data/instrument_master/archive/` tracked 파일 `33`개는 정확 참조가 `0`개다.
+- `data/` 전체 추적 제외는 금지하고, `archive`, `observations`, root JSON, canonical source를 별도 단계로 분리한다.
+- 상세 판정은 [`data_runtime_canonical_split_review.md`](data_runtime_canonical_split_review.md)에 기록했다.
