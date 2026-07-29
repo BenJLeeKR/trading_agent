@@ -237,4 +237,13 @@ Codex 추천은 다음과 같다.
 - 정확 참조 라인 `19`개는 코드 텍스트 또는 일반 텍스트로 남아 있다.
 - `.gitignore`에 `data/ar_fdc_*.json`을 추가해 재추적을 막았다.
 - `runtime_tracked_file_count`는 `12`에서 `10`으로 감소했다.
+
+### 2026-07-29 — 남은 `data/` canonical 입력 허용 목록 문서화
+
+- 남은 `data/` tracked 파일은 `10`개다.
+- `data/` runtime 산출물 tracked 파일은 `0`개로 분류했다.
+- CSV 파일은 `7`개, JSON 파일은 `3`개다.
+- owner가 문서화된 허용 파일은 `10`개다.
+- 허용 목록 밖 신규 `data/` 파일은 runtime 산출물로 보고 Git 추적에서 제외하기로 기록했다.
+- 상세 계약은 [`canonical_data_contract.md`](../20_harness_engineering/canonical_data_contract.md)에 남겼다.
 - `.gitignore`에 `data/signal_feature_snapshot_input_*.json`과 `data/trigger_proxy_attribution_*.json`를 추가했다.

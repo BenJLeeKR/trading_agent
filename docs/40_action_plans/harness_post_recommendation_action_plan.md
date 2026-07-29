@@ -20,12 +20,12 @@
 목표: 운영 서버 배포 중 `git reset --hard`가 런타임 쓰기 경로를 되돌리거나 운영 산출물을 훼손하지 못하게 한다.
 
 - [x] `tmp/`, `logs/`, `data/`의 tracked 파일 목록을 목적별로 분류한다.
-- [~] 런타임 산출물과 canonical 입력 데이터의 기준을 문서화한다.
+- [x] 런타임 산출물과 canonical 입력 데이터의 기준을 문서화한다.
 - [x] `logs/`, `tmp/`는 원칙적으로 Git 추적 대상에서 제외한다.
 - [x] `data/`는 전체 제외 여부를 바로 결정하지 않고 `data/runtime/`, `data/cache/`, `data/local/` 같은 mutable 하위 경로 분리를 먼저 검토한다.
-- [~] 필요한 seed, example, fixture 파일은 `tests/fixtures/`, `docs/`, 또는 `*.example` 경로로 이동할지 결정한다. `logs/`는 대량 보존보다 코드 텍스트 전환 우선 정책으로 결정했다.
+- [x] 필요한 seed, example, fixture 파일은 `tests/fixtures/`, `docs/`, 또는 `*.example` 경로로 이동할지 결정한다. `logs/`는 대량 보존보다 코드 텍스트 전환 우선 정책으로 결정했고, 남은 `data/` tracked 파일 `10`개는 canonical 입력 허용 목록으로 유지한다.
 - [x] `.gitignore`에 runtime write path 패턴을 추가한다.
-- [~] 기존 tracked 런타임 파일은 `git rm --cached` 또는 경로 이동으로 정리한다. `tmp/` tracked 파일 `55`개, `logs/` tracked 파일 `2560`개, `data/instrument_master/archive/` tracked 파일 `33`개, `data/observations/` tracked 파일 `6`개, root JSON 후보 `21`개, `data/ar_fdc_*.json` tracked 파일 `2`개는 제거 완료했고, `data/` `10`개는 남아 있다.
+- [x] 기존 tracked 런타임 파일은 `git rm --cached` 또는 경로 이동으로 정리한다. `tmp/` tracked 파일 `55`개, `logs/` tracked 파일 `2560`개, `data/instrument_master/archive/` tracked 파일 `33`개, `data/observations/` tracked 파일 `6`개, root JSON 후보 `21`개, `data/ar_fdc_*.json` tracked 파일 `2`개는 제거 완료했고, 남은 `data/` `10`개는 canonical 입력 허용 목록으로 유지한다.
 - [x] 배포 workflow에 `git clean -fdx` 또는 동등한 파괴적 clean 명령이 들어가지 않도록 `accept ci` 검사에 추가한다.
 - [x] `accept ci`에 tracked runtime write path 카운트 검사를 추가한다.
 
@@ -37,6 +37,7 @@
 
 분류 상세는 [`runtime_write_path_inventory.md`](../30_work_log/runtime_write_path_inventory.md)를 따른다.
 `data/` 상세 분리 판정은 [`data_runtime_canonical_split_review.md`](../30_work_log/data_runtime_canonical_split_review.md)를 따른다.
+canonical data 허용 목록과 owner 기준은 [`canonical_data_contract.md`](../20_harness_engineering/canonical_data_contract.md)를 따른다.
 
 ### P1 — 장 시간 배포 가드와 수동 재배포 진입점
 
@@ -292,6 +293,16 @@
 - [x] `runtime_tracked_file_count`는 `12`에서 `10`으로 감소했다.
 - [x] 처리 기록은 [`data_runtime_canonical_split_review.md`](../30_work_log/data_runtime_canonical_split_review.md)와 [`runtime_write_path_reference_audit.md`](../30_work_log/runtime_write_path_reference_audit.md)에 남겼다.
 
+### P0 19차 — 남은 `data/` canonical 입력 허용 목록 문서화
+
+- [x] 남은 `data/` tracked 파일 `10`개를 재확인했다.
+- [x] 확장자 분포 `csv=7`, `json=3`을 기록했다.
+- [x] `data/` runtime 산출물 tracked 파일은 `0`개로 분류했다.
+- [x] 허용 목록 작성 전 full path 정확 참조가 `0`개였던 constituent CSV `3`개는 manifest `csv_path`와 문서 basename 참조를 근거로 source package 구성 파일로 유지했다.
+- [x] owner 분류 `운영 데이터 관리자=5`, `스케줄러 운영자=3`, `Harness 문서 관리자=2`를 기록했다.
+- [x] 허용 목록과 갱신 절차는 [`canonical_data_contract.md`](../20_harness_engineering/canonical_data_contract.md)에 기록했다.
+- [x] 처리 기록은 [`data_runtime_canonical_split_review.md`](../30_work_log/data_runtime_canonical_split_review.md)와 [`runtime_write_path_reference_audit.md`](../30_work_log/runtime_write_path_reference_audit.md)에 남겼다.
+
 ## 작업 이력
 
 | 일자 | 작업자 | 항목 | 변경 파일 수 | 검증 명령 | 주요 출력 지표 | 후속 조치 |
@@ -316,6 +327,7 @@
 | 2026-07-29 | Codex | P0 16차 — root JSON 후보 tracked 파일 추적 제외 | 25 | `bash scripts/harness/run.sh accept docs`; `bash scripts/harness/run.sh accept ci` | `root_json_candidates_tracked_count=0`, `root_json_candidates_on_disk_count=21`, `runtime_tracked_file_count=12` | `data/ar_fdc_*.json` Markdown 링크 정리 |
 | 2026-07-29 | Codex | P0 17차 — `data/ar_fdc_*.json` Markdown 링크 전환 | 5 | `bash scripts/harness/run.sh accept docs`; `bash scripts/harness/run.sh accept ci` | `converted_ar_fdc_markdown_link_count=3`, `remaining_ar_fdc_markdown_link_count=0`, `ar_fdc_exact_reference_line_count=19`, `runtime_tracked_file_count=12` | `data/ar_fdc_*.json` 생성 경로 감사 |
 | 2026-07-29 | Codex | P0 18차 — `data/ar_fdc_*.json` tracked 파일 추적 제외 | 5 | `bash scripts/harness/run.sh accept docs`; `bash scripts/harness/run.sh accept ci` | `ar_fdc_tracked_count=0`, `ar_fdc_files_on_disk_count=2`, `runtime_tracked_file_count=10` | 남은 `data/` canonical 입력 `10`개 owner·갱신 절차 문서화 |
+| 2026-07-29 | Codex | P0 19차 — 남은 `data/` canonical 입력 허용 목록 문서화 | 5 | `bash scripts/harness/run.sh accept docs`; `bash scripts/harness/run.sh accept ci` | `data_tracked_allowlist_count=10`, `runtime_artifact_tracked_count=0`, `canonical_data_owner_documented_count=10` | P0 닫기 후보, 다음 P1 장 시간 배포 가드 |
 
 ## 갱신 규칙
 
