@@ -170,6 +170,15 @@
 - [x] 대표 산출물 대량 보존보다 Markdown 링크를 코드 텍스트로 전환하는 정책을 우선하기로 결정했다.
 - [x] 정책 기준은 [`runtime_artifact_policy.md`](../20_harness_engineering/runtime_artifact_policy.md)에 기록했다.
 
+### P0 6차 — `docs/03_execution_order` `logs/` Markdown 링크 전환
+
+- [x] 저위험 후보인 `docs/30_work_log`와 `docs/99_meta_handover`에는 전환 대상 Markdown 링크가 `0`개임을 확인했다.
+- [x] 전체 문서의 `logs/` Markdown 링크 `28`개 중 `20`개를 코드 텍스트로 전환했다.
+- [x] `docs/03_execution_order`의 `logs/` Markdown 링크 `19`개를 전환했다.
+- [x] `docs/20_harness_engineering/runtime_artifact_policy.md`의 예시 링크 `1`개를 전환했다.
+- [x] 남은 `logs/` Markdown 링크는 `8`개다.
+- [x] 처리 기록은 [`runtime_write_path_reference_audit.md`](../30_work_log/runtime_write_path_reference_audit.md)에 남겼다.
+
 ## 작업 이력
 
 | 일자 | 작업자 | 항목 | 변경 파일 수 | 검증 명령 | 주요 출력 지표 | 후속 조치 |
@@ -181,6 +190,7 @@
 | 2026-07-29 | Codex | 작업기록 문서 라우팅 정리 | 3 | `bash scripts/harness/run.sh accept docs`; `bash scripts/harness/run.sh accept ci` | `moved_work_log_document_count=2`, `updated_plan_link_count=4` | P0 `tmp/` 정리 PR |
 | 2026-07-29 | Codex | P0 4차 — `tmp/` tracked 파일 추적 제외 | 60 | `bash scripts/harness/run.sh accept docs`; `bash scripts/harness/run.sh accept ci` | `tmp_tracked_count=0`, `runtime_tracked_file_count=2632` | `logs/` 링크 정책 결정 |
 | 2026-07-29 | Codex | P0 5차 — `logs/` 링크 정책 결정 | 3 | `bash scripts/harness/run.sh accept docs`; `bash scripts/harness/run.sh accept ci` | `logs_exact_referenced_file_count=166`, `logs_exact_reference_line_count=413` | `logs/` Markdown 링크 전환 PR |
+| 2026-07-29 | Codex | P0 6차 — `docs/03_execution_order` `logs/` Markdown 링크 전환 | 7 | `bash scripts/harness/run.sh accept docs`; `bash scripts/harness/run.sh accept ci` | `converted_markdown_logs_link_count=20`, `remaining_markdown_logs_link_count=8` | 나머지 8개 링크 전환 |
 
 ## 갱신 규칙
 

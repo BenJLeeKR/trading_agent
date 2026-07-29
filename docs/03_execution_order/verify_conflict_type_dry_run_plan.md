@@ -3,7 +3,7 @@
 ## 1. 기존 로그 분석 결과
 
 ### 1.1. 분석 파일
-- [`logs/backfill_container_dry_run_v4_20260531.log`](../logs/backfill_container_dry_run_v4_20260531.log)
+- `logs/backfill_container_dry_run_v4_20260531.log`
 
 ### 1.2. 발견된 문제: `conflict_type` / `conflict_type_breakdown` 부재
 

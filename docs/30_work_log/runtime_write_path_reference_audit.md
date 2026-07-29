@@ -124,3 +124,11 @@ Codex 추천은 다음과 같다.
 - 정확 참조 파일 확장자 분포는 `.json=95`, `.log=68`, `.jsonl=2`, `.txt=1`이다.
 - 대표 산출물 대량 보존보다 Markdown 링크를 코드 텍스트로 전환하는 정책을 우선한다.
 - 정책 기준은 [`runtime_artifact_policy.md`](../20_harness_engineering/runtime_artifact_policy.md)에 기록했다.
+
+### 2026-07-29 — `docs/03_execution_order` `logs/` Markdown 링크 전환
+
+- `docs/30_work_log`와 `docs/99_meta_handover`에는 `logs/` Markdown 링크가 `0`개였다.
+- 두 디렉터리의 정확 참조된 `logs/` tracked 파일은 `23`개, 정확 참조 라인은 `30`개였으나 이미 코드 텍스트 형태라 전환하지 않았다.
+- 전체 문서의 `logs/` Markdown 링크는 `28`개였다.
+- `docs/03_execution_order`의 `logs/` Markdown 링크 `19`개와 정책 문서 예시 링크 `1`개를 코드 텍스트로 전환했다.
+- 전환 후 남은 `logs/` Markdown 링크는 `8`개다.

@@ -1,7 +1,7 @@
 # Phase 5i-3: NAVER Quota 소진 원인 분석 및 운영 조치 (재시도 5)
 
 > **분석 일자**: 2026-05-29 KST
-> **전제**: `ops-scheduler`는 2026-05-27 장중(00:00~17:55 KST)에 실행되지 않음 — [`scheduler_restart_20260527.log`](logs/scheduler_restart_20260527.log) 로그 증거 기반
+> **전제**: `ops-scheduler`는 2026-05-27 장중(00:00~17:55 KST)에 실행되지 않음 — `logs/scheduler_restart_20260527.log` 로그 증거 기반
 
 ## 1. 분석 범위
 
@@ -35,7 +35,7 @@
 
 ### 2.2 ops-scheduler 기여도 (0%)
 
-- [`logs/scheduler_restart_20260527.log`](logs/scheduler_restart_20260527.log): ops-scheduler가 **17:55:26 KST**에 시작, 즉시 idle 모드 진입
+- `logs/scheduler_restart_20260527.log`: ops-scheduler가 **17:55:26 KST**에 시작, 즉시 idle 모드 진입
   ```
   2026-05-27 17:55:26 [INFO] ops-scheduler: ═══ Reached scheduler end time — entering idle mode ═══
   2026-05-27 17:55:26 [INFO] ops-scheduler:   cycles              : 1
@@ -54,16 +54,16 @@
 
 | # | Log File | query_count | HTTP 429 | Partial Persist | RuntimeError | 비고 |
 |:-:|----------|:-----------:|:--------:|:---------------:|:------------:|------|
-| 1 | [`t3_429_fastfail_verify_20260527.log`](logs/t3_429_fastfail_verify_20260527.log) | 1,585 | 1,560 | 58 | **4,400** | Transaction bug 존재 |
-| 2 | [`t3_transaction_fix_verify_20260527.log`](logs/t3_transaction_fix_verify_20260527.log) | 2,182 | 2,174 | 58 | **0** | Bug 수정됨, 2 cycles |
-| 3 | [`budget_protection_dryrun_20260527.log`](logs/budget_protection_dryrun_20260527.log) | 1,136 | 1,132 | 29 | 0 | 1 cycle, 42 symbols |
-| 4 | [`budget_protection_submit_20260527.log`](logs/budget_protection_submit_20260527.log) | 1,131 | 1,128 | 29 | 0 | |
-| 5 | [`t3_smoke_test_verify_20260527.log`](logs/t3_smoke_test_verify_20260527.log) | 1,131 | 1,126 | 29 | 0 | |
-| 6 | [`t3_sync_verify_20260527_105313.log`](logs/t3_sync_verify_20260527_105313.log) | **1,493** | **0** | 0 | 0 | **가장 큰 단일 소모, 429 없음** |
-| 7 | [`submit_verification_20260527_100650.log`](logs/submit_verification_20260527_100650.log) | 456 | 0 | 0 | 0 | 429 없음 |
-| 8 | [`t3_2cycle_verify_20260527_121137.log`](logs/t3_2cycle_verify_20260527_121137.log) | 117 | **272** | 0 | 0 | 모든 429 = errorCode 010 (daily quota exhausted) |
-| 9 | [`t3_freshness_verify_20260527_125944.log`](logs/t3_freshness_verify_20260527_125944.log) | 102 | **236** | 0 | 0 | 모든 429 = errorCode 010 (daily quota exhausted) |
-| 10 | [`t3_async_verify_20260527.log`](logs/t3_async_verify_20260527.log) | 64 | 132 | 0 | 0 | 82 cycles, daily quota 완전 소진 상태 |
+| 1 | `logs/t3_429_fastfail_verify_20260527.log` | 1,585 | 1,560 | 58 | **4,400** | Transaction bug 존재 |
+| 2 | `logs/t3_transaction_fix_verify_20260527.log` | 2,182 | 2,174 | 58 | **0** | Bug 수정됨, 2 cycles |
+| 3 | `logs/budget_protection_dryrun_20260527.log` | 1,136 | 1,132 | 29 | 0 | 1 cycle, 42 symbols |
+| 4 | `logs/budget_protection_submit_20260527.log` | 1,131 | 1,128 | 29 | 0 | |
+| 5 | `logs/t3_smoke_test_verify_20260527.log` | 1,131 | 1,126 | 29 | 0 | |
+| 6 | `logs/t3_sync_verify_20260527_105313.log` | **1,493** | **0** | 0 | 0 | **가장 큰 단일 소모, 429 없음** |
+| 7 | `logs/submit_verification_20260527_100650.log` | 456 | 0 | 0 | 0 | 429 없음 |
+| 8 | `logs/t3_2cycle_verify_20260527_121137.log` | 117 | **272** | 0 | 0 | 모든 429 = errorCode 010 (daily quota exhausted) |
+| 9 | `logs/t3_freshness_verify_20260527_125944.log` | 102 | **236** | 0 | 0 | 모든 429 = errorCode 010 (daily quota exhausted) |
+| 10 | `logs/t3_async_verify_20260527.log` | 64 | 132 | 0 | 0 | 82 cycles, daily quota 완전 소진 상태 |
 | | **Total** | **~10,397** | **~7,760** | **~203** | **4,400** | |
 
 #### 2.3.2 주요 발견사항

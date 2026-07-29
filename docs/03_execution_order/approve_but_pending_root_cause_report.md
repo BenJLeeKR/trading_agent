@@ -375,8 +375,8 @@ Cycle 3부터 returncode=1이 발생하는 원인을 정확히 파악해야 함.
 | [`decision_orchestrator.py:1144-1199`](src/agent_trading/services/decision_orchestrator.py:1144) | `_check_account_snapshot_freshness()` |
 | [`decision_orchestrator.py:1860-1945`](src/agent_trading/services/decision_orchestrator.py:1860) | `build_submit_order_request_from_decision()` |
 | [`order_manager.py:334-470`](src/agent_trading/services/order_manager.py:334) | `submit_order_to_broker()` — Phase 5 본체 |
-| [`near_real_scheduler_2026-05-15.log`](logs/near_real_scheduler_2026-05-15.log) | 오늘 스케줄러 로그 (ERROR cycles) |
-| [`near_real_scheduler_2026-05-14_closed.log`](logs/near_real_scheduler_2026-05-14_closed.log) | 어제 스케줄러 로그 (정상, 1 symbol) |
+| `logs/near_real_scheduler_2026-05-15.log` | 오늘 스케줄러 로그 (ERROR cycles) |
+| `logs/near_real_scheduler_2026-05-14_closed.log` | 어제 스케줄러 로그 (정상, 1 symbol) |
 
 ---
 
