@@ -209,7 +209,7 @@ FDC가 005930에 대해 BUY/SELL 대신 WATCH를 반환한 원인:
 
 | 파일 | 내용 |
 |------|------|
-| [`logs/smoke_test_full_20260525.log`](../logs/smoke_test_full_20260525.log) | assemble-only 전체 로그 (1.3MB, 8537 lines) |
-| [`logs/smoke_test_submit_20260525.log`](../logs/smoke_test_submit_20260525.log) | submit smoke test 로그 |
-| [`logs/smoke_test_assemble_only_2026-05-25.json`](../logs/smoke_test_assemble_only_2026-05-25.json) | 1차 assemble-only JSON 출력 (Stub, 이전) |
-| [`logs/smoke_test_submit_2026-05-25.txt`](../logs/smoke_test_submit_2026-05-25.txt) | 1차 submit 로그 (Stub, 이전) |
+| `logs/smoke_test_full_20260525.log` | assemble-only 전체 로그 (1.3MB, 8537 lines) |
+| `logs/smoke_test_submit_20260525.log` | submit smoke test 로그 |
+| `logs/smoke_test_assemble_only_2026-05-25.json` | 1차 assemble-only JSON 출력 (Stub, 이전) |
+| `logs/smoke_test_submit_2026-05-25.txt` | 1차 submit 로그 (Stub, 이전) |
