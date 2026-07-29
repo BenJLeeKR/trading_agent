@@ -225,6 +225,15 @@
 - [x] `runtime_tracked_file_count`는 `72`에서 `39`로 감소했다.
 - [x] 처리 기록은 [`data_runtime_canonical_split_review.md`](../30_work_log/data_runtime_canonical_split_review.md)와 [`runtime_write_path_reference_audit.md`](../30_work_log/runtime_write_path_reference_audit.md)에 남겼다.
 
+### P0 12차 — `data/observations/` Markdown 링크 전환
+
+- [x] `data/observations/` tracked 파일 `6`개를 재확인했다.
+- [x] 정확 참조된 `data/observations/` tracked 파일은 `6`개, 정확 참조 라인은 `13`개로 기록했다.
+- [x] 전체 문서의 `data/observations/` Markdown 링크 `13`개를 코드 텍스트로 전환했다.
+- [x] 전환 대상 문서는 `7`개였다.
+- [x] 전환 후 전체 문서의 `data/observations/` Markdown 링크는 `0`개다.
+- [x] 처리 기록은 [`data_runtime_canonical_split_review.md`](../30_work_log/data_runtime_canonical_split_review.md)와 [`runtime_write_path_reference_audit.md`](../30_work_log/runtime_write_path_reference_audit.md)에 남겼다.
+
 ## 작업 이력
 
 | 일자 | 작업자 | 항목 | 변경 파일 수 | 검증 명령 | 주요 출력 지표 | 후속 조치 |
@@ -242,6 +251,7 @@
 | 2026-07-29 | Codex | P0 9차 — `logs/` tracked 파일 추적 제외 | 2562 | `bash scripts/harness/run.sh accept docs`; `bash scripts/harness/run.sh accept ci` | `logs_tracked_count=0`, `runtime_tracked_file_count=72` | `data/` seed/canonical 분리 |
 | 2026-07-29 | Codex | P0 10차 — `data/` runtime/canonical 분리 검토 | 3 | `bash scripts/harness/run.sh accept docs`; `bash scripts/harness/run.sh accept ci` | `data_tracked_count=72`, `data_exact_referenced_file_count=15`, `data_archive_exact_reference_count=0` | `data/instrument_master/archive/` 추적 제외 |
 | 2026-07-29 | Codex | P0 11차 — `data/instrument_master/archive/` tracked 파일 추적 제외 | 37 | `bash scripts/harness/run.sh accept docs`; `bash scripts/harness/run.sh accept ci` | `archive_tracked_count=0`, `archive_files_on_disk_count=34`, `runtime_tracked_file_count=39` | `data/observations/` 링크 보존 정책 결정 |
+| 2026-07-29 | Codex | P0 12차 — `data/observations/` Markdown 링크 전환 | 10 | `bash scripts/harness/run.sh accept docs`; `bash scripts/harness/run.sh accept ci` | `converted_observations_markdown_link_count=13`, `remaining_observations_markdown_link_count=0`, `runtime_tracked_file_count=39` | `data/observations/` tracked 파일 추적 제외 |
 
 ## 갱신 규칙
 

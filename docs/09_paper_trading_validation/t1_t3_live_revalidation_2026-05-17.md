@@ -173,7 +173,7 @@ docker compose run --rm ops-scheduler \
 
 - **스크립트**: [`tests/scripts/test_t1_t3_interaction_analysis.py`](tests/scripts/test_t1_t3_interaction_analysis.py)
 - **실행 일시**: 2026-05-17T10:19:31+00:00
-- **저장 위치**: [`data/observations/t1_t3_comparison_20260517_101931.json`](data/observations/t1_t3_comparison_20260517_101931.json)
+- **저장 위치**: `data/observations/t1_t3_comparison_20260517_101931.json` (`data/observations/t1_t3_comparison_20260517_101931.json`)
 - **분석 symbol**: 051910, 096770, 005930, 035420, 000660 (5개)
 
 ### 5.2 분석 결과 JSON 요약
@@ -433,4 +433,4 @@ flowchart TD
 | [`plans/phase_p4_seeded_news_ei_integration_2026-05-17.md`](plans/phase_p4_seeded_news_ei_integration_2026-05-17.md) | Phase P4: Seeded News EI Integration |
 | [`plans/phase_p5_seeded_news_ei_quality_observation_2026-05-17.md`](plans/phase_p5_seeded_news_ei_quality_observation_2026-05-17.md) | Phase P5: Seeded News EI Quality Observation |
 | [`plans/kis_disclosure_naver_news_two_stage_go_no_go_2026-05-17.md`](plans/kis_disclosure_naver_news_two_stage_go_no_go_2026-05-17.md) | KIS 공시 제목 + NAVER 뉴스 2단계 검증 Go/No-Go |
-| [`data/observations/t1_t3_comparison_20260517_101931.json`](data/observations/t1_t3_comparison_20260517_101931.json) | T1+T3 비교 분석 결과 JSON |
+| `data/observations/t1_t3_comparison_20260517_101931.json` (`data/observations/t1_t3_comparison_20260517_101931.json`) | T1+T3 비교 분석 결과 JSON |

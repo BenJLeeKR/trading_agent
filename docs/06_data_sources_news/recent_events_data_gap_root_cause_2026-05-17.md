@@ -54,7 +54,7 @@
 
 **결론: N/A — quality gate가 적용될 기회 자체가 없었다.**
 
-- 수동 검증([`naver_live_validation`](data/observations/naver_live_validation_20260517_193100.json)) 결과:
+- 수동 검증(`naver_live_validation` (`data/observations/naver_live_validation_20260517_193100.json`)) 결과:
   - raw_candidates: 370건
   - hard_gate_passed: 75건
   - final_kept: **10건** (005380 포함 1건, score=70)
