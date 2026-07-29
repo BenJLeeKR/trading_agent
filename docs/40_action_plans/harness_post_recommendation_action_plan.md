@@ -35,7 +35,7 @@
 - `destructive_deploy_clean_command_count`가 `0`이다.
 - 배포 job이 untracked/ignored runtime 파일을 삭제하지 않는다는 정적 검사 결과가 보고된다.
 
-분류 상세는 [`runtime_write_path_inventory.md`](runtime_write_path_inventory.md)를 따른다.
+분류 상세는 [`runtime_write_path_inventory.md`](../30_work_log/runtime_write_path_inventory.md)를 따른다.
 
 ### P1 — 장 시간 배포 가드와 수동 재배포 진입점
 
@@ -142,7 +142,7 @@
 - [x] `tmp/`는 tracked `55`개 중 Python 임시 스크립트 `40`개, 결과·백업·패치 파일 `15`개로 분류했다.
 - [x] `data/`는 tracked `72`개 중 `instrument_master=42`, `observations=6`, 루트 JSON `24`개로 분류했다.
 - [x] `logs/`와 `tmp/`는 전체 추적 제외 후보, `data/`는 하위 경로별 분류 대상으로 판정했다.
-- [x] 분류 결과와 Codex 추천안을 [`runtime_write_path_inventory.md`](runtime_write_path_inventory.md)에 기록했다.
+- [x] 분류 결과와 Codex 추천안을 [`runtime_write_path_inventory.md`](../30_work_log/runtime_write_path_inventory.md)에 기록했다.
 
 ### P0 3차 — tracked runtime 참조 감사
 
@@ -151,7 +151,7 @@
 - [x] 정확 참조된 tracked runtime 파일은 `182`개, 정확 참조 라인은 `507`개로 기록했다.
 - [x] 정확 참조된 tracked 파일은 `logs=166`, `tmp=1`, `data=15`로 분류했다.
 - [x] 즉시 전체 `git rm --cached -r logs tmp data`는 금지하고, `tmp/`부터 작은 PR로 정리하는 추천안을 남겼다.
-- [x] 감사 결과는 [`runtime_write_path_reference_audit.md`](runtime_write_path_reference_audit.md)에 기록했다.
+- [x] 감사 결과는 [`runtime_write_path_reference_audit.md`](../30_work_log/runtime_write_path_reference_audit.md)에 기록했다.
 
 ## 작업 이력
 
@@ -161,6 +161,7 @@
 | 2026-07-29 | Codex | P0 1차 — 배포 파괴 명령 차단과 runtime ignore 기준 | 4 | `bash scripts/harness/run.sh accept ci`; `bash scripts/harness/run.sh accept docs` | `destructive_deploy_clean_command_count=0`, `runtime_tracked_file_count=2687` | tracked runtime 파일 목적별 분류 |
 | 2026-07-29 | Codex | P0 2차 — tracked runtime 파일 분류 | 2 | `bash scripts/harness/run.sh accept docs` | `runtime_tracked_file_count=2687`, `logs=2560`, `tmp=55`, `data=72` | `logs/`, `tmp/` 추적 제외 PR 범위 결정 |
 | 2026-07-29 | Codex | P0 3차 — tracked runtime 참조 감사 | 3 | `bash scripts/harness/run.sh accept docs`; `bash scripts/harness/run.sh accept ci` | `exact_referenced_tracked_runtime_file_count=182`, `exact_reference_line_count=507` | `tmp/` 정리 PR부터 진행 |
+| 2026-07-29 | Codex | 작업기록 문서 라우팅 정리 | 3 | `bash scripts/harness/run.sh accept docs`; `bash scripts/harness/run.sh accept ci` | `moved_work_log_document_count=2`, `updated_plan_link_count=4` | P0 `tmp/` 정리 PR |
 
 ## 갱신 규칙
 
