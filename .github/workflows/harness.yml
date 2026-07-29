@@ -206,4 +206,7 @@ jobs:
             docker compose up -d --build --remove-orphans
             echo "deploy_restart_run=1"
 
+            docker exec nginx-proxy nginx -s reload
+            echo "deploy_proxy_reload_run=1"
+
             docker compose ps
