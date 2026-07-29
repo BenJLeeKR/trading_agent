@@ -218,4 +218,14 @@ Codex 추천은 다음과 같다.
 - 작업트리의 후보 실제 파일은 `21`개로 보존됐다.
 - 남은 top-level root JSON tracked 파일은 `3`개다.
 - `runtime_tracked_file_count`는 `33`에서 `12`로 감소했다.
+
+### 2026-07-29 — `data/ar_fdc_*.json` Markdown 링크 전환
+
+- `data/ar_fdc_*.json` tracked 파일은 `2`개다.
+- 전환 전 전체 문서의 `data/ar_fdc_*.json` Markdown 링크는 `3`개였다.
+- 전환 대상 문서는 `2`개였다.
+- Markdown 링크 `3`개를 모두 코드 텍스트로 전환했다.
+- 전환 후 전체 문서의 `data/ar_fdc_*.json` Markdown 링크는 `0`개다.
+- 정확 참조된 `data/ar_fdc_*.json` tracked 파일은 `2`개, 정확 참조 라인은 `19`개다.
+- 정확 참조는 코드 텍스트 또는 일반 텍스트로 남아 있으며, `accept docs`의 Markdown 링크 검증 대상이 아니다.
 - `.gitignore`에 `data/signal_feature_snapshot_input_*.json`과 `data/trigger_proxy_attribution_*.json`를 추가했다.

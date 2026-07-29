@@ -178,8 +178,8 @@ OLD-style prompt는 `_build_old_style_ar_prompt()` / `_build_old_style_fdc_promp
 |------|------|
 | [`plans/ar_fdc_provider_2phase_design.md`](plans/ar_fdc_provider_2phase_design.md) | 2단계 분리 설계 문서 |
 | [`scripts/ar_fdc_provider_validation.py`](scripts/ar_fdc_provider_validation.py) | Phase 2: Provider call only (신규) |
-| [`data/ar_fdc_prompts_030200.json`](data/ar_fdc_prompts_030200.json) | Phase 1 artifact (prompt + quality) |
-| [`data/ar_fdc_provider_validation_030200.json`](data/ar_fdc_provider_validation_030200.json) | Phase 2 artifact (provider results) |
+| `data/ar_fdc_prompts_030200.json` | Phase 1 artifact (prompt + quality) |
+| `data/ar_fdc_provider_validation_030200.json` | Phase 2 artifact (provider results) |
 
 ### 수정된 파일
 

@@ -133,7 +133,7 @@ AR도 동일한 패턴(`symbol=result.symbol`)이지만, **prompt에 Symbol line
 | **결과** | **정상** | **UNKNOWN** |
 
 **근거**:
-1. FDC prompt 아티팩트 ([`data/ar_fdc_prompts_030200.json`](data/ar_fdc_prompts_030200.json))의 `fdc_*_prompt` 필드에서 `Symbol:` 문자열이 **존재하지 않음**
+1. FDC prompt 아티팩트(`data/ar_fdc_prompts_030200.json`)의 `fdc_*_prompt` 필드에서 `Symbol:` 문자열이 **존재하지 않음**
 2. AR prompt에는 `Symbol: 030200`이 존재
 3. FDC `_build_user_prompt()` 코드에 Symbol line 생성 로직이 없음
 4. `DecisionContextEntity`에는 `symbol` 필드 자체가 없음 ([`entities.py:144-153`](src/agent_trading/domain/entities.py:144))
