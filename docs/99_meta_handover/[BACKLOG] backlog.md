@@ -1829,6 +1829,16 @@
   미제시. 상세: `docs/10_signal_research_sppv/[DESIGN] regime_
   conditional_entry_signal_v1.md` §120.
 
+- 2026-07-29 KST(SPPV-2.133, 신규 KIS 호출 0건, **코드 변경
+  포함**): `relative_activity` 案1 diff 실제 적용 —
+  `deterministic_trigger_engine.py`의 `_build_buy_ranking_score`
+  에서 `0.10*relative_activity` 항 제거, `entry_score` 쪽 반영은
+  유지. 관련 단위 테스트 4개 파일(125건) + 하네스 `accept
+  backend-file` 통과. 경계값 부근 기존 테스트 1건은 fixture 최소
+  보정. `coverage_score` threshold 재설계는 미착수. 상세: `docs/
+  10_signal_research_sppv/[DESIGN] regime_conditional_entry_
+  signal_v1.md` §121.
+
 ---
 
 ## 관리 원칙

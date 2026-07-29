@@ -10079,10 +10079,21 @@ agent 설계 문서 기준으로도 순서는 다음이 맞다.
      **案1이 더 보수적이며 이번 턴 기준 최초로 즉시 diff 초안
      작성이 가능한 안**으로 확정. 상세: `docs/10_signal_research_
      sppv/[DESIGN] regime_conditional_entry_signal_v1.md` §120.
-   - **SPPV-3(다음 착수: [1순위] `relative_activity` 案1(ranking_
-     score에서 `0.10*relative_activity` 항 제거, `entry_score`
-     내부 항은 유지)의 구체적 diff 초안 작성 — 사용자 승인 시
-     코드 변경 턴으로 전환 +
+   - **SPPV-2.133(완료, 2026-07-29 KST, `relative_activity` 案1
+     diff 실제 적용, 작성자: Codex, `.env` 미수정, Full pytest
+     미실행, 신규 KIS 호출 0건 — 이번 항목만 코드 변경 포함)**:
+     `deterministic_trigger_engine.py`의 `_build_buy_ranking_
+     score`에서 `0.10*relative_activity` 항과 미사용 `signal_
+     feature_snapshot` 매개변수를 제거, `entry_score` 쪽 반영은
+     유지. 관련 단위 테스트 4개 파일(125건) + 하네스 `accept
+     backend-file` 통과. `_CORE_RISK_OFF_RANKING_MIN_SCORE=0.48`
+     경계 부근에 있던 기존 테스트 1건은 `turnover_surge_ratio`
+     최소 보정으로 의도 유지. `coverage_score` threshold 재설계
+     는 미착수(별도 트랙 유지). 상세: `docs/10_signal_research_
+     sppv/[DESIGN] regime_conditional_entry_signal_v1.md` §121.
+   - **SPPV-3(다음 착수: [1순위] 이번 diff 반영 이후 `ranking_
+     blocked`/`shadow_topk_exception_v2` 발동 빈도 변화를 다음
+     거래일 이후 실측 관찰(read-only, 완화안 아님) +
      [2순위] `coverage_score` A안을 위한 threshold(`0.48`/`0.22`)
      재설계 별도 트랙 — 단독 제거가 아니라 재정규화/threshold
      재산정을 함께 설계해야 함(완화안 설계는 아직 아님, 트랙

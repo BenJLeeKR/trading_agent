@@ -2654,6 +2654,27 @@ entry 설계 검토로 전환**을 확정했다. 별도 문서
   확정. 상세: `docs/10_signal_research_sppv/[DESIGN] regime_
   conditional_entry_signal_v1.md` §120.
 
+- 작성자: Codex
+- 수정일자: 2026-07-29 KST (133차, `relative_activity` 案1 diff
+  실제 적용, `.env` 미수정, Full pytest 미실행, 신규 KIS 호출
+  0건 — 이번 항목만 코드 변경 포함)
+- 수정내용: `deterministic_trigger_engine.py`의 `_build_buy_
+  ranking_score`에서 `relative_activity` 계산과 `0.10*relative_
+  activity` 항, 미사용이 된 `signal_feature_snapshot` 매개변수를
+  제거. `entry_score` 쪽 `relative_activity_bonus`는 변경 없음.
+  `coverage_score`/threshold 상수는 손대지 않음. 최소 검증:
+  `test_deterministic_trigger_engine.py`(20 passed), `test_
+  trigger_proxy_attribution.py`+`test_decision_orchestrator.py`+
+  `test_core_risk_off_topk_projection.py`(93 passed), `test_
+  decision_factory.py`+`test_expected_value_gate.py`(12 passed),
+  하네스 `accept backend-file`(PASS). 경계값(`_CORE_RISK_OFF_
+  RANKING_MIN_SCORE=0.48`) 부근에 있던 기존 테스트 1건(`test_
+  trigger_engine_marks_risk_off_exception_eligible_for_strong_
+  core_setup`)은 새 ranking_score 분포에 맞춰 `turnover_surge_
+  ratio`만 1.60→2.50으로 최소 보정(의도 유지, 값만 조정). 상세:
+  `docs/10_signal_research_sppv/[DESIGN] regime_conditional_
+  entry_signal_v1.md` §121.
+
 ---
 
 ## 진행 체크리스트
@@ -5701,6 +5722,17 @@ canonical),
     로직 변경 없음, 신규 KIS 호출 0건(shadow 재호출은 `kis_
     client=None`). 상세: `docs/10_signal_research_sppv/[DESIGN]
     regime_conditional_entry_signal_v1.md` §94.
+- [x] **SPPV-2.133(신설)** `relative_activity` 案1 diff 실제 적용
+  (완료, 2026-07-29 KST, 작성자: Codex, `.env` 미수정, Full
+  pytest 미실행, 신규 KIS 호출 0건 — **이번 항목만 코드 변경
+  포함**)
+  - `deterministic_trigger_engine.py`의 `_build_buy_ranking_
+    score`에서 `0.10*relative_activity` 항 제거, `entry_score`
+    쪽 반영은 유지. 관련 단위 테스트 4개 파일(125건) + 하네스
+    `accept backend-file` 통과. 경계값 근처였던 기존 테스트 1건
+    fixture 최소 보정. `coverage_score` threshold 재설계는
+    미착수. 상세: `docs/10_signal_research_sppv/[DESIGN] regime_
+    conditional_entry_signal_v1.md` §121.
 - [x] **SPPV-2.132(신설)** `coverage_score` threshold 연쇄영향
   정량 재계산 + `relative_activity` 유지 위치 비교 (완료,
   2026-07-29 KST, 작성자: Codex, 코드 미수정, `.env` 미수정,

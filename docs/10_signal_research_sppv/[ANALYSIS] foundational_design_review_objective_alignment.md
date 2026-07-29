@@ -2746,3 +2746,26 @@ research_sppv/[DESIGN] regime_conditional_entry_signal_v1.md`
 필요), `relative_activity`=案1으로 diff 착수 가능. 완화안/코드
 diff는 여전히 미착수. 상세: `docs/10_signal_research_sppv/
 [DESIGN] regime_conditional_entry_signal_v1.md` §120.
+
+## 19. `relative_activity` 案1 diff 실제 적용(SPPV-2.133, 2026-07-29 KST)
+
+§18에서 diff 착수 가능으로 판정된 `relative_activity` 案1을 실제 코드에
+반영했다(`.env` 미수정, Full pytest 미실행, 신규 KIS 호출 0건 — 이번
+항목만 코드 변경 포함).
+
+- **코드 변경**: `deterministic_trigger_engine.py`의 `_build_buy_ranking_
+  score`에서 `0.10*relative_activity` 항과 그 계산에 쓰이던 `signal_
+  feature_snapshot` 매개변수를 제거. `entry_score` 내부의 relative_
+  activity 반영은 그대로 유지. `coverage_score`/threshold 상수는
+  손대지 않음.
+- **최소 검증**: 관련 단위 테스트 4개 파일(125건 전부 통과) + 하네스
+  `accept backend-file` PASS. Full pytest/외부 API 호출 없음.
+- **테스트 보정 1건**: 기존 테스트 하나가 `_CORE_RISK_OFF_RANKING_MIN_
+  SCORE=0.48` 경계 바로 위에 있던 fixture라 항 제거로 통과 기준을
+  밑돌게 되어, 테스트 의도(강한 core setup에서 예외 자격 성립)를 유지한
+  채 입력값 하나(`turnover_surge_ratio`)만 최소 보정.
+
+**결론**: `relative_activity`는 diff 착수 판정에서 실제 적용까지 완료.
+`coverage_score` threshold 재설계는 이번 턴에서도 미착수(별도 트랙
+유지). 상세: `docs/10_signal_research_sppv/[DESIGN] regime_conditional_
+entry_signal_v1.md` §121.

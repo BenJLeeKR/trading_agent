@@ -1,14 +1,16 @@
 # ranking_score 공식 검증 계획
 
 작성일: 2026-07-28  
-상태: [SPPV-2.132에서 갱신] 남은 2개 확인 과제 검증 완료(§6.16).
-`coverage_score` A안은 threshold(`0.48`/`0.22`) 통과율이
-극단적으로 붕괴함을 정량 확인해 **diff 보류**(threshold
-재설계 선행 필요). `relative_activity`는 案1(ranking에서
-제거, entry_score 유지)이 threshold 영향 미미 + diff 범위
-최소임을 확인해 **다음 턴 diff 초안 작성 가능**으로 판정.
-완화안 확정은 아니며 코드 diff는 여전히 미착수(SPPV-2.119~
-2.132 참고)
+상태: [SPPV-2.133에서 갱신] `relative_activity` 案1의 실제 코드
+diff 적용 완료 — `_build_buy_ranking_score`에서 `0.10*
+relative_activity` 항을 제거하고 `entry_score` 쪽 반영은 그대로
+유지(`deterministic_trigger_engine.py`). 최소 검증(관련 단위
+테스트 4개 파일, 하네스 `accept backend-file`) 통과. 경계값
+근처였던 기존 테스트 1건(`test_trigger_engine_marks_risk_off_
+exception_eligible_for_strong_core_setup`)은 새 ranking_score
+분포에 맞춰 fixture(turnover_surge_ratio)만 최소 보정. `coverage_
+score` threshold 재설계는 이번 턴에서 손대지 않음, 별도 트랙으로
+유지(SPPV-2.119~2.133 참고)
 
 ## 1. 문서 목적
 
@@ -835,6 +837,39 @@ KST, 완료 — §6.15의 미확정 2건을 닫음)
 
 상세: `docs/10_signal_research_sppv/[DESIGN] regime_conditional_
 entry_signal_v1.md` §120.
+
+### 6.17 SPPV-2.133 — `relative_activity` 案1 diff 실제 적용(신규,
+2026-07-29 KST, 완료 — §6.16의 diff 착수 가능 판정을 실행에 옮김)
+
+- [x] **코드 변경**: `src/agent_trading/services/deterministic_
+      trigger_engine.py`의 `_build_buy_ranking_score`에서
+      `relative_activity` 계산/항(`0.10*relative_activity`)과
+      미사용이 된 `signal_feature_snapshot` 매개변수를 제거.
+      `entry_score` 쪽(`_build_entry_score`의 `relative_activity_
+      bonus`)은 변경 없음. `coverage_score`/threshold 상수는
+      손대지 않음(사실).
+- [x] **최소 검증**: `tests/services/test_deterministic_trigger_
+      engine.py`(20 passed), `test_trigger_proxy_attribution.py`
+      + `test_decision_orchestrator.py` + `test_core_risk_off_
+      topk_projection.py`(93 passed), `test_decision_factory.py`
+      + `test_expected_value_gate.py`(12 passed), 하네스
+      `accept backend-file`(PASS). Full pytest/외부 API 호출
+      없음(사실).
+- [x] **테스트 보정 1건**: `test_trigger_engine_marks_risk_off_
+      exception_eligible_for_strong_core_setup`가 `_CORE_RISK_
+      OFF_RANKING_MIN_SCORE=0.48` 경계 바로 위(구 ranking_score
+      ≈0.46~0.48대)에 있던 fixture라 항 제거로 통과 기준을
+      밑돌게 됨 — 테스트 의도(강한 core setup에서 예외 자격
+      성립)를 유지한 채 `turnover_surge_ratio`만 1.60→2.50으로
+      최소 보정(신규 ranking_score=0.4849). §120에서 예측한
+      "일반 모집단 영향은 미미(14.8%→14.3%)하나 개별 경계 사례는
+      이동할 수 있음"이 실제 코드 반영 단계에서 구체적으로
+      확인된 사례(해석).
+- [x] **범위 준수**: `coverage_score` threshold 재설계는 이번
+      턴에서 착수하지 않음(별도 트랙 유지).
+
+상세: `docs/10_signal_research_sppv/[DESIGN] regime_conditional_
+entry_signal_v1.md` §121.
 
 ## 7. 완료 기준
 
