@@ -1,16 +1,17 @@
 # ranking_score 공식 검증 계획
 
 작성일: 2026-07-28  
-상태: [SPPV-2.133에서 갱신] `relative_activity` 案1의 실제 코드
-diff 적용 완료 — `_build_buy_ranking_score`에서 `0.10*
-relative_activity` 항을 제거하고 `entry_score` 쪽 반영은 그대로
-유지(`deterministic_trigger_engine.py`). 최소 검증(관련 단위
-테스트 4개 파일, 하네스 `accept backend-file`) 통과. 경계값
-근처였던 기존 테스트 1건(`test_trigger_engine_marks_risk_off_
-exception_eligible_for_strong_core_setup`)은 새 ranking_score
-분포에 맞춰 fixture(turnover_surge_ratio)만 최소 보정. `coverage_
-score` threshold 재설계는 이번 턴에서 손대지 않음, 별도 트랙으로
-유지(SPPV-2.119~2.133 참고)
+상태: [SPPV-2.134에서 갱신] `relative_activity` 案1 diff(SPPV-
+2.133, PR #14, 2026-07-29 12:39:59 KST 병합) 적용 이후 영향을
+운영 실측으로 확인. **관측 결과: 병합 이후 1개 사이클(n=15)만
+확보돼 표본이 극히 작음** — `ranking_score` 평균/중앙값 미세
+이동(0.3358→0.3319 / 0.3037→0.2811)은 자연 변동 범위, `buy_
+candidate`(0→0)/`shadow_topk_exception_v2`(0건 유지)는 **변화
+없음**. 핵심 병목은 여전히 `coverage_score`+절대 threshold
+(`0.48`/`0.22`) 조합으로 재확인. **다음 1순위: `coverage_score`
+threshold 재설계로 바로 가지 않고, 1~2 거래일 추가 운영 관측을
+먼저 축적한다(2안 채택)**. `coverage_score` threshold 재설계는
+착수하지 않은 상태 유지(SPPV-2.119~2.134 참고)
 
 ## 1. 문서 목적
 
@@ -870,6 +871,35 @@ entry_signal_v1.md` §120.
 
 상세: `docs/10_signal_research_sppv/[DESIGN] regime_conditional_
 entry_signal_v1.md` §121.
+
+### 6.18 SPPV-2.134 — `relative_activity` 案1 적용 후 영향 확인 +
+다음 설계 분기 확정(신규, 2026-07-29 KST, 완료)
+
+- [x] **배포 확인**: `app`/`ops-scheduler` 컨테이너의 코드가
+      병합된 `main`과 동일(md5sum 일치), 사이클마다 새 서브프로세스
+      기동 구조라 병합 직후 첫 사이클부터 신규 코드 적용됨을 확인
+      (사실).
+- [x] **적용 전/후 비교**(read-only): 병합 직전 30분(n=120) vs
+      병합 이후 1개 사이클(n=15) — `ranking_score` 평균/중앙값
+      0.3358/0.3037→0.3319/0.2811(미세 이동, 표본 극소로 해석
+      보류), `ranking_blocked` 비중 46.7%→53.3%(표본 15건 단일
+      창 변동, 의미 있는 변화로 해석하지 않음), `buy_candidate`
+      0/120→0/15(**변화 없음**), `shadow_topk_exception_v2`
+      발동 0건 유지(**변화 없음**).
+- [x] **관측 한계 명시**: 병합 이후 경과 약 6분, 사이클 1회만
+      확보 — `ranking_score` 분포의 실제(장기) 이동 여부는 이번
+      자료로 판정 불가(미확정, 명시).
+- [x] **핵심 병목 재판정**: `eligibility_core_risk_off_ranking_
+      blocked`가 여전히 최다 차단 사유, `buy_candidate`는 여전히
+      0 — 핵심 병목은 여전히 `coverage_score`+절대 threshold
+      (`0.48`/`0.22`) 조합(기존 판정 재확인, 신규 반박 근거 없음).
+- [x] **다음 1순위 결정**: **2안 채택** — `coverage_score`
+      threshold 재설계로 바로 가지 않고, 1~2 거래일 추가 운영
+      관측을 먼저 축적한 뒤 §120 예측치(14.8%→14.3%)와의 실측
+      부합 여부를 확인하고 진행 여부를 결정.
+
+상세: `docs/10_signal_research_sppv/[DESIGN] regime_conditional_
+entry_signal_v1.md` §122.
 
 ## 7. 완료 기준
 
