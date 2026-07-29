@@ -326,6 +326,29 @@ deploy_target_sha_pin_count = int(
         "deploy_target_sha=",
     )
 )
+deploy_market_hours_guard_count = int(
+    contains(
+        workflow,
+        "market_hours_guard:",
+        "TZ=Asia/Seoul date +%H%M",
+        "deploy_skipped_by_market_hours_count",
+        "deploy_market_hours_override_count",
+        "allow_market_hours_deploy",
+    )
+)
+deploy_market_hours_skip_metric_count = int(
+    "deploy_skipped_by_market_hours_count=" in workflow_text
+)
+deploy_market_hours_override_metric_count = int(
+    "deploy_market_hours_override_count=" in workflow_text
+)
+deploy_job_depends_on_market_guard_count = int(
+    contains(
+        workflow,
+        "needs: [safe, changes, market_hours_guard]",
+        "needs.market_hours_guard.outputs.allow_deploy == '1'",
+    )
+)
 
 contract_checks = [
     ("workflow_declares_pull_request", "pull_request:" in workflow_text),
@@ -343,10 +366,12 @@ contract_checks = [
     ("workflow_deploy_depends_on_change_detector", contains(workflow, "Deployment change detector", "needs.changes.outputs.deploy_required == '1'", "deploy_skipped_by_docs_only_count")),
     ("workflow_deploy_supports_manual_dispatch", contains(workflow, "github.event_name == 'workflow_dispatch' && inputs.deploy_main == 'true'", "deploy_manual_dispatch_requested_count")),
     ("workflow_manual_deploy_targets_latest_origin_main", contains(workflow, 'git fetch origin main', 'deploy_target_sha="$(git rev-parse origin/main)"', 'git reset --hard "$deploy_target_sha"', "deploy_target_sha=")),
+    ("workflow_deploy_has_market_hours_guard", contains(workflow, "market_hours_guard:", "TZ=Asia/Seoul date +%H%M", "allow_market_hours_deploy", "deploy_skipped_by_market_hours_count", "deploy_market_hours_override_count")),
+    ("workflow_deploy_job_depends_on_market_guard", contains(workflow, "needs: [safe, changes, market_hours_guard]", "needs.market_hours_guard.outputs.allow_deploy == '1'")),
     ("workflow_deploy_runs_migration_before_restart", contains(workflow, "docker compose run --rm migrate", "docker compose up -d --build --remove-orphans")),
     ("workflow_deploy_reloads_proxy_after_restart", contains(workflow, "docker exec nginx-proxy nginx -s reload", "deploy_proxy_reload_run=1")),
     ("readme_declares_ci_harness", contains(readme, "CI 검증 기준", ".github/workflows/harness.yml", "bash scripts/harness/run.sh", "Require Harness on main", "Safe harness contracts")),
-    ("harness_readme_declares_ci_harness", contains(harness_readme, "CI 공동 사용 원칙", "safe", "workflow_dispatch", "deploy_main", "allow_market_hours_deploy", "HARNESS_ALLOW_HEAVY=1", "Require Harness on main", "Safe harness contracts")),
+    ("harness_readme_declares_ci_harness", contains(harness_readme, "CI 공동 사용 원칙", "safe", "workflow_dispatch", "deploy_main", "allow_market_hours_deploy", "09:00-15:30 KST", "HARNESS_ALLOW_HEAVY=1", "Require Harness on main", "Safe harness contracts")),
     ("workflow_fetches_full_history_for_diff_contracts", contains(workflow, "fetch-depth: 0")),
     ("agents_declares_ci_harness", contains(agents, ".github/workflows/harness.yml", "bash scripts/harness/run.sh")),
     ("makefile_declares_accept_ci", contains(makefile, "accept-ci:", "bash scripts/harness/run.sh accept ci")),
@@ -369,6 +394,10 @@ metrics = {
     "deploy_manual_dispatch_input_count": deploy_manual_dispatch_input_count,
     "deploy_manual_dispatch_support_count": deploy_manual_dispatch_support_count,
     "deploy_target_sha_pin_count": deploy_target_sha_pin_count,
+    "deploy_market_hours_guard_count": deploy_market_hours_guard_count,
+    "deploy_market_hours_skip_metric_count": deploy_market_hours_skip_metric_count,
+    "deploy_market_hours_override_metric_count": deploy_market_hours_override_metric_count,
+    "deploy_job_depends_on_market_guard_count": deploy_job_depends_on_market_guard_count,
     "runtime_tracked_file_count": len(tracked_runtime_files),
     "legacy_docker_compose_count": len(legacy_docker_compose_hits),
     "ci_contract_failed_count": len(failed_contract_checks),
@@ -381,6 +410,10 @@ informational_metrics = {
     "deploy_manual_dispatch_input_count",
     "deploy_manual_dispatch_support_count",
     "deploy_target_sha_pin_count",
+    "deploy_market_hours_guard_count",
+    "deploy_market_hours_skip_metric_count",
+    "deploy_market_hours_override_metric_count",
+    "deploy_job_depends_on_market_guard_count",
     "runtime_tracked_file_count",
 }
 passed = all(

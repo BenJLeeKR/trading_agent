@@ -218,11 +218,62 @@ jobs:
           bash scripts/harness/run.sh full-test
           bash scripts/harness/run.sh admin-build
 
-  deploy:
-    name: Deploy after safe harness
+  market_hours_guard:
+    name: Market-hours deploy guard
     runs-on: ubuntu-latest
     needs: [safe, changes]
     if: needs.safe.result == 'success' && ((github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.changes.outputs.deploy_required == '1') || (github.event_name == 'workflow_dispatch' && inputs.deploy_main == 'true'))
+    outputs:
+      allow_deploy: ${{ steps.guard.outputs.allow_deploy }}
+      deploy_skipped_by_market_hours_count: ${{ steps.guard.outputs.deploy_skipped_by_market_hours_count }}
+      deploy_market_hours_override_count: ${{ steps.guard.outputs.deploy_market_hours_override_count }}
+    steps:
+      - name: Evaluate KST market-hours guard
+        id: guard
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          hour_min_kst="$(TZ=Asia/Seoul date +%H%M)"
+          weekday_kst="$(TZ=Asia/Seoul date +%u)"
+          timestamp_kst="$(TZ=Asia/Seoul date +%Y-%m-%dT%H:%M:%S%z)"
+
+          in_market_hours="0"
+          if [ "$weekday_kst" -ge 1 ] && [ "$weekday_kst" -le 5 ] && [ "$hour_min_kst" -ge 0900 ] && [ "$hour_min_kst" -lt 1530 ]; then
+            in_market_hours="1"
+          fi
+
+          allow_deploy="1"
+          deploy_skipped_by_market_hours_count="0"
+          deploy_market_hours_override_count="0"
+
+          if [ "$in_market_hours" = "1" ]; then
+            if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ "${{ inputs.allow_market_hours_deploy }}" = "true" ]; then
+              deploy_market_hours_override_count="1"
+            else
+              allow_deploy="0"
+              deploy_skipped_by_market_hours_count="1"
+            fi
+          fi
+
+          {
+            echo "allow_deploy=$allow_deploy"
+            echo "deploy_skipped_by_market_hours_count=$deploy_skipped_by_market_hours_count"
+            echo "deploy_market_hours_override_count=$deploy_market_hours_override_count"
+          } >> "$GITHUB_OUTPUT"
+
+          echo "market_guard_kst_timestamp=$timestamp_kst"
+          echo "market_guard_weekday_kst=$weekday_kst"
+          echo "market_guard_hour_min_kst=$hour_min_kst"
+          echo "market_guard_in_market_hours=$in_market_hours"
+          echo "deploy_skipped_by_market_hours_count=$deploy_skipped_by_market_hours_count"
+          echo "deploy_market_hours_override_count=$deploy_market_hours_override_count"
+
+  deploy:
+    name: Deploy after safe harness
+    runs-on: ubuntu-latest
+    needs: [safe, changes, market_hours_guard]
+    if: needs.safe.result == 'success' && needs.market_hours_guard.outputs.allow_deploy == '1'
     steps:
       - name: Deploy to Oracle Cloud
         uses: appleboy/ssh-action@v1.0.3
@@ -245,6 +296,7 @@ jobs:
             else
               echo "deploy_manual_dispatch_count=0"
             fi
+            echo "deploy_market_hours_override_count=${{ needs.market_hours_guard.outputs.deploy_market_hours_override_count }}"
             echo "deploy_target_sha=$deploy_target_sha"
 
             docker compose run --rm migrate
