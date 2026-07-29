@@ -22,6 +22,7 @@ GitHub Actions도 사람과 AI가 쓰는 동일한 하네스를 사용한다. CI
 - 기본 PR/push gate는 `.github/workflows/harness.yml`의 `safe` job이다.
 - `safe` job은 `check quick`, `accept db-structure`, `accept architecture`, `accept style`, `type-check backend`, `type-check frontend`, `security scan`을 실행한다.
 - CI workflow 자체의 정합성 판정은 `accept ci`가 담당한다.
+- GitHub ruleset `Require Harness on main`은 기본 브랜치에 `Safe harness contracts` 상태 검사를 필수 항목으로 요구한다.
 - CI의 PostgreSQL 버전 판정은 `.postgres-version`과 같은 버전의 `trading_db` 컨테이너를 시작한 뒤 `accept env`가 확인한다.
 - CI의 Node.js/npm 판정은 `.nvmrc`, `.npm-version`과 일치하는 pin 이미지 또는 setup-node 환경을 기준으로 확인한다.
 - `HARNESS_ALLOW_HEAVY=1`이 필요한 L4/L5 검증은 기본 PR/push에서 실행하지 않고 `workflow_dispatch` 입력으로만 실행한다.
@@ -126,7 +127,7 @@ Makefile에서는 승인 필요 명령을 `heavy-*` target으로 노출한다. �
 - `required_harness_command_missing_count`: 기본 CI gate에 필요한 하네스 명령 누락 수.
 - `direct_verifier_command_count`: CI workflow가 `pytest`, `ruff`, `npm test`, `tsc`, `vitest` 같은 정답 판정기를 직접 호출한 수.
 - `safe_forbidden_heavy_command_count`: 기본 PR/push `safe` job에 L4/L5 heavy 명령 또는 `HARNESS_ALLOW_HEAVY`가 섞인 수.
-- `ci_contract_failed_count`: workflow trigger, version pin, heavy 수동 실행 조건, 문서 연결 실패 수.
+- `ci_contract_failed_count`: workflow trigger, version pin, heavy 수동 실행 조건, required check 문서 연결 실패 수.
 
 ### `accept env`
 
