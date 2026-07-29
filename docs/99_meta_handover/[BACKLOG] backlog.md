@@ -1850,6 +1850,18 @@
   10_signal_research_sppv/[DESIGN] regime_conditional_entry_
   signal_v1.md` §122.
 
+- 2026-07-29 KST(SPPV-2.135, 신규 KIS 호출 0건, 진행 중): `relative_
+  activity` 1안 적용 후 운영 관측 추가 축적. 병합 이후 실제 경과
+  시간 약 41분(초기 1사이클 n=15 → 누적 약 9사이클 n=134) —
+  "5거래일 수준 관측"은 캘린더 시간 제약으로 이번 턴에서 확보 불가.
+  `ranking_blocked` 비중 56.2%→47.8%(병합 이전 기준값 46.7%에
+  더 가깝게 회귀). `buy_candidate`·`APPROVE`·`order_request`·
+  `shadow_topk_exception_v2`는 초기·누적 창 모두 **0 유지**(변화
+  없음). 핵심 병목 재확인: `coverage_score`+절대 threshold(`0.48`/
+  `0.22`). **다음 1순위: 2안(추가 관측 연장) 유지, 관측 단계
+  미종료**. 상세: `docs/10_signal_research_sppv/[DESIGN] regime_
+  conditional_entry_signal_v1.md` §123.
+
 ---
 
 ## 관리 원칙

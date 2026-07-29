@@ -2693,6 +2693,26 @@ entry 설계 검토로 전환**을 확정했다. 별도 문서
   보류**. 상세: `docs/10_signal_research_sppv/[DESIGN] regime_
   conditional_entry_signal_v1.md` §122.
 
+- 작성자: Codex
+- 수정일자: 2026-07-29 KST (135차, `relative_activity` 1안 적용
+  후 운영 관측 추가 축적, 진행 중, 코드 미수정, `.env` 미수정,
+  Full pytest 미실행, 신규 KIS 호출 0건)
+- 수정내용: 병합 이후 실제 경과 시간은 약 41분에 불과해, 이번
+  턴 요청된 "5거래일 수준 관측"은 캘린더 시간 제약으로 확보되지
+  않음을 명시. 초기 1사이클(n=15/16) vs 누적 약 9사이클(n=134)
+  비교 — `ranking_score` 평균/중앙값 거의 동일(0.3305/0.2811→
+  0.3323/0.2983), `ranking_blocked` 비중 56.2%→47.8%(병합 이전
+  기준값 46.7%에 더 가깝게 회귀, 초기 1사이클이 편향 표본이었을
+  가능성). `buy_candidate`·`APPROVE`·`order_request`·`final_
+  intent='buy'`·`shadow_topk_exception_v2`는 초기·누적 창 모두
+  **0으로 동일**(변화 없음). `eligibility_passed=True` 4건은
+  전부 동일 core 종목의 반복 관측(WATCH 고정 패턴)으로 확인,
+  diff 효과로 해석하지 않음. 핵심 병목 재확인: `coverage_score`+
+  절대 threshold(`0.48`/`0.22`). **다음 1순위 결정: 2안(추가
+  관측 연장) 유지 — 관측 단계 미종료, `coverage_score` 재설계
+  착수 준비 안 됨**. 상세: `docs/10_signal_research_sppv/[DESIGN]
+  regime_conditional_entry_signal_v1.md` §123.
+
 ---
 
 ## 진행 체크리스트
@@ -5740,6 +5760,20 @@ canonical),
     로직 변경 없음, 신규 KIS 호출 0건(shadow 재호출은 `kis_
     client=None`). 상세: `docs/10_signal_research_sppv/[DESIGN]
     regime_conditional_entry_signal_v1.md` §94.
+- [ ] **SPPV-2.135(신설, 진행 중)** `relative_activity` 1안 적용
+  후 운영 관측 추가 축적 (2026-07-29 KST, 작성자: Codex, 코드
+  미수정, `.env` 미수정, Full pytest 미실행, 신규 KIS 호출 0건)
+  - 병합 이후 실제 경과 시간 약 41분(초기 1사이클 n=15 → 누적
+    약 9사이클 n=134) — "5거래일 수준 관측"은 캘린더 시간 제약
+    으로 이번 턴에서 확보 불가함을 명시. `ranking_blocked` 비중
+    은 초기 1사이클(56.2%)보다 병합 이전 기준값(46.7%)에 더
+    가깝게 회귀(47.8%). `buy_candidate`·`APPROVE`·`order_
+    request`·`shadow_topk_exception_v2`는 초기·누적 창 모두
+    **0 유지**(변화 없음). 핵심 병목 재확인: `coverage_score`+
+    절대 threshold(`0.48`/`0.22`). **다음 1순위: 2안(추가 관측
+    연장) 유지, 관측 단계 미종료**. 상세: `docs/10_signal_
+    research_sppv/[DESIGN] regime_conditional_entry_signal_
+    v1.md` §123.
 - [x] **SPPV-2.134(신설)** `relative_activity` 1안 적용 후 영향
   확인 + 다음 설계 분기 확정 (완료, 2026-07-29 KST, 작성자:
   Codex, 코드 미수정, `.env` 미수정, Full pytest 미실행, 신규

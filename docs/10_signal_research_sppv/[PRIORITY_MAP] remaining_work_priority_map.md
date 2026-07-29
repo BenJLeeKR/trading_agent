@@ -10106,14 +10106,30 @@ agent 설계 문서 기준으로도 순서는 다음이 맞다.
      (운영 관측 1~2 거래일 추가 축적) 채택**, `coverage_score`
      threshold 재설계는 보류. 상세: `docs/10_signal_research_
      sppv/[DESIGN] regime_conditional_entry_signal_v1.md` §122.
+   - **SPPV-2.135(진행 중, 2026-07-29 KST, `relative_activity`
+     1안 적용 후 운영 관측 추가 축적, 작성자: Codex, 코드 미수정,
+     `.env` 미수정, Full pytest 미실행, 신규 KIS 호출 0건)**:
+     병합 이후 실제 경과 시간 약 41분(초기 1사이클 n=15 → 누적
+     약 9사이클 n=134) — "5거래일 수준 관측"은 캘린더 시간 제약
+     으로 이번 턴에서 확보 불가함을 명시. `ranking_blocked` 비중
+     은 초기 1사이클(56.2%)보다 병합 이전 기준값(46.7%)에 더
+     가깝게 회귀(47.8%, §120 예측과 상충하지 않음). `buy_
+     candidate`·`APPROVE`·`order_request`·`shadow_topk_
+     exception_v2`는 초기·누적 창 모두 **0 유지**(변화 없음).
+     핵심 병목 재확인: `coverage_score`+절대 threshold(`0.48`/
+     `0.22`). **다음 1순위 결정: 2안(추가 관측 연장) 유지, 관측
+     단계 미종료**. 상세: `docs/10_signal_research_sppv/[DESIGN]
+     regime_conditional_entry_signal_v1.md` §123.
    - **SPPV-3(다음 착수: [1순위] `relative_activity` 1안 적용
-     이후 최소 1~2 거래일 운영 관측 축적 — `ranking_score` 분포/
-     `ranking_blocked` 비중/`shadow_topk_exception_v2` 발동 여부를
-     §120 예측치(14.8%→14.3%)와 대조(read-only, 완화안 아님) +
-     [2순위] 1순위 관측 결과를 근거로 `coverage_score` A안을 위한
-     threshold(`0.48`/`0.22`) 재설계 착수 여부 최종 결정 — 단독
-     제거가 아니라 재정규화/threshold 재산정을 함께 설계해야 함
-     (완화안 설계는 아직 아님, 트랙 범위만 확정) +
+     이후 캘린더 시간이 충분히 누적된 뒤(최소 반나절~1거래일 이상
+     권장) `ranking_score` 분포/`ranking_blocked` 비중/`shadow_
+     topk_exception_v2` 발동 여부를 동일 지표로 재확인(read-only,
+     완화안 아님) +
+     [2순위] 1순위 관측이 "5거래일 수준"에 근접하면 그 결과를
+     근거로 `coverage_score` A안을 위한 threshold(`0.48`/`0.22`)
+     재설계 착수 여부 최종 결정 — 단독 제거가 아니라 재정규화/
+     threshold 재산정을 함께 설계해야 함(완화안 설계는 아직 아님,
+     트랙 범위만 확정) +
      [3순위] `000720`이 core 유니버스에 20일 이상 연속 포함되는
      조건을 원인만 확인(완화안 아님) +
      [4순위] 이 모집단(core+bearish_trend)이 신호 품질(overall/

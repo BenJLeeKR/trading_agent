@@ -1,17 +1,19 @@
 # ranking_score 공식 검증 계획
 
 작성일: 2026-07-28  
-상태: [SPPV-2.134에서 갱신] `relative_activity` 1안 diff(SPPV-
-2.133, PR #14, 2026-07-29 12:39:59 KST 병합) 적용 이후 영향을
-운영 실측으로 확인. **관측 결과: 병합 이후 1개 사이클(n=15)만
-확보돼 표본이 극히 작음** — `ranking_score` 평균/중앙값 미세
-이동(0.3358→0.3319 / 0.3037→0.2811)은 자연 변동 범위, `buy_
-candidate`(0→0)/`shadow_topk_exception_v2`(0건 유지)는 **변화
-없음**. 핵심 병목은 여전히 `coverage_score`+절대 threshold
-(`0.48`/`0.22`) 조합으로 재확인. **다음 1순위: `coverage_score`
-threshold 재설계로 바로 가지 않고, 1~2 거래일 추가 운영 관측을
-먼저 축적한다(2안 채택)**. `coverage_score` threshold 재설계는
-착수하지 않은 상태 유지(SPPV-2.119~2.134 참고)
+상태: [SPPV-2.135에서 갱신] `relative_activity` 1안 적용 후 관측
+창을 넓혀 재확인(병합 후 초기 1사이클 n=15 → 누적 약 9사이클
+n=134). **중요한 제약**: 병합 이후 실제 경과 시간은 약 41분에
+불과해 이번 턴 요청("5거래일 수준 관측")은 물리적으로 확보되지
+않음 — 캘린더 시간이 그만큼 지나야 하며 세션 내에서 앞당길 수
+없다는 점을 명시. 누적 창에서도 `buy_candidate`/`APPROVE`/
+`order_request`/`final_intent='buy'`/`shadow_topk_exception_v2`
+는 초기 1사이클과 동일하게 **0 유지**, `ranking_blocked` 비중은
+초기 1사이클(56.2%)보다 병합 이전 기준값(46.7%)에 더 가깝게
+회귀(47.8%) — §120 예측("미미한 영향")과 상충하지 않음. 핵심
+병목은 여전히 `coverage_score`+절대 threshold(`0.48`/`0.22`)
+조합. **관측 단계는 아직 진행 중(2안 유지)** — `coverage_score`
+재설계 착수 준비는 아직 안 됨(SPPV-2.119~2.135 참고)
 
 ## 1. 문서 목적
 
@@ -900,6 +902,38 @@ entry_signal_v1.md` §121.
 
 상세: `docs/10_signal_research_sppv/[DESIGN] regime_conditional_
 entry_signal_v1.md` §122.
+
+### 6.19 SPPV-2.135 — `relative_activity` 1안 적용 후 운영 관측
+추가 축적(신규, 2026-07-29 KST, **진행 중** — 관측 단계 미종료)
+
+- [x] **관측 창 크기 확인**: 병합 이후 실제 경과 시간 약 41분,
+      초기 1사이클(n=15/16) 대비 누적 약 9사이클(n=134)로 확대.
+      "5거래일 수준 관측"은 캘린더 시간 제약으로 이번 턴에서
+      확보 불가함을 명시(사실).
+- [x] **초기 창 vs 누적 창 비교**: `ranking_score` 평균/중앙값
+      거의 동일(0.3305/0.2811 → 0.3323/0.2983), `ranking_
+      blocked` 비중 56.2%→47.8%(병합 이전 기준값 46.7%에 더
+      가깝게 회귀 — 초기 1사이클이 편향 표본이었을 가능성). `buy_
+      candidate`/`APPROVE`/`order_request`/`final_intent='buy'`/
+      `shadow_topk_exception_v2`는 초기·누적 창 모두 **0으로
+      동일**(변화 없음).
+- [x] **`eligibility_passed=True` 4건 검토**: 전부 동일 core
+      종목·동일 ranking_score(0.5428)의 반복 관측, `buy_
+      candidate=False`/`primary=WATCH`로 귀결 — 기존 WATCH 고정
+      패턴으로 판단, diff 효과로 해석하지 않음.
+- [x] **핵심 병목 재판정**: `coverage_score`+절대 threshold
+      (`0.48`/`0.22`) 조합으로 재확인(신규 반박 근거 없음).
+- [x] **다음 1순위 결정**: **2안(추가 관측 연장) 유지** — 캘린더
+      시간이 41분만 경과해 "5거래일 수준" 요청 기준에 크게
+      못 미침. `coverage_score` threshold 재설계 착수는 다음
+      거래일 이후 재확인 후 결정.
+
+**[PLAN] 상태 요약**: `relative_activity` 적용 후 관측 단계는
+**아직 진행 중**(종료 아님). `coverage_score` 재설계 착수 준비는
+**아직 되지 않음**(추가 관측 필요).
+
+상세: `docs/10_signal_research_sppv/[DESIGN] regime_conditional_
+entry_signal_v1.md` §123.
 
 ## 7. 완료 기준
 
