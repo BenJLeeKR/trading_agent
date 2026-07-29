@@ -109,7 +109,7 @@ return output2
 
 ### 로그 출처
 
-[`logs/near_real_scheduler_2026-05-15.log`](../logs/near_real_scheduler_2026-05-15.log) — 18,484 lines
+`logs/near_real_scheduler_2026-05-15.log` — 18,484 lines
 
 ### 주요 타임라인
 
@@ -321,7 +321,7 @@ async def get_cash_balance(self) -> dict[str, Any]:  # ← 인자 없음
 | [`run_snapshot_sync_loop.py`](../scripts/run_snapshot_sync_loop.py) | snapshot sync loop |
 | [`run_near_real_ops_scheduler.py:475-498`](../scripts/run_near_real_ops_scheduler.py:475) | `_run_end_of_day()` 구현 |
 | [`run_near_real_ops_scheduler.py:694-711`](../scripts/run_near_real_ops_scheduler.py:694) | 스케줄러 메인 루프 (phase 전환 로직) |
-| [`logs/near_real_scheduler_2026-05-15.log`](../logs/near_real_scheduler_2026-05-15.log) | 2026-05-15 운영 로그 |
+| `logs/near_real_scheduler_2026-05-15.log` | 2026-05-15 운영 로그 |
 | [`plans/cash_sync_count_mismatch_root_cause_2026-05-15.md`](./cash_sync_count_mismatch_root_cause_2026-05-15.md) | 이전 분석 보고서 |
 
 ---

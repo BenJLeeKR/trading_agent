@@ -171,6 +171,6 @@ Post-submit sync 로직은 `inquire-daily-ccld` 결과에 따라 `submitted` 상
 
 - **Post-submit sync 구현**: [`src/agent_trading/services/kis_snapshot_sync.py`](src/agent_trading/services/kis_snapshot_sync.py)
 - **Order 상태 전이 로직**: [`src/agent_trading/services/order_sync_service.py`](src/agent_trading/services/order_sync_service.py)
-- **Scheduler 로그**: [`logs/near_real_scheduler_2026-05-15.log`](logs/near_real_scheduler_2026-05-15.log)
+- **Scheduler 로그**: `logs/near_real_scheduler_2026-05-15.log`
 - **DB 마이그레이션 (reconciliation)**: [`db/migrations/0008_update_reconciliation_trigger_types.sql`](db/migrations/0008_update_reconciliation_trigger_types.sql)
 - **분석 세션 summary**: Conversation Phase 17 (2026-05-16)

@@ -596,7 +596,7 @@ Phase 1만 적용해도 대부분의 문제가 해결되므로, Phase 2+3은 안
 
 ## Appendix B: Phase 19b Benchmark 참고
 
-Phase 19b 벤치마크 데이터([`logs/phase19_recalculated_metrics.json`](logs/phase19_recalculated_metrics.json)) 기준:
+Phase 19b 벤치마크 데이터(`logs/phase19_recalculated_metrics.json`) 기준:
 
 - 일간 평균 Naver calls: **21,888**
 - 429 Rate Limit 발생: cycle당 평균 ~1.2회 → retry backoff ~36s

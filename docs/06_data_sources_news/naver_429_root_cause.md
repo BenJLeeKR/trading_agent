@@ -60,7 +60,7 @@ _NAVER_RETRYABLE_STATUS_CODES: frozenset[int] = frozenset({429, 500, 502, 503, 5
 
 ### 3.1 분석 대상 로그
 
-[`logs/submit_measurement_20260526_131726.log`](logs/submit_measurement_20260526_131726.log)
+`logs/submit_measurement_20260526_131726.log`
 
 ### 3.2 호출 패턴
 

@@ -132,3 +132,10 @@ Codex 추천은 다음과 같다.
 - 전체 문서의 `logs/` Markdown 링크는 `28`개였다.
 - `docs/03_execution_order`의 `logs/` Markdown 링크 `19`개와 정책 문서 예시 링크 `1`개를 코드 텍스트로 전환했다.
 - 전환 후 남은 `logs/` Markdown 링크는 `8`개다.
+
+### 2026-07-29 — 남은 `logs/` Markdown 링크 전환
+
+- 남은 `logs/` Markdown 링크 `8`개를 모두 코드 텍스트로 전환했다.
+- 전환 대상 파일은 `6`개였다.
+- 경로별 전환 수는 `docs/04_broker_kis=2`, `docs/05_reconciliation_snapshot=1`, `docs/06_data_sources_news=2`, `docs/07_scheduler_ops=1`, `docs/10_signal_research_sppv=2`다.
+- 전환 후 전체 문서의 `logs/` Markdown 링크는 `0`개다.
