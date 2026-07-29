@@ -25,7 +25,7 @@
 - [x] `data/`는 전체 제외 여부를 바로 결정하지 않고 `data/runtime/`, `data/cache/`, `data/local/` 같은 mutable 하위 경로 분리를 먼저 검토한다.
 - [~] 필요한 seed, example, fixture 파일은 `tests/fixtures/`, `docs/`, 또는 `*.example` 경로로 이동할지 결정한다. `logs/`는 대량 보존보다 코드 텍스트 전환 우선 정책으로 결정했다.
 - [x] `.gitignore`에 runtime write path 패턴을 추가한다.
-- [~] 기존 tracked 런타임 파일은 `git rm --cached` 또는 경로 이동으로 정리한다. `tmp/` tracked 파일 `55`개, `logs/` tracked 파일 `2560`개, `data/instrument_master/archive/` tracked 파일 `33`개, `data/observations/` tracked 파일 `6`개, root JSON 후보 `21`개는 제거 완료했고, `data/` `12`개는 남아 있다.
+- [~] 기존 tracked 런타임 파일은 `git rm --cached` 또는 경로 이동으로 정리한다. `tmp/` tracked 파일 `55`개, `logs/` tracked 파일 `2560`개, `data/instrument_master/archive/` tracked 파일 `33`개, `data/observations/` tracked 파일 `6`개, root JSON 후보 `21`개, `data/ar_fdc_*.json` tracked 파일 `2`개는 제거 완료했고, `data/` `10`개는 남아 있다.
 - [x] 배포 workflow에 `git clean -fdx` 또는 동등한 파괴적 clean 명령이 들어가지 않도록 `accept ci` 검사에 추가한다.
 - [x] `accept ci`에 tracked runtime write path 카운트 검사를 추가한다.
 
@@ -281,6 +281,17 @@
 - [x] 이번 단계에서는 `data/ar_fdc_*.json` tracked 파일 `2`개를 제거하지 않았다.
 - [x] 처리 기록은 [`data_runtime_canonical_split_review.md`](../30_work_log/data_runtime_canonical_split_review.md)와 [`runtime_write_path_reference_audit.md`](../30_work_log/runtime_write_path_reference_audit.md)에 남겼다.
 
+### P0 18차 — `data/ar_fdc_*.json` tracked 파일 추적 제외
+
+- [x] `data/ar_fdc_*.json` tracked 파일 `2`개를 재확인했다.
+- [x] `scripts/ar_fdc_output_measurement.py`가 `data/ar_fdc_prompts_{symbol}.json`을 생성한다고 기록했다.
+- [x] `scripts/ar_fdc_provider_validation.py`가 `data/ar_fdc_prompts_030200.json`을 입력으로 읽고 `data/ar_fdc_provider_validation_030200.json`을 생성한다고 기록했다.
+- [x] 전체 문서의 `data/ar_fdc_*.json` Markdown 링크는 `0`개로 유지했다.
+- [x] `git rm --cached`로 `data/ar_fdc_*.json` tracked 파일 `2`개를 Git 추적에서 제거했다.
+- [x] `.gitignore`에 `data/ar_fdc_*.json`을 추가했다.
+- [x] `runtime_tracked_file_count`는 `12`에서 `10`으로 감소했다.
+- [x] 처리 기록은 [`data_runtime_canonical_split_review.md`](../30_work_log/data_runtime_canonical_split_review.md)와 [`runtime_write_path_reference_audit.md`](../30_work_log/runtime_write_path_reference_audit.md)에 남겼다.
+
 ## 작업 이력
 
 | 일자 | 작업자 | 항목 | 변경 파일 수 | 검증 명령 | 주요 출력 지표 | 후속 조치 |
@@ -304,6 +315,7 @@
 | 2026-07-29 | Codex | P0 15차 — root JSON wildcard 사용 감사 | 3 | `bash scripts/harness/run.sh accept docs`; `bash scripts/harness/run.sh accept ci` | `root_json_zero_ref_candidate_count=21`, `code_wildcard_pattern_line_count=0`, `candidate_basename_partial_ref_count=0` | root JSON 후보 `21`개 추적 제외 |
 | 2026-07-29 | Codex | P0 16차 — root JSON 후보 tracked 파일 추적 제외 | 25 | `bash scripts/harness/run.sh accept docs`; `bash scripts/harness/run.sh accept ci` | `root_json_candidates_tracked_count=0`, `root_json_candidates_on_disk_count=21`, `runtime_tracked_file_count=12` | `data/ar_fdc_*.json` Markdown 링크 정리 |
 | 2026-07-29 | Codex | P0 17차 — `data/ar_fdc_*.json` Markdown 링크 전환 | 5 | `bash scripts/harness/run.sh accept docs`; `bash scripts/harness/run.sh accept ci` | `converted_ar_fdc_markdown_link_count=3`, `remaining_ar_fdc_markdown_link_count=0`, `ar_fdc_exact_reference_line_count=19`, `runtime_tracked_file_count=12` | `data/ar_fdc_*.json` 생성 경로 감사 |
+| 2026-07-29 | Codex | P0 18차 — `data/ar_fdc_*.json` tracked 파일 추적 제외 | 5 | `bash scripts/harness/run.sh accept docs`; `bash scripts/harness/run.sh accept ci` | `ar_fdc_tracked_count=0`, `ar_fdc_files_on_disk_count=2`, `runtime_tracked_file_count=10` | 남은 `data/` canonical 입력 `10`개 owner·갱신 절차 문서화 |
 
 ## 갱신 규칙
 

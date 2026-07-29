@@ -25,7 +25,7 @@
 | `data/instrument_master/archive/` | 33 | 0 | runtime/cache 후보 | Git 추적 제외 완료 |
 | `data/signal_feature_snapshot_input*.json` | 16 | 일부 있음 | 테스트·스케줄러 입력과 분석 산출물이 혼재 | 기본 입력 1개만 보존, 과거 snapshot 추적 제외 완료 |
 | `data/trigger_proxy_attribution*.json` | 5 | 0 | 분석 산출물 후보 | Git 추적 제외 완료 |
-| `data/ar_fdc_*.json` | 2 | 있음 | 스크립트 생성 산출물 | Markdown 링크 정리 완료, 추적 제외 전 생성 경로 감사 필요 |
+| `data/ar_fdc_*.json` | 2 | 있음 | 스크립트 생성 산출물 | Git 추적 제외 완료 |
 | `data/observations/*.json` | 6 | 있음 | 문서 근거 산출물 | Git 추적 제외 완료 |
 
 ## Codex 추천안
@@ -36,6 +36,7 @@
 4. `data/instrument_master/source/`와 `data/instrument_master/normalized/`는 운영 재현성 입력으로 남기되, 추후 `data/canonical/` 또는 `data/fixtures/` 같은 명시 경로로 옮길지 별도 판단한다.
 5. top-level root JSON `24`개 중 정확 참조가 없는 `21`개는 코드 wildcard 사용 여부 감사 결과 `0`건이므로 Git 추적에서 제외했다.
 6. `data/ar_fdc_*.json` Markdown 링크 `3`개는 코드 텍스트로 전환했다.
+7. `data/ar_fdc_*.json`은 스크립트가 생성·갱신하는 산출물이므로 Git 추적에서 제외했다.
 
 ## 금지 사항
 
@@ -52,6 +53,7 @@
 - P0 15차: 정확 참조가 없는 root JSON `21`개에 대한 wildcard 사용 여부를 감사했다.
 - P0 16차: 정확 참조와 wildcard 사용이 없는 root JSON `21`개를 추적 제외했다.
 - P0 17차: `data/ar_fdc_*.json` Markdown 링크 `3`개를 코드 텍스트로 전환했다.
+- P0 18차: `data/ar_fdc_*.json` 생성 경로를 감사하고 tracked 파일 `2`개를 추적 제외했다.
 
 ## 완료 기록
 
@@ -122,3 +124,14 @@
 - 전환 후 전체 문서의 `data/ar_fdc_*.json` Markdown 링크는 `0`개다.
 - 정확 참조된 `data/ar_fdc_*.json` tracked 파일은 `2`개, 정확 참조 라인은 `19`개다.
 - 다음 작업은 `data/ar_fdc_*.json` 생성 경로를 감사한 뒤 Git 추적 제외 가능 여부를 판단하는 것이다.
+
+### 2026-07-29 — `data/ar_fdc_*.json` 추적 제외
+
+- 추적 제외 전 `data/ar_fdc_*.json` tracked 파일은 `2`개였다.
+- `scripts/ar_fdc_output_measurement.py`는 `data/ar_fdc_prompts_{symbol}.json`을 생성한다.
+- `scripts/ar_fdc_provider_validation.py`는 `data/ar_fdc_prompts_030200.json`을 입력으로 읽고 `data/ar_fdc_provider_validation_030200.json`을 생성한다.
+- `data/ar_fdc_*.json` Markdown 링크는 `0`개였다.
+- `git rm --cached`로 후보 `2`개를 Git 추적에서만 제거했다.
+- `.gitignore`에 `data/ar_fdc_*.json`을 추가했다.
+- 남은 `data/` tracked 파일은 `10`개다.
+- `runtime_tracked_file_count`는 `12`에서 `10`으로 감소했다.
