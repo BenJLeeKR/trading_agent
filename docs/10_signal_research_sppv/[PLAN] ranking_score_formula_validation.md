@@ -1,13 +1,14 @@
 # ranking_score 공식 검증 계획
 
 작성일: 2026-07-28  
-상태: [SPPV-2.128에서 갱신] §6.1/§6.5/§6.6/§6.8 실제 완료, §6.2/
-§6.3/§6.4 부분 완료. §6.12(신규)에서 `[PRIORITY_MAP]` SPPV-3
-1순위 과제(`regime_tailwind`/`strategy_alignment` 고정 여부)를
-완료 — `strategy_alignment`(core 소스)는 설계 의도대로 죽어 있는
-항, `regime_tailwind`는 설계는 정상이나 상류 risk_off 상시화의
-부산물임을 판정. 완화안/코드 diff는 여전히 미착수(SPPV-2.119~
-2.128 참고)
+상태: [SPPV-2.129에서 정밀 보정] §6.1/§6.5/§6.6/§6.8 실제 완료,
+§6.2/§6.3/§6.4 부분 완료. §6.12의 "`strategy_alignment`(core
+소스)는 설계 의도대로 죽어 있는 항"이라는 판정을 §6.13에서
+정정 — `core`에도 `event_overlay`와 무관한 일반 경로가 존재하나
+상류 `risk_tone` 상시화 때문에 아직 도달 사례가 없는 것으로
+낮춰 씀(`regime_tailwind`와 근본 원인 동일). `regime_tailwind`
+판정은 유지. 완화안/코드 diff는 여전히 미착수(SPPV-2.119~2.129
+참고)
 
 ## 1. 문서 목적
 
@@ -699,6 +700,46 @@ score` 모집단 38,667건 전체의 최상위가 아님) — **값은 전부
 
 상세: `docs/10_signal_research_sppv/[DESIGN] regime_conditional_
 entry_signal_v1.md` §116.
+
+### 6.13 SPPV-2.129 — §6.12 수치·해석 정밀 보정(신규, 2026-07-29
+KST, 완료)
+
+**전제**: §6.12의 결론을 뒤집는 것이 아니라 수치·해석 정밀도를
+현재 기준으로 보정한다.
+
+- [x] **분모 재확인**: `n=38,997`(§6.12 작성 시점)/`n=39,027`
+      (사용자 재확인 시점)/`n=39,113`(이번 턴 재조회, 2026-07-29
+      KST 10:55 기준)이 서로 다른 이유는 계산 오류가 아니라
+      **`trade_decisions`가 5분 주기로 계속 자라는 운영 테이블
+      이기 때문**(사실, §115.2와 정합). 앞으로는 조회 시각을
+      함께 명시한다.
+- [x] **`strategy_alignment=1.0` 재확인**: 이번 턴 기준
+      `event_overlay 2,535 + market_overlay 42 = 2,577`. `market_
+      overlay=42`는 과거 확정 구간(2026-06-18)이라 조회 시점과
+      무관하게 안정적이나, `event_overlay` 쪽은 계속 늘어난다
+      (사실).
+- [x] **핵심 정정**: "`strategy_alignment`(core 기준)는 설계
+      의도대로 죽어 있는 항"이라는 §6.12의 표현은 **과했다**.
+      `strategy_selection.py`를 재확인한 결과, `core`도 `event_
+      overlay` 전용 override와 **무관하게** `regime_label ∈
+      {bullish_trend, event_driven_unstable}`이면서 `risk_tone
+      ≠ risk_off`이면 `strategy_alignment=1`에 도달할 수 있는
+      **일반 경로가 이미 존재**한다(사실, 코드 재확인). 전체
+      이력에서 `core` 소스의 `(regime_label, risk_tone)` 조합을
+      전수 조사한 결과 `bullish_trend`(2,593건)/`event_driven_
+      unstable`(60건) 관측 사례가 **전부 `risk_off`와 겹쳐** 이
+      경로에 도달한 사례가 0건이었다(사실).
+- [x] **낮춰 쓴 최종 판정**: `strategy_alignment`(core)는 "설계
+      배제"가 아니라 **"일반 경로는 있으나 상류 `risk_tone`
+      상시화 때문에 아직 도달 사례가 없는 항"**으로 정정 —
+      `regime_tailwind`와 **근본 원인이 사실상 동일**하다.
+      `event_overlay` 전용 override는 실재하지만 이것이 "core가
+      죽은 이유"는 아니다(별개의 우회 메커니즘일 뿐). `regime_
+      tailwind` 해석(설계 정상, 상류 이상의 부산물)은 **정정
+      없이 유지**한다.
+
+상세: `docs/10_signal_research_sppv/[DESIGN] regime_conditional_
+entry_signal_v1.md` §117.
 
 ## 7. 완료 기준
 

@@ -1788,6 +1788,17 @@
   코드 버그 아님, 완화안 미제시. 상세: `docs/10_signal_research_
   sppv/[DESIGN] regime_conditional_entry_signal_v1.md` §116.
 
+- 2026-07-29 KST(SPPV-2.129, 신규 KIS 호출 0건): `strategy_
+  alignment` 해석·집계 수치 정밀 보정. 분모(`n`)가 조회마다
+  다른 것은 운영 테이블이 계속 자라기 때문(정상). 핵심 정정:
+  "core는 설계 의도대로 죽어 있는 항"은 과했음 — `core`도
+  `event_overlay`와 무관한 일반 경로(bullish_trend/event_
+  driven_unstable + 비risk_off)가 코드에 존재하나, 해당 관측
+  사례가 전부 risk_off와 겹쳐 도달한 적이 없었을 뿐. `regime_
+  tailwind`와 근본 원인 동일로 수렴. `regime_tailwind` 판정은
+  유지. 완화안 미제시. 상세: `docs/10_signal_research_sppv/
+  [DESIGN] regime_conditional_entry_signal_v1.md` §117.
+
 ---
 
 ## 관리 원칙

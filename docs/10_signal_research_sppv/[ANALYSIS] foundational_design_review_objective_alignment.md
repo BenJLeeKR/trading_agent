@@ -2644,3 +2644,30 @@ pytest 미실행, 신규 KIS 호출 0건).
 최종 판정(1순위 산식 재검토, 2순위 중복 차단 정리)에 영향 없음.
 상세: `docs/10_signal_research_sppv/[DESIGN] regime_conditional_
 entry_signal_v1.md` §116.
+
+## 15. `strategy_alignment` 해석·집계 수치 정밀 보정(SPPV-2.129, 2026-07-29 KST)
+
+§14(SPPV-2.128)의 결론을 뒤집지 않고 수치·해석 정밀도만 보정했다
+(코드 미수정, Full pytest 미실행, 신규 KIS 호출 0건).
+
+- **분모 차이 원인**: `n=38,997`→`39,027`→`39,113`으로 계속
+  달라진 것은 계산 오류가 아니라 `trade_decisions`가 5분 주기로
+  계속 자라는 운영 테이블이기 때문(사실). 이후 보고는 조회
+  시각을 함께 명시한다.
+- **핵심 정정**: "`strategy_alignment`(core 기준)는 설계 의도
+  대로 죽어 있는 항"은 **과했다**. `strategy_selection.py`
+  재확인 결과 `core`도 `event_overlay`와 무관하게 `regime_
+  label ∈ {bullish_trend, event_driven_unstable}`이면서 `risk_
+  tone ≠ risk_off`이면 도달 가능한 **일반 경로가 이미 존재**함을
+  확인. 전체 이력에서 `core`의 해당 regime 관측 사례(2,593+60건)
+  가 **전부 `risk_off`와 겹쳐** 이 경로에 도달한 적이 없었을
+  뿐이다.
+- **낮춰 쓴 최종 판정**: `strategy_alignment`(core)는 "설계
+  배제"가 아니라 **"일반 경로는 있으나 상류 risk_tone 상시화
+  때문에 아직 도달 사례가 없는 항"** — `regime_tailwind`와
+  근본 원인이 사실상 동일함으로 수렴. `regime_tailwind` 해석은
+  정정 없이 유지.
+
+최종 판정(1순위 산식 재검토, 2순위 중복 차단 정리)에 영향 없음.
+상세: `docs/10_signal_research_sppv/[DESIGN] regime_conditional_
+entry_signal_v1.md` §117.
