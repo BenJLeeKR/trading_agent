@@ -2671,3 +2671,32 @@ entry_signal_v1.md` §116.
 최종 판정(1순위 산식 재검토, 2순위 중복 차단 정리)에 영향 없음.
 상세: `docs/10_signal_research_sppv/[DESIGN] regime_conditional_
 entry_signal_v1.md` §117.
+
+## 16. `ranking_score` 산식 재설계 준비 — 4개 항목 역할 재분류(SPPV-2.130, 2026-07-29 KST)
+
+`regime_tailwind`/`strategy_alignment` "고정 여부 확인" 단계
+(§14/§15)를 종료하고, 4개 항목을 설계 관점에서 재분류했다(코드
+미수정, 완화안/코드 diff 없음, Full pytest 미실행, 신규 KIS
+호출 0건).
+
+- **`coverage_score`(1순위, 다른 계층으로 이관 검토)**: 전체
+  이력에서 실제 관측 값이 `1.0`(36,383건)/`0.1429`(725건, 그중
+  723건이 eligibility 하드 차단) 단 2개뿐임을 확인 — hard 게이트
+  통과 후에는 100% 상수. ranking 쪽 0.20 가중치는 정보량 0.
+- **`relative_activity`(2순위, 중복 제거/정리 검토)**: entry_
+  score+ranking 소프트 2곳이 같은 신호를 같은 방향으로 재사용
+  (과잉 중복), eligibility+core guard 하드 2곳은 국면별 차등
+  정당화 여지 있음.
+- **`strategy_alignment`(3순위, 중복 제거/정리 검토)**: entry_
+  score+ranking이 완전히 동일한 조건 집합 검사 — 현재 미발동
+  이나 구조적으로 확정된 중복.
+- **`regime_tailwind`(4순위, 역할 축소 검토)**: entry_score
+  penalty+core 하드 게이트가 이미 강하게 처리, ranking 쪽
+  0.03 가중치의 존치 근거 약함.
+
+**설계안 비교 단계 진입 가능 여부**: 1·2순위(`coverage_score`/
+`relative_activity`)는 추가 사실 확인 없이 **즉시 설계안(A/B)
+비교 단계 진입 가능**. 3·4순위는 방향은 확정됐으나 우선순위상
+대기. 다음 턴은 설계안 비교 턴으로 제안한다. 상세: `docs/10_
+signal_research_sppv/[DESIGN] regime_conditional_entry_signal_
+v1.md` §118.

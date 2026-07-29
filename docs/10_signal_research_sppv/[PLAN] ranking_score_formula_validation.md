@@ -1,14 +1,13 @@
 # ranking_score 공식 검증 계획
 
 작성일: 2026-07-28  
-상태: [SPPV-2.129에서 정밀 보정] §6.1/§6.5/§6.6/§6.8 실제 완료,
-§6.2/§6.3/§6.4 부분 완료. §6.12의 "`strategy_alignment`(core
-소스)는 설계 의도대로 죽어 있는 항"이라는 판정을 §6.13에서
-정정 — `core`에도 `event_overlay`와 무관한 일반 경로가 존재하나
-상류 `risk_tone` 상시화 때문에 아직 도달 사례가 없는 것으로
-낮춰 씀(`regime_tailwind`와 근본 원인 동일). `regime_tailwind`
-판정은 유지. 완화안/코드 diff는 여전히 미착수(SPPV-2.119~2.129
-참고)
+상태: [SPPV-2.130에서 갱신] "고정 여부 확인" 단계(§6.1~§6.13)
+종료, **산식 재설계 준비 단계 진입**. §6.14에서 4개 항목을
+재분류 — `coverage_score`=다른 계층 이관 검토(1순위),
+`relative_activity`=중복 정리 검토(2순위), `strategy_
+alignment`=중복 정리 검토(3순위), `regime_tailwind`=역할 축소
+검토(4순위). 1·2순위는 즉시 설계안(A/B) 비교 단계 진입 가능
+판정. 완화안/코드 diff는 여전히 미착수(SPPV-2.119~2.130 참고)
 
 ## 1. 문서 목적
 
@@ -740,6 +739,43 @@ KST, 완료)
 
 상세: `docs/10_signal_research_sppv/[DESIGN] regime_conditional_
 entry_signal_v1.md` §117.
+
+### 6.14 SPPV-2.130 — 산식 재설계 준비: 4개 항목 역할 재분류(신규,
+2026-07-29 KST, 완료 — "고정 여부 확인" 단계 종료 선언)
+
+**[SPPV-2.130] `regime_tailwind`/`strategy_alignment` "고정
+여부 확인" 단계(§6.12/§6.13, §116/§117)는 이 항목으로 종료한다.**
+이번 턴은 그 결과를 바탕으로 4개 항목(`coverage_score`/
+`regime_tailwind`/`relative_activity`/`strategy_alignment`)을
+설계 관점에서 재분류하는 **산식 재설계 준비 단계**다.
+
+- [x] **트랙 A-1(`coverage_score`)**: 전체 이력에서 실제 관측
+      값이 `1.0`(36,383건)/`0.1429`(725건, 그중 723건이
+      `eligibility_low_feature_coverage`로 하드 차단) 단 2개뿐임을
+      확인 — 하드 게이트 통과 후에는 100% 상수. **분류: 다른
+      계층으로 이관 검토.**
+- [x] **트랙 A-2(`regime_tailwind`)**: `entry_score` penalty +
+      core risk-off 하드 게이트가 이미 같은 신호를 강하게
+      처리하고 있어 `ranking`의 0.03 가중치는 정책적 존치
+      근거가 약함. **분류: 역할 축소 검토.**
+- [x] **트랙 B-1(`relative_activity`)**: 4계층(entry_score/
+      ranking/eligibility/core guard) 역할표 재정리 — 소프트
+      2곳(entry+ranking)은 과잉 중복, 하드 2곳은 국면별 차등
+      정당화 여지 있음. **분류: 중복 제거/정리 검토**(소프트
+      2곳이 1차 대상).
+- [x] **트랙 B-2(`strategy_alignment`)**: `entry_score`+
+      `ranking`이 완전히 동일한 조건 집합을 검사 — 현재는 미발동
+      이나 살아나면 구조적으로 확정된 중복. **분류: 중복 제거/
+      정리 검토**(시급성은 낮음).
+- [x] **우선순위**: 1순위 `coverage_score`, 2순위 `relative_
+      activity`, 3순위 `strategy_alignment`, 4순위 `regime_
+      tailwind`.
+- [x] **설계안 비교 단계 진입 가능 여부**: 1·2순위는 **즉시
+      설계안(A/B) 비교 단계 진입 가능**(추가 사실 확인 불필요).
+      3·4순위는 방향은 확정됐으나 우선순위상 후순위로 대기.
+
+상세: `docs/10_signal_research_sppv/[DESIGN] regime_conditional_
+entry_signal_v1.md` §118.
 
 ## 7. 완료 기준
 
