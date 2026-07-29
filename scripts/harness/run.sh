@@ -265,6 +265,10 @@ deploy_missing_migration_workflows = [
     path for path, text in deploy_workflows
     if "docker compose run --rm migrate" not in text
 ]
+deploy_missing_proxy_reload_workflows = [
+    path for path, text in deploy_workflows
+    if "docker exec nginx-proxy nginx -s reload" not in text
+]
 deploy_change_detector_present = (
     "Deployment change detector" in workflow_text
     and "deploy_relevant_file_count" in workflow_text
@@ -298,6 +302,7 @@ contract_checks = [
     ("workflow_deploy_depends_on_safe", contains(workflow, "needs: [safe, changes]", "needs.safe.result == 'success'")),
     ("workflow_deploy_depends_on_change_detector", contains(workflow, "Deployment change detector", "needs.changes.outputs.deploy_required == '1'", "deploy_skipped_by_docs_only_count")),
     ("workflow_deploy_runs_migration_before_restart", contains(workflow, "docker compose run --rm migrate", "docker compose up -d --build --remove-orphans")),
+    ("workflow_deploy_reloads_proxy_after_restart", contains(workflow, "docker exec nginx-proxy nginx -s reload", "deploy_proxy_reload_run=1")),
     ("readme_declares_ci_harness", contains(readme, "CI 검증 기준", ".github/workflows/harness.yml", "bash scripts/harness/run.sh", "Require Harness on main", "Safe harness contracts")),
     ("harness_readme_declares_ci_harness", contains(harness_readme, "CI 공동 사용 원칙", "safe", "workflow_dispatch", "HARNESS_ALLOW_HEAVY=1", "Require Harness on main", "Safe harness contracts")),
     ("workflow_fetches_full_history_for_diff_contracts", contains(workflow, "fetch-depth: 0")),
@@ -317,6 +322,7 @@ metrics = {
     "ungated_deploy_workflow_count": len(ungated_deploy_workflows),
     "deploy_without_change_detector_count": deploy_without_change_detector_count,
     "deploy_missing_migration_count": len(deploy_missing_migration_workflows),
+    "deploy_missing_proxy_reload_count": len(deploy_missing_proxy_reload_workflows),
     "legacy_docker_compose_count": len(legacy_docker_compose_hits),
     "ci_contract_failed_count": len(failed_contract_checks),
 }
@@ -368,6 +374,11 @@ if ungated_deploy_workflows:
 if deploy_missing_migration_workflows:
     print("DETAIL deploy_missing_migration_workflows:")
     for path in deploy_missing_migration_workflows:
+        print(f"- {path.relative_to(root)}")
+
+if deploy_missing_proxy_reload_workflows:
+    print("DETAIL deploy_missing_proxy_reload_workflows:")
+    for path in deploy_missing_proxy_reload_workflows:
         print(f"- {path.relative_to(root)}")
 
 if legacy_docker_compose_hits:
