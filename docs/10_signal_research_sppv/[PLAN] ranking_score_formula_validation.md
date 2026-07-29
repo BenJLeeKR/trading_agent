@@ -1,7 +1,7 @@
 # ranking_score 공식 검증 계획
 
 작성일: 2026-07-28  
-상태: [SPPV-2.134에서 갱신] `relative_activity` 案1 diff(SPPV-
+상태: [SPPV-2.134에서 갱신] `relative_activity` 1안 diff(SPPV-
 2.133, PR #14, 2026-07-29 12:39:59 KST 병합) 적용 이후 영향을
 운영 실측으로 확인. **관측 결과: 병합 이후 1개 사이클(n=15)만
 확보돼 표본이 극히 작음** — `ranking_score` 평균/중앙값 미세
@@ -823,23 +823,23 @@ KST, 완료 — §6.15의 미확정 2건을 닫음)
       **판정: A안은 threshold 재설계와 반드시 묶여야 하며, 이번
       턴 기준 diff 착수 불가.**
 - [x] **`relative_activity` 유지 위치(entry_score vs ranking_
-      score) 비교**: 案1(ranking에서 제거, entry 유지)과 案2
+      score) 비교**: 1안(ranking에서 제거, entry 유지)과 2안
       (entry에서 제거, ranking 유지) 모두 threshold 통과율
       영향이 작음(14.8%→14.3%, 양안 동일)을 확인 — `coverage_
       score`와 달리 이 항목은 **threshold 재설계 없이 안전하게
       정리 가능**함을 확정(사실, 신규 DB 재계산). diff 범위
-      비교 결과 **案1(ranking에서 제거)이 더 보수적**(entry_
+      비교 결과 **1안(ranking에서 제거)이 더 보수적**(entry_
       score의 `buy_candidate_threshold=0.65` 하드 게이트를
-      건드리지 않음). **판정: 案1은 지금 바로 diff 초안 작성
+      건드리지 않음). **판정: 1안은 지금 바로 diff 초안 작성
       가능.**
 - [x] **최종 판정**: `coverage_score`=diff 보류(threshold
-      재설계 선행 필요), `relative_activity`=**案1으로 diff
+      재설계 선행 필요), `relative_activity`=**1안으로 diff
       초안 작성 가능**(이번 턴 첫 실행 가능 판정).
 
 상세: `docs/10_signal_research_sppv/[DESIGN] regime_conditional_
 entry_signal_v1.md` §120.
 
-### 6.17 SPPV-2.133 — `relative_activity` 案1 diff 실제 적용(신규,
+### 6.17 SPPV-2.133 — `relative_activity` 1안 diff 실제 적용(신규,
 2026-07-29 KST, 완료 — §6.16의 diff 착수 가능 판정을 실행에 옮김)
 
 - [x] **코드 변경**: `src/agent_trading/services/deterministic_
@@ -872,7 +872,7 @@ entry_signal_v1.md` §120.
 상세: `docs/10_signal_research_sppv/[DESIGN] regime_conditional_
 entry_signal_v1.md` §121.
 
-### 6.18 SPPV-2.134 — `relative_activity` 案1 적용 후 영향 확인 +
+### 6.18 SPPV-2.134 — `relative_activity` 1안 적용 후 영향 확인 +
 다음 설계 분기 확정(신규, 2026-07-29 KST, 완료)
 
 - [x] **배포 확인**: `app`/`ops-scheduler` 컨테이너의 코드가

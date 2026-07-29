@@ -2646,16 +2646,16 @@ entry 설계 검토로 전환**을 확정했다. 별도 문서
   MIN_SCORE=0.48` 통과율 14.8%→0.34%(단순 차감)/2.2%(재정규화),
   `_CORE_RISK_OFF_SHADOW_MIN_SCORE=0.22` 통과율 100%→0.4%/1.8%
   로 급격히 붕괴함을 정량 확인 — threshold 재설계 없이는 단독
-  diff 불가로 판정. `relative_activity`는 案1(entry_score 유지,
-  ranking 제거)/案2(ranking 유지, entry_score 제거) 비교 결과
-  둘 다 threshold 영향은 14.8%→14.3%로 미미하나, 案2는
+  diff 불가로 판정. `relative_activity`는 1안(entry_score 유지,
+  ranking 제거)/2안(ranking 유지, entry_score 제거) 비교 결과
+  둘 다 threshold 영향은 14.8%→14.3%로 미미하나, 2안는
   `buy_candidate_threshold=0.65` 공유 함수를 건드려 diff 범위가
-  더 넓음 — 案1이 더 보수적이며 다음 턴 diff 초안 작성 가능으로
+  더 넓음 — 1안이 더 보수적이며 다음 턴 diff 초안 작성 가능으로
   확정. 상세: `docs/10_signal_research_sppv/[DESIGN] regime_
   conditional_entry_signal_v1.md` §120.
 
 - 작성자: Codex
-- 수정일자: 2026-07-29 KST (133차, `relative_activity` 案1 diff
+- 수정일자: 2026-07-29 KST (133차, `relative_activity` 1안 diff
   실제 적용, `.env` 미수정, Full pytest 미실행, 신규 KIS 호출
   0건 — 이번 항목만 코드 변경 포함)
 - 수정내용: `deterministic_trigger_engine.py`의 `_build_buy_
@@ -2676,7 +2676,7 @@ entry 설계 검토로 전환**을 확정했다. 별도 문서
   entry_signal_v1.md` §121.
 
 - 작성자: Codex
-- 수정일자: 2026-07-29 KST (134차, `relative_activity` 案1 적용
+- 수정일자: 2026-07-29 KST (134차, `relative_activity` 1안 적용
   후 영향 확인 + 다음 설계 분기 확정, 코드 미수정, `.env` 미수정,
   Full pytest 미실행, 신규 KIS 호출 0건)
 - 수정내용: PR #14(mergeCommit `e1ae1b3d`, 2026-07-29 12:39:59
@@ -5740,7 +5740,7 @@ canonical),
     로직 변경 없음, 신규 KIS 호출 0건(shadow 재호출은 `kis_
     client=None`). 상세: `docs/10_signal_research_sppv/[DESIGN]
     regime_conditional_entry_signal_v1.md` §94.
-- [x] **SPPV-2.134(신설)** `relative_activity` 案1 적용 후 영향
+- [x] **SPPV-2.134(신설)** `relative_activity` 1안 적용 후 영향
   확인 + 다음 설계 분기 확정 (완료, 2026-07-29 KST, 작성자:
   Codex, 코드 미수정, `.env` 미수정, Full pytest 미실행, 신규
   KIS 호출 0건)
@@ -5752,7 +5752,7 @@ canonical),
     운영 관측 1~2 거래일 추가 축적(2안), `coverage_score`
     threshold 재설계는 보류**. 상세: `docs/10_signal_research_
     sppv/[DESIGN] regime_conditional_entry_signal_v1.md` §122.
-- [x] **SPPV-2.133(신설)** `relative_activity` 案1 diff 실제 적용
+- [x] **SPPV-2.133(신설)** `relative_activity` 1안 diff 실제 적용
   (완료, 2026-07-29 KST, 작성자: Codex, `.env` 미수정, Full
   pytest 미실행, 신규 KIS 호출 0건 — **이번 항목만 코드 변경
   포함**)
@@ -5770,7 +5770,7 @@ canonical),
   - `coverage_score` A안은 `0.48`/`0.22` threshold 통과율이
     각각 14.8%→0.34~2.2%, 100%→0.4~1.8%로 붕괴함을 정량 확인
     — diff 보류, threshold 재설계 별도 트랙 필요. `relative_
-    activity`는 案1(entry_score 유지, ranking 제거)이 threshold
+    activity`는 1안(entry_score 유지, ranking 제거)이 threshold
     영향 미미(14.8%→14.3%) + diff 범위 최소임을 확인 — 다음 턴
     diff 초안 작성 가능. 상세: `docs/10_signal_research_sppv/
     [DESIGN] regime_conditional_entry_signal_v1.md` §120.
