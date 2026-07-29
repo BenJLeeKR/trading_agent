@@ -2769,3 +2769,33 @@ diff는 여전히 미착수. 상세: `docs/10_signal_research_sppv/
 `coverage_score` threshold 재설계는 이번 턴에서도 미착수(별도 트랙
 유지). 상세: `docs/10_signal_research_sppv/[DESIGN] regime_conditional_
 entry_signal_v1.md` §121.
+
+## 20. `relative_activity` 案1 적용 후 영향 확인 + 다음 설계 분기 확정(SPPV-2.134, 2026-07-29 KST)
+
+§19에서 적용한 diff(PR #14, mergeCommit `e1ae1b3d`, 2026-07-29 12:39:59
+KST 병합)가 운영 decision loop에 미친 영향을 read-only로 확인했다(코드
+미수정, `.env` 미수정, Full pytest 미실행, 신규 KIS 호출 0건).
+
+- **배포 확인**: `app`/`ops-scheduler` 컨테이너 코드가 병합된 `main`과
+  동일함(md5sum 일치), 사이클마다 새 서브프로세스를 기동하는 구조라
+  병합 직후 첫 사이클부터 신규 코드 적용됨을 확인.
+- **적용 전/후 비교**: 병합 직전 30분(BUY-path n=120)과 병합 이후 1개
+  사이클(n=15)을 비교 — `ranking_score` 평균 0.3358→0.3319, 중앙값
+  0.3037→0.2811(표본이 15건뿐이라 해석 보류), `ranking_blocked` 비중
+  46.7%→53.3%(단일 창의 자연 변동으로 판단, 의미 있는 변화로 해석하지
+  않음), `buy_candidate`(0/120→0/15)와 `shadow_topk_exception_v2`
+  (0건 유지) 모두 **변화 없음**.
+- **관측 한계**: 병합 이후 경과 약 6분, 관측 사이클 1회뿐이라 `ranking_
+  score` 분포의 실제(장기) 이동 여부는 이번 자료만으로 판정 불가함을
+  명시한다.
+- **핵심 병목 재판정**: `eligibility_core_risk_off_ranking_blocked`가
+  여전히 최다 차단 사유이고 `buy_candidate`는 여전히 0 — 핵심 병목은
+  여전히 `coverage_score`+절대 threshold(`0.48`/`0.22`) 조합이라는
+  기존 판정을 재확인했다(신규 반박 근거 없음).
+
+**결론**: 다음 1순위는 **2안(운영 관측 1~2 거래일 추가 축적)**으로
+좁힌다 — 표본이 너무 작아 `coverage_score` threshold 재설계처럼 파급력
+이 큰 변경에 바로 착수하기보다, 이번 diff의 예측된 영향(14.8%→14.3%)이
+실측으로 부합하는지 먼저 확인한다. `coverage_score` threshold 재설계는
+보류. 상세: `docs/10_signal_research_sppv/[DESIGN] regime_conditional_
+entry_signal_v1.md` §122.

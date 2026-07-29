@@ -10091,13 +10091,29 @@ agent 설계 문서 기준으로도 순서는 다음이 맞다.
      최소 보정으로 의도 유지. `coverage_score` threshold 재설계
      는 미착수(별도 트랙 유지). 상세: `docs/10_signal_research_
      sppv/[DESIGN] regime_conditional_entry_signal_v1.md` §121.
-   - **SPPV-3(다음 착수: [1순위] 이번 diff 반영 이후 `ranking_
-     blocked`/`shadow_topk_exception_v2` 발동 빈도 변화를 다음
-     거래일 이후 실측 관찰(read-only, 완화안 아님) +
-     [2순위] `coverage_score` A안을 위한 threshold(`0.48`/`0.22`)
-     재설계 별도 트랙 — 단독 제거가 아니라 재정규화/threshold
-     재산정을 함께 설계해야 함(완화안 설계는 아직 아님, 트랙
-     범위만 확정) +
+   - **SPPV-2.134(완료, 2026-07-29 KST, `relative_activity` 案1
+     적용 후 영향 확인 + 다음 설계 분기 확정, 작성자: Codex, 코드
+     미수정, `.env` 미수정, Full pytest 미실행, 신규 KIS 호출
+     0건)**: PR #14(mergeCommit `e1ae1b3d`, 12:39:59 KST 병합)
+     이후 병합 직전 30분(n=120) vs 병합 이후 1개 사이클(n=15)을
+     비교 — `ranking_score` 평균/중앙값 미세 이동(0.3358/0.3037→
+     0.3319/0.2811)은 표본 극소로 해석 보류, `ranking_blocked`
+     비중 46.7%→53.3%는 단일 창 변동으로 판단(의미 부여 안 함),
+     `buy_candidate`(0/0)·`shadow_topk_exception_v2`(0건)는
+     **변화 없음**. 관측 창이 1개 사이클(약 6분)뿐이라는 한계
+     명시. 핵심 병목은 여전히 `coverage_score`+절대 threshold
+     (`0.48`/`0.22`) 조합으로 재확인. **다음 1순위 결정: 2안
+     (운영 관측 1~2 거래일 추가 축적) 채택**, `coverage_score`
+     threshold 재설계는 보류. 상세: `docs/10_signal_research_
+     sppv/[DESIGN] regime_conditional_entry_signal_v1.md` §122.
+   - **SPPV-3(다음 착수: [1순위] `relative_activity` 案1 적용
+     이후 최소 1~2 거래일 운영 관측 축적 — `ranking_score` 분포/
+     `ranking_blocked` 비중/`shadow_topk_exception_v2` 발동 여부를
+     §120 예측치(14.8%→14.3%)와 대조(read-only, 완화안 아님) +
+     [2순위] 1순위 관측 결과를 근거로 `coverage_score` A안을 위한
+     threshold(`0.48`/`0.22`) 재설계 착수 여부 최종 결정 — 단독
+     제거가 아니라 재정규화/threshold 재산정을 함께 설계해야 함
+     (완화안 설계는 아직 아님, 트랙 범위만 확정) +
      [3순위] `000720`이 core 유니버스에 20일 이상 연속 포함되는
      조건을 원인만 확인(완화안 아님) +
      [4순위] 이 모집단(core+bearish_trend)이 신호 품질(overall/

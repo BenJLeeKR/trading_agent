@@ -1839,6 +1839,17 @@
   10_signal_research_sppv/[DESIGN] regime_conditional_entry_
   signal_v1.md` §121.
 
+- 2026-07-29 KST(SPPV-2.134, 신규 KIS 호출 0건): `relative_
+  activity` 案1 적용(PR #14, 12:39:59 KST 병합) 이후 영향 확인.
+  병합 직전 30분(n=120) vs 병합 이후 1개 사이클(n=15) 비교 —
+  `ranking_score` 미세 이동은 표본 극소로 해석 보류, `buy_
+  candidate`·`shadow_topk_exception_v2`는 **변화 없음**. 핵심
+  병목은 여전히 `coverage_score`+절대 threshold(`0.48`/`0.22`)
+  로 재확인. **다음 1순위: 2안(운영 관측 1~2 거래일 추가 축적)
+  채택**, `coverage_score` threshold 재설계는 보류. 상세: `docs/
+  10_signal_research_sppv/[DESIGN] regime_conditional_entry_
+  signal_v1.md` §122.
+
 ---
 
 ## 관리 원칙

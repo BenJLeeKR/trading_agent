@@ -2675,6 +2675,24 @@ entry 설계 검토로 전환**을 확정했다. 별도 문서
   `docs/10_signal_research_sppv/[DESIGN] regime_conditional_
   entry_signal_v1.md` §121.
 
+- 작성자: Codex
+- 수정일자: 2026-07-29 KST (134차, `relative_activity` 案1 적용
+  후 영향 확인 + 다음 설계 분기 확정, 코드 미수정, `.env` 미수정,
+  Full pytest 미실행, 신규 KIS 호출 0건)
+- 수정내용: PR #14(mergeCommit `e1ae1b3d`, 2026-07-29 12:39:59
+  KST 병합) 이후 운영 decision loop 실측 확인. 병합 직전 30분
+  (n=120)과 병합 이후 1개 사이클(n=15) 비교 — `ranking_score`
+  평균 0.3358→0.3319, 중앙값 0.3037→0.2811(표본 극소로 해석
+  보류), `ranking_blocked` 비중 46.7%→53.3%(단일 창 변동, 의미
+  있는 변화로 해석하지 않음), `buy_candidate`(0/120→0/15)·
+  `shadow_topk_exception_v2`(0건 유지) **변화 없음**. 관측 창이
+  1개 사이클(약 6분 경과)뿐이라는 한계를 명시. 핵심 병목은 여전히
+  `coverage_score`+절대 threshold(`0.48`/`0.22`) 조합으로 재확인
+  (신규 반박 근거 없음). **다음 1순위 결정: 2안(운영 관측 1~2
+  거래일 추가 축적) 채택, `coverage_score` threshold 재설계는
+  보류**. 상세: `docs/10_signal_research_sppv/[DESIGN] regime_
+  conditional_entry_signal_v1.md` §122.
+
 ---
 
 ## 진행 체크리스트
@@ -5722,6 +5740,18 @@ canonical),
     로직 변경 없음, 신규 KIS 호출 0건(shadow 재호출은 `kis_
     client=None`). 상세: `docs/10_signal_research_sppv/[DESIGN]
     regime_conditional_entry_signal_v1.md` §94.
+- [x] **SPPV-2.134(신설)** `relative_activity` 案1 적용 후 영향
+  확인 + 다음 설계 분기 확정 (완료, 2026-07-29 KST, 작성자:
+  Codex, 코드 미수정, `.env` 미수정, Full pytest 미실행, 신규
+  KIS 호출 0건)
+  - 병합 직전 30분(n=120) vs 병합 이후 1개 사이클(n=15) 비교 —
+    `ranking_score`/`ranking_blocked` 비중 미세 이동은 표본 극소
+    로 해석 보류, `buy_candidate`(0/0)·`shadow_topk_exception_v2`
+    (0건)는 **변화 없음**. 핵심 병목은 여전히 `coverage_score`+
+    절대 threshold(`0.48`/`0.22`) 조합으로 재확인. **다음 1순위:
+    운영 관측 1~2 거래일 추가 축적(2안), `coverage_score`
+    threshold 재설계는 보류**. 상세: `docs/10_signal_research_
+    sppv/[DESIGN] regime_conditional_entry_signal_v1.md` §122.
 - [x] **SPPV-2.133(신설)** `relative_activity` 案1 diff 실제 적용
   (완료, 2026-07-29 KST, 작성자: Codex, `.env` 미수정, Full
   pytest 미실행, 신규 KIS 호출 0건 — **이번 항목만 코드 변경
