@@ -219,7 +219,6 @@ def assess_deterministic_triggers(
         ranking_score = _build_buy_ranking_score(
             entry_score=entry_score,
             coverage_score=coverage_score,
-            signal_feature_snapshot=signal_feature_snapshot,
             market_regime=market_regime,
             portfolio_allocation=portfolio_allocation,
             strategy_selection=strategy_selection,
@@ -1095,11 +1094,13 @@ def _build_buy_ranking_score(
     *,
     entry_score: float,
     coverage_score: float,
-    signal_feature_snapshot: SignalFeatureSnapshotEntity | None,
     market_regime: MarketRegimeAssessment | None,
     portfolio_allocation: PortfolioAllocationAssessment | None,
     strategy_selection: StrategySelectionAssessment | None,
 ) -> float:
+    # relative_activity는 entry_score 내부(relative_activity_bonus)에만 반영한다.
+    # ranking_score 쪽 항은 SPPV-2.132에서 소프트 중복으로 확인돼 제거함
+    # (docs/10_signal_research_sppv/[DESIGN] regime_conditional_entry_signal_v1.md §120/§121).
     regime_tailwind = 0.5
     if market_regime is not None:
         if market_regime.regime_label == "bullish_trend" and market_regime.risk_tone == "risk_on":
@@ -1120,11 +1121,8 @@ def _build_buy_ranking_score(
     }:
         strategy_alignment = 1.0
 
-    relative_activity = _build_relative_activity_score(signal_feature_snapshot)
-
     score = (
         0.55 * entry_score
-        + 0.10 * relative_activity
         + 0.20 * coverage_score
         + 0.10 * allocation_quality
         + 0.03 * regime_tailwind

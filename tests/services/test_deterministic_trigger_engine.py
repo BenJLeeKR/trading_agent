@@ -327,6 +327,10 @@ def test_trigger_engine_blocks_buy_path_for_reconciliation_overlay() -> None:
 
 
 def test_trigger_engine_marks_risk_off_exception_eligible_for_strong_core_setup() -> None:
+    # SPPV-2.133: relative_activity 案1 적용으로 ranking_score에서
+    # 0.10*relative_activity 항이 제거돼, 기존 fixture(turnover=1.60)는
+    # _CORE_RISK_OFF_RANKING_MIN_SCORE=0.48 문턱을 더 이상 넘지 못한다.
+    # "강한 core setup" 의도를 유지하기 위해 turnover_surge_ratio만 상향.
     result = assess_deterministic_triggers(
         source_type="core",
         signal_feature_snapshot=_make_signal(
@@ -336,7 +340,7 @@ def test_trigger_engine_marks_risk_off_exception_eligible_for_strong_core_setup(
             average_volume_20d="250000",
             average_turnover_20d="12000000000",
             volume_surge_ratio="1.45",
-            turnover_surge_ratio="1.60",
+            turnover_surge_ratio="2.50",
         ),
         market_regime=_make_regime(
             regime_label="bearish_trend",

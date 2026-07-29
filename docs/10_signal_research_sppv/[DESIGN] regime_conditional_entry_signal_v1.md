@@ -15270,3 +15270,82 @@ ranking_score)
    이상 연속 포함되는 조건 원인 확인(완화안 아님).
 4. **4순위(이전 턴 이월)**: `high_volatility` 단독 경로(001450형)
    층3 관찰 지속.
+
+## §121. `relative_activity` 案1 diff 실제 적용 + 최소 검증(SPPV-2.133, 2026-07-29 KST)
+
+**전제**: §120에서 확정된 두 판정 중 `relative_activity` 案1(ranking_score에서
+제거, entry_score는 유지)만 이번 턴 범위로 실제 코드에 반영한다.
+`coverage_score` threshold 재설계는 이번 턴에서 손대지 않는다. 코드 변경 턴이나,
+Full pytest·외부 API 호출·무거운 통합 테스트는 금지, 이번 변경과 직접 관련된
+최소 검증만 수행한다.
+
+### 121.1 코드 변경 내용(사실)
+
+- 대상 파일: `src/agent_trading/services/deterministic_trigger_engine.py`
+- `_build_buy_ranking_score()`에서 `relative_activity = _build_relative_activity_score(signal_feature_snapshot)`
+  계산과 `+ 0.10 * relative_activity` 항을 삭제. 함수 시그니처에서
+  더 이상 쓰이지 않는 `signal_feature_snapshot` 매개변수도 함께 제거(호출부
+  `assess_deterministic_triggers` 내 호출 인자도 동일하게 정리).
+- `entry_score` 쪽 `relative_activity_bonus`(`_build_entry_score()` 내부,
+  `min(0.10, relative_activity_bonus*0.10)`)는 **변경 없음** — `_build_
+  relative_activity_score()` 함수 자체는 그대로 유지되며 entry_score
+  경로에서만 계속 호출된다.
+- `coverage_score`/`_CORE_RISK_OFF_RANKING_MIN_SCORE`/`_CORE_RISK_OFF_
+  SHADOW_MIN_SCORE` 등 threshold 상수는 일절 수정하지 않음.
+- 새 산식(코드 반영 후): `ranking_score = 0.55*entry_score + 0.20*coverage_score
+  + 0.10*allocation_quality + 0.03*regime_tailwind + 0.02*strategy_alignment`
+  (§120에서 검증한 "단순 차감(재정규화 없음)" 방식과 동일 — 가중치 재분배 없음).
+
+### 121.2 최소 검증 결과(사실)
+
+| 검증 대상 | 결과 |
+|---|---|
+| `tests/services/test_deterministic_trigger_engine.py` | 20 passed(수정 전 1건 FAIL → fixture 보정 후 통과) |
+| `tests/services/test_trigger_proxy_attribution.py` + `test_decision_orchestrator.py` + `test_core_risk_off_topk_projection.py` | 93 passed |
+| `tests/services/test_decision_factory.py` + `test_expected_value_gate.py` | 12 passed |
+| `bash scripts/harness/run.sh accept backend-file src/agent_trading/services/deterministic_trigger_engine.py` | PASS(`py_compile_passed=1`, `tests_run_count=3`, `test_failed_count=0`) |
+
+Full pytest, 외부 API 호출, 무거운 통합 테스트는 수행하지 않음(원칙 준수).
+
+### 121.3 테스트 보정 1건 상세(사실 + 해석)
+
+`test_trigger_engine_marks_risk_off_exception_eligible_for_strong_core_setup`
+(기존 fixture: `overall=0.28, fast=0.58, slow=0.02, volume_surge_ratio=1.45,
+turnover_surge_ratio=1.60`)의 구 ranking_score는 `_CORE_RISK_OFF_RANKING_
+MIN_SCORE=0.48` 바로 위에 위치해 있었다. `0.10*relative_activity` 항 제거로
+새 ranking_score가 `0.4601`(< 0.48)로 떨어져 `risk_off_exception_eligible`이
+`False`로 바뀌며 테스트가 실패했다(사실, 코드 반영 후 직접 재현·측정).
+
+이 fixture는 "강한 core setup에서 risk_off 예외 자격이 성립한다"는 테스트
+의도를 검증하기 위한 것이므로, 그 의도를 유지한 채 `turnover_surge_ratio`만
+`1.60→2.50`으로 최소 상향해 새 ranking_score를 `0.4849`(> 0.48)로 복원했다
+(다른 필드는 변경하지 않음). 후보 값 탐색은 컨테이너 내 read-only 재현
+스크립트로 `(volume, turnover)` 조합 7개를 시험해 가장 작은 변경(turnover
+단독 상향)으로 문턱을 넘는 지점을 확인한 결과다(사실).
+
+**해석**: §120.2에서 "案1의 threshold 영향은 일반 모집단 기준 미미
+(14.8%→14.3%)"라고 판정한 것은 집계 수준에서는 유효하지만, **개별 레코드가
+정확히 0.48 경계 부근에 있을 경우 案1 적용으로 경계를 넘나들 수 있다**는
+점이 실제 코드 반영 단계에서 구체적으로 재확인됐다. 이는 §120의 결론을
+뒤집는 것이 아니라(집계 영향은 여전히 작음), "미미한 집계 영향"과 "개별
+경계 사례 영향 없음"은 별개의 명제임을 보여주는 사례다.
+
+### 121.4 범위 준수 확인(사실)
+
+- `coverage_score`/threshold 재설계: 이번 턴에서 미착수(§120.4 2순위 그대로
+  유지).
+- `.env` 미수정, 신규 KIS 호출 0건.
+- 변경 파일: `src/agent_trading/services/deterministic_trigger_engine.py`,
+  `tests/services/test_deterministic_trigger_engine.py`(fixture 보정 1건).
+
+### 121.5 다음 우선 작업(완화안 확정 아님)
+
+1. **1순위(신규)**: 이번 diff가 실제 운영 decision loop에 반영된 이후
+   `ranking_blocked`/`shadow_topk_exception_v2` 발동 빈도가 실측 기준으로
+   어떻게 달라지는지 다음 거래일 이후 관찰(read-only, 완화안 아님).
+2. **2순위**: `coverage_score` threshold(`0.48`/`0.22`) 재설계 트랙 착수
+   여부 결정(§120.4 2순위 이월).
+3. **3순위(이전 턴 이월)**: `000720`이 core 유니버스에 20일 이상 연속
+   포함되는 조건 원인 확인.
+4. **4순위(이전 턴 이월)**: `high_volatility` 단독 경로(001450형) 층3 관찰
+   지속.
