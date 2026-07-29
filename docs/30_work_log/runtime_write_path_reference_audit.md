@@ -149,3 +149,12 @@ Codex 추천은 다음과 같다.
 - 확장자 분포는 `.json=95`, `.log=68`, `.jsonl=2`, `.txt=1`이다.
 - 런타임 추적 파일 총합은 `2632`개이며, 구성은 `logs=2560`, `tmp=0`, `data=72`다.
 - 다음 작업은 `git rm --cached -r logs`를 별도 PR로 진행하는 것이다.
+
+### 2026-07-29 — `logs/` tracked 파일 추적 제외
+
+- `git rm --cached -r logs`로 `logs/` tracked 파일 `2560`개를 Git 추적에서 제거했다.
+- 작업트리의 `logs/` 실제 파일은 `2617`개로 보존됐다.
+- `logs_tracked_count`는 `2560`에서 `0`으로 감소했다.
+- `runtime_tracked_file_count`는 `2632`에서 `72`로 감소했다.
+- 남은 runtime tracked 파일은 `data=72`개다.
+- 전체 문서의 `logs/` Markdown 링크는 `0`개로 유지된다.
