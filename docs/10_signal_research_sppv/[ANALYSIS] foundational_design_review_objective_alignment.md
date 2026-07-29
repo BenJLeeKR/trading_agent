@@ -2736,20 +2736,20 @@ research_sppv/[DESIGN] regime_conditional_entry_signal_v1.md`
   붕괴함을 확인 — 단순 상수 제거가 아니라 threshold 경계 자체를
   재구성하는 변경이라, **threshold 재설계와 묶이지 않으면 단독
   diff로 진행 불가**.
-- **`relative_activity`**: 案1(entry_score 유지)과 案2(ranking
-  유지)의 threshold 영향은 둘 다 미미(14.8%→14.3%)하지만, 案2는
+- **`relative_activity`**: 1안(entry_score 유지)과 2안(ranking
+  유지)의 threshold 영향은 둘 다 미미(14.8%→14.3%)하지만, 2안는
   `buy_candidate_threshold=0.65` 공유 함수(`_build_entry_score`)
-  를 건드려 diff 범위가 넓어짐 — **案1이 더 보수적이며, 이번
+  를 건드려 diff 범위가 넓어짐 — **1안이 더 보수적이며, 이번
   턴 기준 최초로 즉시 diff 초안 작성이 가능한 안**으로 확정.
 
 **결론**: `coverage_score`=diff 보류(threshold 재설계 선행
-필요), `relative_activity`=案1으로 diff 착수 가능. 완화안/코드
+필요), `relative_activity`=1안으로 diff 착수 가능. 완화안/코드
 diff는 여전히 미착수. 상세: `docs/10_signal_research_sppv/
 [DESIGN] regime_conditional_entry_signal_v1.md` §120.
 
-## 19. `relative_activity` 案1 diff 실제 적용(SPPV-2.133, 2026-07-29 KST)
+## 19. `relative_activity` 1안 diff 실제 적용(SPPV-2.133, 2026-07-29 KST)
 
-§18에서 diff 착수 가능으로 판정된 `relative_activity` 案1을 실제 코드에
+§18에서 diff 착수 가능으로 판정된 `relative_activity` 1안을 실제 코드에
 반영했다(`.env` 미수정, Full pytest 미실행, 신규 KIS 호출 0건 — 이번
 항목만 코드 변경 포함).
 
@@ -2770,7 +2770,7 @@ diff는 여전히 미착수. 상세: `docs/10_signal_research_sppv/
 유지). 상세: `docs/10_signal_research_sppv/[DESIGN] regime_conditional_
 entry_signal_v1.md` §121.
 
-## 20. `relative_activity` 案1 적용 후 영향 확인 + 다음 설계 분기 확정(SPPV-2.134, 2026-07-29 KST)
+## 20. `relative_activity` 1안 적용 후 영향 확인 + 다음 설계 분기 확정(SPPV-2.134, 2026-07-29 KST)
 
 §19에서 적용한 diff(PR #14, mergeCommit `e1ae1b3d`, 2026-07-29 12:39:59
 KST 병합)가 운영 decision loop에 미친 영향을 read-only로 확인했다(코드

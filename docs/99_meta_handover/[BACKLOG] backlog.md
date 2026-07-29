@@ -1823,14 +1823,14 @@
 - 2026-07-29 KST(SPPV-2.132, 신규 KIS 호출 0건): `coverage_
   score` threshold 연쇄영향 정량 재계산 — `0.48`/`0.22` 통과율
   붕괴(14.8%→0.34~2.2%, 100%→0.4~1.8%) 확인, diff 보류(threshold
-  재설계 선행 필요). `relative_activity` 유지 위치 비교 — 案1
+  재설계 선행 필요). `relative_activity` 유지 위치 비교 — 1안
   (entry_score 유지, ranking 제거)이 threshold 영향 미미 + diff
   범위 최소로 확인, **다음 턴 diff 초안 작성 가능**. 완화안
   미제시. 상세: `docs/10_signal_research_sppv/[DESIGN] regime_
   conditional_entry_signal_v1.md` §120.
 
 - 2026-07-29 KST(SPPV-2.133, 신규 KIS 호출 0건, **코드 변경
-  포함**): `relative_activity` 案1 diff 실제 적용 —
+  포함**): `relative_activity` 1안 diff 실제 적용 —
   `deterministic_trigger_engine.py`의 `_build_buy_ranking_score`
   에서 `0.10*relative_activity` 항 제거, `entry_score` 쪽 반영은
   유지. 관련 단위 테스트 4개 파일(125건) + 하네스 `accept
@@ -1840,7 +1840,7 @@
   signal_v1.md` §121.
 
 - 2026-07-29 KST(SPPV-2.134, 신규 KIS 호출 0건): `relative_
-  activity` 案1 적용(PR #14, 12:39:59 KST 병합) 이후 영향 확인.
+  activity` 1안 적용(PR #14, 12:39:59 KST 병합) 이후 영향 확인.
   병합 직전 30분(n=120) vs 병합 이후 1개 사이클(n=15) 비교 —
   `ranking_score` 미세 이동은 표본 극소로 해석 보류, `buy_
   candidate`·`shadow_topk_exception_v2`는 **변화 없음**. 핵심

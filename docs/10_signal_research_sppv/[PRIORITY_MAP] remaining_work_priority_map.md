@@ -10070,16 +10070,16 @@ agent 설계 문서 기준으로도 순서는 다음이 맞다.
      MIN_SCORE=0.22` 통과율이 100%→0.4%/1.8%로 급격히 붕괴함을
      정량 확인 — 단순 상수 제거가 아니라 threshold 경계 자체를
      재구성하는 변경이라 **threshold 재설계 없이는 단독 diff
-     불가**로 판정. `relative_activity`는 案1(entry_score 유지,
-     ranking 제거)과 案2(ranking 유지, entry_score 제거)를 비교
-     한 결과 둘 다 threshold 영향은 미미(14.8%→14.3%)하나, 案2는
+     불가**로 판정. `relative_activity`는 1안(entry_score 유지,
+     ranking 제거)과 2안(ranking 유지, entry_score 제거)를 비교
+     한 결과 둘 다 threshold 영향은 미미(14.8%→14.3%)하나, 2안는
      `buy_candidate_threshold=0.65` 공유 함수(`_build_entry_
      score`)를 건드려 diff 범위가 더 넓음(현재 데이터 기준 관측
-     영향은 500→500으로 0이나 구조적 리스크는 案2가 더 큼) —
-     **案1이 더 보수적이며 이번 턴 기준 최초로 즉시 diff 초안
+     영향은 500→500으로 0이나 구조적 리스크는 2안가 더 큼) —
+     **1안이 더 보수적이며 이번 턴 기준 최초로 즉시 diff 초안
      작성이 가능한 안**으로 확정. 상세: `docs/10_signal_research_
      sppv/[DESIGN] regime_conditional_entry_signal_v1.md` §120.
-   - **SPPV-2.133(완료, 2026-07-29 KST, `relative_activity` 案1
+   - **SPPV-2.133(완료, 2026-07-29 KST, `relative_activity` 1안
      diff 실제 적용, 작성자: Codex, `.env` 미수정, Full pytest
      미실행, 신규 KIS 호출 0건 — 이번 항목만 코드 변경 포함)**:
      `deterministic_trigger_engine.py`의 `_build_buy_ranking_
@@ -10091,7 +10091,7 @@ agent 설계 문서 기준으로도 순서는 다음이 맞다.
      최소 보정으로 의도 유지. `coverage_score` threshold 재설계
      는 미착수(별도 트랙 유지). 상세: `docs/10_signal_research_
      sppv/[DESIGN] regime_conditional_entry_signal_v1.md` §121.
-   - **SPPV-2.134(완료, 2026-07-29 KST, `relative_activity` 案1
+   - **SPPV-2.134(완료, 2026-07-29 KST, `relative_activity` 1안
      적용 후 영향 확인 + 다음 설계 분기 확정, 작성자: Codex, 코드
      미수정, `.env` 미수정, Full pytest 미실행, 신규 KIS 호출
      0건)**: PR #14(mergeCommit `e1ae1b3d`, 12:39:59 KST 병합)
@@ -10106,7 +10106,7 @@ agent 설계 문서 기준으로도 순서는 다음이 맞다.
      (운영 관측 1~2 거래일 추가 축적) 채택**, `coverage_score`
      threshold 재설계는 보류. 상세: `docs/10_signal_research_
      sppv/[DESIGN] regime_conditional_entry_signal_v1.md` §122.
-   - **SPPV-3(다음 착수: [1순위] `relative_activity` 案1 적용
+   - **SPPV-3(다음 착수: [1순위] `relative_activity` 1안 적용
      이후 최소 1~2 거래일 운영 관측 축적 — `ranking_score` 분포/
      `ranking_blocked` 비중/`shadow_topk_exception_v2` 발동 여부를
      §120 예측치(14.8%→14.3%)와 대조(read-only, 완화안 아님) +
