@@ -234,6 +234,7 @@ Makefile에서는 승인 필요 명령을 `heavy-*` target으로 노출한다. �
 
 ## 보고 기준
 
+- AI가 완료를 주장할 수 있는 최소 조건은 [`docs/99_meta_handover/definition_of_done.md`](../../docs/99_meta_handover/definition_of_done.md)를 따른다.
 - exit code만 보고하지 않는다.
 - `*_count`, `*_run`, `route_count`, `test_file_count`처럼 출력된 원문 지표를 함께 보고한다.
 - `.env` 값, 토큰, 계좌 정보, API secret은 출력하지 않는다.

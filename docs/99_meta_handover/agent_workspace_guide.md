@@ -26,6 +26,7 @@
 - [`AGENTS.md`](../../AGENTS.md): Codex 및 공통 에이전트가 반드시 따라야 하는 작업 규칙.
 - [`CLAUDE.md`](../../CLAUDE.md): Claude Code가 `AGENTS.md`를 읽도록 안내하는 얇은 라우터.
 - [`scripts/harness/README.md`](../../scripts/harness/README.md): 하네스 실행기, 승인 플래그, accept 출력 지표 안내.
+- [`definition_of_done.md`](./definition_of_done.md): AI가 완료를 주장할 수 있는 최소 조건.
 - [`ai_friendly_error_message_contract.md`](./ai_friendly_error_message_contract.md): AI가 진단 가능한 오류 메시지, API 오류 응답, 운영 로그 계약.
 - `docs/00_foundational_design/`: 시스템 원형 설계와 에이전트 책임 경계.
 - `docs/01_architecture_milestones/`: 구현 마일스톤과 후속 수정 계획.
@@ -114,6 +115,8 @@ README에는 프로젝트 실행에 필요한 최신 정보만 남긴다.
 - 오래된 상세 설명은 삭제하지 않고 적절한 `docs/` 하위 문서로 이동하거나 링크로 대체한다.
 
 ## 완료 보고 원칙
+
+완료를 주장하기 전 최소 조건은 [`definition_of_done.md`](./definition_of_done.md)를 따른다.
 
 작업 완료 보고에는 다음을 포함한다.
 

@@ -11,6 +11,8 @@
 - REST-only 경로는 REST 인증만 사용한다.
 - broker submit, post-submit sync, reconciliation, inspection 경계를 섞지 않는다.
 - 운영 성공은 처리량, 스킵, 오류, 저장 레코드 같은 지표로 증명한다.
+- 코드 수정이 없는 read-only 분석 턴이라도, 어떤 DB/로그/코드 경로를 확인했고 무엇이 아직 미확인인지 분리해서 보고한다.
+- 토큰, 인증 정보, secret 후보가 포함될 수 있는 원격 URL, 명령 출력, 로그 조각은 그대로 보고하지 않는다.
 
 ## 주요 경로
 
@@ -33,8 +35,8 @@
 - Python 명령은 `python3`를 사용한다.
 - 셸 명령은 `bash`에서 실행한다.
 - 단일 파일 문법 확인: `python3 -m py_compile <changed_file>`
-- 대상 테스트: `python3 -m pytest <specific_test_file> -v`
-- 단일 테스트: `python3 -m pytest <specific_test_file>::<test_name> -v`
+- 대상 테스트: `bash scripts/harness/run.sh test-file <tests/path.py>`
+- 단일 테스트: `bash scripts/harness/run.sh test-one <selector>`
 - DB schema나 repository contract를 바꾸면 migration, repository test, API read path 영향을 함께 확인한다.
 
 ## 검증 부하 제한
@@ -53,3 +55,4 @@
 - 테스트 통과만을 위해 risk gate, sell guard, submit-lane gate, reconciliation lock을 우회하지 않는다.
 - 실패한 broker, KIS, DB 작업을 조용히 성공으로 바꾸지 않는다.
 - 관련 없는 리팩터링을 끼워 넣지 않는다.
+- 브랜치 보호 규칙이 있는 저장소에서 로컬 커밋만으로 완료를 주장하지 않는다. 필요한 경우 PR/check 상태를 함께 보고한다.

@@ -7,6 +7,7 @@
 상세 작업 방식은 다음 문서로 분리한다.
 
 - [`docs/99_meta_handover/agent_workspace_guide.md`](docs/99_meta_handover/agent_workspace_guide.md): 작업 원칙, 문서 역할, 테스트 데이터, 계획 리뷰 규칙.
+- [`docs/99_meta_handover/definition_of_done.md`](docs/99_meta_handover/definition_of_done.md): AI가 완료를 주장할 수 있는 최소 조건.
 - [`scripts/harness/README.md`](scripts/harness/README.md): `scripts/harness/run.sh` 진입점, 승인 플래그, 출력 지표.
 - [`src/AGENTS.md`](src/AGENTS.md): 백엔드 런타임 전용 규칙.
 - [`admin_ui/AGENTS.md`](admin_ui/AGENTS.md): Admin UI 전용 규칙.
@@ -23,8 +24,10 @@
 - 표면적인 방어 코드보다 원인에 가까운 작은 수정을 우선한다.
 - 매매 의미론, 리스크 정책, 주문 크기 산정, 주문 제출, 정합성 상태 전이는 명시적 근거와 검증 없이 바꾸지 않는다.
 - 런타임 코드, 마이그레이션 동작, API 실행 모드, 문서 내용이 서로 어긋나지 않게 유지한다.
+- 코드나 문서를 수정하지 않는 read-only 분석 턴이라도, 조회 범위·사용한 명령·미확인 사항을 분리해서 보고한다.
 - `.env` 파일은 직접 수정하지 않는다. 환경변수 변경이 필요하면 `.env.example` 수정안 또는 사용자가 직접 적용할 변경 내용을 제시한다.
 - `.env` 파일의 키값, 토큰, 비밀번호, 계좌 정보, API secret은 출력하거나 보고서에 노출하지 않는다.
+- 토큰, 인증 정보, secret 후보가 포함될 수 있는 원격 URL, 명령 출력, 로그 조각은 그대로 보고하지 않는다.
 
 ## 검증 정책
 
@@ -74,6 +77,8 @@ Ubuntu 서버 작업 영역에서는 `python` 명령을 사용하지 않고 `pyt
 ## 보고 원칙
 
 - 운영 커버리지가 중요한 작업에서는 exit code 0만으로 성공을 판단하지 않는다.
+- AI가 완료를 주장할 수 있는 조건은 `docs/99_meta_handover/definition_of_done.md`를 따른다.
 - 오류 메시지, API 오류 응답, 운영 로그를 보강할 때는 `docs/99_meta_handover/ai_friendly_error_message_contract.md`를 따른다.
 - 완료 보고에는 변경한 파일, 실행한 검증 명령, 검증하지 못한 가정, 실제 처리·스킵·오류·테스트 카운트를 포함한다.
+- 브랜치 보호 규칙이 있는 저장소에서는 완료 보고에 현재 브랜치, `HEAD`, 원격 추적 브랜치 상태, PR/check 상태를 포함한다.
 - 운영 보고에서는 단순히 “OK”라고 쓰지 말고 실제 처리량과 커버리지 지표를 포함한다.
