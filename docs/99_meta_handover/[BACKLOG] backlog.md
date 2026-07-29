@@ -1799,6 +1799,17 @@
   유지. 완화안 미제시. 상세: `docs/10_signal_research_sppv/
   [DESIGN] regime_conditional_entry_signal_v1.md` §117.
 
+- 2026-07-29 KST(SPPV-2.130, 신규 KIS 호출 0건): `ranking_score`
+  산식 재설계 준비 — 4개 항목 역할 재분류. "고정 여부 확인" 단계
+  종료, 산식 재설계 준비 단계 진입. `coverage_score`=다른 계층
+  이관 검토(1순위, hard 게이트 통과 후 100% 상수 확인),
+  `relative_activity`=중복 정리 검토(2순위), `strategy_
+  alignment`=중복 정리 검토(3순위), `regime_tailwind`=역할 축소
+  검토(4순위). 1·2순위는 즉시 설계안(A/B) 비교 단계 진입 가능.
+  다음 턴은 설계안 비교 턴으로 제안. 완화안/코드 diff 없음.
+  상세: `docs/10_signal_research_sppv/[DESIGN] regime_
+  conditional_entry_signal_v1.md` §118.
+
 ---
 
 ## 관리 원칙

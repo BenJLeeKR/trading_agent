@@ -2598,6 +2598,25 @@ entry 설계 검토로 전환**을 확정했다. 별도 문서
   유지. 상세: `docs/10_signal_research_sppv/[DESIGN] regime_
   conditional_entry_signal_v1.md` §117.
 
+- 작성자: Codex
+- 수정일자: 2026-07-29 KST (130차, `ranking_score` 산식 재설계
+  준비 — 4개 항목 역할 재분류, 코드 미수정, 완화안/코드 diff
+  없음, Full pytest 미실행, 신규 KIS 호출 0건)
+- 수정내용: `regime_tailwind`/`strategy_alignment` "고정 여부
+  확인" 단계(128~129차)를 종료하고 산식 재설계 준비 단계로
+  진입. `coverage_score`는 전체 이력에서 실제 관측 값이 `1.0`
+  (36,383건)/`0.1429`(725건, 723건 하드 차단) 단 2개뿐임을
+  확인해 **다른 계층으로 이관 검토(1순위)**로 분류. `relative_
+  activity`는 entry_score+ranking 소프트 2곳이 같은 신호 재사용
+  (과잉 중복)으로 **중복 정리 검토(2순위)**. `strategy_
+  alignment`는 entry_score+ranking이 완전히 동일한 조건 집합을
+  검사(현재 미발동, 구조적 확정 중복)로 **중복 정리 검토(3순위)**.
+  `regime_tailwind`는 상류·하류에서 이미 강하게 처리돼 존치
+  근거 약함으로 **역할 축소 검토(4순위)**. 1·2순위는 즉시
+  설계안(A/B) 비교 단계 진입 가능 판정 — 다음 턴은 설계안 비교
+  턴으로 제안. 상세: `docs/10_signal_research_sppv/[DESIGN]
+  regime_conditional_entry_signal_v1.md` §118.
+
 ---
 
 ## 진행 체크리스트
@@ -5645,6 +5664,15 @@ canonical),
     로직 변경 없음, 신규 KIS 호출 0건(shadow 재호출은 `kis_
     client=None`). 상세: `docs/10_signal_research_sppv/[DESIGN]
     regime_conditional_entry_signal_v1.md` §94.
+- [x] **SPPV-2.130(신설)** `ranking_score` 산식 재설계 준비 —
+  4개 항목 역할 재분류 (완료, 2026-07-29 KST, 작성자: Codex,
+  코드 미수정, 완화안/코드 diff 없음, Full pytest 미실행, 신규
+  KIS 호출 0건)
+  - `coverage_score`=이관 검토(1순위), `relative_activity`=
+    중복 정리(2순위), `strategy_alignment`=중복 정리(3순위),
+    `regime_tailwind`=축소 검토(4순위). 1·2순위는 설계안 비교
+    단계 진입 가능. 상세: `docs/10_signal_research_sppv/
+    [DESIGN] regime_conditional_entry_signal_v1.md` §118.
 - [x] **SPPV-2.129(신설)** `strategy_alignment` 해석·집계 수치
   정밀 보정 (완료, 2026-07-29 KST, 작성자: Codex, 코드 미수정,
   Full pytest 미실행, 신규 KIS 호출 0건)
