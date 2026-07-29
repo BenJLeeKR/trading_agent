@@ -21,6 +21,60 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  changes:
+    name: Deployment change detector
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    outputs:
+      deploy_required: ${{ steps.detect.outputs.deploy_required }}
+      changed_file_count: ${{ steps.detect.outputs.changed_file_count }}
+      deploy_relevant_file_count: ${{ steps.detect.outputs.deploy_relevant_file_count }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+
+      - name: Detect deploy-relevant changes
+        id: detect
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if git rev-parse HEAD^ >/dev/null 2>&1; then
+            base_ref="HEAD^"
+          else
+            base_ref="${{ github.event.before }}"
+          fi
+
+          changed_files="$(git diff --name-only "$base_ref" HEAD || true)"
+          changed_file_count="$(printf '%s\n' "$changed_files" | sed '/^$/d' | wc -l | tr -d ' ')"
+          deploy_relevant_files="$(
+            printf '%s\n' "$changed_files" |
+              sed '/^$/d' |
+              grep -E '^(\.python-version|\.postgres-version|Dockerfile|docker-compose\.yml|pyproject\.toml|requirements(\.lock|\.txt)?|db/|src/|scripts/[^/]+\.(py|sh)|admin_ui/(Dockerfile|nginx\.frontend\.conf|package(-lock)?\.json|tsconfig[^/]*\.json|vite\.config\.[^/]+|src/|public/))' || true
+          )"
+          deploy_relevant_file_count="$(printf '%s\n' "$deploy_relevant_files" | sed '/^$/d' | wc -l | tr -d ' ')"
+
+          if [ "$deploy_relevant_file_count" -gt 0 ]; then
+            deploy_required="1"
+            deploy_skipped_by_docs_only_count="0"
+          else
+            deploy_required="0"
+            deploy_skipped_by_docs_only_count="1"
+          fi
+
+          {
+            echo "deploy_required=$deploy_required"
+            echo "changed_file_count=$changed_file_count"
+            echo "deploy_relevant_file_count=$deploy_relevant_file_count"
+          } >> "$GITHUB_OUTPUT"
+
+          echo "changed_file_count=$changed_file_count"
+          echo "deploy_relevant_file_count=$deploy_relevant_file_count"
+          echo "deploy_required=$deploy_required"
+          echo "deploy_skipped_by_docs_only_count=$deploy_skipped_by_docs_only_count"
+
   safe:
     name: Safe harness contracts
     runs-on: ubuntu-latest
@@ -128,8 +182,8 @@ jobs:
   deploy:
     name: Deploy after safe harness
     runs-on: ubuntu-latest
-    needs: safe
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.safe.result == 'success'
+    needs: [safe, changes]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.safe.result == 'success' && needs.changes.outputs.deploy_required == '1'
     steps:
       - name: Deploy to Oracle Cloud
         uses: appleboy/ssh-action@v1.0.3
