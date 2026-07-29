@@ -25,7 +25,7 @@
 - [ ] `data/`는 전체 제외 여부를 바로 결정하지 않고 `data/runtime/`, `data/cache/`, `data/local/` 같은 mutable 하위 경로 분리를 먼저 검토한다.
 - [ ] 필요한 seed, example, fixture 파일은 `tests/fixtures/`, `docs/`, 또는 `*.example` 경로로 이동할지 결정한다.
 - [x] `.gitignore`에 runtime write path 패턴을 추가한다.
-- [~] 기존 tracked 런타임 파일은 `git rm --cached` 또는 경로 이동으로 정리한다.
+- [~] 기존 tracked 런타임 파일은 `git rm --cached` 또는 경로 이동으로 정리한다. `tmp/` tracked 파일 `55`개는 제거 완료했고, `logs/`, `data/`는 남아 있다.
 - [x] 배포 workflow에 `git clean -fdx` 또는 동등한 파괴적 clean 명령이 들어가지 않도록 `accept ci` 검사에 추가한다.
 - [x] `accept ci`에 tracked runtime write path 카운트 검사를 추가한다.
 
@@ -153,6 +153,15 @@
 - [x] 즉시 전체 `git rm --cached -r logs tmp data`는 금지하고, `tmp/`부터 작은 PR로 정리하는 추천안을 남겼다.
 - [x] 감사 결과는 [`runtime_write_path_reference_audit.md`](../30_work_log/runtime_write_path_reference_audit.md)에 기록했다.
 
+### P0 4차 — `tmp/` tracked 파일 추적 제외
+
+- [x] `tmp/` tracked 파일 `55`개를 Git 추적에서 제거했다.
+- [x] `tmp/` 정확 참조 파일 `1`개와 참조 라인 `3`개를 문서 링크에서 역사적 파일명 코드 텍스트로 전환했다.
+- [x] `tmp/measure_dschat_latency.py`는 `.env` 기반 외부 API 측정 스크립트라 정식 `scripts/` 경로로 승격하지 않았다.
+- [x] `runtime_tracked_file_count`는 `2687`에서 `2632`로 감소했다.
+- [x] `tmp_tracked_count`는 `55`에서 `0`으로 감소했다.
+- [x] 처리 기록은 [`runtime_write_path_inventory.md`](../30_work_log/runtime_write_path_inventory.md)와 [`runtime_write_path_reference_audit.md`](../30_work_log/runtime_write_path_reference_audit.md)에 남겼다.
+
 ## 작업 이력
 
 | 일자 | 작업자 | 항목 | 변경 파일 수 | 검증 명령 | 주요 출력 지표 | 후속 조치 |
@@ -162,6 +171,7 @@
 | 2026-07-29 | Codex | P0 2차 — tracked runtime 파일 분류 | 2 | `bash scripts/harness/run.sh accept docs` | `runtime_tracked_file_count=2687`, `logs=2560`, `tmp=55`, `data=72` | `logs/`, `tmp/` 추적 제외 PR 범위 결정 |
 | 2026-07-29 | Codex | P0 3차 — tracked runtime 참조 감사 | 3 | `bash scripts/harness/run.sh accept docs`; `bash scripts/harness/run.sh accept ci` | `exact_referenced_tracked_runtime_file_count=182`, `exact_reference_line_count=507` | `tmp/` 정리 PR부터 진행 |
 | 2026-07-29 | Codex | 작업기록 문서 라우팅 정리 | 3 | `bash scripts/harness/run.sh accept docs`; `bash scripts/harness/run.sh accept ci` | `moved_work_log_document_count=2`, `updated_plan_link_count=4` | P0 `tmp/` 정리 PR |
+| 2026-07-29 | Codex | P0 4차 — `tmp/` tracked 파일 추적 제외 | 60 | `bash scripts/harness/run.sh accept docs`; `bash scripts/harness/run.sh accept ci` | `tmp_tracked_count=0`, `runtime_tracked_file_count=2632` | `logs/` 링크 정책 결정 |
 
 ## 갱신 규칙
 
