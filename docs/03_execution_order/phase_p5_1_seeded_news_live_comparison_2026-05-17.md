@@ -70,7 +70,7 @@ flowchart LR
 
 ## 4. 비교 실행 결과 (핵심)
 
-실행 파일: [`data/observations/comparison_20260517_064639.json`](data/observations/comparison_20260517_064639.json)
+실행 파일: `data/observations/comparison_20260517_064639.json` (`data/observations/comparison_20260517_064639.json`)
 
 ### OFF vs ON EI Output 종합 비교표
 
@@ -251,6 +251,6 @@ flowchart TB
 ## 부록: 실행 로그
 
 - 관측 스크립트: [`observe_seeded_news_comparison.py`](scripts/observe_seeded_news_comparison.py)
-- 비교 데이터: [`comparison_20260517_064639.json`](data/observations/comparison_20260517_064639.json)
+- 비교 데이터: `comparison_20260517_064639.json` (`data/observations/comparison_20260517_064639.json`)
 - 실행 기반: [`run_paper_decision_loop.py --dry-run --count 1`](scripts/run_paper_decision_loop.py)
 - 이전 보고서: [`phase_p5_seeded_news_ei_quality_observation_2026-05-17.md`](plans/phase_p5_seeded_news_ei_quality_observation_2026-05-17.md) (credential 부재로 데이터 없음)

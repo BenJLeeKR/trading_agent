@@ -40,7 +40,7 @@ EI(Event Interpretation) 파이프라인에서 T1(OpenDART regulatory/authoritat
 1. **DB 현황 조회**: [`trading.external_events`](db/migrations/0013_add_source_type_to_trade_decisions.sql) 테이블 통계 (2,369건)
 2. **코드 분석**: [`_event_sort_key()`](src/agent_trading/services/decision_orchestrator.py:326), [`SourceReliabilityTier`](src/agent_trading/domain/enums.py:139), [`ExternalEventEntity`](src/agent_trading/domain/entities.py:507)
 3. **EI Agent Prompt 분석**: [`event_interpretation.py:_build_system_prompt()`](src/agent_trading/services/ai_agents/event_interpretation.py:201)
-4. **Phase P-5 관측 데이터 분석**: [`comparison_20260517_063319.json`](data/observations/comparison_20260517_063319.json)
+4. **Phase P-5 관측 데이터 분석**: `comparison_20260517_063319.json` (`data/observations/comparison_20260517_063319.json`)
 5. **시뮬레이션 스크립트 실행**: [`test_t1_t3_interaction_analysis.py`](tests/scripts/test_t1_t3_interaction_analysis.py)
 
 ---

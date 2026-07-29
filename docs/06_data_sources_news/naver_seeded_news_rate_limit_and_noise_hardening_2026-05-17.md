@@ -7,7 +7,7 @@
 | 보고서 생성일 | 2026-05-17 |
 | Phase | K (Step 1~3 통합) |
 | 대상 시스템 | [`src/agent_trading/brokers/naver_news_adapter.py`](src/agent_trading/brokers/naver_news_adapter.py) / [`src/agent_trading/services/seeded_news_service.py`](src/agent_trading/services/seeded_news_service.py) |
-| Live Validation | [`data/observations/naver_hardened_comparison_20260517_195158.json`](data/observations/naver_hardened_comparison_20260517_195158.json) |
+| Live Validation | `data/observations/naver_hardened_comparison_20260517_195158.json` (`data/observations/naver_hardened_comparison_20260517_195158.json`) |
 | EI Suitability | **CONDITIONAL GO (유지)** — EI 판정 영향 없음, 인프라 안정성+데이터 품질 개선 |
 
 ---
@@ -298,5 +298,5 @@ flowchart TD
 | [`plans/phase_p3_seeded_news_live_validation_2026-05-17.md`](plans/phase_p3_seeded_news_live_validation_2026-05-17.md) | Phase J → Phase K Step 3 live validation 계획 |
 | [`plans/phase_p5_seeded_news_ei_quality_observation_2026-05-17.md`](plans/phase_p5_seeded_news_ei_quality_observation_2026-05-17.md) | EI quality observation |
 | [`plans/phase_p5_1_seeded_news_live_comparison_2026-05-17.md`](plans/phase_p5_1_seeded_news_live_comparison_2026-05-17.md) | Phase K Step 3 live comparison |
-| [`data/observations/naver_hardened_comparison_20260517_195158.json`](data/observations/naver_hardened_comparison_20260517_195158.json) | 수정 전/후 비교 raw data |
-| [`data/observations/naver_live_validation_20260517_193100.json`](data/observations/naver_live_validation_20260517_193100.json) | Phase J live validation raw data |
+| `data/observations/naver_hardened_comparison_20260517_195158.json` (`data/observations/naver_hardened_comparison_20260517_195158.json`) | 수정 전/후 비교 raw data |
+| `data/observations/naver_live_validation_20260517_193100.json` (`data/observations/naver_live_validation_20260517_193100.json`) | Phase J live validation raw data |

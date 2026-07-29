@@ -140,8 +140,8 @@ flowchart LR
 
 | 파일 | 타임스탬프 | 결과 |
 |------|-----------|------|
-| [`comparison_20260517_062609.json`](data/observations/comparison_20260517_062609.json) | 06:26:09 UTC | ❌ ERROR (returncode=1, status=ERROR) |
-| [`comparison_20260517_063319.json`](data/observations/comparison_20260517_063319.json) | 06:33:19 UTC | ✅ 성공 (전 종목 returncode=0) |
+| `comparison_20260517_062609.json` (`data/observations/comparison_20260517_062609.json`) | 06:26:09 UTC | ❌ ERROR (returncode=1, status=ERROR) |
+| `comparison_20260517_063319.json` (`data/observations/comparison_20260517_063319.json`) | 06:33:19 UTC | ✅ 성공 (전 종목 returncode=0) |
 
 첫 번째 실행은 초기 환경 미준비로 ERROR 발생. 두 번째 실행부터 정상 동작.
 

@@ -3,7 +3,7 @@
 **작성일:** 2026-05-17 19:31 KST  
 **대상 Phase:** J (Seeded News — NAVER Search API 라이브 검증)  
 **실제 실행:** Step 2 (Code) — Docker `ops-scheduler`, 2026-05-17 19:31 KST  
-**관측 데이터:** [`data/observations/naver_live_validation_20260517_193100.json`](data/observations/naver_live_validation_20260517_193100.json)  
+**관측 데이터:** `data/observations/naver_live_validation_20260517_193100.json` (`data/observations/naver_live_validation_20260517_193100.json`)  
 **참조:** [`plans/phase_p3_seeded_news_live_validation_2026-05-17.md`](plans/phase_p3_seeded_news_live_validation_2026-05-17.md) (Phase P-3 보고서)
 
 ---
@@ -443,7 +443,7 @@ async def _apply_hard_gate(self, items, seed):
 }
 ```
 
-전체 raw data: [`data/observations/naver_live_validation_20260517_193100.json`](data/observations/naver_live_validation_20260517_193100.json)
+전체 raw data: `data/observations/naver_live_validation_20260517_193100.json` (`data/observations/naver_live_validation_20260517_193100.json`)
 
 ---
 
