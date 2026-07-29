@@ -188,6 +188,11 @@ def section_between(text: str, start: str, end: str) -> str:
     end_index = text.find(end, start_index + len(start))
     return text[start_index:] if end_index < 0 else text[start_index:end_index]
 
+def normalize_harness_command(command: str) -> str:
+    command = command.strip()
+    command = re.sub(r"^bash scripts/harness/run\.sh\s+", "", command)
+    return re.sub(r"\s+", " ", command)
+
 harness_command_lines = [
     (path, line_no, line)
     for path, text in workflow_text_by_path.items()
@@ -299,6 +304,11 @@ deploy_without_change_detector_count = (
 )
 
 safe_section = section_between(workflow_text, "  safe:", "  heavy:")
+check_quick_section = section_between(
+    (root / "scripts" / "harness" / "run.sh").read_text(),
+    "check_quick() {",
+    "check_changed() {",
+)
 safe_forbidden_heavy_pattern = re.compile(
     r"(HARNESS_ALLOW_HEAVY|full-test|docker-test|smoke|admin-build|admin-test-all)"
 )
@@ -307,6 +317,36 @@ safe_forbidden_heavy_lines = [
     for line_no, line in enumerate(safe_section.splitlines(), 1)
     if safe_forbidden_heavy_pattern.search(line)
 ]
+quick_command_set = {
+    "accept docs",
+    "accept ci",
+    "accept no-bypass",
+    "accept env",
+    "accept backend-runtime",
+    "accept frontend",
+    "lint-path src/agent_trading",
+    "git diff --check",
+}
+quick_step_count = len(quick_command_set)
+quick_step_match = re.search(r"local step_count=(\d+)", check_quick_section)
+if quick_step_match is not None:
+    quick_step_count = int(quick_step_match.group(1))
+
+safe_harness_commands = [
+    normalize_harness_command(match.group(1))
+    for match in re.finditer(
+        r"bash scripts/harness/run\.sh\s+([A-Za-z0-9_.\-/ ]+)",
+        safe_section,
+    )
+]
+ci_safe_step_count = len(safe_harness_commands)
+safe_expanded_command_set = set(quick_command_set)
+for command in safe_harness_commands:
+    if command == "check quick":
+        continue
+    safe_expanded_command_set.add(command)
+local_ci_command_gap_count = len(safe_expanded_command_set - quick_command_set)
+quick_only_command_count = len(quick_command_set - safe_expanded_command_set)
 deploy_manual_dispatch_input_count = int("deploy_main:" in workflow_text) + int(
     "allow_market_hours_deploy:" in workflow_text
 )
@@ -391,6 +431,10 @@ metrics = {
     "deploy_missing_migration_count": len(deploy_missing_migration_workflows),
     "deploy_missing_proxy_reload_count": len(deploy_missing_proxy_reload_workflows),
     "destructive_deploy_clean_command_count": len(destructive_runtime_clean_lines),
+    "quick_step_count": quick_step_count,
+    "ci_safe_step_count": ci_safe_step_count,
+    "local_ci_command_gap_count": local_ci_command_gap_count,
+    "quick_only_command_count": quick_only_command_count,
     "deploy_manual_dispatch_input_count": deploy_manual_dispatch_input_count,
     "deploy_manual_dispatch_support_count": deploy_manual_dispatch_support_count,
     "deploy_target_sha_pin_count": deploy_target_sha_pin_count,
@@ -407,6 +451,10 @@ informational_metrics = {
     "harness_command_count",
     "workflow_file_count",
     "deploy_workflow_count",
+    "quick_step_count",
+    "ci_safe_step_count",
+    "local_ci_command_gap_count",
+    "quick_only_command_count",
     "deploy_manual_dispatch_input_count",
     "deploy_manual_dispatch_support_count",
     "deploy_target_sha_pin_count",

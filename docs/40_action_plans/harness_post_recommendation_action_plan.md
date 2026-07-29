@@ -63,12 +63,12 @@ canonical data 허용 목록과 owner 기준은 [`canonical_data_contract.md`](.
 
 목표: 로컬의 빠른 검증과 CI 필수 검증이 과도하게 어긋나지 않게 한다.
 
-- [ ] 현재 `check quick` 단계 수와 CI `safe` job 단계 수를 카운트한다.
+- [x] 현재 `check quick` 단계 수와 CI `safe` job 단계 수를 카운트한다.
 - [ ] 부하가 작은 필수 계약을 `check quick`에 포함할지 판단한다.
 - [ ] 부하가 큰 항목은 `check full`을 신설해 CI safe와 등가로 둘지 판단한다.
 - [ ] `AGENTS.md`의 커밋 전 권장 명령이 실제 정책과 일치하도록 수정한다.
 - [ ] `scripts/harness/README.md`에 `check quick`과 `check full`의 역할 차이를 명시한다.
-- [ ] `accept ci`에 required harness command와 로컬 명령 간 괴리 카운트를 추가한다.
+- [x] `accept ci`에 required harness command와 로컬 명령 간 괴리 카운트를 추가한다.
 
 완료 기준:
 
@@ -330,6 +330,7 @@ canonical data 허용 목록과 owner 기준은 [`canonical_data_contract.md`](.
 | 2026-07-29 | Codex | P0 19차 — 남은 `data/` canonical 입력 허용 목록 문서화 | 5 | `bash scripts/harness/run.sh accept docs`; `bash scripts/harness/run.sh accept ci` | `data_tracked_allowlist_count=10`, `runtime_artifact_tracked_count=0`, `canonical_data_owner_documented_count=10` | P0 닫기 후보, 다음 P1 장 시간 배포 가드 |
 | 2026-07-29 | Codex | P1 1차 — 수동 재배포 입력과 최신 SHA 고정 | 4 | `bash scripts/harness/run.sh accept docs`; `bash scripts/harness/run.sh accept ci` | `deploy_manual_dispatch_input_count=2`, `deploy_manual_dispatch_requested_count=0`, `ci_contract_failed_count=0`, `deploy_workflow_count=1` | 장 시간 가드와 skip/override 지표 추가 |
 | 2026-07-29 | Codex | P1 2차 — 장 시간 배포 가드와 override 지표 | 4 | `bash scripts/harness/run.sh accept docs`; `bash scripts/harness/run.sh accept ci` | `deploy_market_hours_guard_count=1`, `deploy_market_hours_skip_metric_count=1`, `deploy_market_hours_override_metric_count=1`, `deploy_job_depends_on_market_guard_count=1` | P1 닫기 후보, 다음 P2 quick/full 계층 정리 |
+| 2026-07-29 | Codex | P2 1차 — quick/safe 단계 수와 괴리 계측 | 3 | `bash scripts/harness/run.sh accept docs`; `bash scripts/harness/run.sh accept ci` | `quick_step_count=8`, `ci_safe_step_count=8`, `local_ci_command_gap_count=6`, `quick_only_command_count=0` | `check quick` 확장 또는 `check full` 신설 판단 |
 
 ## 갱신 규칙
 
