@@ -79,6 +79,19 @@ GitHub Actions도 사람과 AI가 쓰는 동일한 하네스를 사용한다. CI
 
 `check quick`은 커밋 전 기본 스냅샷용 계층 묶음이다. 현재 범위는 `accept docs`, `accept ci`, `accept no-bypass`, `accept env`, `accept backend-runtime`, `accept frontend`, `lint-path src/agent_trading`, `git diff --check`이며 전체 테스트, 전체 빌드, DB 연결, 외부 네트워크 호출을 실행하지 않는다.
 
+현재 2026-07-29 기준 계측은 다음과 같다.
+
+- `quick_step_count=8`
+- `ci_safe_step_count=8`
+- `local_ci_command_gap_count=6`
+- `quick_only_command_count=0`
+
+해석:
+
+- raw 호출 수는 둘 다 `8`이지만, `safe` job은 `check quick` 외에 `accept db-structure`, `accept architecture`, `accept style`, `type-check backend`, `type-check frontend`, `security scan`을 추가로 강제한다.
+- 즉, 현재 로컬 기본 스냅샷과 CI safe gate 사이에는 고유 명령 기준 `6`개의 차이가 있다.
+- 이 차이를 줄일지, `check full` 같은 별도 로컬 계약으로 분리할지는 P2 후속 단계에서 결정한다.
+
 `check changed`는 Git 변경 목록에서 `src/agent_trading/**/*.py` 파일만 골라 각 파일에 `accept backend-file`을 적용한다. 문서만 변경된 경우 `changed_backend_file_count=0`으로 보고하며 전체 테스트를 실행하지 않는다.
 
 `type-check backend`는 `mypy` 또는 `pyright`가 설치된 경우에만 실행한다. 둘 다 없으면 `backend_type_tool_missing_count=1`, `backend_type_check_run=0`으로 보고한다. `type-check frontend`는 `admin_ui/package.json`의 `typecheck`, `type-check`, `check:types` script 중 하나가 있을 때만 실행한다. script가 없으면 `frontend_typecheck_script_missing_count=1`, `frontend_type_check_run=0`으로 보고한다.
@@ -144,6 +157,10 @@ Makefile에서는 승인 필요 명령을 `heavy-*` target으로 노출한다. �
 - `deploy_missing_migration_count`: 배포 재기동 전에 `docker compose run --rm migrate`를 실행하지 않는 workflow 수.
 - `deploy_missing_proxy_reload_count`: 배포 재기동 뒤 `nginx-proxy` reload를 실행하지 않는 workflow 수.
 - `destructive_deploy_clean_command_count`: 배포 workflow에서 `git clean -fdx` 또는 `logs/`, `tmp/`, `data/`를 직접 삭제하는 명령 수.
+- `quick_step_count`: `check quick`가 실행하는 단계 수.
+- `ci_safe_step_count`: CI `safe` job이 직접 호출하는 하네스 단계 수.
+- `local_ci_command_gap_count`: CI `safe`가 `check quick`보다 추가로 강제하는 고유 명령 수.
+- `quick_only_command_count`: `check quick`에만 있고 CI `safe` 확장 집합에는 없는 고유 명령 수.
 - `deploy_manual_dispatch_input_count`: `workflow_dispatch`에 선언된 수동 재배포 입력 수. 현재 계약 값은 `2`다.
 - `deploy_manual_dispatch_support_count`: deploy job이 `workflow_dispatch`의 `deploy_main=true` 경로를 실제로 지원하는지 나타내는 수.
 - `deploy_target_sha_pin_count`: 수동 재배포가 최신 `origin/main` SHA를 fetch·출력·reset 하는 계약을 만족하는 workflow 수.
