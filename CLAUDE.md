@@ -30,7 +30,7 @@ Claude Code는 이 저장소에서 코드, 문서, 스크립트, 테스트를 �
    - 승인 플래그가 필요한 명령과 `heavy-*` target 구분
    - API 수동 실행 진입점
 
-5. `docs/99_meta_handover/definition_of_done.md`
+5. `docs/20_harness_engineering/definition_of_done.md`
    - Claude Code가 완료를 주장하기 전에 확인할 최소 조건
 
 ## 운영 원칙

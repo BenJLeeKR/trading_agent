@@ -161,7 +161,7 @@ API 오류 응답은 다음 순서로 개선한다.
 4. `order_manager`, `order_sync_service`, `reconciliation_worker`의 운영 로그에 `event`, `error_code`, 핵심 ID를 보강한다.
 5. 하네스에 오류 메시지 계약 정적 점검을 추가할지 별도 결정한다.
 
-API 오류 분류 현황은 [`api_error_message_inventory.md`](./api_error_message_inventory.md)를 기준으로 갱신한다.
+API 오류 분류 현황은 [`api_error_message_inventory.md`](../99_meta_handover/api_error_message_inventory.md)를 기준으로 갱신한다.
 
 ## 이번 단계의 비목표
 

@@ -31,6 +31,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -76,6 +78,7 @@ jobs:
           bash scripts/harness/run.sh accept db-structure
           bash scripts/harness/run.sh accept architecture
           bash scripts/harness/run.sh accept style
+          bash scripts/harness/run.sh accept no-bypass
 
       - name: Run type-check contracts
         run: |
