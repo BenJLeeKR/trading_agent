@@ -26,12 +26,12 @@
 | `data/signal_feature_snapshot_input*.json` | 16 | 일부 있음 | 테스트·스케줄러 입력과 분석 산출물이 혼재 | 기본 입력 1개와 과거 snapshot 분리 |
 | `data/trigger_proxy_attribution*.json` | 5 | 0 | 분석 산출물 후보 | 추적 제외 또는 `docs/90_reference/` 보존 후보 |
 | `data/ar_fdc_*.json` | 2 | 있음 | 스크립트 생성 산출물 | 문서 링크 정리 후 runtime/reference 분리 |
-| `data/observations/*.json` | 6 | 있음 | 문서 근거 산출물 | Markdown 링크를 코드 텍스트로 전환 완료 |
+| `data/observations/*.json` | 6 | 있음 | 문서 근거 산출물 | Git 추적 제외 완료 |
 
 ## Codex 추천안
 
 1. `data/instrument_master/archive/` `33`개는 정확 참조가 `0`개이므로 Git 추적에서 제외했다.
-2. `data/observations/`는 `logs/`와 같은 방식으로 Markdown 링크를 코드 텍스트로 전환했다.
+2. `data/observations/`는 `logs/`와 같은 방식으로 Markdown 링크를 코드 텍스트로 전환한 뒤 Git 추적에서 제외했다.
 3. `data/signal_feature_snapshot_input.json`은 스케줄러와 테스트 기본값이 직접 참조하므로 이번 범위에서 제거하지 않는다.
 4. `data/instrument_master/source/`와 `data/instrument_master/normalized/`는 운영 재현성 입력으로 남기되, 추후 `data/canonical/` 또는 `data/fixtures/` 같은 명시 경로로 옮길지 별도 판단한다.
 
@@ -45,7 +45,7 @@
 
 - P0 11차: `data/instrument_master/archive/` 정확 참조 `0`개를 재확인하고 추적 제외했다.
 - P0 12차: `data/observations/` Markdown 링크 보존 정책을 결정했다.
-- P0 13차: `data/observations/` tracked 파일 `6`개 추적 제외를 진행한다.
+- P0 13차: `data/observations/` tracked 파일 `6`개 추적 제외를 완료했다.
 - P0 14차: root JSON 중 기본 입력 파일과 과거 분석 산출물을 분리한다.
 
 ## 완료 기록
@@ -68,3 +68,12 @@
 - Markdown 링크 `13`개를 모두 코드 텍스트로 전환했다.
 - 전환 후 `data/observations/` Markdown 링크는 `0`개다.
 - 다음 작업은 `data/observations/` tracked 파일 `6`개를 별도 PR에서 추적 제외하는 것이다.
+
+### 2026-07-29 — `data/observations/` 추적 제외
+
+- 추적 제외 전 `data/observations/` tracked 파일은 `6`개였다.
+- 작업트리의 `data/observations/` 실제 파일은 `6`개로 보존됐다.
+- 전체 문서의 `data/observations/` Markdown 링크는 `0`개였다.
+- `git rm --cached -r data/observations`로 Git 추적에서만 제거했다.
+- `.gitignore`에 `data/observations/`를 추가해 재추적을 막았다.
+- `runtime_tracked_file_count`는 `39`에서 `33`으로 감소했다.

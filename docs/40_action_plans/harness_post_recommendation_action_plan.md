@@ -25,7 +25,7 @@
 - [x] `data/`는 전체 제외 여부를 바로 결정하지 않고 `data/runtime/`, `data/cache/`, `data/local/` 같은 mutable 하위 경로 분리를 먼저 검토한다.
 - [~] 필요한 seed, example, fixture 파일은 `tests/fixtures/`, `docs/`, 또는 `*.example` 경로로 이동할지 결정한다. `logs/`는 대량 보존보다 코드 텍스트 전환 우선 정책으로 결정했다.
 - [x] `.gitignore`에 runtime write path 패턴을 추가한다.
-- [~] 기존 tracked 런타임 파일은 `git rm --cached` 또는 경로 이동으로 정리한다. `tmp/` tracked 파일 `55`개, `logs/` tracked 파일 `2560`개, `data/instrument_master/archive/` tracked 파일 `33`개는 제거 완료했고, `data/` `39`개는 남아 있다.
+- [~] 기존 tracked 런타임 파일은 `git rm --cached` 또는 경로 이동으로 정리한다. `tmp/` tracked 파일 `55`개, `logs/` tracked 파일 `2560`개, `data/instrument_master/archive/` tracked 파일 `33`개, `data/observations/` tracked 파일 `6`개는 제거 완료했고, `data/` `33`개는 남아 있다.
 - [x] 배포 workflow에 `git clean -fdx` 또는 동등한 파괴적 clean 명령이 들어가지 않도록 `accept ci` 검사에 추가한다.
 - [x] `accept ci`에 tracked runtime write path 카운트 검사를 추가한다.
 
@@ -234,6 +234,15 @@
 - [x] 전환 후 전체 문서의 `data/observations/` Markdown 링크는 `0`개다.
 - [x] 처리 기록은 [`data_runtime_canonical_split_review.md`](../30_work_log/data_runtime_canonical_split_review.md)와 [`runtime_write_path_reference_audit.md`](../30_work_log/runtime_write_path_reference_audit.md)에 남겼다.
 
+### P0 13차 — `data/observations/` tracked 파일 추적 제외
+
+- [x] `data/observations/` tracked 파일 `6`개를 Git 추적에서 제거했다.
+- [x] 작업트리의 `data/observations/` 실제 파일 `6`개는 보존했다.
+- [x] 전체 문서의 `data/observations/` Markdown 링크는 `0`개로 유지됐다.
+- [x] `.gitignore`에 `data/observations/`를 추가했다.
+- [x] `runtime_tracked_file_count`는 `39`에서 `33`으로 감소했다.
+- [x] 처리 기록은 [`data_runtime_canonical_split_review.md`](../30_work_log/data_runtime_canonical_split_review.md)와 [`runtime_write_path_reference_audit.md`](../30_work_log/runtime_write_path_reference_audit.md)에 남겼다.
+
 ## 작업 이력
 
 | 일자 | 작업자 | 항목 | 변경 파일 수 | 검증 명령 | 주요 출력 지표 | 후속 조치 |
@@ -252,6 +261,7 @@
 | 2026-07-29 | Codex | P0 10차 — `data/` runtime/canonical 분리 검토 | 3 | `bash scripts/harness/run.sh accept docs`; `bash scripts/harness/run.sh accept ci` | `data_tracked_count=72`, `data_exact_referenced_file_count=15`, `data_archive_exact_reference_count=0` | `data/instrument_master/archive/` 추적 제외 |
 | 2026-07-29 | Codex | P0 11차 — `data/instrument_master/archive/` tracked 파일 추적 제외 | 37 | `bash scripts/harness/run.sh accept docs`; `bash scripts/harness/run.sh accept ci` | `archive_tracked_count=0`, `archive_files_on_disk_count=34`, `runtime_tracked_file_count=39` | `data/observations/` 링크 보존 정책 결정 |
 | 2026-07-29 | Codex | P0 12차 — `data/observations/` Markdown 링크 전환 | 10 | `bash scripts/harness/run.sh accept docs`; `bash scripts/harness/run.sh accept ci` | `converted_observations_markdown_link_count=13`, `remaining_observations_markdown_link_count=0`, `runtime_tracked_file_count=39` | `data/observations/` tracked 파일 추적 제외 |
+| 2026-07-29 | Codex | P0 13차 — `data/observations/` tracked 파일 추적 제외 | 10 | `bash scripts/harness/run.sh accept docs`; `bash scripts/harness/run.sh accept ci` | `observations_tracked_count=0`, `observations_files_on_disk_count=6`, `runtime_tracked_file_count=33` | root JSON 기본 입력·분석 산출물 분리 |
 
 ## 갱신 규칙
 
