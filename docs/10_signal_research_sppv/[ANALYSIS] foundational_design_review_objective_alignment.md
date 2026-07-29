@@ -2799,3 +2799,31 @@ KST 병합)가 운영 decision loop에 미친 영향을 read-only로 확인했�
 실측으로 부합하는지 먼저 확인한다. `coverage_score` threshold 재설계는
 보류. 상세: `docs/10_signal_research_sppv/[DESIGN] regime_conditional_
 entry_signal_v1.md` §122.
+
+## 21. `relative_activity` 1안 적용 후 운영 관측 추가 축적(SPPV-2.135, 2026-07-29 KST, 진행 중)
+
+§20의 "2안(추가 관측) 채택" 판정 이후 관측 창을 넓혀 재확인했다(코드
+미수정, `.env` 미수정, Full pytest 미실행, 신규 KIS 호출 0건).
+
+- **관측 창의 실제 크기(중요한 제약)**: 병합(2026-07-29 12:39:59 KST)
+  이후 실제 경과 시간은 약 41분에 불과하다. 이번 턴 요청된 "5거래일
+  수준 관측"은 캘린더 시간이 그만큼 지나야 확보 가능하며, 세션 내에서
+  앞당길 수 없다 — 물리적으로 확보되지 않았음을 명시한다.
+- **초기 1사이클(n=15/16) vs 누적 약 9사이클(n=134) 비교**: `ranking_
+  score` 평균/중앙값은 거의 동일(0.3305/0.2811→0.3323/0.2983).
+  `ranking_blocked` 비중은 56.2%→47.8%로, 병합 이전 기준값(46.7%)에
+  더 가깝게 회귀했다 — 초기 1사이클이 우연히 편향된 표본이었을 가능성을
+  시사하며, §120의 "미미한 영향" 예측과 상충하지 않는다. `buy_
+  candidate`·`APPROVE`·`order_request`·`final_intent='buy'`·`shadow_
+  topk_exception_v2`는 초기·누적 창 모두 **0으로 동일**(변화 없음).
+- **`eligibility_passed=True` 4건**: 전부 동일 core 종목·동일 ranking_
+  score(0.5428)의 반복 관측이며 `buy_candidate=False`/`primary=WATCH`
+  로 귀결 — 기존 WATCH 고정 패턴으로 판단, diff 효과로 해석하지 않는다.
+- **핵심 병목 재판정**: `coverage_score`+절대 threshold(`0.48`/`0.22`)
+  조합으로 재확인(신규 반박 근거 없음).
+
+**결론**: 다음 1순위는 여전히 **2안(추가 관측 연장) 유지** — 캘린더
+시간이 41분만 경과해 "5거래일 수준" 요청 기준에 크게 못 미친다.
+`coverage_score` threshold 재설계는 이번 턴에서도 착수하지 않는다.
+관측 단계는 종료가 아니라 진행 중임을 명시한다. 상세: `docs/10_signal_
+research_sppv/[DESIGN] regime_conditional_entry_signal_v1.md` §123.
