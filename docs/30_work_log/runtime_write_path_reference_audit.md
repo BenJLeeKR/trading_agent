@@ -192,3 +192,12 @@ Codex 추천은 다음과 같다.
 - 전체 문서의 `data/observations/` Markdown 링크는 `0`개였다.
 - `runtime_tracked_file_count`는 `39`에서 `33`으로 감소했다.
 - `.gitignore`에 `data/observations/`를 추가했다.
+
+### 2026-07-29 — root JSON 기본 입력·분석 산출물 분리
+
+- top-level root JSON tracked 파일은 `24`개다.
+- 정확 참조된 top-level root JSON 파일은 `3`개, 정확 참조 라인은 `46`개다.
+- 정확 참조 없는 top-level root JSON 파일은 `21`개다.
+- 분류 결과는 `signal_feature_default=1`, `signal_feature_historical=16`, `trigger_proxy_artifact=5`, `ar_fdc_artifact=2`다.
+- top-level root JSON Markdown 링크는 `3`개이며 모두 `data/ar_fdc_*.json`을 가리킨다.
+- root JSON 파일은 이번 단계에서 제거하지 않았고, 다음 단계에서 wildcard 사용 여부와 Markdown 링크 정리를 분리한다.
