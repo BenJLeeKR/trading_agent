@@ -25,7 +25,7 @@
 - [ ] `data/`는 전체 제외 여부를 바로 결정하지 않고 `data/runtime/`, `data/cache/`, `data/local/` 같은 mutable 하위 경로 분리를 먼저 검토한다.
 - [ ] 필요한 seed, example, fixture 파일은 `tests/fixtures/`, `docs/`, 또는 `*.example` 경로로 이동할지 결정한다.
 - [x] `.gitignore`에 runtime write path 패턴을 추가한다.
-- [ ] 기존 tracked 런타임 파일은 `git rm --cached` 또는 경로 이동으로 정리한다.
+- [~] 기존 tracked 런타임 파일은 `git rm --cached` 또는 경로 이동으로 정리한다.
 - [x] 배포 workflow에 `git clean -fdx` 또는 동등한 파괴적 clean 명령이 들어가지 않도록 `accept ci` 검사에 추가한다.
 - [x] `accept ci`에 tracked runtime write path 카운트 검사를 추가한다.
 
@@ -144,6 +144,15 @@
 - [x] `logs/`와 `tmp/`는 전체 추적 제외 후보, `data/`는 하위 경로별 분류 대상으로 판정했다.
 - [x] 분류 결과와 Codex 추천안을 [`runtime_write_path_inventory.md`](runtime_write_path_inventory.md)에 기록했다.
 
+### P0 3차 — tracked runtime 참조 감사
+
+- [x] 코드·문서·테스트에서 `logs/`, `tmp/`, `data/` 경로 문자열 참조를 집계했다.
+- [x] 경로 문자열 참조 라인은 `logs=864`, `tmp=103`, `data=307`로 기록했다.
+- [x] 정확 참조된 tracked runtime 파일은 `182`개, 정확 참조 라인은 `507`개로 기록했다.
+- [x] 정확 참조된 tracked 파일은 `logs=166`, `tmp=1`, `data=15`로 분류했다.
+- [x] 즉시 전체 `git rm --cached -r logs tmp data`는 금지하고, `tmp/`부터 작은 PR로 정리하는 추천안을 남겼다.
+- [x] 감사 결과는 [`runtime_write_path_reference_audit.md`](runtime_write_path_reference_audit.md)에 기록했다.
+
 ## 작업 이력
 
 | 일자 | 작업자 | 항목 | 변경 파일 수 | 검증 명령 | 주요 출력 지표 | 후속 조치 |
@@ -151,6 +160,7 @@
 | 2026-07-29 | Codex | 권고사항 이후 후속 작업 계획 문서 생성 | 1 | 예정 | 예정 | `accept docs` 실행 |
 | 2026-07-29 | Codex | P0 1차 — 배포 파괴 명령 차단과 runtime ignore 기준 | 4 | `bash scripts/harness/run.sh accept ci`; `bash scripts/harness/run.sh accept docs` | `destructive_deploy_clean_command_count=0`, `runtime_tracked_file_count=2687` | tracked runtime 파일 목적별 분류 |
 | 2026-07-29 | Codex | P0 2차 — tracked runtime 파일 분류 | 2 | `bash scripts/harness/run.sh accept docs` | `runtime_tracked_file_count=2687`, `logs=2560`, `tmp=55`, `data=72` | `logs/`, `tmp/` 추적 제외 PR 범위 결정 |
+| 2026-07-29 | Codex | P0 3차 — tracked runtime 참조 감사 | 3 | `bash scripts/harness/run.sh accept docs`; `bash scripts/harness/run.sh accept ci` | `exact_referenced_tracked_runtime_file_count=182`, `exact_reference_line_count=507` | `tmp/` 정리 PR부터 진행 |
 
 ## 갱신 규칙
 

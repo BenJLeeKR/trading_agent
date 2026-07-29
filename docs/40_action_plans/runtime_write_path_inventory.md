@@ -75,7 +75,7 @@ Codex 추천안:
 
 ## 후속 정리 순서
 
-1. `logs/`를 참조하는 문서·테스트·스크립트 목록을 산출한다.
+1. `logs/`를 참조하는 문서·테스트·스크립트 목록을 산출한다. 상세는 [`runtime_write_path_reference_audit.md`](runtime_write_path_reference_audit.md)를 따른다.
 2. `tmp/`의 `.py` 중 정식 스크립트 또는 테스트로 승격할 파일이 있는지 확인한다.
 3. `data/instrument_master/`의 source, normalized, archive를 seed/canonical/runtime 산출물로 분류한다.
 4. 사용자 승인 후 `git rm --cached` 또는 경로 이동 PR을 분리한다.
