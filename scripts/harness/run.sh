@@ -152,17 +152,27 @@ import re
 from pathlib import Path
 
 root = Path(os.environ["HARNESS_ROOT_DIR"])
+workflow_dir = root / ".github" / "workflows"
 workflow = root / ".github" / "workflows" / "harness.yml"
 readme = root / "README.md"
 harness_readme = root / "scripts" / "harness" / "README.md"
 agents = root / "AGENTS.md"
 makefile = root / "Makefile"
 
-required_files = [workflow, readme, harness_readme, agents, makefile]
+required_files = [workflow, workflow_dir, readme, harness_readme, agents, makefile]
 missing_files = [path for path in required_files if not path.exists()]
+workflow_files = []
+if workflow_dir.exists():
+    workflow_files = sorted(
+        path for path in workflow_dir.iterdir()
+        if path.suffix in {".yml", ".yaml"}
+    )
 
 workflow_text = workflow.read_text() if workflow.exists() else ""
 workflow_lines = workflow_text.splitlines()
+workflow_text_by_path = {
+    path: path.read_text() for path in workflow_files
+}
 
 def contains(path: Path, *needles: str) -> bool:
     if not path.exists():
@@ -178,7 +188,9 @@ def section_between(text: str, start: str, end: str) -> str:
     return text[start_index:] if end_index < 0 else text[start_index:end_index]
 
 harness_command_lines = [
-    line for line in workflow_lines
+    (path, line_no, line)
+    for path, text in workflow_text_by_path.items()
+    for line_no, line in enumerate(text.splitlines(), 1)
     if "bash scripts/harness/run.sh" in line
 ]
 
@@ -206,11 +218,49 @@ direct_verifier_pattern = re.compile(
     r")"
 )
 direct_verifier_lines = []
-for line_no, line in enumerate(workflow_lines, 1):
-    if "bash scripts/harness/run.sh" in line:
-        continue
-    if direct_verifier_pattern.search(line):
-        direct_verifier_lines.append((line_no, line.strip()))
+for path, text in workflow_text_by_path.items():
+    for line_no, line in enumerate(text.splitlines(), 1):
+        if "bash scripts/harness/run.sh" in line:
+            continue
+        if direct_verifier_pattern.search(line):
+            direct_verifier_lines.append((path, line_no, line.strip()))
+
+deploy_impact_pattern = re.compile(
+    r"(appleboy/ssh-action|SERVER_HOST|SERVER_KEY|"
+    r"docker\s+compose\s+(up|down)|docker-compose\s+(up|down)|"
+    r"git\s+pull\s+origin\s+main|git\s+reset\s+--hard\s+origin/main)"
+)
+deploy_workflows = [
+    (path, text) for path, text in workflow_text_by_path.items()
+    if deploy_impact_pattern.search(text)
+]
+legacy_docker_compose_hits = [
+    (path, line_no, line.strip())
+    for path, text in workflow_text_by_path.items()
+    for line_no, line in enumerate(text.splitlines(), 1)
+    if re.search(r"\bdocker-compose\b", line)
+]
+
+def deploy_has_harness_gate(text: str) -> bool:
+    needs_safe_gate = (
+        "needs: safe" in text
+        and "needs.safe.result == 'success'" in text
+    )
+    workflow_run_gate = (
+        "workflow_run:" in text
+        and "Harness" in text
+        and "conclusion == 'success'" in text
+    )
+    return needs_safe_gate or workflow_run_gate
+
+ungated_deploy_workflows = [
+    path for path, text in deploy_workflows
+    if not deploy_has_harness_gate(text)
+]
+deploy_missing_migration_workflows = [
+    path for path, text in deploy_workflows
+    if "docker compose run --rm migrate" not in text
+]
 
 safe_section = section_between(workflow_text, "  safe:", "  heavy:")
 safe_forbidden_heavy_pattern = re.compile(
@@ -233,6 +283,8 @@ contract_checks = [
     ("workflow_uses_postgres_pin", "POSTGRES_VERSION=\"$(cat .postgres-version)\"" in workflow_text and "\"postgres:${POSTGRES_VERSION}\"" in workflow_text),
     ("workflow_heavy_requires_dispatch", "if: github.event_name == 'workflow_dispatch' && inputs.run_heavy == 'true'" in workflow_text),
     ("workflow_heavy_sets_allow_flag", 'HARNESS_ALLOW_HEAVY: "1"' in workflow_text),
+    ("workflow_deploy_depends_on_safe", contains(workflow, "needs: safe", "needs.safe.result == 'success'")),
+    ("workflow_deploy_runs_migration_before_restart", contains(workflow, "docker compose run --rm migrate", "docker compose up -d --build --remove-orphans")),
     ("readme_declares_ci_harness", contains(readme, "CI 검증 기준", ".github/workflows/harness.yml", "bash scripts/harness/run.sh", "Require Harness on main", "Safe harness contracts")),
     ("harness_readme_declares_ci_harness", contains(harness_readme, "CI 공동 사용 원칙", "safe", "workflow_dispatch", "HARNESS_ALLOW_HEAVY=1", "Require Harness on main", "Safe harness contracts")),
     ("workflow_fetches_full_history_for_diff_contracts", contains(workflow, "fetch-depth: 0")),
@@ -243,14 +295,28 @@ failed_contract_checks = [name for name, passed in contract_checks if not passed
 
 metrics = {
     "required_file_missing_count": len(missing_files),
+    "workflow_file_count": len(workflow_files),
     "harness_command_count": len(harness_command_lines),
     "required_harness_command_missing_count": len(missing_harness_commands),
     "direct_verifier_command_count": len(direct_verifier_lines),
     "safe_forbidden_heavy_command_count": len(safe_forbidden_heavy_lines),
+    "deploy_workflow_count": len(deploy_workflows),
+    "ungated_deploy_workflow_count": len(ungated_deploy_workflows),
+    "deploy_missing_migration_count": len(deploy_missing_migration_workflows),
+    "legacy_docker_compose_count": len(legacy_docker_compose_hits),
     "ci_contract_failed_count": len(failed_contract_checks),
 }
 
-passed = all(value == 0 for key, value in metrics.items() if key != "harness_command_count") and metrics["harness_command_count"] > 0
+informational_metrics = {
+    "harness_command_count",
+    "workflow_file_count",
+    "deploy_workflow_count",
+}
+passed = all(
+    value == 0
+    for key, value in metrics.items()
+    if key not in informational_metrics
+) and metrics["harness_command_count"] > 0
 
 print(f"ACCEPT ci: {'PASS' if passed else 'FAIL'}")
 for key, value in metrics.items():
@@ -272,13 +338,28 @@ if missing_harness_commands:
 
 if direct_verifier_lines:
     print("DETAIL direct_verifier_commands:")
-    for line_no, line in direct_verifier_lines:
-        print(f"- {workflow.relative_to(root)}:{line_no}: {line}")
+    for source, line_no, line in direct_verifier_lines:
+        print(f"- {source.relative_to(root)}:{line_no}: {line}")
 
 if safe_forbidden_heavy_lines:
     print("DETAIL safe_forbidden_heavy_commands:")
     for line_no, line in safe_forbidden_heavy_lines:
         print(f"- safe_section:{line_no}: {line}")
+
+if ungated_deploy_workflows:
+    print("DETAIL ungated_deploy_workflows:")
+    for path in ungated_deploy_workflows:
+        print(f"- {path.relative_to(root)}")
+
+if deploy_missing_migration_workflows:
+    print("DETAIL deploy_missing_migration_workflows:")
+    for path in deploy_missing_migration_workflows:
+        print(f"- {path.relative_to(root)}")
+
+if legacy_docker_compose_hits:
+    print("DETAIL legacy_docker_compose:")
+    for source, line_no, line in legacy_docker_compose_hits:
+        print(f"- {source.relative_to(root)}:{line_no}: {line}")
 
 if failed_contract_checks:
     print("DETAIL failed_contract_checks:")

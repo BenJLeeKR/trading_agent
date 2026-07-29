@@ -16,6 +16,7 @@
 - `.env` 파일 직접 수정 또는 `.env` 키값 노출.
 - risk gate, sell guard, submit-lane gate, reconciliation lock, broker contract check를 비활성화하거나 우회하는 변경.
 - GitHub Actions safe job이나 하네스 기본 경로에서 사용자 승인 없이 heavy 검증 플래그를 켜는 변경.
+- 운영 배포 경로에서 `Safe harness contracts` 또는 동등한 하네스 게이트를 우회하는 변경.
 - 실패한 브로커, KIS, DB, 스케줄러 작업을 성공으로 조용히 변환하는 변경.
 
 ## Review Flag
