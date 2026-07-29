@@ -167,3 +167,11 @@ Codex 추천은 다음과 같다.
 - `data/instrument_master/archive/` tracked 파일 `33`개는 정확 참조가 `0`개다.
 - `data/` 전체 추적 제외는 금지하고, `archive`, `observations`, root JSON, canonical source를 별도 단계로 분리한다.
 - 상세 판정은 [`data_runtime_canonical_split_review.md`](data_runtime_canonical_split_review.md)에 기록했다.
+
+### 2026-07-29 — `data/instrument_master/archive/` 추적 제외
+
+- `data/instrument_master/archive/` tracked 파일 `33`개를 Git 추적에서 제거했다.
+- 작업트리의 archive 실제 파일은 `34`개로 보존됐다.
+- `data/instrument_master/archive/` 정확 참조 파일은 `0`개였다.
+- `runtime_tracked_file_count`는 `72`에서 `39`로 감소했다.
+- `.gitignore`에 `data/instrument_master/archive/`를 추가했다.
