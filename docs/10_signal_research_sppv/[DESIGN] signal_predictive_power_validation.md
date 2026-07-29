@@ -2617,6 +2617,26 @@ entry 설계 검토로 전환**을 확정했다. 별도 문서
   턴으로 제안. 상세: `docs/10_signal_research_sppv/[DESIGN]
   regime_conditional_entry_signal_v1.md` §118.
 
+- 작성자: Codex
+- 수정일자: 2026-07-29 KST (131차, `coverage_score`/`relative_
+  activity` 설계안 A/B 비교, 코드 미수정, `.env` 미수정, Full
+  pytest 미실행, 신규 KIS 호출 0건)
+- 수정내용: `coverage_score`는 A안(ranking 제거, eligibility
+  전용 이관)을 우선 권고 — 이미 하드 게이트 통과 후 100% 상수
+  임을 확인했으므로 B안(가중치 축소)보다 근거가 명확. 다만
+  `ranking_score`가 `_assess_core_risk_off_buy_guard`/
+  eligibility 하드 게이트의 파라미터로 직접 쓰이는 구조라, A안
+  적용 시 `ranking_score` 최댓값이 0.20 낮아지는 것이 기존
+  절대 threshold(`0.48` 등)와 상호작용하는 범위를 먼저 재계산
+  해야 diff 착수 가능. `relative_activity`는 A안(소프트 2곳 중
+  1곳만 유지)을 우선 권고 — B안(파생값 분리)은 추가 설계·검증
+  필요해 확정 불가. "entry_score 쪽 유지 vs ranking_score 쪽
+  유지" 중 어느 것이 하드 게이트와 더 정합적인지는 아직 실측
+  으로 확정하지 않음. 결론: 둘 다 아직 diff 초안 단계로 넘어가지
+  않음 — 각각 1개씩의 확인 과제가 남아 있음. 상세: `docs/10_
+  signal_research_sppv/[DESIGN] regime_conditional_entry_
+  signal_v1.md` §119.
+
 ---
 
 ## 진행 체크리스트
@@ -5664,6 +5684,13 @@ canonical),
     로직 변경 없음, 신규 KIS 호출 0건(shadow 재호출은 `kis_
     client=None`). 상세: `docs/10_signal_research_sppv/[DESIGN]
     regime_conditional_entry_signal_v1.md` §94.
+- [x] **SPPV-2.131(신설)** `coverage_score`/`relative_activity`
+  설계안 A/B 비교 (완료, 2026-07-29 KST, 작성자: Codex, 코드
+  미수정, `.env` 미수정, Full pytest 미실행, 신규 KIS 호출 0건)
+  - 둘 다 A안(제거/단일화) 방향으로 수렴. diff 초안 착수 전
+    각 1개씩 확인 과제 남음(threshold 상호작용 재계산, 하드
+    게이트 정합성 실측). 상세: `docs/10_signal_research_sppv/
+    [DESIGN] regime_conditional_entry_signal_v1.md` §119.
 - [x] **SPPV-2.130(신설)** `ranking_score` 산식 재설계 준비 —
   4개 항목 역할 재분류 (완료, 2026-07-29 KST, 작성자: Codex,
   코드 미수정, 완화안/코드 diff 없음, Full pytest 미실행, 신규

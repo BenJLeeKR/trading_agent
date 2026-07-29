@@ -10047,10 +10047,27 @@ agent 설계 문서 기준으로도 순서는 다음이 맞다.
      다음 턴은 설계안 비교 턴으로 제안. 상세: `docs/10_signal_
      research_sppv/[DESIGN] regime_conditional_entry_signal_
      v1.md` §118.
-   - **SPPV-3(다음 착수: [1순위] `coverage_score` 설계안 A(ranking
-     제거) vs B(가중치 축소) 비교 설계 검토 +
-     [2순위] `relative_activity` 설계안 — entry_score/ranking
-     한쪽에만 반영하는 방식 비교 검토 +
+   - **SPPV-2.131(완료, 2026-07-29 KST, `coverage_score`/
+     `relative_activity` 설계안 A/B 비교, 작성자: Codex, 코드
+     미수정, `.env` 미수정, Full pytest 미실행, 신규 KIS 호출
+     0건)**: `coverage_score`는 **A안(ranking 제거, eligibility
+     전용 이관) 우선 권고** — 하드 게이트 통과 후 100% 상수임을
+     이미 확인했으나, `ranking_score`가 하드 게이트 파라미터로
+     직접 쓰이는 구조라 threshold(`0.48` 등)와의 상호작용 재계산
+     선행 필요. `relative_activity`는 **A안(소프트 2곳 중 1곳만
+     유지) 우선 권고** — "entry_score 쪽 유지 vs ranking_score
+     쪽 유지" 중 어느 것이 하드 게이트와 더 정합적인지 실측 확인
+     선행 필요. **결론: 둘 다 아직 diff 초안 단계로 넘어가지
+     않음**(각 1개씩 확인 과제 남음). 상세: `docs/10_signal_
+     research_sppv/[DESIGN] regime_conditional_entry_signal_
+     v1.md` §119.
+   - **SPPV-3(다음 착수: [1순위] `coverage_score` A안 채택 시
+     `ranking_score` 최댓값 0.20 감소가 `_CORE_RISK_OFF_RANKING_
+     MIN_SCORE=0.48`/`shadow_topk_exception_v2`의 `0.22` 하한
+     등과 어떻게 상호작용하는지 read-only 재계산(완화안 아님) +
+     [2순위] `relative_activity` A안에서 "entry_score 쪽 유지
+     vs ranking_score 쪽 유지" 중 어느 쪽이 하드 게이트와 더
+     정합적인지 실측 데이터로 재확인 +
      [3순위] `000720`이 core 유니버스에 20일 이상 연속 포함되는
      조건을 원인만 확인(완화안 아님) +
      [4순위] 이 모집단(core+bearish_trend)이 신호 품질(overall/

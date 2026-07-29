@@ -1,13 +1,12 @@
 # ranking_score 공식 검증 계획
 
 작성일: 2026-07-28  
-상태: [SPPV-2.130에서 갱신] "고정 여부 확인" 단계(§6.1~§6.13)
-종료, **산식 재설계 준비 단계 진입**. §6.14에서 4개 항목을
-재분류 — `coverage_score`=다른 계층 이관 검토(1순위),
-`relative_activity`=중복 정리 검토(2순위), `strategy_
-alignment`=중복 정리 검토(3순위), `regime_tailwind`=역할 축소
-검토(4순위). 1·2순위는 즉시 설계안(A/B) 비교 단계 진입 가능
-판정. 완화안/코드 diff는 여전히 미착수(SPPV-2.119~2.130 참고)
+상태: [SPPV-2.131에서 갱신] `coverage_score`/`relative_activity`
+설계안 A/B 비교 완료(§6.15) — 둘 다 **A안(제거/단일화) 방향으로
+수렴**했으나, diff 착수 전 각 1개씩 확인 과제가 남아 있어
+"즉시 진입 가능"이었던 §6.14 마지막 판정은 부분 완료로
+재조정됨. 완화안/코드 diff는 여전히 미착수(SPPV-2.119~2.131
+참고)
 
 ## 1. 문서 목적
 
@@ -776,6 +775,36 @@ entry_signal_v1.md` §117.
 
 상세: `docs/10_signal_research_sppv/[DESIGN] regime_conditional_
 entry_signal_v1.md` §118.
+
+### 6.15 SPPV-2.131 — `coverage_score`/`relative_activity` 설계안
+A/B 비교(신규, 2026-07-29 KST, 완료 — §6.14 마지막 판정 재보정)
+
+**[SPPV-2.131에서 재판정]** §6.14의 "1·2순위는 즉시 설계안(A/B)
+비교 단계 진입 가능(추가 사실 확인 불필요)"이라는 판정을
+**부분 완료로 재조정한다** — 이번 턴에 실제로 A/B를 비교해 본
+결과, "방향"은 확정할 수 있었으나 "diff 초안 착수"에는 각각
+1개씩 추가 확인 과제가 남아 있음을 확인했다(이력 보존, 원문은
+그대로 두고 이 항목에서 갱신 사실만 추가).
+
+- [x] `coverage_score` A안(ranking 제거, eligibility 전용
+      이관)/B안(가중치 축소) 비교 — **A안 우선 권고**. 다만
+      `ranking_score` 절대 스케일이 0.20 낮아지면 `_CORE_RISK_
+      OFF_RANKING_MIN_SCORE=0.48` 등 기존 절대 threshold와의
+      상호작용을 먼저 재계산해야 diff 착수 가능(사실, 코드
+      구조 확인 — `ranking_score`가 하드 게이트 파라미터로
+      직접 쓰임).
+- [x] `relative_activity` A안(소프트 2곳 중 1곳만 유지)/B안
+      (소프트 유지+역할 분리) 비교 — **A안 우선 권고**. 다만
+      "`entry_score` 쪽 유지 vs `ranking_score` 쪽 유지" 중
+      어느 것이 하드 게이트와 더 정합적인지는 아직 실측 데이터로
+      확정하지 않았다(잠정 해석만 제시).
+- [x] 최종 비교표 작성 완료(§119.4).
+- [x] "지금 바로 diff 초안으로 넘어갈 안" 판정 — **둘 다 아직
+      아니다**. 각 1개씩의 확인 과제(§119.6 1·2순위) 완료 후
+      다음 턴에서 diff 초안 착수 가능.
+
+상세: `docs/10_signal_research_sppv/[DESIGN] regime_conditional_
+entry_signal_v1.md` §119.
 
 ## 7. 완료 기준
 

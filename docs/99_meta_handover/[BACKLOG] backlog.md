@@ -1810,6 +1810,16 @@
   상세: `docs/10_signal_research_sppv/[DESIGN] regime_
   conditional_entry_signal_v1.md` §118.
 
+- 2026-07-29 KST(SPPV-2.131, 신규 KIS 호출 0건): `coverage_
+  score`/`relative_activity` 설계안 A/B 비교. 둘 다 A안(제거/
+  단일화) 방향으로 수렴 — `coverage_score`는 ranking 제거 후
+  eligibility 전용 이관, `relative_activity`는 소프트 2곳 중
+  1곳만 유지. 다만 각각 threshold 상호작용 재계산, 하드 게이트
+  정합성 실측 확인이라는 1개씩의 확인 과제가 남아 diff 초안
+  단계로는 아직 넘어가지 않음. 완화안 미제시. 상세: `docs/10_
+  signal_research_sppv/[DESIGN] regime_conditional_entry_
+  signal_v1.md` §119.
+
 ---
 
 ## 관리 원칙
