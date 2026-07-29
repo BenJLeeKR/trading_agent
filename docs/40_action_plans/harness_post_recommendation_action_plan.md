@@ -22,7 +22,7 @@
 - [x] `tmp/`, `logs/`, `data/`의 tracked 파일 목록을 목적별로 분류한다.
 - [~] 런타임 산출물과 canonical 입력 데이터의 기준을 문서화한다.
 - [x] `logs/`, `tmp/`는 원칙적으로 Git 추적 대상에서 제외한다.
-- [ ] `data/`는 전체 제외 여부를 바로 결정하지 않고 `data/runtime/`, `data/cache/`, `data/local/` 같은 mutable 하위 경로 분리를 먼저 검토한다.
+- [x] `data/`는 전체 제외 여부를 바로 결정하지 않고 `data/runtime/`, `data/cache/`, `data/local/` 같은 mutable 하위 경로 분리를 먼저 검토한다.
 - [~] 필요한 seed, example, fixture 파일은 `tests/fixtures/`, `docs/`, 또는 `*.example` 경로로 이동할지 결정한다. `logs/`는 대량 보존보다 코드 텍스트 전환 우선 정책으로 결정했다.
 - [x] `.gitignore`에 runtime write path 패턴을 추가한다.
 - [~] 기존 tracked 런타임 파일은 `git rm --cached` 또는 경로 이동으로 정리한다. `tmp/` tracked 파일 `55`개와 `logs/` tracked 파일 `2560`개는 제거 완료했고, `data/` `72`개는 남아 있다.
@@ -36,6 +36,7 @@
 - 배포 job이 untracked/ignored runtime 파일을 삭제하지 않는다는 정적 검사 결과가 보고된다.
 
 분류 상세는 [`runtime_write_path_inventory.md`](../30_work_log/runtime_write_path_inventory.md)를 따른다.
+`data/` 상세 분리 판정은 [`data_runtime_canonical_split_review.md`](../30_work_log/data_runtime_canonical_split_review.md)를 따른다.
 
 ### P1 — 장 시간 배포 가드와 수동 재배포 진입점
 
@@ -206,6 +207,15 @@
 - [x] 전체 문서의 `logs/` Markdown 링크는 `0`개로 유지됨을 확인했다.
 - [x] 처리 기록은 [`runtime_write_path_reference_audit.md`](../30_work_log/runtime_write_path_reference_audit.md)에 남겼다.
 
+### P0 10차 — `data/` runtime/canonical 분리 검토
+
+- [x] 남은 runtime tracked 파일이 `data=72`개임을 재확인했다.
+- [x] 경로별 구성은 `data/instrument_master=42`, `data/observations=6`, `data/` 루트 JSON `24`개로 기록했다.
+- [x] 정확 참조된 tracked `data/` 파일은 `15`개, 정확 참조 라인은 `107`개로 기록했다.
+- [x] `data/instrument_master/archive/` `33`개는 정확 참조가 `0`개라 다음 추적 제외 1순위로 판정했다.
+- [x] `data/signal_feature_snapshot_input.json`은 스케줄러와 테스트 기본값이 직접 참조하므로 이번 범위에서 제거하지 않기로 했다.
+- [x] 상세 판정은 [`data_runtime_canonical_split_review.md`](../30_work_log/data_runtime_canonical_split_review.md)에 남겼다.
+
 ## 작업 이력
 
 | 일자 | 작업자 | 항목 | 변경 파일 수 | 검증 명령 | 주요 출력 지표 | 후속 조치 |
@@ -221,6 +231,7 @@
 | 2026-07-29 | Codex | P0 7차 — 남은 `logs/` Markdown 링크 전환 | 8 | `bash scripts/harness/run.sh accept docs`; `bash scripts/harness/run.sh accept ci` | `converted_markdown_logs_link_count=8`, `remaining_markdown_logs_link_count=0` | `logs/` 추적 제외 준비 |
 | 2026-07-29 | Codex | P0 8차 — `logs/` 추적 제외 전 최종 참조 재감사 | 2 | `bash scripts/harness/run.sh accept docs`; `bash scripts/harness/run.sh accept ci` | `markdown_logs_link_count=0`, `logs_exact_reference_line_count=413` | `logs/` 추적 제외 PR |
 | 2026-07-29 | Codex | P0 9차 — `logs/` tracked 파일 추적 제외 | 2562 | `bash scripts/harness/run.sh accept docs`; `bash scripts/harness/run.sh accept ci` | `logs_tracked_count=0`, `runtime_tracked_file_count=72` | `data/` seed/canonical 분리 |
+| 2026-07-29 | Codex | P0 10차 — `data/` runtime/canonical 분리 검토 | 3 | `bash scripts/harness/run.sh accept docs`; `bash scripts/harness/run.sh accept ci` | `data_tracked_count=72`, `data_exact_referenced_file_count=15`, `data_archive_exact_reference_count=0` | `data/instrument_master/archive/` 추적 제외 |
 
 ## 갱신 규칙
 
