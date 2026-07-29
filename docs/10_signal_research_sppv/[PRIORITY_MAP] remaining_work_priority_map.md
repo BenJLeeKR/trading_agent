@@ -10061,13 +10061,32 @@ agent 설계 문서 기준으로도 순서는 다음이 맞다.
      않음**(각 1개씩 확인 과제 남음). 상세: `docs/10_signal_
      research_sppv/[DESIGN] regime_conditional_entry_signal_
      v1.md` §119.
-   - **SPPV-3(다음 착수: [1순위] `coverage_score` A안 채택 시
-     `ranking_score` 최댓값 0.20 감소가 `_CORE_RISK_OFF_RANKING_
-     MIN_SCORE=0.48`/`shadow_topk_exception_v2`의 `0.22` 하한
-     등과 어떻게 상호작용하는지 read-only 재계산(완화안 아님) +
-     [2순위] `relative_activity` A안에서 "entry_score 쪽 유지
-     vs ranking_score 쪽 유지" 중 어느 쪽이 하드 게이트와 더
-     정합적인지 실측 데이터로 재확인 +
+   - **SPPV-2.132(완료, 2026-07-29 KST, `coverage_score`
+     threshold 연쇄영향 정량 재계산 + `relative_activity` 유지
+     위치 비교, 작성자: Codex, 코드 미수정, `.env` 미수정, Full
+     pytest 미실행, 신규 KIS 호출 0건)**: `coverage_score` A안은
+     `_CORE_RISK_OFF_RANKING_MIN_SCORE=0.48` 통과율이 14.8%→
+     0.34%(단순 차감)/2.2%(재정규화)로, `_CORE_RISK_OFF_SHADOW_
+     MIN_SCORE=0.22` 통과율이 100%→0.4%/1.8%로 급격히 붕괴함을
+     정량 확인 — 단순 상수 제거가 아니라 threshold 경계 자체를
+     재구성하는 변경이라 **threshold 재설계 없이는 단독 diff
+     불가**로 판정. `relative_activity`는 案1(entry_score 유지,
+     ranking 제거)과 案2(ranking 유지, entry_score 제거)를 비교
+     한 결과 둘 다 threshold 영향은 미미(14.8%→14.3%)하나, 案2는
+     `buy_candidate_threshold=0.65` 공유 함수(`_build_entry_
+     score`)를 건드려 diff 범위가 더 넓음(현재 데이터 기준 관측
+     영향은 500→500으로 0이나 구조적 리스크는 案2가 더 큼) —
+     **案1이 더 보수적이며 이번 턴 기준 최초로 즉시 diff 초안
+     작성이 가능한 안**으로 확정. 상세: `docs/10_signal_research_
+     sppv/[DESIGN] regime_conditional_entry_signal_v1.md` §120.
+   - **SPPV-3(다음 착수: [1순위] `relative_activity` 案1(ranking_
+     score에서 `0.10*relative_activity` 항 제거, `entry_score`
+     내부 항은 유지)의 구체적 diff 초안 작성 — 사용자 승인 시
+     코드 변경 턴으로 전환 +
+     [2순위] `coverage_score` A안을 위한 threshold(`0.48`/`0.22`)
+     재설계 별도 트랙 — 단독 제거가 아니라 재정규화/threshold
+     재산정을 함께 설계해야 함(완화안 설계는 아직 아님, 트랙
+     범위만 확정) +
      [3순위] `000720`이 core 유니버스에 20일 이상 연속 포함되는
      조건을 원인만 확인(완화안 아님) +
      [4순위] 이 모집단(core+bearish_trend)이 신호 품질(overall/

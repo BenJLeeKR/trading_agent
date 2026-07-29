@@ -2725,3 +2725,24 @@ Full pytest 미실행, 신규 KIS 호출 0건).
 2순위 중복 차단 정리)에 영향 없음. 상세: `docs/10_signal_
 research_sppv/[DESIGN] regime_conditional_entry_signal_v1.md`
 §119.
+
+## 18. `coverage_score` threshold 연쇄영향 + `relative_activity` 위치 비교 최종 확인(SPPV-2.132, 2026-07-29 KST)
+
+§17에서 남겨진 확인 과제 2개를 정량 검증했다(코드 미수정,
+`.env` 미수정, Full pytest 미실행, 신규 KIS 호출 0건).
+
+- **`coverage_score`**: A안(ranking 제거) 적용 시 `0.48`/`0.22`
+  threshold 통과율이 각각 14.8%→0.34~2.2%, 100%→0.4~1.8%로
+  붕괴함을 확인 — 단순 상수 제거가 아니라 threshold 경계 자체를
+  재구성하는 변경이라, **threshold 재설계와 묶이지 않으면 단독
+  diff로 진행 불가**.
+- **`relative_activity`**: 案1(entry_score 유지)과 案2(ranking
+  유지)의 threshold 영향은 둘 다 미미(14.8%→14.3%)하지만, 案2는
+  `buy_candidate_threshold=0.65` 공유 함수(`_build_entry_score`)
+  를 건드려 diff 범위가 넓어짐 — **案1이 더 보수적이며, 이번
+  턴 기준 최초로 즉시 diff 초안 작성이 가능한 안**으로 확정.
+
+**결론**: `coverage_score`=diff 보류(threshold 재설계 선행
+필요), `relative_activity`=案1으로 diff 착수 가능. 완화안/코드
+diff는 여전히 미착수. 상세: `docs/10_signal_research_sppv/
+[DESIGN] regime_conditional_entry_signal_v1.md` §120.
