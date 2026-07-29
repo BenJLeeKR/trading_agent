@@ -184,3 +184,11 @@ Codex 추천은 다음과 같다.
 - 전환 대상 문서는 `7`개였다.
 - 전환 후 전체 문서의 `data/observations/` Markdown 링크는 `0`개다.
 - `data/observations/` 파일은 이번 단계에서 제거하지 않았고, 다음 별도 PR에서 추적 제외한다.
+
+### 2026-07-29 — `data/observations/` 추적 제외
+
+- `data/observations/` tracked 파일 `6`개를 Git 추적에서 제거했다.
+- 작업트리의 `data/observations/` 실제 파일은 `6`개로 보존됐다.
+- 전체 문서의 `data/observations/` Markdown 링크는 `0`개였다.
+- `runtime_tracked_file_count`는 `39`에서 `33`으로 감소했다.
+- `.gitignore`에 `data/observations/`를 추가했다.
