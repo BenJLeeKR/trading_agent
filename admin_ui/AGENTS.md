@@ -11,6 +11,8 @@
 - 실제 동작하지 않은 작업을 성공처럼 보이게 하지 않는다.
 - 백엔드 enum, API schema, RBAC 정책과 UI 표시 문구를 맞춘다.
 - 코드를 제외한 화면 문구, 주석, 설명, 보고는 한국어를 사용한다.
+- read-only 분석 턴이라도 어떤 화면/API 상태를 어떤 범위에서 확인했는지와 미확인 사항을 분리해서 보고한다.
+- 토큰, 인증 정보, secret 후보가 포함될 수 있는 원격 URL, 명령 출력, 로그 조각은 그대로 보고하지 않는다.
 
 ## 주요 경로
 
@@ -29,6 +31,7 @@
 - UI 동작 변경 시 관련 컴포넌트나 view 테스트를 우선 실행한다.
 - API contract 변경과 함께 작업했다면 백엔드 schema와 프론트 타입·표시 로직을 함께 확인한다.
 - API client 호출 경계를 건드린 경우 `bash scripts/harness/run.sh accept architecture` 또는 `make accept-architecture`를 사용한다.
+- 완료 보고는 `docs/99_meta_handover/definition_of_done.md` 기준을 따른다.
 
 ## 검증 부하 제한
 
@@ -45,6 +48,7 @@
 - timestamp와 freshness 정보는 운영자가 판단할 수 있게 노출한다.
 - 주문, 정합성, agent run, decision 상태는 원본 상태값과 한국어 설명이 어긋나지 않게 한다.
 - 위험하거나 불확실한 상태는 정상 상태처럼 색상이나 문구를 표시하지 않는다.
+- 상태 표시를 바꿨다면 가능한 범위에서 관련 view/test selector 또는 `accept frontend` 결과로 확인 근거를 남긴다.
 
 ## 금지 사항
 
