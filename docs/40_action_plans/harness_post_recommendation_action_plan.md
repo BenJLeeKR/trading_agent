@@ -252,6 +252,15 @@
 - [x] top-level root JSON Markdown 링크는 `3`개이며 모두 `data/ar_fdc_*.json`을 가리킨다고 기록했다.
 - [x] root JSON 파일은 이번 단계에서 제거하지 않고 wildcard 사용 여부와 Markdown 링크 정리를 다음 단계로 분리했다.
 
+### P0 15차 — root JSON wildcard 사용 감사
+
+- [x] 정확 참조가 없는 top-level root JSON 후보 `21`개를 재확인했다.
+- [x] 후보 구성은 `signal_feature_historical=16`, `trigger_proxy_artifact=5`로 기록했다.
+- [x] 코드·테스트·스크립트·CI의 root JSON wildcard 패턴 사용은 `0`건으로 기록했다.
+- [x] 후보 파일 basename 부분 참조는 `0`건으로 기록했다.
+- [x] 문서 예시와 과거 산출물명 참조는 제거 차단 근거로 보지 않는다고 기록했다.
+- [x] root JSON 파일은 이번 단계에서 제거하지 않고, 다음 별도 PR에서 후보 `21`개를 추적 제외하기로 기록했다.
+
 ## 작업 이력
 
 | 일자 | 작업자 | 항목 | 변경 파일 수 | 검증 명령 | 주요 출력 지표 | 후속 조치 |
@@ -272,6 +281,7 @@
 | 2026-07-29 | Codex | P0 12차 — `data/observations/` Markdown 링크 전환 | 10 | `bash scripts/harness/run.sh accept docs`; `bash scripts/harness/run.sh accept ci` | `converted_observations_markdown_link_count=13`, `remaining_observations_markdown_link_count=0`, `runtime_tracked_file_count=39` | `data/observations/` tracked 파일 추적 제외 |
 | 2026-07-29 | Codex | P0 13차 — `data/observations/` tracked 파일 추적 제외 | 10 | `bash scripts/harness/run.sh accept docs`; `bash scripts/harness/run.sh accept ci` | `observations_tracked_count=0`, `observations_files_on_disk_count=6`, `runtime_tracked_file_count=33` | root JSON 기본 입력·분석 산출물 분리 |
 | 2026-07-29 | Codex | P0 14차 — root JSON 기본 입력·분석 산출물 분리 | 3 | `bash scripts/harness/run.sh accept docs`; `bash scripts/harness/run.sh accept ci` | `top_level_root_json_count=24`, `top_level_root_json_exact_referenced_file_count=3`, `top_level_root_json_zero_ref_count=21` | root JSON wildcard 사용 여부 감사 |
+| 2026-07-29 | Codex | P0 15차 — root JSON wildcard 사용 감사 | 3 | `bash scripts/harness/run.sh accept docs`; `bash scripts/harness/run.sh accept ci` | `root_json_zero_ref_candidate_count=21`, `code_wildcard_pattern_line_count=0`, `candidate_basename_partial_ref_count=0` | root JSON 후보 `21`개 추적 제외 |
 
 ## 갱신 규칙
 

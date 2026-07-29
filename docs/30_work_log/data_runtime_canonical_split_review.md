@@ -34,7 +34,7 @@
 2. `data/observations/`는 `logs/`와 같은 방식으로 Markdown 링크를 코드 텍스트로 전환한 뒤 Git 추적에서 제외했다.
 3. `data/signal_feature_snapshot_input.json`은 스케줄러와 테스트 기본값이 직접 참조하므로 이번 범위에서 제거하지 않는다.
 4. `data/instrument_master/source/`와 `data/instrument_master/normalized/`는 운영 재현성 입력으로 남기되, 추후 `data/canonical/` 또는 `data/fixtures/` 같은 명시 경로로 옮길지 별도 판단한다.
-5. top-level root JSON `24`개 중 정확 참조가 없는 `21`개는 바로 제거하지 않고 wildcard 사용 여부를 추가 감사한 뒤 별도 PR에서 정리한다.
+5. top-level root JSON `24`개 중 정확 참조가 없는 `21`개는 코드 wildcard 사용 여부 감사 결과 `0`건이므로 별도 PR에서 추적 제외한다.
 
 ## 금지 사항
 
@@ -48,7 +48,8 @@
 - P0 12차: `data/observations/` Markdown 링크 보존 정책을 결정했다.
 - P0 13차: `data/observations/` tracked 파일 `6`개 추적 제외를 완료했다.
 - P0 14차: root JSON 중 기본 입력 파일과 과거 분석 산출물을 분리했다.
-- P0 15차: 정확 참조가 없는 root JSON `21`개에 대한 wildcard 사용 여부를 감사한다.
+- P0 15차: 정확 참조가 없는 root JSON `21`개에 대한 wildcard 사용 여부를 감사했다.
+- P0 16차: 정확 참조와 wildcard 사용이 없는 root JSON `21`개를 추적 제외한다.
 
 ## 완료 기록
 
@@ -89,3 +90,13 @@
 - `data/signal_feature_snapshot_input.json`은 스케줄러와 테스트 기본 입력이라 제거하지 않는다.
 - `data/ar_fdc_*.json`은 문서 Markdown 링크 `3`개와 스크립트 생성 경로 참조가 있어 링크 정리 후 별도 처리한다.
 - `signal_feature_historical`와 `trigger_proxy_artifact` `21`개는 정확 참조가 `0`개지만 wildcard 사용 여부를 추가 감사한 뒤 추적 제외한다.
+
+### 2026-07-29 — root JSON wildcard 사용 감사
+
+- 정확 참조가 없는 top-level root JSON 후보는 `21`개다.
+- 후보 구성은 `signal_feature_historical=16`, `trigger_proxy_artifact=5`다.
+- 코드·테스트·스크립트·CI에서 `data/*.json`, `Path("data").glob("*.json")`, `glob("data/*.json")`, `signal_feature_snapshot_input_*`, `trigger_proxy_attribution_*` 패턴을 감사했다.
+- 후보 파일 basename 부분 참조는 `0`건이었다.
+- 후보를 실제로 읽을 수 있는 코드 wildcard 패턴은 `0`건이었다.
+- 문서 예시와 과거 산출물명 참조는 runtime artifact 보존 근거로 보지 않는다.
+- 다음 작업은 후보 `21`개를 별도 PR에서 Git 추적 제외하는 것이다.

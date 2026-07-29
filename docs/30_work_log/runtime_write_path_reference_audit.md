@@ -201,3 +201,12 @@ Codex 추천은 다음과 같다.
 - 분류 결과는 `signal_feature_default=1`, `signal_feature_historical=16`, `trigger_proxy_artifact=5`, `ar_fdc_artifact=2`다.
 - top-level root JSON Markdown 링크는 `3`개이며 모두 `data/ar_fdc_*.json`을 가리킨다.
 - root JSON 파일은 이번 단계에서 제거하지 않았고, 다음 단계에서 wildcard 사용 여부와 Markdown 링크 정리를 분리한다.
+
+### 2026-07-29 — root JSON wildcard 사용 감사
+
+- 정확 참조가 없는 top-level root JSON 후보는 `21`개다.
+- 후보 구성은 `signal_feature_historical=16`, `trigger_proxy_artifact=5`다.
+- 코드·테스트·스크립트·CI의 root JSON wildcard 패턴 사용은 `0`건이었다.
+- 후보 파일 basename 부분 참조는 `0`건이었다.
+- 문서 예시와 과거 산출물명 참조는 제거 차단 근거로 보지 않는다.
+- root JSON 파일은 이번 단계에서 제거하지 않았고, 다음 별도 PR에서 후보 `21`개를 추적 제외한다.
