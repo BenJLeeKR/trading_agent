@@ -12,6 +12,7 @@ usage() {
 사용법:
   bash scripts/harness/run.sh status
   bash scripts/harness/run.sh check quick
+  bash scripts/harness/run.sh check full
   bash scripts/harness/run.sh check changed
   bash scripts/harness/run.sh type-check backend
   bash scripts/harness/run.sh type-check frontend
@@ -331,6 +332,18 @@ quick_step_count = len(quick_command_set)
 quick_step_match = re.search(r"local step_count=(\d+)", check_quick_section)
 if quick_step_match is not None:
     quick_step_count = int(quick_step_match.group(1))
+full_command_set = set(quick_command_set)
+full_command_set.update(
+    {
+        "accept db-structure",
+        "accept architecture",
+        "accept style",
+        "type-check backend",
+        "type-check frontend",
+        "security scan",
+    }
+)
+full_step_count = len(full_command_set)
 
 safe_harness_commands = [
     normalize_harness_command(match.group(1))
@@ -347,6 +360,8 @@ for command in safe_harness_commands:
     safe_expanded_command_set.add(command)
 local_ci_command_gap_count = len(safe_expanded_command_set - quick_command_set)
 quick_only_command_count = len(quick_command_set - safe_expanded_command_set)
+full_ci_command_gap_count = len(safe_expanded_command_set - full_command_set)
+full_only_command_count = len(full_command_set - safe_expanded_command_set)
 deploy_manual_dispatch_input_count = int("deploy_main:" in workflow_text) + int(
     "allow_market_hours_deploy:" in workflow_text
 )
@@ -432,9 +447,12 @@ metrics = {
     "deploy_missing_proxy_reload_count": len(deploy_missing_proxy_reload_workflows),
     "destructive_deploy_clean_command_count": len(destructive_runtime_clean_lines),
     "quick_step_count": quick_step_count,
+    "full_step_count": full_step_count,
     "ci_safe_step_count": ci_safe_step_count,
     "local_ci_command_gap_count": local_ci_command_gap_count,
     "quick_only_command_count": quick_only_command_count,
+    "full_ci_command_gap_count": full_ci_command_gap_count,
+    "full_only_command_count": full_only_command_count,
     "deploy_manual_dispatch_input_count": deploy_manual_dispatch_input_count,
     "deploy_manual_dispatch_support_count": deploy_manual_dispatch_support_count,
     "deploy_target_sha_pin_count": deploy_target_sha_pin_count,
@@ -452,9 +470,12 @@ informational_metrics = {
     "workflow_file_count",
     "deploy_workflow_count",
     "quick_step_count",
+    "full_step_count",
     "ci_safe_step_count",
     "local_ci_command_gap_count",
     "quick_only_command_count",
+    "full_ci_command_gap_count",
+    "full_only_command_count",
     "deploy_manual_dispatch_input_count",
     "deploy_manual_dispatch_support_count",
     "deploy_target_sha_pin_count",
@@ -617,6 +638,91 @@ check_quick() {
   echo "- accept_frontend_exit_code=$accept_frontend_exit_code"
   echo "- lint_exit_code=$lint_exit_code"
   echo "- diff_check_exit_code=$diff_check_exit_code"
+  echo "- full_test_run=0"
+  echo "- full_build_run=0"
+  echo "- database_connection_run=0"
+  echo "- external_network_run=0"
+
+  [[ "$failed_step_count" -eq 0 ]]
+}
+
+check_full() {
+  local step_count=14
+  local failed_step_count=0
+  local check_quick_exit_code=0
+  local accept_db_structure_exit_code=0
+  local accept_architecture_exit_code=0
+  local accept_style_exit_code=0
+  local type_check_backend_exit_code=0
+  local type_check_frontend_exit_code=0
+  local security_scan_exit_code=0
+
+  echo "CHECK full: start"
+
+  if check_quick; then
+    check_quick_exit_code=0
+  else
+    check_quick_exit_code=$?
+    failed_step_count=$((failed_step_count + 1))
+  fi
+
+  if accept_db_structure; then
+    accept_db_structure_exit_code=0
+  else
+    accept_db_structure_exit_code=$?
+    failed_step_count=$((failed_step_count + 1))
+  fi
+
+  if accept_architecture; then
+    accept_architecture_exit_code=0
+  else
+    accept_architecture_exit_code=$?
+    failed_step_count=$((failed_step_count + 1))
+  fi
+
+  if accept_style; then
+    accept_style_exit_code=0
+  else
+    accept_style_exit_code=$?
+    failed_step_count=$((failed_step_count + 1))
+  fi
+
+  if type_check_backend; then
+    type_check_backend_exit_code=0
+  else
+    type_check_backend_exit_code=$?
+    failed_step_count=$((failed_step_count + 1))
+  fi
+
+  if type_check_frontend; then
+    type_check_frontend_exit_code=0
+  else
+    type_check_frontend_exit_code=$?
+    failed_step_count=$((failed_step_count + 1))
+  fi
+
+  if security_scan; then
+    security_scan_exit_code=0
+  else
+    security_scan_exit_code=$?
+    failed_step_count=$((failed_step_count + 1))
+  fi
+
+  if [[ "$failed_step_count" -eq 0 ]]; then
+    echo "CHECK full: PASS"
+  else
+    echo "CHECK full: FAIL"
+  fi
+  echo "- step_count=$step_count"
+  echo "- full_step_count=$step_count"
+  echo "- failed_step_count=$failed_step_count"
+  echo "- check_quick_exit_code=$check_quick_exit_code"
+  echo "- accept_db_structure_exit_code=$accept_db_structure_exit_code"
+  echo "- accept_architecture_exit_code=$accept_architecture_exit_code"
+  echo "- accept_style_exit_code=$accept_style_exit_code"
+  echo "- type_check_backend_exit_code=$type_check_backend_exit_code"
+  echo "- type_check_frontend_exit_code=$type_check_frontend_exit_code"
+  echo "- security_scan_exit_code=$security_scan_exit_code"
   echo "- full_test_run=0"
   echo "- full_build_run=0"
   echo "- database_connection_run=0"
@@ -2586,6 +2692,9 @@ main() {
       case "$profile" in
         quick)
           check_quick
+          ;;
+        full)
+          check_full
           ;;
         changed)
           check_changed

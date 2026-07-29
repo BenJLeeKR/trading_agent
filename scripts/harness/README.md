@@ -42,6 +42,7 @@ GitHub Actions도 사람과 AI가 쓰는 동일한 하네스를 사용한다. CI
 |------|-----------|------------|
 | 하네스 사용법 | `bash scripts/harness/run.sh status` | `make harness-status` |
 | 빠른 계층 검증 | `bash scripts/harness/run.sh check quick` | `make check-quick` |
+| CI 등가 로컬 검증 | `bash scripts/harness/run.sh check full` | `make check-full` |
 | 변경 백엔드 파일 검증 | `bash scripts/harness/run.sh check changed` | `make check-changed` |
 | 백엔드 타입 검사 | `bash scripts/harness/run.sh type-check backend` | `make type-check-backend` |
 | Frontend 타입 검사 | `bash scripts/harness/run.sh type-check frontend` | `make type-check-frontend` |
@@ -82,15 +83,19 @@ GitHub Actions도 사람과 AI가 쓰는 동일한 하네스를 사용한다. CI
 현재 2026-07-29 기준 계측은 다음과 같다.
 
 - `quick_step_count=8`
+- `full_step_count=14`
 - `ci_safe_step_count=8`
 - `local_ci_command_gap_count=6`
 - `quick_only_command_count=0`
+- `full_ci_command_gap_count=0`
+- `full_only_command_count=0`
 
 해석:
 
 - raw 호출 수는 둘 다 `8`이지만, `safe` job은 `check quick` 외에 `accept db-structure`, `accept architecture`, `accept style`, `type-check backend`, `type-check frontend`, `security scan`을 추가로 강제한다.
 - 즉, 현재 로컬 기본 스냅샷과 CI safe gate 사이에는 고유 명령 기준 `6`개의 차이가 있다.
-- 이 차이를 줄일지, `check full` 같은 별도 로컬 계약으로 분리할지는 P2 후속 단계에서 결정한다.
+- 이 차이는 `check quick`을 가볍게 유지하고 `check full`을 CI safe 등가 계약으로 두는 방식으로 정리했다.
+- 커밋 전 빠른 확인은 `check quick`, CI와 같은 범위의 로컬 확인은 `check full`을 사용한다.
 
 `check changed`는 Git 변경 목록에서 `src/agent_trading/**/*.py` 파일만 골라 각 파일에 `accept backend-file`을 적용한다. 문서만 변경된 경우 `changed_backend_file_count=0`으로 보고하며 전체 테스트를 실행하지 않는다.
 
@@ -107,7 +112,9 @@ L4/L5는 코드 변경의 일반 검증 경로가 아니라 사용자가 명시�
 | L4 통합 테스트 | 전체 pytest, Docker 기반 전체 테스트, DB·컨테이너가 필요한 통합 검증 | `HARNESS_ALLOW_HEAVY=1 bash scripts/harness/run.sh full-test`, `HARNESS_ALLOW_HEAVY=1 bash scripts/harness/run.sh docker-test` | `full_test_run`, `docker_test_run`, `failed_step_count`, 테스트 통과·실패 수 |
 | L5 E2E·smoke 테스트 | smoke, broker/KIS 연동, 외부 API 가능 경로, Admin UI 전체 빌드·전체 테스트 | `HARNESS_ALLOW_HEAVY=1 bash scripts/harness/run.sh smoke`, `HARNESS_ALLOW_HEAVY=1 bash scripts/harness/run.sh admin-build`, `HARNESS_ALLOW_HEAVY=1 bash scripts/harness/run.sh admin-test-all` | `smoke_run`, `admin_build_run`, `admin_test_run`, 외부 연동 실행 여부 |
 
-`check quick`에는 L4/L5 명령과 L6 `security scan`을 포함하지 않는다. `check quick`은 빠른 커밋 전 스냅샷으로 유지하고, 보안 스냅샷은 사용자가 별도로 요청했을 때 `security scan`으로 실행한다.
+`check quick`에는 L4/L5 명령과 L6 `security scan`을 포함하지 않는다. `check quick`은 빠른 커밋 전 스냅샷으로 유지한다.
+
+`check full`은 `check quick`에 `accept db-structure`, `accept architecture`, `accept style`, `type-check backend`, `type-check frontend`, `security scan`을 더한 로컬 CI-safe 등가 계약이다. L4/L5 heavy 명령은 여전히 포함하지 않는다.
 
 ## 수동 실행 명령
 
@@ -158,9 +165,12 @@ Makefile에서는 승인 필요 명령을 `heavy-*` target으로 노출한다. �
 - `deploy_missing_proxy_reload_count`: 배포 재기동 뒤 `nginx-proxy` reload를 실행하지 않는 workflow 수.
 - `destructive_deploy_clean_command_count`: 배포 workflow에서 `git clean -fdx` 또는 `logs/`, `tmp/`, `data/`를 직접 삭제하는 명령 수.
 - `quick_step_count`: `check quick`가 실행하는 단계 수.
+- `full_step_count`: `check full`이 실행하는 단계 수.
 - `ci_safe_step_count`: CI `safe` job이 직접 호출하는 하네스 단계 수.
 - `local_ci_command_gap_count`: CI `safe`가 `check quick`보다 추가로 강제하는 고유 명령 수.
 - `quick_only_command_count`: `check quick`에만 있고 CI `safe` 확장 집합에는 없는 고유 명령 수.
+- `full_ci_command_gap_count`: CI `safe`가 `check full`보다 추가로 강제하는 고유 명령 수.
+- `full_only_command_count`: `check full`에만 있고 CI `safe` 확장 집합에는 없는 고유 명령 수.
 - `deploy_manual_dispatch_input_count`: `workflow_dispatch`에 선언된 수동 재배포 입력 수. 현재 계약 값은 `2`다.
 - `deploy_manual_dispatch_support_count`: deploy job이 `workflow_dispatch`의 `deploy_main=true` 경로를 실제로 지원하는지 나타내는 수.
 - `deploy_target_sha_pin_count`: 수동 재배포가 최신 `origin/main` SHA를 fetch·출력·reset 하는 계약을 만족하는 workflow 수.
