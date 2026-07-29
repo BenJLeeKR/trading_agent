@@ -23,6 +23,9 @@ GitHub Actions도 사람과 AI가 쓰는 동일한 하네스를 사용한다. CI
 - `safe` job은 `check quick`, `accept db-structure`, `accept architecture`, `accept style`, `accept no-bypass`, `type-check backend`, `type-check frontend`, `security scan`을 실행한다.
 - 운영 배포는 `.github/workflows/harness.yml`의 `deploy` job에서 `needs: safe` 성공 뒤에만 실행한다.
 - 문서만 변경된 `main` push는 `changes` job에서 `deploy_required=0`으로 판정해 운영 재기동을 실행하지 않는다.
+- 수동 재배포는 `workflow_dispatch`의 `deploy_main=true` 입력으로만 연다.
+- 수동 재배포는 과거 workflow run을 재개하지 않고, 실행 시점의 최신 `origin/main` SHA를 다시 fetch한 뒤 그 SHA를 배포한다.
+- `allow_market_hours_deploy` 입력은 장 시간 가드 단계에서만 사용하며, 현재 단계에서는 선언만 유지한다.
 - 배포 재기동 뒤에는 `nginx-proxy`를 reload해 Docker DNS가 새 frontend 컨테이너 IP를 다시 해석하게 한다.
 - CI workflow 자체의 정합성 판정은 `accept ci`가 담당한다.
 - GitHub ruleset `Require Harness on main`은 기본 브랜치에 `Safe harness contracts` 상태 검사를 필수 항목으로 요구한다.
@@ -138,9 +141,12 @@ Makefile에서는 승인 필요 명령을 `heavy-*` target으로 노출한다. �
 - `deploy_missing_migration_count`: 배포 재기동 전에 `docker compose run --rm migrate`를 실행하지 않는 workflow 수.
 - `deploy_missing_proxy_reload_count`: 배포 재기동 뒤 `nginx-proxy` reload를 실행하지 않는 workflow 수.
 - `destructive_deploy_clean_command_count`: 배포 workflow에서 `git clean -fdx` 또는 `logs/`, `tmp/`, `data/`를 직접 삭제하는 명령 수.
+- `deploy_manual_dispatch_input_count`: `workflow_dispatch`에 선언된 수동 재배포 입력 수. 현재 계약 값은 `2`다.
+- `deploy_manual_dispatch_support_count`: deploy job이 `workflow_dispatch`의 `deploy_main=true` 경로를 실제로 지원하는지 나타내는 수.
+- `deploy_target_sha_pin_count`: 수동 재배포가 최신 `origin/main` SHA를 fetch·출력·reset 하는 계약을 만족하는 workflow 수.
+- `ci_contract_failed_count`: `workflow_dispatch` 수동 재배포 입력, 최신 `origin/main` SHA 고정, heavy 수동 실행 조건, version pin 같은 CI 계약 실패 수.
 - `runtime_tracked_file_count`: Git이 추적 중인 `logs/`, `tmp/`, `data/` 파일 수. 현재는 정리 진행을 위한 정보 지표이며, 합의된 허용 목록 정리 후 실패 지표로 전환한다.
 - `legacy_docker_compose_count`: workflow 안에서 v1 `docker-compose` 명령을 사용하는 수.
-- `ci_contract_failed_count`: workflow trigger, version pin, heavy 수동 실행 조건, required check 문서 연결 실패 수.
 
 ### `accept env`
 

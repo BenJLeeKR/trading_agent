@@ -307,11 +307,31 @@ safe_forbidden_heavy_lines = [
     for line_no, line in enumerate(safe_section.splitlines(), 1)
     if safe_forbidden_heavy_pattern.search(line)
 ]
+deploy_manual_dispatch_input_count = int("deploy_main:" in workflow_text) + int(
+    "allow_market_hours_deploy:" in workflow_text
+)
+deploy_manual_dispatch_support_count = int(
+    contains(
+        workflow,
+        "github.event_name == 'workflow_dispatch' && inputs.deploy_main == 'true'",
+        "deploy_manual_dispatch_requested_count",
+    )
+)
+deploy_target_sha_pin_count = int(
+    contains(
+        workflow,
+        'git fetch origin main',
+        'deploy_target_sha="$(git rev-parse origin/main)"',
+        'git reset --hard "$deploy_target_sha"',
+        "deploy_target_sha=",
+    )
+)
 
 contract_checks = [
     ("workflow_declares_pull_request", "pull_request:" in workflow_text),
     ("workflow_declares_main_push", "push:" in workflow_text and "- main" in workflow_text),
     ("workflow_declares_manual_heavy", "workflow_dispatch:" in workflow_text and "run_heavy:" in workflow_text),
+    ("workflow_declares_manual_deploy_inputs", contains(workflow, "workflow_dispatch:", "deploy_main:", "allow_market_hours_deploy:")),
     ("workflow_safe_job_present", "  safe:" in workflow_text),
     ("workflow_heavy_job_present", "  heavy:" in workflow_text),
     ("workflow_uses_setup_python_pin", "python-version-file: .python-version" in workflow_text),
@@ -321,10 +341,12 @@ contract_checks = [
     ("workflow_heavy_sets_allow_flag", 'HARNESS_ALLOW_HEAVY: "1"' in workflow_text),
     ("workflow_deploy_depends_on_safe", contains(workflow, "needs: [safe, changes]", "needs.safe.result == 'success'")),
     ("workflow_deploy_depends_on_change_detector", contains(workflow, "Deployment change detector", "needs.changes.outputs.deploy_required == '1'", "deploy_skipped_by_docs_only_count")),
+    ("workflow_deploy_supports_manual_dispatch", contains(workflow, "github.event_name == 'workflow_dispatch' && inputs.deploy_main == 'true'", "deploy_manual_dispatch_requested_count")),
+    ("workflow_manual_deploy_targets_latest_origin_main", contains(workflow, 'git fetch origin main', 'deploy_target_sha="$(git rev-parse origin/main)"', 'git reset --hard "$deploy_target_sha"', "deploy_target_sha=")),
     ("workflow_deploy_runs_migration_before_restart", contains(workflow, "docker compose run --rm migrate", "docker compose up -d --build --remove-orphans")),
     ("workflow_deploy_reloads_proxy_after_restart", contains(workflow, "docker exec nginx-proxy nginx -s reload", "deploy_proxy_reload_run=1")),
     ("readme_declares_ci_harness", contains(readme, "CI 검증 기준", ".github/workflows/harness.yml", "bash scripts/harness/run.sh", "Require Harness on main", "Safe harness contracts")),
-    ("harness_readme_declares_ci_harness", contains(harness_readme, "CI 공동 사용 원칙", "safe", "workflow_dispatch", "HARNESS_ALLOW_HEAVY=1", "Require Harness on main", "Safe harness contracts")),
+    ("harness_readme_declares_ci_harness", contains(harness_readme, "CI 공동 사용 원칙", "safe", "workflow_dispatch", "deploy_main", "allow_market_hours_deploy", "HARNESS_ALLOW_HEAVY=1", "Require Harness on main", "Safe harness contracts")),
     ("workflow_fetches_full_history_for_diff_contracts", contains(workflow, "fetch-depth: 0")),
     ("agents_declares_ci_harness", contains(agents, ".github/workflows/harness.yml", "bash scripts/harness/run.sh")),
     ("makefile_declares_accept_ci", contains(makefile, "accept-ci:", "bash scripts/harness/run.sh accept ci")),
@@ -344,6 +366,9 @@ metrics = {
     "deploy_missing_migration_count": len(deploy_missing_migration_workflows),
     "deploy_missing_proxy_reload_count": len(deploy_missing_proxy_reload_workflows),
     "destructive_deploy_clean_command_count": len(destructive_runtime_clean_lines),
+    "deploy_manual_dispatch_input_count": deploy_manual_dispatch_input_count,
+    "deploy_manual_dispatch_support_count": deploy_manual_dispatch_support_count,
+    "deploy_target_sha_pin_count": deploy_target_sha_pin_count,
     "runtime_tracked_file_count": len(tracked_runtime_files),
     "legacy_docker_compose_count": len(legacy_docker_compose_hits),
     "ci_contract_failed_count": len(failed_contract_checks),
@@ -353,6 +378,9 @@ informational_metrics = {
     "harness_command_count",
     "workflow_file_count",
     "deploy_workflow_count",
+    "deploy_manual_dispatch_input_count",
+    "deploy_manual_dispatch_support_count",
+    "deploy_target_sha_pin_count",
     "runtime_tracked_file_count",
 }
 passed = all(
