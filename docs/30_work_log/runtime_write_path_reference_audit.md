@@ -139,3 +139,13 @@ Codex 추천은 다음과 같다.
 - 전환 대상 파일은 `6`개였다.
 - 경로별 전환 수는 `docs/04_broker_kis=2`, `docs/05_reconciliation_snapshot=1`, `docs/06_data_sources_news=2`, `docs/07_scheduler_ops=1`, `docs/10_signal_research_sppv=2`다.
 - 전환 후 전체 문서의 `logs/` Markdown 링크는 `0`개다.
+
+### 2026-07-29 — `logs/` 추적 제외 전 최종 참조 재감사
+
+- `logs/` tracked 파일은 `2560`개다.
+- 전체 문서의 `logs/` Markdown 링크는 `0`개다.
+- 정확 참조된 `logs/` tracked 파일은 `166`개, 정확 참조 라인은 `413`개다.
+- 정확 참조는 코드 텍스트 또는 일반 텍스트로 남아 있으며, `accept docs`의 Markdown 링크 검증 대상이 아니다.
+- 확장자 분포는 `.json=95`, `.log=68`, `.jsonl=2`, `.txt=1`이다.
+- 런타임 추적 파일 총합은 `2632`개이며, 구성은 `logs=2560`, `tmp=0`, `data=72`다.
+- 다음 작업은 `git rm --cached -r logs`를 별도 PR로 진행하는 것이다.
