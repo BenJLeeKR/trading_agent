@@ -1,0 +1,31 @@
+name: Auto Deploy to Oracle Cloud
+
+# main 브랜치에 코드가 push(또는 merge) 될 때만 실행되도록 설정해요.
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: 서버 접속 및 자동 배포 실행
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.SERVER_HOST }}
+          username: ${{ secrets.SERVER_USER }}
+          key: ${{ secrets.SERVER_KEY }}
+          port: 22
+          script: |
+            # 1. 작업 폴더로 이동
+            cd /workspace/agent_trading
+            
+            # 2. 깃허브에서 최신 코드 가져오기
+            git pull origin main
+            
+            # 3. 기존 도커 컨테이너 종료 및 새 코드를 반영하여 재기동
+            docker-compose down
+            docker-compose up -d --build
+
+            echo "🎉 도커 자동 배포가 성공적으로 완료되었습니다!"
