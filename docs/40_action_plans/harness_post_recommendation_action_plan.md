@@ -243,6 +243,15 @@
 - [x] `runtime_tracked_file_count`는 `39`에서 `33`으로 감소했다.
 - [x] 처리 기록은 [`data_runtime_canonical_split_review.md`](../30_work_log/data_runtime_canonical_split_review.md)와 [`runtime_write_path_reference_audit.md`](../30_work_log/runtime_write_path_reference_audit.md)에 남겼다.
 
+### P0 14차 — root JSON 기본 입력·분석 산출물 분리
+
+- [x] top-level root JSON tracked 파일 `24`개를 재확인했다.
+- [x] 정확 참조된 top-level root JSON 파일은 `3`개, 정확 참조 라인은 `46`개로 기록했다.
+- [x] 정확 참조 없는 top-level root JSON 파일은 `21`개로 기록했다.
+- [x] 분류 결과는 `signal_feature_default=1`, `signal_feature_historical=16`, `trigger_proxy_artifact=5`, `ar_fdc_artifact=2`로 기록했다.
+- [x] top-level root JSON Markdown 링크는 `3`개이며 모두 `data/ar_fdc_*.json`을 가리킨다고 기록했다.
+- [x] root JSON 파일은 이번 단계에서 제거하지 않고 wildcard 사용 여부와 Markdown 링크 정리를 다음 단계로 분리했다.
+
 ## 작업 이력
 
 | 일자 | 작업자 | 항목 | 변경 파일 수 | 검증 명령 | 주요 출력 지표 | 후속 조치 |
@@ -262,6 +271,7 @@
 | 2026-07-29 | Codex | P0 11차 — `data/instrument_master/archive/` tracked 파일 추적 제외 | 37 | `bash scripts/harness/run.sh accept docs`; `bash scripts/harness/run.sh accept ci` | `archive_tracked_count=0`, `archive_files_on_disk_count=34`, `runtime_tracked_file_count=39` | `data/observations/` 링크 보존 정책 결정 |
 | 2026-07-29 | Codex | P0 12차 — `data/observations/` Markdown 링크 전환 | 10 | `bash scripts/harness/run.sh accept docs`; `bash scripts/harness/run.sh accept ci` | `converted_observations_markdown_link_count=13`, `remaining_observations_markdown_link_count=0`, `runtime_tracked_file_count=39` | `data/observations/` tracked 파일 추적 제외 |
 | 2026-07-29 | Codex | P0 13차 — `data/observations/` tracked 파일 추적 제외 | 10 | `bash scripts/harness/run.sh accept docs`; `bash scripts/harness/run.sh accept ci` | `observations_tracked_count=0`, `observations_files_on_disk_count=6`, `runtime_tracked_file_count=33` | root JSON 기본 입력·분석 산출물 분리 |
+| 2026-07-29 | Codex | P0 14차 — root JSON 기본 입력·분석 산출물 분리 | 3 | `bash scripts/harness/run.sh accept docs`; `bash scripts/harness/run.sh accept ci` | `top_level_root_json_count=24`, `top_level_root_json_exact_referenced_file_count=3`, `top_level_root_json_zero_ref_count=21` | root JSON wildcard 사용 여부 감사 |
 
 ## 갱신 규칙
 

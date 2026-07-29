@@ -34,6 +34,7 @@
 2. `data/observations/`는 `logs/`와 같은 방식으로 Markdown 링크를 코드 텍스트로 전환한 뒤 Git 추적에서 제외했다.
 3. `data/signal_feature_snapshot_input.json`은 스케줄러와 테스트 기본값이 직접 참조하므로 이번 범위에서 제거하지 않는다.
 4. `data/instrument_master/source/`와 `data/instrument_master/normalized/`는 운영 재현성 입력으로 남기되, 추후 `data/canonical/` 또는 `data/fixtures/` 같은 명시 경로로 옮길지 별도 판단한다.
+5. top-level root JSON `24`개 중 정확 참조가 없는 `21`개는 바로 제거하지 않고 wildcard 사용 여부를 추가 감사한 뒤 별도 PR에서 정리한다.
 
 ## 금지 사항
 
@@ -46,7 +47,8 @@
 - P0 11차: `data/instrument_master/archive/` 정확 참조 `0`개를 재확인하고 추적 제외했다.
 - P0 12차: `data/observations/` Markdown 링크 보존 정책을 결정했다.
 - P0 13차: `data/observations/` tracked 파일 `6`개 추적 제외를 완료했다.
-- P0 14차: root JSON 중 기본 입력 파일과 과거 분석 산출물을 분리한다.
+- P0 14차: root JSON 중 기본 입력 파일과 과거 분석 산출물을 분리했다.
+- P0 15차: 정확 참조가 없는 root JSON `21`개에 대한 wildcard 사용 여부를 감사한다.
 
 ## 완료 기록
 
@@ -77,3 +79,13 @@
 - `git rm --cached -r data/observations`로 Git 추적에서만 제거했다.
 - `.gitignore`에 `data/observations/`를 추가해 재추적을 막았다.
 - `runtime_tracked_file_count`는 `39`에서 `33`으로 감소했다.
+
+### 2026-07-29 — root JSON 기본 입력·분석 산출물 분리
+
+- top-level root JSON tracked 파일은 `24`개다.
+- 정확 참조된 top-level root JSON 파일은 `3`개, 정확 참조 라인은 `46`개다.
+- 정확 참조 없는 top-level root JSON 파일은 `21`개다.
+- 분류 결과는 `signal_feature_default=1`, `signal_feature_historical=16`, `trigger_proxy_artifact=5`, `ar_fdc_artifact=2`다.
+- `data/signal_feature_snapshot_input.json`은 스케줄러와 테스트 기본 입력이라 제거하지 않는다.
+- `data/ar_fdc_*.json`은 문서 Markdown 링크 `3`개와 스크립트 생성 경로 참조가 있어 링크 정리 후 별도 처리한다.
+- `signal_feature_historical`와 `trigger_proxy_artifact` `21`개는 정확 참조가 `0`개지만 wildcard 사용 여부를 추가 감사한 뒤 추적 제외한다.
