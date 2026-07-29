@@ -287,6 +287,8 @@ docker compose up -d db api
 
 GitHub Actions는 사람과 AI가 쓰는 동일한 하네스를 사용한다. 기본 PR/push gate는 [`.github/workflows/harness.yml`](./.github/workflows/harness.yml)에서 `bash scripts/harness/run.sh ...`를 호출하며, 개별 `pytest`, `ruff`, `npm test` 명령을 CI 정답 판정기로 중복 정의하지 않는다.
 
+GitHub ruleset `Require Harness on main`은 기본 브랜치에 `Safe harness contracts` 상태 검사를 필수 항목으로 요구한다.
+
 L4/L5 계층의 전체 테스트, smoke, Admin UI 전체 빌드/테스트는 기본 PR/push에서 실행하지 않고 `workflow_dispatch`와 `HARNESS_ALLOW_HEAVY=1`이 있을 때만 실행한다.
 
 ## 환경 재현성 기준

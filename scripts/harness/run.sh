@@ -231,8 +231,8 @@ contract_checks = [
     ("workflow_uses_postgres_pin", "POSTGRES_VERSION=\"$(cat .postgres-version)\"" in workflow_text and "\"postgres:${POSTGRES_VERSION}\"" in workflow_text),
     ("workflow_heavy_requires_dispatch", "if: github.event_name == 'workflow_dispatch' && inputs.run_heavy == 'true'" in workflow_text),
     ("workflow_heavy_sets_allow_flag", 'HARNESS_ALLOW_HEAVY: "1"' in workflow_text),
-    ("readme_declares_ci_harness", contains(readme, "CI 검증 기준", ".github/workflows/harness.yml", "bash scripts/harness/run.sh")),
-    ("harness_readme_declares_ci_harness", contains(harness_readme, "CI 공동 사용 원칙", "safe", "workflow_dispatch", "HARNESS_ALLOW_HEAVY=1")),
+    ("readme_declares_ci_harness", contains(readme, "CI 검증 기준", ".github/workflows/harness.yml", "bash scripts/harness/run.sh", "Require Harness on main", "Safe harness contracts")),
+    ("harness_readme_declares_ci_harness", contains(harness_readme, "CI 공동 사용 원칙", "safe", "workflow_dispatch", "HARNESS_ALLOW_HEAVY=1", "Require Harness on main", "Safe harness contracts")),
     ("agents_declares_ci_harness", contains(agents, ".github/workflows/harness.yml", "bash scripts/harness/run.sh")),
     ("makefile_declares_accept_ci", contains(makefile, "accept-ci:", "bash scripts/harness/run.sh accept ci")),
 ]
