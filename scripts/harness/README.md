@@ -33,7 +33,7 @@ GitHub Actions도 사람과 AI가 쓰는 동일한 하네스를 사용한다. CI
 - CI workflow 자체의 정합성 판정은 `accept ci`가 담당한다.
 - GitHub ruleset `Require Harness on main`은 기본 브랜치에 `Safe harness contracts` 상태 검사를 필수 항목으로 요구한다.
 - CI의 PostgreSQL 버전 판정은 `.postgres-version`과 같은 버전의 `trading_db` 컨테이너를 시작한 뒤 `accept env`가 확인한다.
-- CI의 Node.js/npm 판정은 `.nvmrc`, `.npm-version`과 일치하는 pin 이미지 또는 setup-node 환경을 기준으로 확인한다.
+- CI의 Node.js/npm 판정은 `admin_ui/.nvmrc`, `admin_ui/.npm-version`과 일치하는 pin 이미지 또는 setup-node 환경을 기준으로 확인한다.
 - `HARNESS_ALLOW_HEAVY=1`이 필요한 L4/L5 검증은 기본 PR/push에서 실행하지 않고 `workflow_dispatch` 입력으로만 실행한다.
 
 ## 승인 없이 실행 가능한 명령
@@ -89,6 +89,8 @@ GitHub Actions도 사람과 AI가 쓰는 동일한 하네스를 사용한다. CI
 - `quick_only_command_count=0`
 - `full_ci_command_gap_count=0`
 - `full_only_command_count=0`
+- `pip_install_command_count=2`
+- `pip_install_without_constraints_count=0`
 
 해석:
 
@@ -148,6 +150,8 @@ Makefile에서는 승인 필요 명령을 `heavy-*` target으로 노출한다. �
 - `markdown_link_missing_count`: 핵심 문서의 깨진 상대 링크 수.
 - `deprecated_reference_count`: 오래된 문서 경로 참조 수.
 - `documented_make_target_missing_count`: 핵심 문서가 안내하지만 `Makefile`에 없는 target 수.
+- `documented_run_sh_command_missing_count`: 문서가 안내하지만 `scripts/harness/run.sh`가 실제로 지원하지 않는 명령 수.
+- `run_sh_usage_dispatch_mismatch_count`: `scripts/harness/run.sh`의 사용법 블록과 실제 dispatch selector가 서로 어긋나는 명령 수.
 - `semantic_check_failed_count`: Harness Engineering 필수 문구와 라우팅 규칙 실패 수.
 
 ### `accept ci`
@@ -171,6 +175,8 @@ Makefile에서는 승인 필요 명령을 `heavy-*` target으로 노출한다. �
 - `quick_only_command_count`: `check quick`에만 있고 CI `safe` 확장 집합에는 없는 고유 명령 수.
 - `full_ci_command_gap_count`: CI `safe`가 `check full`보다 추가로 강제하는 고유 명령 수.
 - `full_only_command_count`: `check full`에만 있고 CI `safe` 확장 집합에는 없는 고유 명령 수.
+- `pip_install_command_count`: workflow 안의 Python dependency 설치 명령 수.
+- `pip_install_without_constraints_count`: `requirements.lock` 제약 없이 실행되는 workflow의 `pip install` 명령 수.
 - `deploy_manual_dispatch_input_count`: `workflow_dispatch`에 선언된 수동 재배포 입력 수. 현재 계약 값은 `2`다.
 - `deploy_manual_dispatch_support_count`: deploy job이 `workflow_dispatch`의 `deploy_main=true` 경로를 실제로 지원하는지 나타내는 수.
 - `deploy_target_sha_pin_count`: 수동 재배포가 최신 `origin/main` SHA를 fetch·출력·reset 하는 계약을 만족하는 workflow 수.

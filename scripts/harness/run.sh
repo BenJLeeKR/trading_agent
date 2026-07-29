@@ -175,6 +175,17 @@ workflow_lines = workflow_text.splitlines()
 workflow_text_by_path = {
     path: path.read_text() for path in workflow_files
 }
+pip_install_lines = [
+    (path, line_no, line.strip())
+    for path, text in workflow_text_by_path.items()
+    for line_no, line in enumerate(text.splitlines(), 1)
+    if "python3 -m pip install" in line
+]
+pip_install_without_constraints = [
+    (path, line_no, line)
+    for path, line_no, line in pip_install_lines
+    if "--constraint requirements.lock" not in line
+]
 
 def contains(path: Path, *needles: str) -> bool:
     if not path.exists():
@@ -415,6 +426,7 @@ contract_checks = [
     ("workflow_uses_setup_python_pin", "python-version-file: .python-version" in workflow_text),
     ("workflow_uses_setup_node_pin", "node-version-file: admin_ui/.nvmrc" in workflow_text),
     ("workflow_uses_postgres_pin", "POSTGRES_VERSION=\"$(cat .postgres-version)\"" in workflow_text and "\"postgres:${POSTGRES_VERSION}\"" in workflow_text),
+    ("workflow_uses_requirements_lock_constraints", len(pip_install_lines) > 0 and len(pip_install_without_constraints) == 0),
     ("workflow_heavy_requires_dispatch", "if: github.event_name == 'workflow_dispatch' && inputs.run_heavy == 'true'" in workflow_text),
     ("workflow_heavy_sets_allow_flag", 'HARNESS_ALLOW_HEAVY: "1"' in workflow_text),
     ("workflow_deploy_depends_on_safe", contains(workflow, "needs: [safe, changes]", "needs.safe.result == 'success'")),
@@ -462,6 +474,8 @@ metrics = {
     "deploy_job_depends_on_market_guard_count": deploy_job_depends_on_market_guard_count,
     "runtime_tracked_file_count": len(tracked_runtime_files),
     "legacy_docker_compose_count": len(legacy_docker_compose_hits),
+    "pip_install_command_count": len(pip_install_lines),
+    "pip_install_without_constraints_count": len(pip_install_without_constraints),
     "ci_contract_failed_count": len(failed_contract_checks),
 }
 
@@ -484,6 +498,7 @@ informational_metrics = {
     "deploy_market_hours_override_metric_count",
     "deploy_job_depends_on_market_guard_count",
     "runtime_tracked_file_count",
+    "pip_install_command_count",
 }
 passed = all(
     value == 0
@@ -512,6 +527,11 @@ if missing_harness_commands:
 if direct_verifier_lines:
     print("DETAIL direct_verifier_commands:")
     for source, line_no, line in direct_verifier_lines:
+        print(f"- {source.relative_to(root)}:{line_no}: {line}")
+
+if pip_install_without_constraints:
+    print("DETAIL pip_install_without_constraints:")
+    for source, line_no, line in pip_install_without_constraints:
         print(f"- {source.relative_to(root)}:{line_no}: {line}")
 
 if safe_forbidden_heavy_lines:
@@ -1106,6 +1126,10 @@ required_files = core_docs + [
     root / "scripts" / "harness" / "run.sh",
     root / "Makefile",
 ]
+documentation_files = sorted({
+    *core_docs,
+    *(root / "docs").rglob("*.md"),
+})
 
 line_suffix = re.compile(r"^(.*\.(?:md|py|sql|yml|yaml|toml|json|txt|sh))(?:[:#]L?\d+(?:-L?\d+)?)$")
 deprecated_reference = re.compile(r"\bplan_docs\b|\]\((?:\.\./)*plans/")
@@ -1125,6 +1149,111 @@ if makefile.exists():
             make_targets.add(match.group(1))
 
 documented_make_target_misses = []
+documented_run_sh_command_misses = []
+
+run_sh = root / "scripts" / "harness" / "run.sh"
+run_sh_text = run_sh.read_text() if run_sh.exists() else ""
+
+def normalize_run_sh_command(command: str) -> str:
+    raw = command.strip().strip("`")
+    raw = re.sub(r"^bash scripts/harness/run\.sh\s+", "", raw)
+    tokens = []
+    for token in raw.split():
+        normalized_token = token.rstrip('",;:)]}')
+        if re.fullmatch(r"[A-Za-z0-9_./:<>\-\[\]]+", normalized_token):
+            tokens.append(normalized_token)
+            continue
+        break
+    normalized = " ".join(tokens).strip()
+    if normalized in {"", "...", "<command>"}:
+        return ""
+    if normalized.startswith("check "):
+        parts = normalized.split()
+        return " ".join(parts[:2]) if len(parts) >= 2 else "check"
+    if normalized.startswith("type-check "):
+        parts = normalized.split()
+        return " ".join(parts[:2]) if len(parts) >= 2 else "type-check"
+    if normalized.startswith("security "):
+        parts = normalized.split()
+        return " ".join(parts[:2]) if len(parts) >= 2 else "security"
+    if normalized.startswith("accept "):
+        parts = normalized.split()
+        return " ".join(parts[:2]) if len(parts) >= 2 else "accept"
+    if normalized.startswith("dump "):
+        parts = normalized.split()
+        return " ".join(parts[:2]) if len(parts) >= 2 else "dump"
+    if normalized.startswith("run "):
+        parts = normalized.split()
+        return " ".join(parts[:2]) if len(parts) >= 2 else "run"
+    if normalized.startswith("HARNESS_ALLOW_OPS_DUMP=1 "):
+        return normalize_run_sh_command(normalized.split(" ", 1)[1])
+    if normalized.startswith("HARNESS_ALLOW_HEAVY=1 "):
+        return normalize_run_sh_command(normalized.split(" ", 1)[1])
+    return normalized.split()[0]
+
+usage_commands = {
+    normalize_run_sh_command(match.group(1))
+    for match in re.finditer(r"bash scripts/harness/run\.sh\s+([^\n]+)", run_sh_text)
+}
+usage_commands.discard("")
+
+def parse_dispatch_commands(text: str) -> set[str]:
+    commands: set[str] = set()
+    simple_outer = {
+        "status",
+        "env-check",
+        "py-compile",
+        "test-one",
+        "test-file",
+        "lint-path",
+        "docs-check",
+        "admin-test-one",
+        "full-test",
+        "docker-test",
+        "smoke",
+        "admin-build",
+        "admin-test-all",
+    }
+    grouped_outer = {"check", "type-check", "security", "accept", "dump", "run"}
+    in_main_case = False
+    active_outer = ""
+    inside_nested_case = False
+
+    for raw_line in text.splitlines():
+        stripped = raw_line.strip()
+        indent = len(raw_line) - len(raw_line.lstrip(" "))
+
+        if stripped == 'case "$command" in':
+            in_main_case = True
+            continue
+        if not in_main_case:
+            continue
+        if stripped == "esac":
+            if inside_nested_case:
+                inside_nested_case = False
+                continue
+            break
+        if indent == 4:
+            outer_match = re.fullmatch(r"([A-Za-z0-9-]+)\)", stripped)
+            if outer_match:
+                active_outer = outer_match.group(1)
+                inside_nested_case = active_outer in grouped_outer
+                if active_outer in simple_outer:
+                    commands.add(active_outer)
+                continue
+            if stripped == ";;":
+                active_outer = ""
+                inside_nested_case = False
+                continue
+        if indent == 8 and inside_nested_case:
+            nested_match = re.fullmatch(r"([A-Za-z0-9-]+)\)", stripped)
+            if nested_match and active_outer:
+                commands.add(f"{active_outer} {nested_match.group(1)}")
+    return commands
+
+dispatch_commands = parse_dispatch_commands(run_sh_text)
+usage_dispatch_missing = sorted(usage_commands - dispatch_commands)
+dispatch_usage_missing = sorted(dispatch_commands - usage_commands)
 
 for file_path in core_docs:
     if not file_path.exists():
@@ -1152,6 +1281,19 @@ for file_path in core_docs:
                     documented_make_target_misses.append(
                         (file_path, line_no, target, line.strip())
                     )
+
+for file_path in documentation_files:
+    if not file_path.exists():
+        continue
+    for line_no, line in enumerate(file_path.read_text().splitlines(), 1):
+        for match in re.finditer(r"bash scripts/harness/run\.sh\s+([^\n`]+)", line):
+            normalized = normalize_run_sh_command(match.group(1))
+            if not normalized:
+                continue
+            if normalized not in dispatch_commands:
+                documented_run_sh_command_misses.append(
+                    (file_path, line_no, normalized, line.strip())
+                )
 
 def contains(path: Path, *needles: str) -> bool:
     if not path.exists():
@@ -1207,6 +1349,8 @@ metrics = {
     "markdown_link_missing_count": len(missing_links),
     "deprecated_reference_count": len(deprecated_hits),
     "documented_make_target_missing_count": len(documented_make_target_misses),
+    "documented_run_sh_command_missing_count": len(documented_run_sh_command_misses),
+    "run_sh_usage_dispatch_mismatch_count": len(usage_dispatch_missing) + len(dispatch_usage_missing),
     "semantic_check_failed_count": len(failed_semantic_checks),
 }
 
@@ -1234,6 +1378,18 @@ if documented_make_target_misses:
     print("DETAIL documented_make_target_misses:")
     for source, line_no, target, line in documented_make_target_misses:
         print(f"- {source.relative_to(root)}:{line_no}: make {target} :: {line}")
+
+if documented_run_sh_command_misses:
+    print("DETAIL documented_run_sh_command_misses:")
+    for source, line_no, command, line in documented_run_sh_command_misses:
+        print(f"- {source.relative_to(root)}:{line_no}: {command} :: {line}")
+
+if usage_dispatch_missing or dispatch_usage_missing:
+    print("DETAIL run_sh_usage_dispatch_mismatches:")
+    for command in usage_dispatch_missing:
+        print(f"- usage_only: {command}")
+    for command in dispatch_usage_missing:
+        print(f"- dispatch_only: {command}")
 
 if failed_semantic_checks:
     print("DETAIL failed_semantic_checks:")
