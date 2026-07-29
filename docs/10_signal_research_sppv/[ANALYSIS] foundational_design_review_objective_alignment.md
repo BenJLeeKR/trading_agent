@@ -2595,3 +2595,27 @@ ranking_blocked` 하드 게이트 모집단(n=11,971) 내부 한정이며,
 전체 `deterministic_trigger.ranking_score` 모집단(38,667건)의
 최상위가 아니다 — [PLAN] 문서와 §113/§114에 조건을 명시적으로
 추가했다. 수치·최종 판정 변경 없음.
+
+## 13. distinct symbol 기준 기여도 재계산 + 반복 등장 원인 규명(SPPV-2.127, 2026-07-29 KST)
+
+`[PLAN] ranking_score_formula_validation.md` §6.8의 잔여 2개
+항목을 완료했다(코드 미수정, Full pytest 미실행, 신규 KIS 호출
+0건).
+
+- **기여도 재계산**: 게이트 모집단 내부(distinct=25)에서
+  `entry_score`+`relative_activity`가 차이의 100.0%, 일반 BUY
+  경로 전체(distinct=105, `eligibility_path='buy'`만 필터)에서
+  96.2%를 설명 — 종목 반복 편향을 제거해도 **기존 결론(entry_
+  score+relative_activity가 핵심)은 유지**된다.
+- **반복 원인**: `002790`/`000720` 모두 intraday decision loop
+  5분 주기(`DEFAULT_INTERVAL_SECONDS=300`) + `signal_feature_
+  snapshot` 1일 1회 갱신 + 게이트 고정 상태 지속이라는 **동일
+  메커니즘**으로 반복되며, 이는 **정상 반복**(저장/집계 결함
+  아님)이다. 다만 `000720`(20일+ 연속, 신호 만성적 0)과
+  `002790`(6일 산발, 신호 완만 변화)은 정도가 다르다.
+- **방법론적 시사점**: 이후 이 계열 분석은 distinct-symbol
+  기준을 기본으로 삼아야 한다.
+
+최종 판정(1순위 산식 재검토, 2순위 중복 차단 정리)에 영향 없음.
+상세: `docs/10_signal_research_sppv/[DESIGN] regime_conditional_
+entry_signal_v1.md` §115.
