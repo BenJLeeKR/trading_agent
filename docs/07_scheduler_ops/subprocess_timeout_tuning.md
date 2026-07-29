@@ -49,7 +49,7 @@ run_decision_loop.py
 
 ### 2.1 측정 데이터 출처
 
-- **로그 파일**: [`logs/submit_measurement_20260526_131726.log`](../logs/submit_measurement_20260526_131726.log)
+- **로그 파일**: `logs/submit_measurement_20260526_131726.log`
 - **측정 일시**: 2026-05-26 KST (최근 측정)
 - **측정 대상**: Universe 30개 symbol, 1 cycle
 - **측정 구간**: `ai_assemble` phase (subprocess 내부 EI→AR→FDC 순차 실행)

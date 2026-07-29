@@ -179,6 +179,14 @@
 - [x] 남은 `logs/` Markdown 링크는 `8`개다.
 - [x] 처리 기록은 [`runtime_write_path_reference_audit.md`](../30_work_log/runtime_write_path_reference_audit.md)에 남겼다.
 
+### P0 7차 — 남은 `logs/` Markdown 링크 전환
+
+- [x] 남은 `logs/` Markdown 링크 `8`개를 모두 코드 텍스트로 전환했다.
+- [x] 전환 대상 파일은 `6`개였다.
+- [x] 경로별 전환 수는 `docs/04_broker_kis=2`, `docs/05_reconciliation_snapshot=1`, `docs/06_data_sources_news=2`, `docs/07_scheduler_ops=1`, `docs/10_signal_research_sppv=2`다.
+- [x] 전환 후 전체 문서의 `logs/` Markdown 링크는 `0`개다.
+- [x] 처리 기록은 [`runtime_write_path_reference_audit.md`](../30_work_log/runtime_write_path_reference_audit.md)에 남겼다.
+
 ## 작업 이력
 
 | 일자 | 작업자 | 항목 | 변경 파일 수 | 검증 명령 | 주요 출력 지표 | 후속 조치 |
@@ -191,6 +199,7 @@
 | 2026-07-29 | Codex | P0 4차 — `tmp/` tracked 파일 추적 제외 | 60 | `bash scripts/harness/run.sh accept docs`; `bash scripts/harness/run.sh accept ci` | `tmp_tracked_count=0`, `runtime_tracked_file_count=2632` | `logs/` 링크 정책 결정 |
 | 2026-07-29 | Codex | P0 5차 — `logs/` 링크 정책 결정 | 3 | `bash scripts/harness/run.sh accept docs`; `bash scripts/harness/run.sh accept ci` | `logs_exact_referenced_file_count=166`, `logs_exact_reference_line_count=413` | `logs/` Markdown 링크 전환 PR |
 | 2026-07-29 | Codex | P0 6차 — `docs/03_execution_order` `logs/` Markdown 링크 전환 | 7 | `bash scripts/harness/run.sh accept docs`; `bash scripts/harness/run.sh accept ci` | `converted_markdown_logs_link_count=20`, `remaining_markdown_logs_link_count=8` | 나머지 8개 링크 전환 |
+| 2026-07-29 | Codex | P0 7차 — 남은 `logs/` Markdown 링크 전환 | 8 | `bash scripts/harness/run.sh accept docs`; `bash scripts/harness/run.sh accept ci` | `converted_markdown_logs_link_count=8`, `remaining_markdown_logs_link_count=0` | `logs/` 추적 제외 준비 |
 
 ## 갱신 규칙
 

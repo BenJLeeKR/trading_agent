@@ -35,9 +35,9 @@
 - 기간:
   `2026-07-06 ~ 2026-07-10`
 - 분석 산출물:
-  - [`logs/trigger_proxy_attribution_2026-07-06_2026-07-10_v5_rerun_after_hydration_fix.json`](../logs/trigger_proxy_attribution_2026-07-06_2026-07-10_v5_rerun_after_hydration_fix.json)
+  - `logs/trigger_proxy_attribution_2026-07-06_2026-07-10_v5_rerun_after_hydration_fix.json`
   - [`plans/[ANALYSIS] core_risk_off_floor_v5_report_measurement_2026-07-11.md`](./%5BANALYSIS%5D%20core_risk_off_floor_v5_report_measurement_2026-07-11.md)
-  - [`logs/entry_score_downward_bias_2026-07-01_2026-07-10.json`](../logs/entry_score_downward_bias_2026-07-01_2026-07-10.json)
+  - `logs/entry_score_downward_bias_2026-07-01_2026-07-10.json`
 
 ### 2.2 확인된 사실
 
