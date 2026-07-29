@@ -87,6 +87,7 @@
 - 분석 문서의 과거 산출물 링크를 계속 클릭 가능하게 유지할지 결정한다.
 - 유지한다면 대표 산출물만 `docs/90_reference/artifacts/` 같은 보존 경로로 이동한다.
 - 유지하지 않는다면 문서 링크를 “역사적 산출물명” 텍스트로 바꾸고 `logs/` 전체를 추적 제외한다.
+- 현재 정책은 [`runtime_artifact_policy.md`](../20_harness_engineering/runtime_artifact_policy.md)를 따른다.
 
 ### 3단계 — `data/` canonical 분리
 
@@ -115,3 +116,11 @@ Codex 추천은 다음과 같다.
 - 정확 참조 파일 `1`개: `tmp/measure_dschat_latency.py`.
 - 정확 참조 라인 `3`개를 Markdown 링크에서 역사적 파일명 코드 텍스트로 전환했다.
 - 전환 후 `tmp/` tracked 파일을 Git 추적에서 제거해도 문서 링크 검증이 깨지지 않는다.
+
+### 2026-07-29 — `logs/` 링크 정책 결정
+
+- `logs/` tracked 파일은 `2560`개다.
+- 정확 참조된 `logs/` tracked 파일은 `166`개, 정확 참조 라인은 `413`개다.
+- 정확 참조 파일 확장자 분포는 `.json=95`, `.log=68`, `.jsonl=2`, `.txt=1`이다.
+- 대표 산출물 대량 보존보다 Markdown 링크를 코드 텍스트로 전환하는 정책을 우선한다.
+- 정책 기준은 [`runtime_artifact_policy.md`](../20_harness_engineering/runtime_artifact_policy.md)에 기록했다.
