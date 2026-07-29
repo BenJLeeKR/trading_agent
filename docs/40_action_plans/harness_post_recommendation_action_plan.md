@@ -64,10 +64,10 @@ canonical data 허용 목록과 owner 기준은 [`canonical_data_contract.md`](.
 목표: 로컬의 빠른 검증과 CI 필수 검증이 과도하게 어긋나지 않게 한다.
 
 - [x] 현재 `check quick` 단계 수와 CI `safe` job 단계 수를 카운트한다.
-- [ ] 부하가 작은 필수 계약을 `check quick`에 포함할지 판단한다.
-- [ ] 부하가 큰 항목은 `check full`을 신설해 CI safe와 등가로 둘지 판단한다.
-- [ ] `AGENTS.md`의 커밋 전 권장 명령이 실제 정책과 일치하도록 수정한다.
-- [ ] `scripts/harness/README.md`에 `check quick`과 `check full`의 역할 차이를 명시한다.
+- [x] 부하가 작은 필수 계약을 `check quick`에 포함할지 판단한다.
+- [x] 부하가 큰 항목은 `check full`을 신설해 CI safe와 등가로 둘지 판단한다.
+- [x] `AGENTS.md`의 커밋 전 권장 명령이 실제 정책과 일치하도록 수정한다.
+- [x] `scripts/harness/README.md`에 `check quick`과 `check full`의 역할 차이를 명시한다.
 - [x] `accept ci`에 required harness command와 로컬 명령 간 괴리 카운트를 추가한다.
 
 완료 기준:
@@ -79,11 +79,11 @@ canonical data 허용 목록과 owner 기준은 [`canonical_data_contract.md`](.
 
 목표: CI가 로컬/운영과 같은 dependency lock 계약을 사용하게 한다.
 
-- [ ] `harness.yml`의 `pip install` 경로를 전수 확인한다.
-- [ ] 가능한 모든 `pip install`에 `--constraint requirements.lock`을 적용한다.
-- [ ] lock 적용이 불가능한 설치 경로는 명시 예외로 문서화한다.
-- [ ] `accept ci`가 workflow의 Python dependency 설치에서 `requirements.lock` constraint 사용 여부를 검사하도록 확장한다.
-- [ ] Node.js와 PostgreSQL 버전 고정 문서가 실제 CI 설정과 일치하는지 확인한다.
+- [x] `harness.yml`의 `pip install` 경로를 전수 확인한다.
+- [x] 가능한 모든 `pip install`에 `--constraint requirements.lock`을 적용한다.
+- [x] lock 적용이 불가능한 설치 경로는 명시 예외로 문서화한다. 현재 예외 경로 수는 `0`이다.
+- [x] `accept ci`가 workflow의 Python dependency 설치에서 `requirements.lock` constraint 사용 여부를 검사하도록 확장한다.
+- [x] Node.js와 PostgreSQL 버전 고정 문서가 실제 CI 설정과 일치하는지 확인한다.
 
 완료 기준:
 
@@ -94,12 +94,12 @@ canonical data 허용 목록과 owner 기준은 [`canonical_data_contract.md`](.
 
 목표: 문서가 하네스 명령과 실제 파일 경로를 잘못 안내하지 않게 한다.
 
-- [ ] `CLAUDE.md`의 명령 목록 중복을 줄이고 `AGENTS.md`, `scripts/harness/README.md` 링크 중심으로 정리한다.
-- [ ] `accept docs`가 문서 속 `bash scripts/harness/run.sh <command>` 문자열의 실존 여부를 검사하도록 확장한다.
-- [ ] `run.sh`의 command selector 목록을 파싱해 문서 내 명령과 대조한다.
-- [ ] `docs/99_meta_handover/agent_workspace_guide.md`에 `.claude/worktrees/` 그림자 사본 경고를 추가한다.
-- [ ] 코드 검색 시 `.claude/` 경로를 제외하라는 지침을 추가한다.
-- [ ] README의 `.nvmrc`, `.npm-version` 표기가 실제 `admin_ui/` 하위 경로를 가리키는지 확인한다.
+- [x] `CLAUDE.md`의 명령 목록 중복을 줄이고 `AGENTS.md`, `scripts/harness/README.md` 링크 중심으로 정리한다.
+- [x] `accept docs`가 문서 속 `bash scripts/harness/run.sh <command>` 문자열의 실존 여부를 검사하도록 확장한다.
+- [x] `run.sh`의 command selector 목록을 파싱해 문서 내 명령과 대조한다.
+- [x] `docs/99_meta_handover/agent_workspace_guide.md`에 `.claude/worktrees/` 그림자 사본 경고를 추가한다.
+- [x] 코드 검색 시 `.claude/` 경로를 제외하라는 지침을 추가한다.
+- [x] README의 `.nvmrc`, `.npm-version` 표기가 실제 `admin_ui/` 하위 경로를 가리키는지 확인한다.
 
 완료 기준:
 
@@ -331,6 +331,13 @@ canonical data 허용 목록과 owner 기준은 [`canonical_data_contract.md`](.
 | 2026-07-29 | Codex | P1 1차 — 수동 재배포 입력과 최신 SHA 고정 | 4 | `bash scripts/harness/run.sh accept docs`; `bash scripts/harness/run.sh accept ci` | `deploy_manual_dispatch_input_count=2`, `deploy_manual_dispatch_requested_count=0`, `ci_contract_failed_count=0`, `deploy_workflow_count=1` | 장 시간 가드와 skip/override 지표 추가 |
 | 2026-07-29 | Codex | P1 2차 — 장 시간 배포 가드와 override 지표 | 4 | `bash scripts/harness/run.sh accept docs`; `bash scripts/harness/run.sh accept ci` | `deploy_market_hours_guard_count=1`, `deploy_market_hours_skip_metric_count=1`, `deploy_market_hours_override_metric_count=1`, `deploy_job_depends_on_market_guard_count=1` | P1 닫기 후보, 다음 P2 quick/full 계층 정리 |
 | 2026-07-29 | Codex | P2 1차 — quick/safe 단계 수와 괴리 계측 | 3 | `bash scripts/harness/run.sh accept docs`; `bash scripts/harness/run.sh accept ci` | `quick_step_count=8`, `ci_safe_step_count=8`, `local_ci_command_gap_count=6`, `quick_only_command_count=0` | `check quick` 확장 또는 `check full` 신설 판단 |
+| 2026-07-29 | Codex | P2 2차 — `check full` 신설과 로컬/CI 정렬 | 5 | `bash scripts/harness/run.sh accept docs`; `bash scripts/harness/run.sh accept ci` | `full_step_count=14`, `full_ci_command_gap_count=0`, `full_only_command_count=0`, `local_ci_command_gap_count=6` | P2 닫기 후보, 다음 P3 dependency lock 계약 강화 |
+| 2026-07-29 | Codex | P3 1차 — CI Python lock constraint 강제 | 4 | `bash scripts/harness/run.sh accept docs`; `bash scripts/harness/run.sh accept ci` | `pip_install_command_count=2`, `pip_install_without_constraints_count=0`, `ci_contract_failed_count=0` | Node/PostgreSQL 버전 고정 문서와 CI 일치 여부 확인 |
+| 2026-07-29 | Codex | P3 2차 — Node/PostgreSQL 버전 문서와 CI 일치 확인 | 2 | `bash scripts/harness/run.sh accept env`; `bash scripts/harness/run.sh accept docs` | `runtime_version_mismatch_count=0`, `required_file_missing_count=0`, `semantic_check_failed_count=0` | P3 닫기 후보, 다음 P4 문서 자기검증 |
+| 2026-07-29 | Codex | P4 1차 — 문서 속 `run.sh` 명령 실존 검사 추가 | 3 | `bash scripts/harness/run.sh accept docs`; `bash scripts/harness/run.sh accept ci` | `documented_run_sh_command_missing_count=0`, `semantic_check_failed_count=0`, `ci_contract_failed_count=0` | `run.sh` selector 파싱과 `CLAUDE.md` 중복 정리 |
+| 2026-07-29 | Codex | P4 2차 — `run.sh` usage와 dispatch selector 정합성 검사 추가 | 3 | `bash scripts/harness/run.sh accept docs`; `bash scripts/harness/run.sh accept ci` | `run_sh_usage_dispatch_mismatch_count=0`, `documented_run_sh_command_missing_count=0`, `ci_contract_failed_count=0` | `CLAUDE.md` 중복 정리와 workspace guide 보강 |
+| 2026-07-29 | Codex | P4 3차 — `.claude/worktrees` 경고와 검색 제외 지침 추가 | 2 | `bash scripts/harness/run.sh accept docs` | `documented_run_sh_command_missing_count=0`, `run_sh_usage_dispatch_mismatch_count=0`, `semantic_check_failed_count=0` | `CLAUDE.md` 중복 정리와 README 경로 재확인 |
+| 2026-07-29 | Codex | P4 4차 — `CLAUDE.md` 링크 중심 정리와 README 경로 재확인 | 2 | `bash scripts/harness/run.sh accept docs` | `documented_run_sh_command_missing_count=0`, `run_sh_usage_dispatch_mismatch_count=0`, `semantic_check_failed_count=0` | P4 닫기 후보 |
 
 ## 갱신 규칙
 

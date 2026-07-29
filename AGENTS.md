@@ -37,6 +37,7 @@
 - 검증 계층과 출력 지표 기준은 [`scripts/harness/README.md`](scripts/harness/README.md)를 따른다.
 - CI도 사람·AI와 같은 `bash scripts/harness/run.sh ...` 진입점을 사용하며, GitHub Actions 기준은 `.github/workflows/harness.yml`에 둔다.
 - 커밋 전 빠른 스냅샷: `bash scripts/harness/run.sh check quick` 또는 `make check-quick`.
+- CI safe 등가 로컬 스냅샷: `bash scripts/harness/run.sh check full` 또는 `make check-full`.
 - 변경 백엔드 파일 스냅샷: `bash scripts/harness/run.sh check changed` 또는 `make check-changed`.
 - 타입 검사 스냅샷: `bash scripts/harness/run.sh type-check backend`, `bash scripts/harness/run.sh type-check frontend`, `make type-check-backend`, `make type-check-frontend`.
 - read-only 보안 스냅샷: `bash scripts/harness/run.sh security scan` 또는 `make security-scan`.

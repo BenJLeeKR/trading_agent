@@ -140,7 +140,7 @@ jobs:
           cache-dependency-path: admin_ui/package-lock.json
 
       - name: Install backend dependencies
-        run: python3 -m pip install -e ".[dev]"
+        run: python3 -m pip install --constraint requirements.lock -e ".[dev]"
 
       - name: Install Admin UI dependencies
         working-directory: admin_ui
@@ -207,7 +207,7 @@ jobs:
           cache-dependency-path: admin_ui/package-lock.json
 
       - name: Install backend dependencies
-        run: python3 -m pip install -e ".[dev]"
+        run: python3 -m pip install --constraint requirements.lock -e ".[dev]"
 
       - name: Install Admin UI dependencies
         working-directory: admin_ui

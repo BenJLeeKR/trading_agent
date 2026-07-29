@@ -97,6 +97,8 @@
 - API Postgres/Auth 모드 실행은 `bash scripts/harness/run.sh run api-postgres` 또는 `make run-api-postgres`를 사용한다.
 - Python, Node.js, npm, PostgreSQL 기준 버전은 각각 `.python-version`, `admin_ui/.nvmrc`, `admin_ui/.npm-version`, `.postgres-version`에 고정한다.
 - Python 패키지는 `requirements.lock`, Admin UI 패키지는 `package-lock.json`과 `npm ci`를 기준으로 재현한다.
+- `.claude/worktrees/` 아래에는 Claude Code가 만든 그림자 작업트리나 사본이 남을 수 있으므로, canonical 변경 경로로 취급하지 않는다.
+- 코드 검색, 참조 집계, 문서 링크 감사, 대량 치환 시에는 `.claude/` 경로를 제외하고 현재 작업트리 기준으로만 판정한다.
 
 ## 테스트 데이터 원칙
 
