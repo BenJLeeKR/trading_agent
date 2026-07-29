@@ -2700,3 +2700,28 @@ entry_signal_v1.md` §117.
 대기. 다음 턴은 설계안 비교 턴으로 제안한다. 상세: `docs/10_
 signal_research_sppv/[DESIGN] regime_conditional_entry_signal_
 v1.md` §118.
+
+## 17. `coverage_score`/`relative_activity` 설계안 A/B 비교(SPPV-2.131, 2026-07-29 KST)
+
+1·2순위 항목의 설계안을 비교했다(코드 미수정, `.env` 미수정,
+Full pytest 미실행, 신규 KIS 호출 0건).
+
+- **`coverage_score`**: A안(ranking에서 제거, eligibility 전용
+  이관) 우선 권고 — 이 항목이 하드 게이트 통과 후 100% 상수임을
+  이미 확인했으므로(§118) B안(가중치만 축소)보다 근거가 명확.
+  다만 `ranking_score`가 `_assess_core_risk_off_buy_guard`/
+  `eligibility` 하드 게이트의 파라미터로 직접 쓰이는 구조라,
+  A안 적용 시 `ranking_score` 최댓값이 0.20 낮아지는 것이 기존
+  절대 threshold(`0.48` 등)와 상호작용하는 범위를 먼저
+  재계산해야 diff 착수 가능.
+- **`relative_activity`**: A안(소프트 2곳 중 1곳만 유지) 우선
+  권고 — B안(파생값 분리)은 신규 설계·검증이 추가로 필요해
+  이번 턴 근거만으로는 확정 불가. 다만 "entry_score 쪽 유지 vs
+  ranking_score 쪽 유지" 중 어느 쪽이 하드 게이트와 더 정합적
+  인지는 아직 실측으로 확정하지 않음.
+
+**결론**: 둘 다 아직 diff 초안 단계로 넘어가지 않는다 — 각각
+1개씩의 확인 과제가 남아 있다. 최종 판정(1순위 산식 재검토,
+2순위 중복 차단 정리)에 영향 없음. 상세: `docs/10_signal_
+research_sppv/[DESIGN] regime_conditional_entry_signal_v1.md`
+§119.
