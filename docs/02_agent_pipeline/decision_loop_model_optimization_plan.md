@@ -56,7 +56,7 @@ flowchart TD
 
 ## 2. deepseek-chat 실제 Latency 측정 결과
 
-실제 측정 기준 ([`tmp/measure_dschat_latency.py`](tmp/measure_dschat_latency.py) 참조):
+실제 측정 기준: 역사적 임시 측정 스크립트명 `tmp/measure_dschat_latency.py`.
 
 | Prompt 유형 | 평균 Latency | Input Tokens | Output Tokens |
 |-------------|-------------|-------------|---------------|
@@ -306,4 +306,4 @@ gantt
 
 | File | 설명 |
 |------|------|
-| [`tmp/measure_dschat_latency.py`](tmp/measure_dschat_latency.py) | deepseek-chat 실제 latency 측정 (EI-style short prompt + AR/FDC-style long prompt) |
+| `tmp/measure_dschat_latency.py` | deepseek-chat 실제 latency 측정 (EI-style short prompt + AR/FDC-style long prompt). 현재는 runtime write path 추적 제외 정책에 따라 Git 추적 대상이 아니다. |

@@ -309,7 +309,7 @@ flowchart TD
 |------|------|
 | [`scripts/run_decision_loop.py`](../scripts/run_decision_loop.py) | Wall clock 측정 주체 (line 1152 loop_start, line 1349 total_duration) |
 | [`scripts/run_ops_scheduler.py`](../scripts/run_ops_scheduler.py) | Subprocess 실행 wall clock 측정 (line 524 start, line 602 duration) |
-| [`tmp/measure_dschat_latency.py`](../tmp/measure_dschat_latency.py) | deepseek-chat latency 실측 (short prompt avg 0.85s, long prompt avg 1.25s) |
+| `tmp/measure_dschat_latency.py` | deepseek-chat latency 실측 (short prompt avg 0.85s, long prompt avg 1.25s). 현재는 runtime write path 추적 제외 정책에 따라 Git 추적 대상이 아니다. |
 | [`plans/decision_loop_model_optimization_plan.md`](../plans/decision_loop_model_optimization_plan.md) | 기존 병목 분석 (AI pipeline ~90s/symbol → deepseek-chat ~4.5s/symbol) |
 | [`src/agent_trading/config/settings.py`](../src/agent_trading/config/settings.py:39) | Model 기본값 `deepseek-chat`으로 변경 완료 |
 | [`docker-compose.yml`](../docker-compose.yml:247) | ops-scheduler 섹션 `DEEPSEEK_MODEL_ID` 아직 `deepseek-v4-pro` (수정 필요) |
