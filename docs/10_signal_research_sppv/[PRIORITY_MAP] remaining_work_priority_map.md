@@ -10015,6 +10015,22 @@ agent 설계 문서 기준으로도 순서는 다음이 맞다.
      **설계는 정상이나 상류 risk_off 상시화의 부산물**. 코드
      버그 아님, 완화안 미제시. 상세: `docs/10_signal_research_
      sppv/[DESIGN] regime_conditional_entry_signal_v1.md` §116.
+   - **SPPV-2.129(완료, 2026-07-29 KST, `strategy_alignment`
+     해석·집계 수치 정밀 보정, 작성자: Codex, 코드 미수정, Full
+     pytest 미실행, 신규 KIS 호출 0건)**: 분모(`n=38,997→39,027→
+     39,113`)가 계속 다른 것은 `trade_decisions`가 5분 주기로
+     계속 자라는 운영 테이블이기 때문(정상). 핵심 정정: "core는
+     설계 의도대로 죽어 있는 항"은 과했음 — `core`도 `event_
+     overlay`와 무관하게 `regime_label∈{bullish_trend, event_
+     driven_unstable}`+비-`risk_off`면 도달 가능한 일반 경로가
+     이미 존재. 전체 이력에서 `core`의 해당 regime 관측 사례
+     (2,593+60건)가 전부 `risk_off`와 겹쳐 도달한 적이 없었을
+     뿐임을 확인. 낮춰 쓴 최종 판정: `core`는 "설계 배제"가
+     아니라 "일반 경로는 있으나 상류 `risk_tone` 상시화 때문에
+     아직 도달 사례가 없는 항" — `regime_tailwind`와 근본 원인
+     동일로 수렴. `regime_tailwind` 해석은 정정 없이 유지. 상세:
+     `docs/10_signal_research_sppv/[DESIGN] regime_conditional_
+     entry_signal_v1.md` §117.
    - **SPPV-3(다음 착수: [1순위] `000720`이 core 유니버스에 20일 이상 연속 포함되는
      조건을 원인만 확인(완화안 아님) +
      [2순위] 이 모집단(core+bearish_trend)이 신호 품질(overall/

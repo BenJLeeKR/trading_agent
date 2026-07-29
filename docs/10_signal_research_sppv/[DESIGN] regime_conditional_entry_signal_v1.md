@@ -14613,3 +14613,159 @@ off`(또는 `bearish_trend`) 상태에서 momentum/event 계열 전략을
    조건 원인 확인(완화안 아님, 이전 턴 이월).
 3. **3순위(이전 턴 이월)**: `high_volatility` 단독 경로(001450형)
    층3 관찰 지속.
+
+
+---
+
+## §117. `strategy_alignment` 해석·집계 수치 정밀 보정(SPPV-2.129, 2026-07-29 KST)
+
+**전제**: §116(SPPV-2.128)의 결론을 뒤집는 턴이 아니라, 수치와
+해석의 정밀도를 현재 기준으로 보정하는 턴이다. 코드 미수정,
+완화안/새 설계안 제안 없음, Full pytest 미실행, 신규 KIS 호출
+0건, DB/코드 read-only만 사용.
+
+### 117.1 전체 이력 분모 재확인 — 왜 매번 숫자가 다른가(사실)
+
+`trade_decisions`는 **지금도 계속 쓰이고 있는 운영 테이블**이다
+— intraday decision loop가 5분 주기로 계속 새 행을 적재한다
+(§115.2에서 이미 확인). 같은 조회를 다른 시각에 실행하면 분모
+`n`이 매번 달라지는 것이 **정상**이다(사실, 재확인).
+
+| 조회 시점(대략) | `deterministic_trigger` 존재 `n` | 최신 레코드 시각(UTC) |
+|---|---:|---|
+| §116(SPPV-2.128) 작성 시점 | 38,997 | (기록 없음) |
+| 사용자 재확인 시점 | 39,027 | (기록 없음) |
+| 이번 턴(SPPV-2.129) 재조회 | **39,113** | 2026-07-29 01:55:10 UTC(KST 10:55:10) |
+
+**[SPPV-2.129에서 정정]** §116의 "n=38,997"은 그 시점의 스냅샷
+값으로는 사실이었으나, **이 값을 고정된 전체 이력 수치처럼
+서술**한 것은 정밀하지 못했다 — 정확히는 "조회 시각 기준 스냅
+샷"이라고 명시했어야 한다. 최초 레코드는 2026-06-16 02:13:22
+UTC(§99 등에서 다뤄온 관측 기간 시작과 일치)이며, 최신 레코드는
+조회 시각까지 계속 늘어난다.
+
+### 117.2 `strategy_alignment=1.0` 분해 수치 재확인
+
+이번 턴 재조회(2026-07-29 KST 기준) 결과:
+
+| source_type | 건수 |
+|---|---:|
+| `event_overlay` | 2,535 |
+| `market_overlay` | 42 |
+| **합계** | **2,577** |
+
+§116이 제시한 `event_overlay 2,531 + market_overlay 42 = 2,573`
+과 사용자가 재확인한 `2,532 + 42 = 2,574`는 **모두 각자의 조회
+시점 기준으로는 정확했다** — 차이는 계산 오류가 아니라 §117.1
+에서 확인한 **테이블이 계속 자라는 운영 테이블이기 때문**이다
+(사실, 재현 확인). `market_overlay=42`(2026-06-18 유일 `risk_
+on` 관측일 관련)만은 그 날짜가 이미 지난 과거 구간이라 세 시점
+모두 정확히 42로 고정돼 있다 — 이 부분은 조회 시점과 무관하게
+안정적이다.
+
+### 117.3 `strategy_alignment` 해석 재검증 — 핵심 정정
+
+**§116의 표현("`strategy_alignment`(core 기준)은 설계 의도대로
+죽어 있는 항")을 재검증한 결과, 이 표현은 과했다.** 아래 코드
+재확인이 근거다.
+
+`strategy_selection.py`의 `select_strategy()`를 다시 읽으면,
+`core`(또는 다른 일반 source_type)에도 `strategy_alignment=1`
+로 이어지는 **`event_overlay`와 무관한 별도 경로가 이미
+존재**한다(사실, 코드 재확인, §116.1에서 부분적으로만 인용됨):
+
+```python
+preferred_strategy = "swing_momentum"  # 기본값(라인 34)
+...
+if regime_label == "bearish_trend" or risk_tone == "risk_off":
+    preferred_strategy = "defensive_low_volatility_rotation"
+elif regime_label == "range_bound":
+    preferred_strategy = "mean_reversion_bounce"
+elif regime_label == "event_driven_unstable":
+    preferred_strategy = "event_continuation"   # <- alignment=1 가능
+elif regime_label == "bullish_trend":
+    preferred_strategy = "swing_momentum"        # <- alignment=1 가능
+```
+
+즉 **`core` 소스라도 `regime_label`이 `bullish_trend` 또는
+`event_driven_unstable`이면서 `risk_tone`이 `risk_off`가
+아니면(`risk_on` 또는 `neutral`) `strategy_alignment=1`이 될
+수 있는 경로가 코드에 이미 존재한다** — 이는 `event_overlay`
+전용 override(§116.1의 `:88-95`)와는 **완전히 별개의, 더 앞선
+기본 분기**다.
+
+**전체 이력 재확인(사실, 신규 조회)**: `core` 소스의 `(regime_
+label, risk_tone)` 조합을 전수 조사한 결과:
+
+| 조합 | 건수 |
+|---|---:|
+| `(bearish_trend, risk_off)` | 15,142 |
+| `(range_bound, risk_off)` | 4,173 |
+| `(bullish_trend, risk_off)` | 2,593 |
+| `(event_driven_unstable, risk_off)` | 60 |
+| `(range_bound, neutral)` | 11 |
+| `(None, None)` | 198 |
+
+**`core` 소스에서 `regime_label ∈ {bullish_trend, event_driven_
+unstable}`이면서 `risk_tone ≠ risk_off`인 조합은 전체 이력에서
+정확히 0건이다** — `bullish_trend`(2,593건)와 `event_driven_
+unstable`(60건)이 관측된 모든 사례가 하필 전부 `risk_off`와
+겹쳤다(사실, 재확인).
+
+### 117.4 재판정 — "설계 배제"가 아니라 "경로 미도달"
+
+- **정정 전(§116)**: "`strategy_alignment`(core 기준)는 설계
+  의도대로 죽어 있는 항" — `event_overlay` 전용 override 코드가
+  존재한다는 사실만으로 `core`도 의도적으로 배제된 것처럼
+  서술했다.
+- **정정 후(SPPV-2.129)**: `core`를 `strategy_alignment=1`
+  에서 배제하는 **전용 코드 분기는 존재하지 않는다** — `core`도
+  `bullish_trend`/`event_driven_unstable`+비-`risk_off` 조합만
+  되면 이 항이 살아날 수 있는 일반 경로를 갖고 있다. `core`가
+  현재까지 0건인 것은 **"설계상 항상 0이 되도록 만들어져서"가
+  아니라, "`risk_tone`이 §99~§101에서 이미 진단한 대로 거의
+  상시 `risk_off`이고, 하필 `core`의 `bullish_trend`/`event_
+  driven_unstable` 관측 사례 전부가 그 `risk_off`와 겹쳤기
+  때문에 결과적으로 경로에 도달하지 못한 것"**이다.
+- `event_overlay` 전용 override(§116.1)는 **실재하는 별도
+  메커니즘**이지만, 이것이 "`core`가 죽어 있는 이유"는 아니다
+  — `event_overlay`는 `risk_off`여도(`bearish_trend`만 아니면)
+  강제로 살려주는 **추가 우회로**이고, `core`에는 이런 우회로가
+  없을 뿐이다. `core`가 죽어 있는 **근본 원인은 `regime_
+  tailwind`와 동일하게 상류 `risk_tone` 상시화**다.
+
+### 117.5 `regime_tailwind` 해석 — 그대로 유지
+
+`regime_tailwind`는 §116에서 이미 "설계 자체는 정상이나 상류
+`risk_off` 상시화의 부산물"로 판정했다 — 이 판정은 **source_
+type 분기가 전혀 없는 순수 regime 규칙**이라는 사실에 근거하며,
+이번 재검증에서 달라진 것이 없다. **§116의 `regime_tailwind`
+해석은 그대로 유지한다.**
+
+### 117.6 최종 판정(낮춰 쓴 표현)
+
+- `strategy_alignment`: ~~"core 기준 설계 의도대로 죽어 있는
+  항"~~ → **"core를 포함한 모든 source_type에 이론상 살아날 수
+  있는 일반 경로가 있으나, 상류 `risk_tone` 상시화 때문에
+  `core`에서는 현재까지 그 경로에 단 한 번도 도달하지 못한
+  항"**(`regime_tailwind`와 근본 원인이 사실상 동일함). `event_
+  overlay` 전용 override는 이와 별개로 실재하는 추가 우회
+  메커니즘이며, 이 우회로가 있다는 사실 자체가 "core 배제
+  설계"를 의미하지는 않는다.
+- `regime_tailwind`: 정정 없음, §116 판정 유지.
+- **공통 결론**: 두 항 모두 근본적으로 **같은 상류 원인(risk_
+  tone 상시화, §99~§101)**에 지배되는 항이라는 쪽으로 해석이
+  수렴한다 — "서로 다른 성격의 두 항"이라는 §116의 프레이밍은
+  일부(`event_overlay` 우회로의 존재 자체는 사실)만 맞고,
+  "`core`가 구조적으로 배제됐다"는 부분은 과했다.
+
+### 117.7 다음 우선 작업(완화안 아님, 후속 규명 과제로만 제시)
+
+1. **1순위(이전 턴 이월, 재확인됨)**: §99~§101에서 이미 진단한
+   `atr_14_pct`/`risk_tone` 상시화 원인 규명이, `regime_
+   tailwind`뿐 아니라 `strategy_alignment`(core 경로)까지
+   설명하는 **공통 근본 원인**임을 감안해 우선순위를 재확인.
+2. **2순위(이전 턴 이월)**: `000720`이 core 유니버스에 20일
+   이상 연속 포함되는 조건 원인 확인(완화안 아님).
+3. **3순위(이전 턴 이월)**: `high_volatility` 단독 경로(001450형)
+   층3 관찰 지속.

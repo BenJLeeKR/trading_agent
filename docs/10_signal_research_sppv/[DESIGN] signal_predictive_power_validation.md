@@ -2578,6 +2578,26 @@ entry 설계 검토로 전환**을 확정했다. 별도 문서
   research_sppv/[DESIGN] regime_conditional_entry_signal_v1.md`
   §116.
 
+- 작성자: Codex
+- 수정일자: 2026-07-29 KST (129차, `strategy_alignment` 해석·
+  집계 수치 정밀 보정, 코드 미수정, Full pytest 미실행, 신규
+  KIS 호출 0건)
+- 수정내용: §128(128차)의 결론을 뒤집지 않고 정밀도만 보정.
+  분모(`n=38,997→39,027→39,113`)가 계속 다른 것은 `trade_
+  decisions`가 5분 주기로 계속 자라는 운영 테이블이기 때문(정상,
+  계산 오류 아님). 핵심 정정: "`strategy_alignment`(core 기준)는
+  설계 의도대로 죽어 있는 항"은 과했음 — `strategy_selection.py`
+  재확인 결과 `core`도 `event_overlay`와 무관하게 `regime_
+  label∈{bullish_trend, event_driven_unstable}`+비-`risk_off`면
+  도달 가능한 일반 경로가 이미 존재. 전체 이력에서 `core`의
+  해당 regime 관측 사례(2,593+60건)가 전부 `risk_off`와 겹쳐
+  도달한 적이 없었을 뿐임을 확인. 낮춰 쓴 최종 판정: `core`는
+  "설계 배제"가 아니라 "일반 경로는 있으나 상류 `risk_tone`
+  상시화 때문에 아직 도달 사례가 없는 항" — `regime_tailwind`와
+  근본 원인 동일로 수렴. `regime_tailwind` 해석은 정정 없이
+  유지. 상세: `docs/10_signal_research_sppv/[DESIGN] regime_
+  conditional_entry_signal_v1.md` §117.
+
 ---
 
 ## 진행 체크리스트
@@ -5625,6 +5645,15 @@ canonical),
     로직 변경 없음, 신규 KIS 호출 0건(shadow 재호출은 `kis_
     client=None`). 상세: `docs/10_signal_research_sppv/[DESIGN]
     regime_conditional_entry_signal_v1.md` §94.
+- [x] **SPPV-2.129(신설)** `strategy_alignment` 해석·집계 수치
+  정밀 보정 (완료, 2026-07-29 KST, 작성자: Codex, 코드 미수정,
+  Full pytest 미실행, 신규 KIS 호출 0건)
+  - "core는 설계 의도대로 죽어 있는 항" 판정을 정정 — core도
+    event_overlay와 무관한 일반 경로 존재, 상류 risk_tone
+    상시화 때문에 도달 사례가 없었을 뿐. regime_tailwind와
+    근본 원인 동일로 수렴. regime_tailwind 판정은 유지. 상세:
+    `docs/10_signal_research_sppv/[DESIGN] regime_conditional_
+    entry_signal_v1.md` §117.
 - [x] **SPPV-2.128(신설)** `regime_tailwind`/`strategy_alignment`
   고정 여부 설계 의도 vs 부산물 판정 — `[PRIORITY_MAP]` SPPV-3
   1순위 완료 (완료, 2026-07-29 KST, 작성자: Codex, 코드 미수정,
