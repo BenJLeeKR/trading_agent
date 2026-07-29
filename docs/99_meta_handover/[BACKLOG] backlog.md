@@ -1778,6 +1778,16 @@
   research_sppv/[DESIGN] regime_conditional_entry_signal_v1.md`
   §115.
 
+- 2026-07-29 KST(SPPV-2.128, 신규 KIS 호출 0건): `regime_
+  tailwind`/`strategy_alignment` 고정 여부 설계 의도 vs 부산물
+  판정(`[PRIORITY_MAP]` SPPV-3 1순위). `strategy_alignment`는
+  `event_overlay` 전용 명시적 override 코드 확인, `core` 소스는
+  전체 이력에서 단 한 번도 0이 아닌 적 없음 — 설계 의도대로
+  죽어 있는 항. `regime_tailwind`는 source_type 무관 규칙이라
+  상류 risk_tone 상시화(§99~§101)의 부산물로 실질 효력 상실.
+  코드 버그 아님, 완화안 미제시. 상세: `docs/10_signal_research_
+  sppv/[DESIGN] regime_conditional_entry_signal_v1.md` §116.
+
 ---
 
 ## 관리 원칙

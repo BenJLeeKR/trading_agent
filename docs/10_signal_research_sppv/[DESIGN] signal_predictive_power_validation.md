@@ -2558,6 +2558,26 @@ entry 설계 검토로 전환**을 확정했다. 별도 문서
   research_sppv/[DESIGN] regime_conditional_entry_signal_v1.md`
   §115.
 
+- 작성자: Codex
+- 수정일자: 2026-07-29 KST (128차, `regime_tailwind`/`strategy_
+  alignment` 고정 여부 설계 의도 vs 부산물 판정, `[PRIORITY_MAP]`
+  SPPV-3 1순위 완료, 코드 미수정, Full pytest 미실행, 신규 KIS
+  호출 0건)
+- 수정내용: `regime_tailwind`는 `source_type` 무관하게 `risk_
+  tone`에만 의존(코드 확인). `strategy_alignment`는 `strategy_
+  selection.py`에 `source_type=='event_overlay'` 전용 override가
+  있어 `risk_off`여도(`bearish_trend`만 아니면) `event_
+  continuation`을 강제 부여함을 확인. 전체 이력(n=38,997)에서
+  `regime_tailwind=1.0`은 42건(전부 `market_overlay`,
+  2026-06-18 유일 `risk_on`일), `strategy_alignment=1.0`은
+  2,573건(`event_overlay` 2,531+`market_overlay` 42) — `core`
+  소스에서는 전체 이력에서 단 한 번도 0이 아닌 사례 없음. 판정:
+  `strategy_alignment`(core 기준)는 설계 의도대로 죽어 있는 항,
+  `regime_tailwind`는 설계는 정상이나 상류 risk_off 상시화의
+  부산물. 코드 버그 아님, 완화안 미제시. 상세: `docs/10_signal_
+  research_sppv/[DESIGN] regime_conditional_entry_signal_v1.md`
+  §116.
+
 ---
 
 ## 진행 체크리스트
@@ -5605,6 +5625,15 @@ canonical),
     로직 변경 없음, 신규 KIS 호출 0건(shadow 재호출은 `kis_
     client=None`). 상세: `docs/10_signal_research_sppv/[DESIGN]
     regime_conditional_entry_signal_v1.md` §94.
+- [x] **SPPV-2.128(신설)** `regime_tailwind`/`strategy_alignment`
+  고정 여부 설계 의도 vs 부산물 판정 — `[PRIORITY_MAP]` SPPV-3
+  1순위 완료 (완료, 2026-07-29 KST, 작성자: Codex, 코드 미수정,
+  Full pytest 미실행, 신규 KIS 호출 0건)
+  - `strategy_alignment`(core 소스)는 설계 의도대로 죽어 있는
+    항(event_overlay 전용 override 코드 확인), `regime_
+    tailwind`는 상류 risk_off 상시화의 부산물. 코드 버그 아님.
+    상세: `docs/10_signal_research_sppv/[DESIGN] regime_
+    conditional_entry_signal_v1.md` §116.
 - [x] **SPPV-2.127(신설)** distinct symbol 기준 기여도 재계산 +
   `002790`/`000720` 반복 등장 원인 규명 — `[PLAN]` §6.8 잔여
   완료 (완료, 2026-07-29 KST, 작성자: Codex, 코드 미수정, Full

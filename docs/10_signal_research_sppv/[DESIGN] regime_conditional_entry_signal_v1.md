@@ -14481,3 +14481,135 @@ row 단위 통계는 관측 빈도가 높은 종목에 과대 가중되므로, �
    조건(왜 20일 이상 연속 관측되는지)을 원인만 확인(완화안 아님).
 3. **3순위(이전 턴 이월)**: `high_volatility` 단독 경로(001450형)
    층3 관찰 지속.
+
+
+---
+
+## §116. `regime_tailwind`/`strategy_alignment` 고정 여부 — 설계 의도 vs 부산물 판정(SPPV-2.128, 2026-07-29 KST)
+
+**전제**: `[PRIORITY_MAP]` SPPV-3 1순위 과제. 코드 미수정,
+threshold/diff/완화안 없음, Full pytest 미실행, 신규 KIS 호출
+0건, DB/코드 read-only만 사용. main은 최신(`5d0745cb`)으로
+동기화한 상태에서 진행.
+
+### 116.1 코드 경로 재확인(Q1)
+
+**`regime_tailwind`**(`_build_buy_ranking_score`,
+`deterministic_trigger_engine.py:1103-1108`):
+
+```python
+regime_tailwind = 0.5
+if market_regime.regime_label == "bullish_trend" and market_regime.risk_tone == "risk_on":
+    regime_tailwind = 1.0
+elif market_regime.risk_tone == "risk_off":
+    regime_tailwind = 0.0
+```
+
+`source_type` 분기가 **전혀 없다** — 어떤 `source_type`이든
+`risk_tone == "risk_off"`이면 무조건 0.0이다(사실, 코드 재확인).
+
+**`strategy_alignment`**(`_build_buy_ranking_score:1116-1121`):
+`strategy_selection.preferred_strategy ∈ {swing_momentum,
+event_continuation}`이면 1.0. `strategy_selection.preferred_
+strategy`는 `strategy_selection.py:41-97`의 `select_strategy()`가
+결정하는데, 여기에는 **두 단계 로직**이 있다(사실, 코드 재확인):
+
+1. 1차 분기(regime 기반): `regime_label=="bearish_trend" or
+   risk_tone=="risk_off"` → `defensive_low_volatility_rotation`
+   (이 시점엔 `swing_momentum`/`event_continuation` 모두 제외).
+2. **2차 override(source_type 기반, `:88-95`)**: `source_type ==
+   "event_overlay"`이면 `preferred_strategy = "event_continuation"
+   if regime_label != "bearish_trend" else preferred_strategy`
+   — **즉 `event_overlay` 소스는 `regime_label`이 `bearish_trend`
+   만 아니면(risk_off이더라도) 1차 분기의 결과를 덮어쓰고
+   `event_continuation`을 강제로 부여한다.**
+
+**핵심 사실**: `regime_tailwind`는 `source_type`과 무관하게
+`risk_off`면 항상 0이지만, `strategy_alignment`는 `source_type
+== event_overlay`(또는 `market_overlay`, 아래 §116.2에서 확인)
+일 때는 `risk_off`여도 살아있을 수 있는 **명시적 예외 경로가
+코드에 존재**한다.
+
+### 116.2 전체 이력에서 0이 아닌 사례 확인(Q2)
+
+전체 `deterministic_trigger` 존재 레코드(n=38,997) 기준(사실,
+DB 재조회):
+
+| 항목 | 0이 아닌 건수 | source_type 분포 |
+|---|---:|---|
+| `regime_tailwind=1.0`(bullish_trend+risk_on) | **42건** | `market_overlay` 100% |
+| `strategy_alignment=1.0`(swing_momentum/event_continuation) | **2,573건** | `event_overlay` 2,531건 / `market_overlay` 42건 |
+| `eligibility_core_risk_off_ranking_blocked` 게이트 내부 | — | `core` **100%**(12,125건 전수) |
+
+- `regime_tailwind=1.0`은 **오직 `market_overlay` 소스, 오직
+  2026-06-18(`risk_on`이 관측된 유일한 날, §99와 정합)에서만**
+  발생한다 — `core` 소스에서는 전체 이력을 통틀어 단 한 번도
+  발생하지 않았다(사실).
+- `strategy_alignment=1.0`의 98.4%(2,531/2,573)는 `event_overlay`
+  소스이며, 이는 §116.1에서 확인한 **명시적 override 코드 경로**
+  (`elif source_type=="event_overlay": ...`)가 실제로 발동한
+  결과다(코드-데이터 정합 확인). 나머지 1.6%(42건)는 `market_
+  overlay` 소스이며 `bullish_trend`+`risk_on`(즉 `regime_
+  tailwind=1`과 동시 발생) 조건에서 나온다.
+- **`core` 소스에서는 `strategy_alignment=1.0`이 전체 이력을
+  통틀어 단 한 번도 발생하지 않았다**(사실) — `eligibility_
+  core_risk_off_ranking_blocked` 게이트가 다루는 모집단은 100%
+  `core` 소스이므로, 이 게이트 안에서 `strategy_alignment`가
+  항상 0인 것은 우연이 아니라 **`core` 소스 자체의 구조적 특성**
+  이다.
+
+### 116.3 설계 문서와의 대조(Q3)
+
+`select_strategy()`의 `event_overlay` override(§116.1)는
+"이벤트 지속성 전략을 유지하기 위한 명시적 예외"로 코드에
+분리된 조건 분기로 존재한다 — 이는 **설계자가 의도적으로
+넣은 조건부 로직**이다(우연한 부산물이 아님, 코드 구조 자체가
+이를 뒷받침). 다만 이 조건은 **`event_overlay`/`market_overlay`
+소스에만 적용**되도록 범위가 명시적으로 좁혀져 있고, `core`
+소스에는 이 예외가 적용되지 않는다 — 즉 "`core` 소스는 `risk_
+off`(또는 `bearish_trend`) 상태에서 momentum/event 계열 전략을
+선택하지 않는다"는 것 자체가 **설계상 의도된 제약**이다.
+
+반면 `regime_tailwind`에는 이런 소스별 예외 조건이 전혀 없다 —
+모든 소스에 대해 동일하게 `risk_tone` 하나에만 의존한다. 이
+항목이 이 관찰 창에서 사실상 항상 0인 것은, `regime_tailwind`
+자체의 설계 결함이 아니라 **상류의 `risk_tone`이 §99~§101에서
+이미 진단한 대로 거의 항상 `risk_off`로 고정돼 있기 때문**이다
+— 즉 `regime_tailwind`는 "의도한 대로 작동하는 항이 우연히
+항상 0을 반환하게 만드는 외부 조건(상시 risk_off)의 영향을
+받는" 경우에 해당한다.
+
+### 116.4 최종 판정(Q4)
+
+- **`strategy_alignment`**: `core` 소스에서 `risk_off`/방어
+  전략 상태일 때 항상 0인 것은 **의도된 안전장치에 가깝다** —
+  `event_overlay` 소스에만 명시적 예외를 두고 `core`에는 두지
+  않은 코드 구조가 이를 뒷받침한다. 다만 "이 게이트가 다루는
+  모집단(`core`) 안에서는 이 항이 산식 안에 남아 있지만 실질적
+  으로 작동할 조건 자체가 존재하지 않는 항"이라는 점도 사실이다
+  — **"설계 의도대로 죽어 있는 항"**으로 판정한다.
+- **`regime_tailwind`**: 소스 무관하게 `risk_off`면 항상 0이
+  되도록 설계돼 있고, 이 자체는 "위험 회피 국면에는 가산점을
+  주지 않는다"는 합리적 설계 의도로 보인다. 그러나 §99~§101에서
+  이미 확인한 대로 `risk_tone`이 관측 창 전체에서 거의 상시
+  `risk_off`이므로, **현재 운영 조건에서는 "산식 안에 남아
+  있지만 실질적으로 의미를 잃은 항"에 더 가깝다** — 항 자체의
+  설계는 정상이지만, 상류 입력의 이상(이미 별도로 진단됨)이
+  이 항을 사실상 항상 죽게 만든다.
+- **종합**: 둘 다 "코드 버그"는 아니지만 성격이 다르다 —
+  `strategy_alignment`는 **소스 유형에 따른 의도된 차등 적용**
+  (설계 의도와 일치), `regime_tailwind`는 **의도한 조건(risk_
+  off)이 상류 이상으로 거의 상시화되어 실질적 효력을 잃은
+  부산물적 결과**(설계 자체는 정상이나 운영 조건과 어긋남)다.
+
+### 116.5 다음 우선 작업(완화안 아님, 후속 규명 과제로만 제시)
+
+1. **1순위**: §110.8/§111.4/§112.5/§113.5/§114/§115.3에서 이미
+   확정한 "1순위=산식 재검토, 2순위=중복 차단 정리" 판정을
+   바탕으로, 다음 턴에서 실제 설계 검토 방향(coverage_score
+   역할 재정의 vs relative_activity/strategy_alignment 중복
+   정리)을 좁힌다.
+2. **2순위**: `000720`이 core 유니버스에 20일 이상 연속 포함되는
+   조건 원인 확인(완화안 아님, 이전 턴 이월).
+3. **3순위(이전 턴 이월)**: `high_volatility` 단독 경로(001450형)
+   층3 관찰 지속.

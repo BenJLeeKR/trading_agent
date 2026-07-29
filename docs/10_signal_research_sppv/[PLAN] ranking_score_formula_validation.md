@@ -1,12 +1,13 @@
 # ranking_score 공식 검증 계획
 
 작성일: 2026-07-28  
-상태: [SPPV-2.127에서 완료] §6.1/§6.5/§6.6/§6.8 실제 완료, §6.2/
-§6.3/§6.4 부분 완료. 트랙 F(§6.8) 잔여 2개 항목을 이번 턴에
-완료 — distinct symbol 기준 기여도 재계산(§6.10)으로 기존 결론
-유지 확인, `002790`/`000720` 반복 원인을 intraday loop(5분 주기)
-+snapshot 1일 1회 갱신 구조로 규명(§6.11). 완화안/코드 diff는
-여전히 미착수(SPPV-2.119~2.127 참고)
+상태: [SPPV-2.128에서 갱신] §6.1/§6.5/§6.6/§6.8 실제 완료, §6.2/
+§6.3/§6.4 부분 완료. §6.12(신규)에서 `[PRIORITY_MAP]` SPPV-3
+1순위 과제(`regime_tailwind`/`strategy_alignment` 고정 여부)를
+완료 — `strategy_alignment`(core 소스)는 설계 의도대로 죽어 있는
+항, `regime_tailwind`는 설계는 정상이나 상류 risk_off 상시화의
+부산물임을 판정. 완화안/코드 diff는 여전히 미착수(SPPV-2.119~
+2.128 참고)
 
 ## 1. 문서 목적
 
@@ -667,6 +668,37 @@ BUY 경로 전체(96.2%) 양쪽 모두에서 유지된다** — 종목 반복
 score` 모집단 38,667건 전체의 최상위가 아님) — **값은 전부
 재현됨**. `n=68,724`라는 분모 표기(재현 안 됨, 정밀화 필요 —
 위 보정표로 대체).
+
+### 6.12 SPPV-2.128 — `regime_tailwind`/`strategy_alignment` 고정
+여부: 설계 의도 vs 부산물(신규, 2026-07-29 KST, 완료)
+
+`[PRIORITY_MAP]` SPPV-3 1순위 과제. 코드 read-only 재확인 +
+전체 이력(n=38,997) DB 조회로 검증했다.
+
+- [x] **코드 경로 재확인**: `regime_tailwind`는 `source_type`
+      분기 없이 `risk_tone`에만 의존(사실). `strategy_alignment`는
+      `strategy_selection.py`에 **`source_type=='event_overlay'`
+      전용 override**가 존재해, `regime_label != 'bearish_trend'`
+      이면 `risk_off`여도 `event_continuation`을 강제 부여함을
+      확인(사실, 코드).
+- [x] **전체 이력 0-아닌 사례 확인**: `regime_tailwind=1.0`은
+      42건, 전부 `market_overlay` 소스·2026-06-18(유일한 `risk_
+      on` 관측일)에서만 발생. `strategy_alignment=1.0`은 2,573건
+      (`event_overlay` 2,531 + `market_overlay` 42) — **`core`
+      소스에서는 전체 이력을 통틀어 단 한 번도 0이 아닌 사례가
+      없음**(사실).
+- [x] **설계 문서 대조**: `event_overlay` override는 코드에
+      명시적으로 분리된 조건 분기로 존재 — 의도된 설계로 판단.
+      `regime_tailwind`는 소스 무관 규칙이라 `core`만 예외적으로
+      죽이는 설계가 아니라, 상류 `risk_tone` 상시화(§99~§101
+      기진단)의 영향을 받는 구조.
+- [x] **최종 판정**: `strategy_alignment`(`core` 소스 기준)는
+      **설계 의도대로 죽어 있는 항**, `regime_tailwind`는 **설계
+      자체는 정상이나 상류 이상으로 실질적 효력을 잃은 부산물적
+      결과** — 둘의 성격이 다름을 확정. 코드 버그 아님.
+
+상세: `docs/10_signal_research_sppv/[DESIGN] regime_conditional_
+entry_signal_v1.md` §116.
 
 ## 7. 완료 기준
 

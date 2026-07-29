@@ -2619,3 +2619,28 @@ ranking_blocked` 하드 게이트 모집단(n=11,971) 내부 한정이며,
 최종 판정(1순위 산식 재검토, 2순위 중복 차단 정리)에 영향 없음.
 상세: `docs/10_signal_research_sppv/[DESIGN] regime_conditional_
 entry_signal_v1.md` §115.
+
+## 14. `regime_tailwind`/`strategy_alignment` 고정 여부 — 설계 의도 vs 부산물 판정(SPPV-2.128, 2026-07-29 KST)
+
+`[PRIORITY_MAP]` SPPV-3 1순위 과제를 완료했다(코드 미수정, Full
+pytest 미실행, 신규 KIS 호출 0건).
+
+- 코드 재확인: `regime_tailwind`는 `source_type` 무관하게
+  `risk_tone`에만 의존. `strategy_alignment`는 `strategy_
+  selection.py`에 `source_type=='event_overlay'` 전용 override가
+  있어 `risk_off`여도(`bearish_trend`만 아니면) `event_
+  continuation`을 강제 부여함을 확인.
+- 전체 이력(n=38,997) 조회: `regime_tailwind=1.0`은 42건(전부
+  `market_overlay`, 2026-06-18 유일 `risk_on`일). `strategy_
+  alignment=1.0`은 2,573건(`event_overlay` 2,531+`market_
+  overlay` 42) — **`core` 소스에서는 전체 이력에서 단 한 번도
+  0이 아닌 사례가 없음.**
+- 최종 판정: `strategy_alignment`(core 기준)는 **설계 의도대로
+  죽어 있는 항**(event_overlay 전용 명시적 예외 코드가 이를
+  뒷받침), `regime_tailwind`는 **설계 자체는 정상이나 상류
+  risk_tone 상시화(§99~§101)의 부산물로 실질적 효력을 잃은
+  결과**. 코드 버그 아님.
+
+최종 판정(1순위 산식 재검토, 2순위 중복 차단 정리)에 영향 없음.
+상세: `docs/10_signal_research_sppv/[DESIGN] regime_conditional_
+entry_signal_v1.md` §116.
