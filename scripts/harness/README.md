@@ -25,7 +25,10 @@ GitHub Actions도 사람과 AI가 쓰는 동일한 하네스를 사용한다. CI
 - 문서만 변경된 `main` push는 `changes` job에서 `deploy_required=0`으로 판정해 운영 재기동을 실행하지 않는다.
 - 수동 재배포는 `workflow_dispatch`의 `deploy_main=true` 입력으로만 연다.
 - 수동 재배포는 과거 workflow run을 재개하지 않고, 실행 시점의 최신 `origin/main` SHA를 다시 fetch한 뒤 그 SHA를 배포한다.
-- `allow_market_hours_deploy` 입력은 장 시간 가드 단계에서만 사용하며, 현재 단계에서는 선언만 유지한다.
+- `market_hours_guard` job은 `Asia/Seoul` 기준 평일 `09:00-15:30 KST`를 장중으로 계산한다.
+- 장중에는 자동 배포를 막고 `deploy_skipped_by_market_hours_count=1`을 출력한다.
+- 장중 수동 재배포는 `allow_market_hours_deploy=true`일 때만 허용하고 `deploy_market_hours_override_count=1`을 출력한다.
+- 거래소 휴장일 캘린더는 아직 연동하지 않았으므로 1차 가드는 평일 시간대 기준이다.
 - 배포 재기동 뒤에는 `nginx-proxy`를 reload해 Docker DNS가 새 frontend 컨테이너 IP를 다시 해석하게 한다.
 - CI workflow 자체의 정합성 판정은 `accept ci`가 담당한다.
 - GitHub ruleset `Require Harness on main`은 기본 브랜치에 `Safe harness contracts` 상태 검사를 필수 항목으로 요구한다.
@@ -144,6 +147,10 @@ Makefile에서는 승인 필요 명령을 `heavy-*` target으로 노출한다. �
 - `deploy_manual_dispatch_input_count`: `workflow_dispatch`에 선언된 수동 재배포 입력 수. 현재 계약 값은 `2`다.
 - `deploy_manual_dispatch_support_count`: deploy job이 `workflow_dispatch`의 `deploy_main=true` 경로를 실제로 지원하는지 나타내는 수.
 - `deploy_target_sha_pin_count`: 수동 재배포가 최신 `origin/main` SHA를 fetch·출력·reset 하는 계약을 만족하는 workflow 수.
+- `deploy_market_hours_guard_count`: 장 시간 guard job이 `Asia/Seoul` 기준으로 선언된 workflow 수.
+- `deploy_market_hours_skip_metric_count`: 장중 차단 지표 `deploy_skipped_by_market_hours_count`를 출력하는 workflow 수.
+- `deploy_market_hours_override_metric_count`: 장중 승인 지표 `deploy_market_hours_override_count`를 출력하는 workflow 수.
+- `deploy_job_depends_on_market_guard_count`: deploy job이 장 시간 guard 출력 `allow_deploy`를 실제 조건으로 사용하는 workflow 수.
 - `ci_contract_failed_count`: `workflow_dispatch` 수동 재배포 입력, 최신 `origin/main` SHA 고정, heavy 수동 실행 조건, version pin 같은 CI 계약 실패 수.
 - `runtime_tracked_file_count`: Git이 추적 중인 `logs/`, `tmp/`, `data/` 파일 수. 현재는 정리 진행을 위한 정보 지표이며, 합의된 허용 목록 정리 후 실패 지표로 전환한다.
 - `legacy_docker_compose_count`: workflow 안에서 v1 `docker-compose` 명령을 사용하는 수.

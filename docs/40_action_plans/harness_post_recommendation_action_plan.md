@@ -47,11 +47,11 @@ canonical data 허용 목록과 owner 기준은 [`canonical_data_contract.md`](.
 - [x] `workflow_dispatch`에 `allow_market_hours_deploy` 입력을 추가한다.
 - [x] 수동 배포는 항상 최신 `origin/main` SHA를 대상으로 실행한다.
 - [x] 폐기된 과거 workflow run을 장종료 후 자동 재개하지 않는다는 정책을 문서화한다.
-- [ ] KST 기준 정규장 시간대를 계산하는 guard를 deploy job 앞에 추가한다.
-- [ ] 장중 + 승인 없음이면 배포를 중단하고 `deploy_skipped_by_market_hours_count=1`을 출력한다.
-- [ ] 장중 + 승인 있음이면 `allow_market_hours_deploy=true` 입력과 함께 `deploy_market_hours_override_count=1`을 출력한다.
-- [ ] 장종료 후 수동 재배포는 `deploy_manual_dispatch_count=1`과 `deploy_target_sha=<sha>`를 출력한다.
-- [ ] `accept ci`가 수동 재배포 입력과 장 시간 guard 지표를 검사하도록 확장한다.
+- [x] KST 기준 정규장 시간대를 계산하는 guard를 deploy job 앞에 추가한다.
+- [x] 장중 + 승인 없음이면 배포를 중단하고 `deploy_skipped_by_market_hours_count=1`을 출력한다.
+- [x] 장중 + 승인 있음이면 `allow_market_hours_deploy=true` 입력과 함께 `deploy_market_hours_override_count=1`을 출력한다.
+- [x] 장종료 후 수동 재배포는 `deploy_manual_dispatch_count=1`과 `deploy_target_sha=<sha>`를 출력한다.
+- [x] `accept ci`가 수동 재배포 입력과 장 시간 guard 지표를 검사하도록 확장한다.
 
 완료 기준:
 
@@ -329,6 +329,7 @@ canonical data 허용 목록과 owner 기준은 [`canonical_data_contract.md`](.
 | 2026-07-29 | Codex | P0 18차 — `data/ar_fdc_*.json` tracked 파일 추적 제외 | 5 | `bash scripts/harness/run.sh accept docs`; `bash scripts/harness/run.sh accept ci` | `ar_fdc_tracked_count=0`, `ar_fdc_files_on_disk_count=2`, `runtime_tracked_file_count=10` | 남은 `data/` canonical 입력 `10`개 owner·갱신 절차 문서화 |
 | 2026-07-29 | Codex | P0 19차 — 남은 `data/` canonical 입력 허용 목록 문서화 | 5 | `bash scripts/harness/run.sh accept docs`; `bash scripts/harness/run.sh accept ci` | `data_tracked_allowlist_count=10`, `runtime_artifact_tracked_count=0`, `canonical_data_owner_documented_count=10` | P0 닫기 후보, 다음 P1 장 시간 배포 가드 |
 | 2026-07-29 | Codex | P1 1차 — 수동 재배포 입력과 최신 SHA 고정 | 4 | `bash scripts/harness/run.sh accept docs`; `bash scripts/harness/run.sh accept ci` | `deploy_manual_dispatch_input_count=2`, `deploy_manual_dispatch_requested_count=0`, `ci_contract_failed_count=0`, `deploy_workflow_count=1` | 장 시간 가드와 skip/override 지표 추가 |
+| 2026-07-29 | Codex | P1 2차 — 장 시간 배포 가드와 override 지표 | 4 | `bash scripts/harness/run.sh accept docs`; `bash scripts/harness/run.sh accept ci` | `deploy_market_hours_guard_count=1`, `deploy_market_hours_skip_metric_count=1`, `deploy_market_hours_override_metric_count=1`, `deploy_job_depends_on_market_guard_count=1` | P1 닫기 후보, 다음 P2 quick/full 계층 정리 |
 
 ## 갱신 규칙
 
