@@ -22,6 +22,7 @@ GitHub Actions도 사람과 AI가 쓰는 동일한 하네스를 사용한다. CI
 - 기본 PR/push gate는 `.github/workflows/harness.yml`의 `safe` job이다.
 - `safe` job은 `check quick`, `accept db-structure`, `accept architecture`, `accept style`, `accept no-bypass`, `type-check backend`, `type-check frontend`, `security scan`을 실행한다.
 - 운영 배포는 `.github/workflows/harness.yml`의 `deploy` job에서 `needs: safe` 성공 뒤에만 실행한다.
+- 문서만 변경된 `main` push는 `changes` job에서 `deploy_required=0`으로 판정해 운영 재기동을 실행하지 않는다.
 - CI workflow 자체의 정합성 판정은 `accept ci`가 담당한다.
 - GitHub ruleset `Require Harness on main`은 기본 브랜치에 `Safe harness contracts` 상태 검사를 필수 항목으로 요구한다.
 - CI의 PostgreSQL 버전 판정은 `.postgres-version`과 같은 버전의 `trading_db` 컨테이너를 시작한 뒤 `accept env`가 확인한다.
@@ -132,6 +133,7 @@ Makefile에서는 승인 필요 명령을 `heavy-*` target으로 노출한다. �
 - `safe_forbidden_heavy_command_count`: 기본 PR/push `safe` job에 L4/L5 heavy 명령 또는 `HARNESS_ALLOW_HEAVY`가 섞인 수.
 - `deploy_workflow_count`: 운영 배포에 영향을 주는 workflow 수.
 - `ungated_deploy_workflow_count`: `safe` 또는 동등한 하네스 성공 조건 없이 배포하는 workflow 수.
+- `deploy_without_change_detector_count`: 문서-only 변경을 배포 대상에서 제외하는 change detector 없이 배포하는 workflow 수.
 - `deploy_missing_migration_count`: 배포 재기동 전에 `docker compose run --rm migrate`를 실행하지 않는 workflow 수.
 - `legacy_docker_compose_count`: workflow 안에서 v1 `docker-compose` 명령을 사용하는 수.
 - `ci_contract_failed_count`: workflow trigger, version pin, heavy 수동 실행 조건, required check 문서 연결 실패 수.
