@@ -137,6 +137,8 @@ Makefile에서는 승인 필요 명령을 `heavy-*` target으로 노출한다. �
 - `deploy_without_change_detector_count`: 문서-only 변경을 배포 대상에서 제외하는 change detector 없이 배포하는 workflow 수.
 - `deploy_missing_migration_count`: 배포 재기동 전에 `docker compose run --rm migrate`를 실행하지 않는 workflow 수.
 - `deploy_missing_proxy_reload_count`: 배포 재기동 뒤 `nginx-proxy` reload를 실행하지 않는 workflow 수.
+- `destructive_deploy_clean_command_count`: 배포 workflow에서 `git clean -fdx` 또는 `logs/`, `tmp/`, `data/`를 직접 삭제하는 명령 수.
+- `runtime_tracked_file_count`: Git이 추적 중인 `logs/`, `tmp/`, `data/` 파일 수. 현재는 정리 진행을 위한 정보 지표이며, 합의된 허용 목록 정리 후 실패 지표로 전환한다.
 - `legacy_docker_compose_count`: workflow 안에서 v1 `docker-compose` 명령을 사용하는 수.
 - `ci_contract_failed_count`: workflow trigger, version pin, heavy 수동 실행 조건, required check 문서 연결 실패 수.
 

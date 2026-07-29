@@ -149,6 +149,7 @@ accept_ci() {
   python3 - <<'PY'
 import os
 import re
+import subprocess
 from pathlib import Path
 
 root = Path(os.environ["HARNESS_ROOT_DIR"])
@@ -269,6 +270,25 @@ deploy_missing_proxy_reload_workflows = [
     path for path, text in deploy_workflows
     if "docker exec nginx-proxy nginx -s reload" not in text
 ]
+destructive_runtime_clean_pattern = re.compile(
+    r"("
+    r"\bgit\s+clean\b(?=.*-)(?=.*f)(?=.*d)(?=.*x)|"
+    r"\brm\s+-rf\s+(?:/workspace/agent_trading/)?(?:logs|tmp|data)(?:\s|/|$)"
+    r")"
+)
+destructive_runtime_clean_lines = [
+    (path, line_no, line.strip())
+    for path, text in workflow_text_by_path.items()
+    for line_no, line in enumerate(text.splitlines(), 1)
+    if destructive_runtime_clean_pattern.search(line)
+]
+tracked_runtime_files = subprocess.run(
+    ["git", "ls-files", "logs", "tmp", "data"],
+    cwd=root,
+    check=True,
+    text=True,
+    stdout=subprocess.PIPE,
+).stdout.splitlines()
 deploy_change_detector_present = (
     "Deployment change detector" in workflow_text
     and "deploy_relevant_file_count" in workflow_text
@@ -323,6 +343,8 @@ metrics = {
     "deploy_without_change_detector_count": deploy_without_change_detector_count,
     "deploy_missing_migration_count": len(deploy_missing_migration_workflows),
     "deploy_missing_proxy_reload_count": len(deploy_missing_proxy_reload_workflows),
+    "destructive_deploy_clean_command_count": len(destructive_runtime_clean_lines),
+    "runtime_tracked_file_count": len(tracked_runtime_files),
     "legacy_docker_compose_count": len(legacy_docker_compose_hits),
     "ci_contract_failed_count": len(failed_contract_checks),
 }
@@ -331,6 +353,7 @@ informational_metrics = {
     "harness_command_count",
     "workflow_file_count",
     "deploy_workflow_count",
+    "runtime_tracked_file_count",
 }
 passed = all(
     value == 0
@@ -384,6 +407,11 @@ if deploy_missing_proxy_reload_workflows:
 if legacy_docker_compose_hits:
     print("DETAIL legacy_docker_compose:")
     for source, line_no, line in legacy_docker_compose_hits:
+        print(f"- {source.relative_to(root)}:{line_no}: {line}")
+
+if destructive_runtime_clean_lines:
+    print("DETAIL destructive_runtime_clean_commands:")
+    for source, line_no, line in destructive_runtime_clean_lines:
         print(f"- {source.relative_to(root)}:{line_no}: {line}")
 
 if failed_contract_checks:
