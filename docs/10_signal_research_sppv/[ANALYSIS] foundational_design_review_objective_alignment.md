@@ -3035,3 +3035,34 @@ read-only만 수행). 방향 결론을 새로 바꾸는 턴이 아니라 재현�
 배제한다)을 약화시키지 않으며 오히려 뚜렷하게 한다. 상세: `docs/
 10_signal_research_sppv/[DESIGN] regime_conditional_entry_signal_
 v1.md` §130.
+
+## 29. `core_cap` 절단 기준 재설계안 A/B/C/D 비교(SPPV-2.143, 2026-07-30 KST)
+
+§27~§28에서 확인·재현된 사전순 절단 왜곡을 줄이는 재설계안을 read-only로
+비교했다(코드 미수정, 완화안 확정 아님).
+
+- **신규 구조 제약 1**: `signal_feature_snapshots` 커버리지가 core-eligible
+  사전순 **1~79위 연속 구간**뿐이며 80위 이후 120종목은 0건이다. snapshot
+  입력 배치도 동일한 `_apply_cap()`을 자체 cap(80)으로 쓰기 때문이다 →
+  **score 기반 어떤 안도 사전순 편향을 제거하지 못하고 12위에서 79/80위로
+  경계만 이동**한다. 근본 제거는 snapshot 배치 cap까지 다루는 별도 트랙.
+- **신규 구조 제약 2**: 유니버스는 루프 진입 시 1회 확정되고 채점은 그
+  이후다. `universe_selection`은 `deterministic_trigger_engine`을 import
+  하지 않으며 `CompositionContext`에 regime/strategy/allocation이 없다 →
+  B/C안은 계층 역전과 선정 파이프라인 재배선을 요구한다. 반면 snapshot
+  원시 점수 읽기는 현재 계층에서 가능하다.
+- **정량 비교(20거래일, 유효 19일)**: A안 평균 `entry_score` 0.1535,
+  B안=C안 0.3489(종목집합 19/19일 완전 동일 — shadow에서 `ranking_score`가
+  `entry_score`의 단조 변환이라 **B/C 우열 판정 불가**), D안(snapshot 원시
+  `overall_score` 정렬) 0.3460으로 **B안의 99.2%**이면서 B안과 92.1%
+  일치했다. B/C/D 모두 `entry_score>=0.65`가 0건이므로 이 재설계는
+  **신호 품질 개선이지 주문 발생 완화가 아니다**.
+- **사례**: `000720`(저신호) A안 11일 → B/C/D안 0일, `009150`(고신호)
+  A안 0일 → B/C안 6일·D안 10일 — 세 안 모두 의도한 방향으로 작동.
+- **보수성**: 효과 최대는 B/C안이지만 계층 역전·재배선이 필요하고,
+  D안은 효과가 B안의 99.2%로 실질 동등하면서 현재 계층을 유지한다 —
+  "가장 효과 큰 안"과 "가장 보수적 안"이 거의 일치한다는 것이 핵심 소득.
+
+**결론**: **절충안 검토 필요** — 다음 턴 diff 초안으로 넘어갈 1안은
+**D안**(snapshot 원시 `overall_score` 기준 절단)이다. 상세: `docs/10_
+signal_research_sppv/[DESIGN] regime_conditional_entry_signal_v1.md` §131.
