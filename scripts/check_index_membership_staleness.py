@@ -5,6 +5,7 @@
 축소안 — KIS 지수 구성종목 전체 목록 API가 확인되지 않아 자동 갱신 대신,
 현재 ``instrument_index_memberships``의 가장 최근 반영 시각을 조회해 21일
 초과 시 경고만 남긴다. DB에 어떤 것도 쓰지 않는다(순수 관측용).
+이 스크립트는 장중 sync-only 배포 경로 검증에서도 사용할 수 있는 read-only 관측 도구다.
 """
 
 from __future__ import annotations
