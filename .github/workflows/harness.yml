@@ -42,8 +42,12 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       deploy_required: ${{ steps.detect.outputs.deploy_required }}
+      activate_required: ${{ steps.detect.outputs.activate_required }}
       changed_file_count: ${{ steps.detect.outputs.changed_file_count }}
       deploy_relevant_file_count: ${{ steps.detect.outputs.deploy_relevant_file_count }}
+      sync_only_candidate_count: ${{ steps.detect.outputs.sync_only_candidate_count }}
+      sync_only_allowlist_count: ${{ steps.detect.outputs.sync_only_allowlist_count }}
+      sync_only_blocked_count: ${{ steps.detect.outputs.sync_only_blocked_count }}
       deploy_manual_dispatch_requested_count: ${{ steps.detect.outputs.deploy_manual_dispatch_requested_count }}
     steps:
       - name: Checkout
@@ -65,14 +69,22 @@ jobs:
 
             {
               echo "deploy_required=0"
+              echo "activate_required=0"
               echo "changed_file_count=0"
               echo "deploy_relevant_file_count=0"
+              echo "sync_only_candidate_count=0"
+              echo "sync_only_allowlist_count=0"
+              echo "sync_only_blocked_count=0"
               echo "deploy_manual_dispatch_requested_count=$deploy_manual_dispatch_requested_count"
             } >> "$GITHUB_OUTPUT"
 
             echo "changed_file_count=0"
             echo "deploy_relevant_file_count=0"
             echo "deploy_required=0"
+            echo "activate_required=0"
+            echo "sync_only_candidate_count=0"
+            echo "sync_only_allowlist_count=0"
+            echo "sync_only_blocked_count=0"
             echo "deploy_skipped_by_docs_only_count=0"
             echo "deploy_manual_dispatch_requested_count=$deploy_manual_dispatch_requested_count"
             exit 0
@@ -86,12 +98,33 @@ jobs:
 
           changed_files="$(git diff --name-only "$base_ref" HEAD || true)"
           changed_file_count="$(printf '%s\n' "$changed_files" | sed '/^$/d' | wc -l | tr -d ' ')"
+          sync_only_allowlist_pattern='^(scripts/(analyze_trigger_proxy_attribution\.py|check_index_membership_staleness\.py|check_t3_db_status\.py|diagnose_activity_filter_half_period_divergence\.py|diagnose_blocked_reason_distribution\.py|diagnose_market_overlay_shadow\.py|observe_seeded_news_comparison\.py))$'
+          runtime_affecting_pattern='^(\.github/workflows/|\.python-version|\.postgres-version|Dockerfile|docker-compose\.yml|pyproject\.toml|requirements(\.lock|\.txt)?|db/|src/|admin_ui/(Dockerfile|nginx\.frontend\.conf|package(-lock)?\.json|tsconfig[^/]*\.json|vite\.config\.[^/]+|src/|public/))'
+          sync_only_candidates="$(
+            printf '%s\n' "$changed_files" |
+              sed '/^$/d' |
+              grep -E '^scripts/[^/]+\.(py|sh)$' || true
+          )"
+          sync_only_allowlist_files="$(
+            printf '%s\n' "$sync_only_candidates" |
+              sed '/^$/d' |
+              grep -E "$sync_only_allowlist_pattern" || true
+          )"
+          runtime_affecting_files="$(
+            printf '%s\n' "$changed_files" |
+              sed '/^$/d' |
+              grep -E "$runtime_affecting_pattern" || true
+          )"
           deploy_relevant_files="$(
             printf '%s\n' "$changed_files" |
               sed '/^$/d' |
               grep -E '^(\.python-version|\.postgres-version|Dockerfile|docker-compose\.yml|pyproject\.toml|requirements(\.lock|\.txt)?|db/|src/|scripts/[^/]+\.(py|sh)|admin_ui/(Dockerfile|nginx\.frontend\.conf|package(-lock)?\.json|tsconfig[^/]*\.json|vite\.config\.[^/]+|src/|public/))' || true
           )"
+          sync_only_candidate_count="$(printf '%s\n' "$sync_only_candidates" | sed '/^$/d' | wc -l | tr -d ' ')"
+          sync_only_allowlist_count="$(printf '%s\n' "$sync_only_allowlist_files" | sed '/^$/d' | wc -l | tr -d ' ')"
+          sync_only_blocked_count="$((sync_only_candidate_count - sync_only_allowlist_count))"
           deploy_relevant_file_count="$(printf '%s\n' "$deploy_relevant_files" | sed '/^$/d' | wc -l | tr -d ' ')"
+          activate_relevant_file_count="$(printf '%s\n' "$runtime_affecting_files" | sed '/^$/d' | wc -l | tr -d ' ')"
 
           if [ "$deploy_relevant_file_count" -gt 0 ]; then
             deploy_required="1"
@@ -101,16 +134,30 @@ jobs:
             deploy_skipped_by_docs_only_count="1"
           fi
 
+          if [ "$activate_relevant_file_count" -gt 0 ]; then
+            activate_required="1"
+          else
+            activate_required="0"
+          fi
+
           {
             echo "deploy_required=$deploy_required"
+            echo "activate_required=$activate_required"
             echo "changed_file_count=$changed_file_count"
             echo "deploy_relevant_file_count=$deploy_relevant_file_count"
+            echo "sync_only_candidate_count=$sync_only_candidate_count"
+            echo "sync_only_allowlist_count=$sync_only_allowlist_count"
+            echo "sync_only_blocked_count=$sync_only_blocked_count"
             echo "deploy_manual_dispatch_requested_count=0"
           } >> "$GITHUB_OUTPUT"
 
           echo "changed_file_count=$changed_file_count"
           echo "deploy_relevant_file_count=$deploy_relevant_file_count"
           echo "deploy_required=$deploy_required"
+          echo "activate_required=$activate_required"
+          echo "sync_only_candidate_count=$sync_only_candidate_count"
+          echo "sync_only_allowlist_count=$sync_only_allowlist_count"
+          echo "sync_only_blocked_count=$sync_only_blocked_count"
           echo "deploy_skipped_by_docs_only_count=$deploy_skipped_by_docs_only_count"
           echo "deploy_manual_dispatch_requested_count=0"
 
@@ -269,13 +316,22 @@ jobs:
           echo "deploy_skipped_by_market_hours_count=$deploy_skipped_by_market_hours_count"
           echo "deploy_market_hours_override_count=$deploy_market_hours_override_count"
 
-  deploy:
-    name: Deploy after safe harness
+  sync_source:
+    name: Sync source after safe harness
     runs-on: ubuntu-latest
     needs: [safe, changes, market_hours_guard]
-    if: needs.safe.result == 'success' && needs.market_hours_guard.outputs.allow_deploy == '1'
+    if: >-
+      needs.safe.result == 'success' && (
+        needs.market_hours_guard.outputs.allow_deploy == '1' || (
+          github.event_name == 'push' &&
+          github.ref == 'refs/heads/main' &&
+          needs.changes.outputs.activate_required == '0' &&
+          needs.changes.outputs.sync_only_allowlist_count != '0' &&
+          needs.changes.outputs.sync_only_blocked_count == '0'
+        )
+      )
     steps:
-      - name: Deploy to Oracle Cloud
+      - name: Sync source on Oracle Cloud
         uses: appleboy/ssh-action@v1.0.3
         with:
           host: ${{ secrets.SERVER_HOST }}
@@ -296,8 +352,44 @@ jobs:
             else
               echo "deploy_manual_dispatch_count=0"
             fi
+
+            if [ "${{ needs.market_hours_guard.outputs.allow_deploy }}" = "1" ]; then
+              echo "deploy_sync_only_run_count=0"
+              echo "deploy_activate_skipped_by_market_hours_count=0"
+            else
+              echo "deploy_sync_only_run_count=1"
+              echo "deploy_activate_skipped_by_market_hours_count=1"
+            fi
+
             echo "deploy_market_hours_override_count=${{ needs.market_hours_guard.outputs.deploy_market_hours_override_count }}"
             echo "deploy_target_sha=$deploy_target_sha"
+            echo "deploy_sync_run_count=1"
+
+  activate_runtime:
+    name: Activate runtime after source sync
+    runs-on: ubuntu-latest
+    needs: [safe, changes, market_hours_guard, sync_source]
+    if: >-
+      needs.safe.result == 'success' &&
+      needs.sync_source.result == 'success' &&
+      needs.market_hours_guard.outputs.allow_deploy == '1' && (
+        (github.event_name == 'push' &&
+          github.ref == 'refs/heads/main' &&
+          needs.changes.outputs.activate_required == '1') ||
+        (github.event_name == 'workflow_dispatch' && inputs.deploy_main == 'true')
+      )
+    steps:
+      - name: Activate runtime on Oracle Cloud
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.SERVER_HOST }}
+          username: ${{ secrets.SERVER_USER }}
+          key: ${{ secrets.SERVER_KEY }}
+          port: 22
+          script: |
+            set -euo pipefail
+
+            cd /workspace/agent_trading
 
             docker compose run --rm migrate
             echo "deploy_migration_run=1"
@@ -307,5 +399,6 @@ jobs:
 
             docker exec nginx-proxy nginx -s reload
             echo "deploy_proxy_reload_run=1"
+            echo "deploy_activate_run_count=1"
 
             docker compose ps

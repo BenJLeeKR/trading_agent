@@ -408,11 +408,72 @@ deploy_market_hours_skip_metric_count = int(
 deploy_market_hours_override_metric_count = int(
     "deploy_market_hours_override_count=" in workflow_text
 )
-deploy_job_depends_on_market_guard_count = int(
+deploy_activate_guard_present_count = int(
     contains(
         workflow,
-        "needs: [safe, changes, market_hours_guard]",
+        "activate_runtime:",
+        "needs: [safe, changes, market_hours_guard, sync_source]",
         "needs.market_hours_guard.outputs.allow_deploy == '1'",
+        "needs.sync_source.result == 'success'",
+    )
+)
+deploy_sync_job_present_count = int("  sync_source:" in workflow_text)
+deploy_activate_job_present_count = int("  activate_runtime:" in workflow_text)
+deploy_sync_only_run_metric_count = int("deploy_sync_only_run_count=" in workflow_text)
+deploy_activate_run_metric_count = int("deploy_activate_run_count=" in workflow_text)
+deploy_activate_skipped_by_market_hours_metric_count = int(
+    "deploy_activate_skipped_by_market_hours_count=" in workflow_text
+)
+deploy_activate_required_output_count = int(
+    contains(
+        workflow,
+        "activate_required: ${{ steps.detect.outputs.activate_required }}",
+        'echo "activate_required=$activate_required"',
+    )
+)
+deploy_sync_only_candidate_count_output_count = int(
+    contains(
+        workflow,
+        "sync_only_candidate_count: ${{ steps.detect.outputs.sync_only_candidate_count }}",
+        'echo "sync_only_candidate_count=$sync_only_candidate_count"',
+    )
+)
+deploy_sync_only_allowlist_count_output_count = int(
+    contains(
+        workflow,
+        "sync_only_allowlist_count: ${{ steps.detect.outputs.sync_only_allowlist_count }}",
+        'echo "sync_only_allowlist_count=$sync_only_allowlist_count"',
+    )
+)
+deploy_sync_only_blocked_count_output_count = int(
+    contains(
+        workflow,
+        "sync_only_blocked_count: ${{ steps.detect.outputs.sync_only_blocked_count }}",
+        'echo "sync_only_blocked_count=$sync_only_blocked_count"',
+    )
+)
+deploy_sync_only_allowlist_defined_count = int(
+    contains(
+        workflow,
+        "sync_only_allowlist_pattern=",
+        "analyze_trigger_proxy_attribution\\.py",
+        "check_index_membership_staleness\\.py",
+        "check_t3_db_status\\.py",
+        "diagnose_activity_filter_half_period_divergence\\.py",
+        "diagnose_blocked_reason_distribution\\.py",
+        "diagnose_market_overlay_shadow\\.py",
+        "observe_seeded_news_comparison\\.py",
+    )
+)
+deploy_runtime_affecting_path_rule_count = int(
+    contains(
+        workflow,
+        "runtime_affecting_pattern=",
+        ".github/workflows/",
+        "docker-compose\\.yml",
+        "src/",
+        "admin_ui/",
+        "db/",
     )
 )
 
@@ -429,12 +490,18 @@ contract_checks = [
     ("workflow_uses_requirements_lock_constraints", len(pip_install_lines) > 0 and len(pip_install_without_constraints) == 0),
     ("workflow_heavy_requires_dispatch", "if: github.event_name == 'workflow_dispatch' && inputs.run_heavy == 'true'" in workflow_text),
     ("workflow_heavy_sets_allow_flag", 'HARNESS_ALLOW_HEAVY: "1"' in workflow_text),
-    ("workflow_deploy_depends_on_safe", contains(workflow, "needs: [safe, changes]", "needs.safe.result == 'success'")),
+    ("workflow_deploy_depends_on_safe", "needs.safe.result == 'success'" in workflow_text and "sync_source:" in workflow_text and "activate_runtime:" in workflow_text),
     ("workflow_deploy_depends_on_change_detector", contains(workflow, "Deployment change detector", "needs.changes.outputs.deploy_required == '1'", "deploy_skipped_by_docs_only_count")),
     ("workflow_deploy_supports_manual_dispatch", contains(workflow, "github.event_name == 'workflow_dispatch' && inputs.deploy_main == 'true'", "deploy_manual_dispatch_requested_count")),
     ("workflow_manual_deploy_targets_latest_origin_main", contains(workflow, 'git fetch origin main', 'deploy_target_sha="$(git rev-parse origin/main)"', 'git reset --hard "$deploy_target_sha"', "deploy_target_sha=")),
     ("workflow_deploy_has_market_hours_guard", contains(workflow, "market_hours_guard:", "TZ=Asia/Seoul date +%H%M", "allow_market_hours_deploy", "deploy_skipped_by_market_hours_count", "deploy_market_hours_override_count")),
-    ("workflow_deploy_job_depends_on_market_guard", contains(workflow, "needs: [safe, changes, market_hours_guard]", "needs.market_hours_guard.outputs.allow_deploy == '1'")),
+    ("workflow_deploy_jobs_present", deploy_sync_job_present_count == 1 and deploy_activate_job_present_count == 1),
+    ("workflow_deploy_activate_guard_present", deploy_activate_guard_present_count == 1),
+    ("workflow_deploy_change_detector_emits_activate_required", deploy_activate_required_output_count == 1),
+    ("workflow_deploy_change_detector_emits_sync_only_counts", deploy_sync_only_candidate_count_output_count == 1 and deploy_sync_only_allowlist_count_output_count == 1 and deploy_sync_only_blocked_count_output_count == 1),
+    ("workflow_deploy_change_detector_defines_sync_only_allowlist", deploy_sync_only_allowlist_defined_count == 1),
+    ("workflow_deploy_change_detector_defines_runtime_affecting_rules", deploy_runtime_affecting_path_rule_count == 1),
+    ("workflow_deploy_emits_sync_activate_metrics", deploy_sync_only_run_metric_count == 1 and deploy_activate_run_metric_count == 1 and deploy_activate_skipped_by_market_hours_metric_count == 1),
     ("workflow_deploy_runs_migration_before_restart", contains(workflow, "docker compose run --rm migrate", "docker compose up -d --build --remove-orphans")),
     ("workflow_deploy_reloads_proxy_after_restart", contains(workflow, "docker exec nginx-proxy nginx -s reload", "deploy_proxy_reload_run=1")),
     ("readme_declares_ci_harness", contains(readme, "CI 검증 기준", ".github/workflows/harness.yml", "bash scripts/harness/run.sh", "Require Harness on main", "Safe harness contracts")),
@@ -471,7 +538,18 @@ metrics = {
     "deploy_market_hours_guard_count": deploy_market_hours_guard_count,
     "deploy_market_hours_skip_metric_count": deploy_market_hours_skip_metric_count,
     "deploy_market_hours_override_metric_count": deploy_market_hours_override_metric_count,
-    "deploy_job_depends_on_market_guard_count": deploy_job_depends_on_market_guard_count,
+    "deploy_sync_job_present_count": deploy_sync_job_present_count,
+    "deploy_activate_job_present_count": deploy_activate_job_present_count,
+    "deploy_activate_guard_present_count": deploy_activate_guard_present_count,
+    "deploy_sync_only_run_metric_count": deploy_sync_only_run_metric_count,
+    "deploy_activate_run_metric_count": deploy_activate_run_metric_count,
+    "deploy_activate_skipped_by_market_hours_metric_count": deploy_activate_skipped_by_market_hours_metric_count,
+    "deploy_activate_required_output_count": deploy_activate_required_output_count,
+    "deploy_sync_only_candidate_count_output_count": deploy_sync_only_candidate_count_output_count,
+    "deploy_sync_only_allowlist_count_output_count": deploy_sync_only_allowlist_count_output_count,
+    "deploy_sync_only_blocked_count_output_count": deploy_sync_only_blocked_count_output_count,
+    "deploy_sync_only_allowlist_defined_count": deploy_sync_only_allowlist_defined_count,
+    "deploy_runtime_affecting_path_rule_count": deploy_runtime_affecting_path_rule_count,
     "runtime_tracked_file_count": len(tracked_runtime_files),
     "legacy_docker_compose_count": len(legacy_docker_compose_hits),
     "pip_install_command_count": len(pip_install_lines),
@@ -496,7 +574,18 @@ informational_metrics = {
     "deploy_market_hours_guard_count",
     "deploy_market_hours_skip_metric_count",
     "deploy_market_hours_override_metric_count",
-    "deploy_job_depends_on_market_guard_count",
+    "deploy_sync_job_present_count",
+    "deploy_activate_job_present_count",
+    "deploy_activate_guard_present_count",
+    "deploy_sync_only_run_metric_count",
+    "deploy_activate_run_metric_count",
+    "deploy_activate_skipped_by_market_hours_metric_count",
+    "deploy_activate_required_output_count",
+    "deploy_sync_only_candidate_count_output_count",
+    "deploy_sync_only_allowlist_count_output_count",
+    "deploy_sync_only_blocked_count_output_count",
+    "deploy_sync_only_allowlist_defined_count",
+    "deploy_runtime_affecting_path_rule_count",
     "runtime_tracked_file_count",
     "pip_install_command_count",
 }

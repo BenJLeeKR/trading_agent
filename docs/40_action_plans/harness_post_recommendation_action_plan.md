@@ -106,6 +106,33 @@ canonical data 허용 목록과 owner 기준은 [`canonical_data_contract.md`](.
 - `documented_run_sh_command_missing_count`가 `0`이다.
 - `claude_command_duplication_count`가 감소하거나, 남은 중복이 의도된 예외로 문서화된다.
 
+### P5 — 장중 배포 정책 고도화
+
+목표: 장중에는 전체 배포를 일괄 차단하지 않고, runtime 영향이 없는 제한된 source sync 후보를 분리할 수 있도록 CI 분류 계약을 먼저 세분화한다.
+
+- [x] `changes` job이 기존 `deploy_required` 외에 `activate_required`를 출력하도록 확장한다.
+- [x] `changes` job이 `sync_only_candidate_count`, `sync_only_allowlist_count`, `sync_only_blocked_count`를 출력하도록 확장한다.
+- [x] 장중 sync-only 허용 후보 `scripts/` allowlist `7`개를 workflow 정적 규칙으로 선언한다.
+- [x] runtime-affecting 경로 denylist를 workflow 정적 규칙으로 선언한다.
+- [x] `accept ci`가 위 신규 출력과 정적 규칙 존재 여부를 검사하도록 확장한다.
+- [x] 실제 `sync_source` / `activate_runtime` job 분리와 장중 sync-only 실행 조건을 workflow에 반영한다.
+- [x] `accept ci`가 `sync_source`, `activate_runtime`, activate guard, sync/activate 실행 지표 존재 여부를 검사하도록 확장한다.
+
+완료 기준:
+
+- `deploy_activate_required_output_count=1`
+- `deploy_sync_only_candidate_count_output_count=1`
+- `deploy_sync_only_allowlist_count_output_count=1`
+- `deploy_sync_only_blocked_count_output_count=1`
+- `deploy_sync_only_allowlist_defined_count=1`
+- `deploy_runtime_affecting_path_rule_count=1`
+- `deploy_sync_job_present_count=1`
+- `deploy_activate_job_present_count=1`
+- `deploy_activate_guard_present_count=1`
+- `deploy_sync_only_run_metric_count=1`
+- `deploy_activate_run_metric_count=1`
+- `deploy_activate_skipped_by_market_hours_metric_count=1`
+
 ## 완료된 작업
 
 ### 배포 경로 하네스 종속화
@@ -337,7 +364,11 @@ canonical data 허용 목록과 owner 기준은 [`canonical_data_contract.md`](.
 | 2026-07-29 | Codex | P4 1차 — 문서 속 `run.sh` 명령 실존 검사 추가 | 3 | `bash scripts/harness/run.sh accept docs`; `bash scripts/harness/run.sh accept ci` | `documented_run_sh_command_missing_count=0`, `semantic_check_failed_count=0`, `ci_contract_failed_count=0` | `run.sh` selector 파싱과 `CLAUDE.md` 중복 정리 |
 | 2026-07-29 | Codex | P4 2차 — `run.sh` usage와 dispatch selector 정합성 검사 추가 | 3 | `bash scripts/harness/run.sh accept docs`; `bash scripts/harness/run.sh accept ci` | `run_sh_usage_dispatch_mismatch_count=0`, `documented_run_sh_command_missing_count=0`, `ci_contract_failed_count=0` | `CLAUDE.md` 중복 정리와 workspace guide 보강 |
 | 2026-07-29 | Codex | P4 3차 — `.claude/worktrees` 경고와 검색 제외 지침 추가 | 2 | `bash scripts/harness/run.sh accept docs` | `documented_run_sh_command_missing_count=0`, `run_sh_usage_dispatch_mismatch_count=0`, `semantic_check_failed_count=0` | `CLAUDE.md` 중복 정리와 README 경로 재확인 |
-| 2026-07-29 | Codex | P4 4차 — `CLAUDE.md` 링크 중심 정리와 README 경로 재확인 | 2 | `bash scripts/harness/run.sh accept docs` | `documented_run_sh_command_missing_count=0`, `run_sh_usage_dispatch_mismatch_count=0`, `semantic_check_failed_count=0` | P4 닫기 후보 |
+| 2026-07-29 | Codex | P4 4차 — `CLAUDE.md` 링크 중심 정리와 README 경로 재확인 | 2 | `bash scripts/harness/run.sh accept docs` | `documented_run_sh_command_missing_count=0`, `run_sh_usage_dispatch_mismatch_count=0`, `semantic_check_failed_count=0` | P4 완료, 다음 우선순위 정의 필요 |
+| 2026-07-29 | Codex | PR46 머지 후 `main` 동기화와 브랜치 정리 | 1 | `git reset --hard origin/main`; `git push origin --delete codex/add-check-full-profile` | `ahead_count=0`, `behind_count=0`, `remote_branch_count=0`, `local_branch_count=0` | 참고문서 기준 미완료 우선순위 없음 |
+| 2026-07-29 | Codex | 장중 sync/activate 분리 설계 문서화 | 3 | `bash scripts/harness/run.sh accept docs` | `required_file_missing_count=0`, `documented_run_sh_command_missing_count=0`, `semantic_check_failed_count=0` | 후속 구현 작업 시 `harness.yml` 변경안으로 사용 |
+| 2026-07-30 | Codex | P5 1차 — 장중 배포 분류 계약 출력과 CI 검사 추가 | 5 | `bash scripts/harness/run.sh accept docs`; `bash scripts/harness/run.sh accept ci` | `deploy_activate_required_output_count=1`, `deploy_sync_only_candidate_count_output_count=1`, `deploy_sync_only_allowlist_count_output_count=1`, `deploy_sync_only_blocked_count_output_count=1`, `deploy_sync_only_allowlist_defined_count=1`, `deploy_runtime_affecting_path_rule_count=1`, `ci_contract_failed_count=0` | 다음은 실제 `sync_source` / `activate_runtime` job 분리 |
+| 2026-07-30 | Codex | P5 2차 — `sync_source` / `activate_runtime` job 분리와 장중 sync-only 조건 반영 | 5 | `bash scripts/harness/run.sh accept docs`; `bash scripts/harness/run.sh accept ci` | `deploy_sync_job_present_count=1`, `deploy_activate_job_present_count=1`, `deploy_activate_guard_present_count=1`, `deploy_sync_only_run_metric_count=1`, `deploy_activate_run_metric_count=1`, `deploy_activate_skipped_by_market_hours_metric_count=1`, `ci_contract_failed_count=0` | 다음은 수동 재배포 dispatch 문서 예시와 운영 runbook 정리 |
 
 ## 갱신 규칙
 
