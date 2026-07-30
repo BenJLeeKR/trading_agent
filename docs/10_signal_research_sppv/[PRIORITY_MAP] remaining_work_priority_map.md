@@ -10120,16 +10120,29 @@ agent 설계 문서 기준으로도 순서는 다음이 맞다.
      `0.22`). **다음 1순위 결정: 2안(추가 관측 연장) 유지, 관측
      단계 미종료**. 상세: `docs/10_signal_research_sppv/[DESIGN]
      regime_conditional_entry_signal_v1.md` §123.
-   - **SPPV-3(다음 착수: [1순위] `relative_activity` 1안 적용
-     이후 캘린더 시간이 충분히 누적된 뒤(최소 반나절~1거래일 이상
-     권장) `ranking_score` 분포/`ranking_blocked` 비중/`shadow_
-     topk_exception_v2` 발동 여부를 동일 지표로 재확인(read-only,
-     완화안 아님) +
-     [2순위] 1순위 관측이 "5거래일 수준"에 근접하면 그 결과를
-     근거로 `coverage_score` A안을 위한 threshold(`0.48`/`0.22`)
-     재설계 착수 여부 최종 결정 — 단독 제거가 아니라 재정규화/
-     threshold 재산정을 함께 설계해야 함(완화안 설계는 아직 아님,
-     트랙 범위만 확정) +
+   - **SPPV-2.136(완료, 2026-07-30 KST, `relative_activity` 1안
+     적용 후 운영 관측 추가 축적 2차·최종 판정, 작성자: Codex,
+     코드 미수정, `.env` 미수정, Full pytest 미실행, 신규 KIS
+     호출 0건)**: 병합 이후 실제 경과 약 23시간, gate 모집단
+     n=616/전체 BUY-path n=1,435로 확대(이전 두 턴 n=15/134 대비
+     4~40배, 병합 이전 1일치 n=1,037과 같은 자릿수 도달).
+     `ranking_blocked` 비중(§120과 동일 gate 정의)은 병합 전 3일
+     99.9~100.0%→누적 23시간 90.7%로 이동했으나 병합 직전부터
+     이미 시작·예측과 반대 방향이라 **diff 인과 효과 아님**(교란
+     요인)으로 판정. `buy_candidate`·`APPROVE`·`order_request`·
+     `shadow_topk_exception_v2`는 3개 관측 창(n=15→134→616~1435)
+     전부 **0 유지**. 핵심 병목 재확인: `coverage_score`+절대
+     threshold(`0.48`/`0.22`). **판정 전환: 1안(coverage_score+
+     threshold 재설계 비교 착수) 채택** — 관측 단계 종료. 상세:
+     `docs/10_signal_research_sppv/[DESIGN] regime_conditional_
+     entry_signal_v1.md` §124.
+   - **SPPV-3(다음 착수: [1순위] `coverage_score`+threshold
+     (`0.48`/`0.22`) 재설계 비교 착수 — 단독 제거가 아니라
+     재정규화/threshold 재산정 방식을 비교 설계(완화안 확정
+     아님, 비교 단계) +
+     [2순위, 하향] `relative_activity` 1안의 장기(수 거래일) 효과
+     를 선택적으로 계속 관찰하되, 더 이상 1순위 결정의 선행
+     조건은 아님 +
      [3순위] `000720`이 core 유니버스에 20일 이상 연속 포함되는
      조건을 원인만 확인(완화안 아님) +
      [4순위] 이 모집단(core+bearish_trend)이 신호 품질(overall/
