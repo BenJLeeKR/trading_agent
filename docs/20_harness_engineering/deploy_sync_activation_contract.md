@@ -79,6 +79,49 @@ GitHub Actions 실제 run으로 다음 `2`개 결과를 확인했다.
 - allowlist 파일만 수정한 PR `#49` 머지 후 `push main` run `30503894901`에서 `Market-hours deploy guard=success`, `Sync source after safe harness=success`, `Activate runtime after source sync=skipped`를 확인했다.
 - 즉 장중 자동 경로에서 `sync_source`만 실행되고 `activate_runtime`은 건너뛰는 현재 계약이 실제로 동작했다.
 
+## 남은 실검증 — 장종료 activate 자연 경로
+
+2026-07-30 기준 남은 핵심 실검증은 `1`건이다.
+
+- 장중 override dispatch 경로: 확인 완료
+- 장중 sync-only 자동 경로: 확인 완료
+- 장종료 activate 자연 경로: 미확인
+
+장종료 activate 자연 경로는 다음 조건을 모두 만족하는 `push main` run `1`건으로 확인한다.
+
+1. KST 기준 평일 `15:30` 이후 또는 장 외 시간대
+2. `src/`, `admin_ui/`, `db/`, `docker-compose.yml`, `.github/workflows/` 같은 runtime-affecting 경로 변경 포함
+3. 수동 `workflow_dispatch` override 사용 없음
+
+기대 결과:
+
+- `Deployment change detector=success`
+- `Safe harness contracts=success`
+- `Market-hours deploy guard=success`
+- `Sync source after safe harness=success`
+- `Activate runtime after source sync=success`
+- run `conclusion=success`
+
+실패로 보는 조합:
+
+- 장 외 시간인데 `Activate runtime after source sync=skipped`
+- runtime-affecting 변경인데 `Sync source`만 실행되고 `activate_runtime`이 건너뛰어짐
+- `workflow_dispatch`가 아닌데 override 지표에 의존한 결과만 남음
+
+권장 최소 샘플 변경:
+
+- backend/runtime 영향이 분명하지만 동작 의미를 바꾸지 않는 문구·주석 수준 변경 `1`건
+- 예: `src/` 또는 `admin_ui/src/`의 설명 문자열/주석 보강
+
+권장 기록 항목:
+
+- run id
+- KST 실행 시각
+- `activate_required`
+- `deploy_sync_run_count`
+- `deploy_activate_run_count`
+- `deploy_market_hours_override_count`
+
 ## 권장 목표 상태
 
 장중 정책은 다음처럼 바꾸는 것을 권장한다.

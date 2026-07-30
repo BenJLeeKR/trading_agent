@@ -31,6 +31,7 @@ GitHub Actions도 사람과 AI가 쓰는 동일한 하네스를 사용한다. CI
 - 장중이라도 `activate_required=0`, `sync_only_allowlist_count>0`, `sync_only_blocked_count=0`이면 `sync_source`만 실행하고 `deploy_sync_only_run_count=1`, `deploy_activate_skipped_by_market_hours_count=1`을 출력한다.
 - 장중 수동 재배포는 `allow_market_hours_deploy=true`일 때만 허용하고 `deploy_market_hours_override_count=1`을 출력한다.
 - 장중 source sync와 activate 분리 설계 초안은 `docs/20_harness_engineering/deploy_sync_activation_contract.md`를 따른다.
+- 남은 실검증은 장 외 시간 `push main`에서 `activate_runtime=success`가 나오는 자연 경로 `1`건이며, 기대 조합은 `deploy_market_hours_override_count=0`, `Sync source after safe harness=success`, `Activate runtime after source sync=success`다.
 - 거래소 휴장일 캘린더는 아직 연동하지 않았으므로 1차 가드는 평일 시간대 기준이다.
 - 배포 재기동 뒤에는 `nginx-proxy`를 reload해 Docker DNS가 새 frontend 컨테이너 IP를 다시 해석하게 한다.
 - CI workflow 자체의 정합성 판정은 `accept ci`가 담당한다.
