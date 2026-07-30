@@ -10,8 +10,8 @@ from agent_trading.services.strategy_selection import StrategySelectionAssessmen
 
 _CORE_RISK_OFF_RANKING_MODE = "hard_block_v1"
 _CORE_RISK_OFF_SHADOW_MODE = "shadow_topk_exception_v2"
-_CORE_RISK_OFF_RANKING_MIN_SCORE = 0.48
-_CORE_RISK_OFF_SHADOW_MIN_SCORE = 0.22
+_CORE_RISK_OFF_RANKING_MIN_SCORE = 0.28
+_CORE_RISK_OFF_SHADOW_MIN_SCORE = 0.02
 _CORE_RISK_OFF_SHADOW_TOP_K_CAP = 2
 _CORE_RISK_OFF_SHADOW_ACTIVITY_MIN = 1.10
 _CORE_RISK_OFF_SHADOW_ENTRY_OBSERVE_MIN = 0.05
@@ -218,7 +218,6 @@ def assess_deterministic_triggers(
         )
         ranking_score = _build_buy_ranking_score(
             entry_score=entry_score,
-            coverage_score=coverage_score,
             market_regime=market_regime,
             portfolio_allocation=portfolio_allocation,
             strategy_selection=strategy_selection,
@@ -1093,7 +1092,6 @@ def _assess_exit_eligibility(
 def _build_buy_ranking_score(
     *,
     entry_score: float,
-    coverage_score: float,
     market_regime: MarketRegimeAssessment | None,
     portfolio_allocation: PortfolioAllocationAssessment | None,
     strategy_selection: StrategySelectionAssessment | None,
@@ -1101,6 +1099,15 @@ def _build_buy_ranking_score(
     # relative_activity는 entry_score 내부(relative_activity_bonus)에만 반영한다.
     # ranking_score 쪽 항은 SPPV-2.132에서 소프트 중복으로 확인돼 제거함
     # (docs/10_signal_research_sppv/[DESIGN] regime_conditional_entry_signal_v1.md §120/§121).
+    #
+    # coverage_score도 여기서 제거했다 — eligibility_low_feature_coverage
+    # 하드 게이트(coverage_score<0.50)를 통과한 population에서는 coverage_score가
+    # 예외 없이 1.0인 상수이므로(SPPV-2.137, 전체 이력 게이트 모집단 n=13,016
+    # 전수 확인), 이 항을 제거하고 _CORE_RISK_OFF_RANKING_MIN_SCORE/
+    # _CORE_RISK_OFF_SHADOW_MIN_SCORE를 동일한 0.20만큼(0.48→0.28, 0.22→0.02)
+    # 함께 낮추면 판정 경계가 수학적으로 그대로 보존된다 — 완화가 아니라
+    # 무변화 리팩터링이다(docs/10_signal_research_sppv/[DESIGN]
+    # regime_conditional_entry_signal_v1.md §125).
     regime_tailwind = 0.5
     if market_regime is not None:
         if market_regime.regime_label == "bullish_trend" and market_regime.risk_tone == "risk_on":
@@ -1123,7 +1130,6 @@ def _build_buy_ranking_score(
 
     score = (
         0.55 * entry_score
-        + 0.20 * coverage_score
         + 0.10 * allocation_quality
         + 0.03 * regime_tailwind
         + 0.02 * strategy_alignment

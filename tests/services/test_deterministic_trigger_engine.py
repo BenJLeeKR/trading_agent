@@ -136,7 +136,9 @@ def test_trigger_engine_builds_buy_candidate_for_bullish_core() -> None:
     assert result.coverage_score is not None
     assert result.coverage_score > 0.8
     assert result.ranking_score is not None
-    assert result.ranking_score > 0.8
+    # SPPV-2.138: ranking_score에서 coverage_score 항(0.20*1.0)을 제거해
+    # 최댓값이 0.20 낮아짐 — 절대 threshold 기대치만 하향 보정.
+    assert result.ranking_score > 0.6
     assert "eligibility_feature_coverage_ok" in result.eligibility_reasons
     assert result.candidate_mode == "relative_surge_v1_instrumented"
 
@@ -364,6 +366,55 @@ def test_trigger_engine_marks_risk_off_exception_eligible_for_strong_core_setup(
     assert "eligibility_risk_off_block" not in result.eligibility_reasons
 
 
+def test_trigger_engine_core_risk_off_ranking_boundary_shifts_by_coverage_score_weight() -> None:
+    """SPPV-2.138 A-3안 회귀 테스트.
+
+    `ranking_score`에서 `coverage_score` 항(가중치 0.20)을 제거하고
+    `_CORE_RISK_OFF_RANKING_MIN_SCORE`를 `0.48→0.28`로 동일하게 낮췄으므로,
+    `coverage_score=1.0`(하드 게이트를 통과한 population의 상시 값)인
+    대표 입력에서 실제 판정 경계는 정확히 0.20만큼만 이동하고 그 외에는
+    바뀌지 않아야 한다 — 이 값이 하나만 달라도(overall 0.33→0.34) 통과/
+    차단이 뒤집히는 좁은 경계를 확인해 "완화가 아니라 무변화 리팩터링"
+    임을 코드로 증명한다.
+    """
+    common_kwargs = dict(
+        source_type="core",
+        market_regime=_make_regime(regime_label="bearish_trend", risk_tone="risk_off"),
+        strategy_selection=_make_strategy(preferred_strategy="defensive_low_volatility_rotation"),
+        portfolio_allocation=_make_portfolio(max_new_capital_pct=2.5, current_weight_pct=0.0),
+        position_snapshot=None,
+    )
+
+    blocked = assess_deterministic_triggers(
+        signal_feature_snapshot=_make_signal(
+            overall="0.33",
+            fast="0.80",
+            slow="0.30",
+            volume_surge_ratio="1.20",
+            turnover_surge_ratio="1.20",
+        ),
+        **common_kwargs,
+    )
+    passed = assess_deterministic_triggers(
+        signal_feature_snapshot=_make_signal(
+            overall="0.34",
+            fast="0.80",
+            slow="0.30",
+            volume_surge_ratio="1.20",
+            turnover_surge_ratio="1.20",
+        ),
+        **common_kwargs,
+    )
+
+    assert blocked is not None and passed is not None
+    assert blocked.coverage_score == 1.0
+    assert passed.coverage_score == 1.0
+    assert blocked.ranking_score is not None and blocked.ranking_score < 0.28
+    assert passed.ranking_score is not None and passed.ranking_score >= 0.28
+    assert "eligibility_core_risk_off_ranking_blocked" in blocked.eligibility_reasons
+    assert "eligibility_core_risk_off_ranking_pass" in passed.eligibility_reasons
+
+
 def test_trigger_engine_keeps_risk_off_block_for_weak_core_setup() -> None:
     result = assess_deterministic_triggers(
         source_type="core",
@@ -486,16 +537,26 @@ def test_trigger_engine_marks_core_risk_off_shadow_topk_candidate() -> None:
 
 
 def test_trigger_engine_marks_core_risk_off_shadow_floor_moderate_relax() -> None:
+    # SPPV-2.138: ranking_score에서 coverage_score 항(0.20*1.0)이 빠지면서
+    # 이 함수 내부에 하드코딩된 관찰용 절대값 `ranking_score>=0.26`(범위 밖,
+    # 이번 턴 변경 대상 아님)의 유효 문턱이 사실상 높아졌다. 기존 fixture
+    # (overall=-0.22)는 v1/v3만 통과하고 v2는 실패하도록 정교하게 설계돼
+    # 있었으나, 그 정도로 낮은 overall에서는 새 ranking_score 상한(약 0.25)
+    # 으로 0.26을 넘길 수 없어(대수적으로 재확인) v1/v2/v3 분기 자체가
+    # 성립하지 않는다. fixture를 활동성 최대값으로 보정해 v1/v2/v3이 모두
+    # moderate_relax로 수렴하는 것으로 갱신한다 — 실제 BUY/eligibility
+    # 판정과는 무관한 순수 관찰용 메타데이터 변화다(docs/10_signal_
+    # research_sppv/[DESIGN] regime_conditional_entry_signal_v1.md §126).
     result = assess_deterministic_triggers(
         source_type="core",
         signal_feature_snapshot=_make_signal(
-            overall="-0.22",
-            fast="0.10",
+            overall="-0.05",
+            fast="1.00",
             slow="-0.20",
             average_volume_20d="250000",
             average_turnover_20d="12000000000",
             volume_surge_ratio="1.14",
-            turnover_surge_ratio="1.18",
+            turnover_surge_ratio="3.00",
         ),
         market_regime=_make_regime(
             regime_label="bearish_trend",
@@ -521,10 +582,10 @@ def test_trigger_engine_marks_core_risk_off_shadow_floor_moderate_relax() -> Non
     )
     assert experiment["shadow_floor_relax_entry_min"] == 0.12
     assert experiment["shadow_floor_relax_ranking_min"] == 0.26
-    assert experiment["shadow_floor_relax_v2_bucket"] == "deep_negative"
-    assert experiment["shadow_floor_relax_v2_pass"] is False
+    assert experiment["shadow_floor_relax_v2_bucket"] == "moderate_relax"
+    assert experiment["shadow_floor_relax_v2_pass"] is True
     assert experiment["shadow_floor_relax_v2_reason_codes"] == (
-        "shadow_core_risk_off_floor_v2_deep_negative",
+        "shadow_core_risk_off_floor_v2_moderate_relax_pass",
     )
     assert experiment["shadow_floor_relax_v3_bucket"] == "moderate_relax"
     assert experiment["shadow_floor_relax_v3_pass"] is True
@@ -791,16 +852,25 @@ def test_trigger_engine_keeps_event_overlay_on_regime_pass_path_under_risk_off()
 
 
 def test_trigger_engine_instruments_event_overlay_shadow_lane_metadata() -> None:
+    # SPPV-2.138: ranking_score에서 coverage_score 항(0.20*1.0)이 빠지면서
+    # 이 경로 전용 관찰용 절대값 `_EVENT_OVERLAY_SHADOW_MIN_SCORE=0.56`
+    # (범위 밖, 이번 턴 변경 대상 아님)의 유효 문턱이 사실상 높아졌다.
+    # 기존 fixture는 새 ranking_score로 shadow_would_pass 기준을 넘지
+    # 못해, 신호 강도(overall/fast/slow)만 최소한으로 상향해 기존 검증
+    # 의도(shadow lane 메타데이터가 정상적으로 채워지는지)를 유지한다 —
+    # 실제 BUY/eligibility 판정과는 무관한 순수 관찰용 메타데이터 변화다
+    # (docs/10_signal_research_sppv/[DESIGN] regime_conditional_entry_
+    # signal_v1.md §126).
     result = assess_deterministic_triggers(
         source_type="event_overlay",
         signal_feature_snapshot=_make_signal(
-            overall="0.30",
-            fast="0.58",
-            slow="0.08",
+            overall="0.70",
+            fast="0.90",
+            slow="0.50",
             average_volume_20d="220000",
             average_turnover_20d="9500000000",
             volume_surge_ratio="1.42",
-            turnover_surge_ratio="1.55",
+            turnover_surge_ratio="3.00",
         ),
         market_regime=_make_regime(
             regime_label="event_driven_unstable",

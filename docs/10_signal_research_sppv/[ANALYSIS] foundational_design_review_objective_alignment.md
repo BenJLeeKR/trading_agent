@@ -2897,3 +2897,36 @@ conditional_entry_signal_v1.md` §124.
 그에 따른 무변화 증명, 다른 장치와의 정합성 확인이다. 상세: `docs/
 10_signal_research_sppv/[DESIGN] regime_conditional_entry_signal_
 v1.md` §125.
+
+## 24. `coverage_score` A-3안 실제 diff 적용 + 최소 검증(SPPV-2.138, 2026-07-30 KST)
+
+§23에서 1순위로 확정된 A-3안을 실제 코드에 반영했다(`.env` 미수정,
+Full pytest/외부 API 호출 금지 — 코드 변경 포함, 완화가 아니라
+무변화 리팩터링).
+
+- **코드 변경**: `deterministic_trigger_engine.py`에서 `_CORE_RISK_
+  OFF_RANKING_MIN_SCORE=0.48→0.28`, `_CORE_RISK_OFF_SHADOW_MIN_
+  SCORE=0.22→0.02`, `_build_buy_ranking_score`의 `0.20*coverage_
+  score` 항 제거. `eligibility_low_feature_coverage` 하드 게이트와
+  `coverage_score` 필드는 유지, exit ranking은 범위 밖.
+- **스코프 충돌 발견**: 코드 반영 후 테스트 3건이 실패했다. 원인은
+  관찰용 shadow 메타데이터 내부에 이번 턴 이동 대상이 아니었던
+  하드코딩 절대값 2곳(`ranking_score>=0.26`, `_EVENT_OVERLAY_
+  SHADOW_MIN_SCORE=0.56`, 둘 다 실제 BUY 판정과 무관)이 낡은
+  스케일에 맞춰져 있었기 때문이다. 사용자에게 직접 확인한 결과
+  "이번 턴 범위 유지"로 결정 — 영향받은 테스트 3건은 fixture/
+  기대값만 최소 보정했다.
+- **최소 검증**: 관련 단위 테스트 21+105건 + 하네스 `accept
+  backend-file` 모두 통과.
+- **무변화 증명**: 신규 전용 회귀 테스트로 `coverage_score=1.0`
+  대표 입력에서 `overall=0.33`(차단)/`0.34`(통과) 경계가 구
+  threshold 대비 정확히 `0.20`만큼 이동했음을 코드로 증명했다.
+  기존 `0.48`/`0.22` 경계 테스트도 수정 없이 통과 — 실제 BUY
+  판정 경로는 완전히 무변화다.
+
+**결론**: `coverage_score`+threshold 재설계는 설계 비교→실제 적용까지
+완료됐다. 부수적으로 발견된 관찰용 shadow 메타데이터의 낡은 스케일
+문제(0.26/0.56)는 실제 판정에 영향이 없어 별도 후속 트랙으로 이월한다.
+다음 단계는 diff 적용 이후 운영 실측으로 무변화를 재확인하는 것이다.
+상세: `docs/10_signal_research_sppv/[DESIGN] regime_conditional_
+entry_signal_v1.md` §126.

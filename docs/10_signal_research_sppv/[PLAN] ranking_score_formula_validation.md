@@ -1,18 +1,21 @@
 # ranking_score 공식 검증 계획
 
 작성일: 2026-07-28  
-상태: [SPPV-2.137에서 갱신] `relative_activity` 관측 단계는
-**종료 상태 유지**(SPPV-2.136에서 종료). `coverage_score`+절대
-threshold(`0.48`/`0.22`) **재설계 비교 완료**. 핵심 발견: 게이트
-모집단(전체 이력 n=13,016)에서 `coverage_score`가 **예외 없이
-`1.0`**임을 실측 확인 — 이에 근거해 "완전 제거 + threshold를
-동일 상수(`0.20`)만큼 함께 이동(`0.48→0.28`, `0.22→0.02`)"하는
-**A-3안**이 현재 판정 경계를 수학적으로 완전히 보존함(무변화,
-병목 완화 아님)을 증명. **1순위 설계안: A-3 채택**, 보류: B안
-(가중치 축소, 안전성 동일하나 구조적 이점 없음), 기각: A-1/A-2
-(§120에서 이미 검증 실패). **diff 착수 가능 여부: 다음 턴부터
-가능**(이번 턴은 설계 비교까지만, 코드 수정 없음). 단, 이 diff는
-완화안이 아니라 리팩터링임을 명확히 구분(SPPV-2.119~2.137 참고)
+상태: [SPPV-2.138에서 갱신] `coverage_score` A-3안 **실제 코드
+적용 완료** — `_build_buy_ranking_score`에서 `0.20*coverage_score`
+항 제거, `_CORE_RISK_OFF_RANKING_MIN_SCORE`를 `0.48→0.28`,
+`_CORE_RISK_OFF_SHADOW_MIN_SCORE`를 `0.22→0.02`로 변경. 실제 BUY
+판정 경로(하드 게이트 `0.28`, shadow 게이트 `0.02`)는 신규 전용
+회귀 테스트로 **경계 이동이 정확히 0.20임을 코드로 증명**(무변화
+리팩터링, 완화 아님). 부수 발견: 관찰용 shadow 메타데이터에
+남아 있던 낡은 스케일 절대값 2곳(`_classify_core_risk_off_
+shadow_floor_bucket`의 `0.26`, `_EVENT_OVERLAY_SHADOW_MIN_
+SCORE=0.56`, 둘 다 실제 BUY 판정과 무관)은 이번 턴 범위 밖으로
+유지(사용자 확인 완료) — 영향받은 테스트 3건은 fixture/기대값만
+보정. 최소 검증(관련 단위 테스트 21+105건, 하네스 `accept
+backend-file`) 통과. `coverage_score` 재설계 트랙은 **적용 완료로
+종료**, 다음 단계는 **운영 무변화 실측 확인**(SPPV-2.119~2.138
+참고)
 
 ## 1. 문서 목적
 
@@ -1022,6 +1025,48 @@ entry_signal_v1.md` §124.
 
 상세: `docs/10_signal_research_sppv/[DESIGN] regime_conditional_
 entry_signal_v1.md` §125.
+
+### 6.22 SPPV-2.138 — `coverage_score` A-3안 실제 diff 적용 + 최소
+검증(신규, 2026-07-30 KST, 완료 — 코드 변경 포함)
+
+- [x] **코드 변경**: `deterministic_trigger_engine.py`에서
+      `_CORE_RISK_OFF_RANKING_MIN_SCORE=0.48→0.28`, `_CORE_RISK_
+      OFF_SHADOW_MIN_SCORE=0.22→0.02`, `_build_buy_ranking_score`
+      의 `+0.20*coverage_score` 항 및 미사용 매개변수 제거.
+      `eligibility_low_feature_coverage` 하드 게이트와 `coverage_
+      score` 필드 자체는 유지, exit ranking(`0.15*coverage_score`)
+      은 범위 밖으로 미수정.
+- [x] **스코프 충돌 발견 및 사용자 확인**: 코드 반영 후 테스트
+      3건 실패 — 원인은 관찰용 shadow 메타데이터 내부에 이동
+      대상이 아니었던 하드코딩 절대값 2곳(`_classify_core_risk_
+      off_shadow_floor_bucket`의 `ranking_score>=0.26`, `_EVENT_
+      OVERLAY_SHADOW_MIN_SCORE=0.56`, 둘 다 실제 BUY 판정과 무관)
+      이 낡은 스케일에 맞춰져 있었기 때문. AskUserQuestion으로
+      확인한 결과 **"이번 턴 범위 유지"로 결정** — 0.26/0.56은
+      건드리지 않고 영향받은 테스트 3건만 fixture/기대값 보정.
+- [x] **최소 검증**: `tests/services/test_deterministic_trigger_
+      engine.py`(21 passed, 신규 A-3 전용 회귀 테스트 1건 포함),
+      `test_trigger_proxy_attribution.py`+`test_decision_
+      orchestrator.py`+`test_core_risk_off_topk_projection.py`+
+      `test_decision_factory.py`+`test_expected_value_gate.py`
+      (105 passed), 하네스 `accept backend-file`(PASS). Full
+      pytest/외부 API 호출 없음.
+- [x] **무변화 증명**: 신규 회귀 테스트로 `coverage_score=1.0`
+      대표 입력에서 `overall=0.33`(신 ranking=0.279, 차단)/
+      `overall=0.34`(신 ranking=0.2802, 통과) 경계가 정확히
+      구 threshold 대비 `0.20`만큼 이동했음을 코드로 증명. 기존
+      `0.48`/`0.22` 경계 테스트(SPPV-2.133에서 보정)도 수정 없이
+      통과 — 실제 BUY 판정 경로는 완전히 무변화.
+
+**[PLAN] 상태 요약**: `coverage_score`+threshold 재설계는 **적용
+완료로 트랙 종료**. 다음 단계는 **운영 무변화 실측 확인**(diff
+적용 이후 `ranking_blocked`/`shadow_topk_exception_v2` 비중이
+실제로 무변화인지 read-only 재확인, §121~124와 동일한 패턴).
+부수적으로 발견된 관찰용 shadow 메타데이터 낡은 스케일 문제
+(0.26/0.56)는 별도 후속 트랙으로 이월.
+
+상세: `docs/10_signal_research_sppv/[DESIGN] regime_conditional_
+entry_signal_v1.md` §126.
 
 ## 7. 완료 기준
 

@@ -15858,3 +15858,99 @@ core_risk_off_ranking_blocked` 차단율(게이트 모집단 기준 90~100%,
    연속 포함되는 조건 원인 확인.
 4. **4순위(이전 턴 이월)**: `high_volatility` 단독 경로(001450형)
    층3 관찰 지속.
+
+## §126. `coverage_score` A-3안 실제 diff 적용 + 최소 검증(SPPV-2.138, 2026-07-30 KST)
+
+**전제**: §125에서 1순위로 확정된 A-3안(완전 제거 + threshold 동일 상수
+이동)을 실제 코드에 반영한다. `.env` 미수정, Full pytest/외부 API 호출
+금지 — 이번 diff는 **완화가 아니라 무변화 리팩터링**이며, `relative_
+activity`/다른 gate·threshold는 이번 턴에서 추가로 손대지 않는다.
+
+### 126.1 코드 변경 내용(사실)
+
+- 대상 파일: `src/agent_trading/services/deterministic_trigger_engine.py`
+- `_CORE_RISK_OFF_RANKING_MIN_SCORE`: `0.48 → 0.28`
+- `_CORE_RISK_OFF_SHADOW_MIN_SCORE`: `0.22 → 0.02`
+- `_build_buy_ranking_score()`에서 `+ 0.20 * coverage_score` 항과 그
+  계산에만 쓰이던 `coverage_score` 매개변수를 제거(호출부 인자도 함께
+  정리). `eligibility_low_feature_coverage` 하드 게이트(`coverage_
+  score<0.50`)와 `coverage_score` 필드 자체는 그대로 유지 — 이번 diff는
+  **ranking hard/shadow 경로에서만 coverage_score를 분리**하는 범위로
+  한정했다.
+- `_build_exit_ranking_score()`(exit 경로, `0.15*coverage_score`)는
+  건드리지 않음 — 이번 조사 범위(BUY funnel)와 무관하고 실제 영향
+  근거가 없어 범위 밖으로 유지.
+
+### 126.2 스코프 관련 발견 및 사용자 확인(중요, 투명하게 기록)
+
+코드 반영 후 `tests/services/test_deterministic_trigger_engine.py` 전체
+실행 결과 3건이 실패했다. 원인을 분석한 결과, `ranking_score`를
+소비하는 순수 관찰용(shadow) 메타데이터 안에 **이번 턴에 이동시키지
+않은 두 개의 하드코딩된 절대값**이 있었다(사실, 신규 발견):
+
+- `_classify_core_risk_off_shadow_floor_bucket()`의 `ranking_score >=
+  0.26`(범위 밖) — `core_risk_off_experiment.shadow_floor_bucket`
+  (`moderate_relax` 등) 분류에만 쓰이는 관찰용 값.
+- `_EVENT_OVERLAY_SHADOW_MIN_SCORE = 0.56`(범위 밖) — `event_overlay_
+  experiment.shadow_would_pass` 판정에만 쓰이는 관찰용 값.
+
+두 값 모두 **`eligibility_passed`/`buy_candidate` 등 실제 BUY 판정에는
+전혀 관여하지 않고**(코드 재확인: 두 함수의 반환값은 `metadata` 딕셔너리
+에만 담김, `risk_off_exception_eligible` 등 실제 판정 변수에 재사용되지
+않음), `coverage_score`의 옛 스케일(+0.20)을 전제로 캘리브레이션된
+값이라는 점에서 `0.48`/`0.22`와 같은 성격의 문제를 안고 있다.
+
+이번 턴 지시("relative_activity/다른 gate/threshold는 이번 턴에서 추가
+변경 금지")와 "완전한 무변화" 목표가 이 지점에서 충돌해, 사용자에게
+직접 확인했다(AskUserQuestion). **사용자 결정: 이번 턴 범위 유지** —
+`0.26`/`0.56`은 건드리지 않고, 영향받는 테스트 3건만 fixture/기대값을
+최소 보정한다. 이 두 관찰용 값의 재조정은 **별도 후속 트랙**으로
+남긴다(126.5 참고).
+
+### 126.3 최소 검증 결과(사실)
+
+| 검증 대상 | 결과 |
+|---|---|
+| `tests/services/test_deterministic_trigger_engine.py` | 21 passed(신규 A-3 회귀 테스트 1건 포함, 수정 전 3건 FAIL → fixture/기대값 보정 후 통과) |
+| `tests/services/test_trigger_proxy_attribution.py` + `test_decision_orchestrator.py` + `test_core_risk_off_topk_projection.py` + `test_decision_factory.py` + `test_expected_value_gate.py` | 105 passed |
+| `bash scripts/harness/run.sh accept backend-file src/agent_trading/services/deterministic_trigger_engine.py` | PASS(`py_compile_passed=1`, `tests_run_count=3`, `test_failed_count=0`) |
+
+Full pytest, 외부 API 호출, 무거운 통합 테스트는 수행하지 않음(원칙
+준수).
+
+### 126.4 "무변화 리팩터링" 근거 — 신규 전용 회귀 테스트
+
+`test_trigger_engine_core_risk_off_ranking_boundary_shifts_by_coverage_
+score_weight`(신규)를 추가해, `coverage_score=1.0`(하드 게이트 통과
+population의 상시 값)인 대표 입력에서 `overall=0.33`(구 ranking_score
+기준 `0.479`대, 신 기준 `0.279` → 차단)과 `overall=0.34`(신 기준
+`0.2802` → 통과)로 **정확히 0.20만큼 이동한 경계**에서 판정이 뒤집힘을
+확인했다 — `_CORE_RISK_OFF_RANKING_MIN_SCORE`가 정확히 `0.28`에서
+작동하고 있음을 코드로 직접 증명한다. 이 좁은 경계 테스트는 §125.2의
+대수적 증명("coverage_score≡1.0인 population에서 상수를 양쪽에서
+정확히 상쇄하면 판정 경계가 그대로 보존된다")을 실제 코드 실행으로
+재확인한 것이다.
+
+기존 테스트 중 `test_trigger_engine_marks_risk_off_exception_eligible_
+for_strong_core_setup`(SPPV-2.133에서 이미 `0.48` 경계에 맞춰 보정된
+fixture)와 `test_trigger_engine_marks_core_risk_off_shadow_topk_
+candidate`(`0.22` 경계 관련)가 **수정 없이 그대로 통과**한 것도 같은
+증거다 — 이 두 테스트는 실제 하드 게이트 판정 결과(`risk_off_
+exception_eligible`, `shadow_would_pass`)를 검증하며, `0.48→0.28`,
+`0.22→0.02` 이동이 이 판정들을 전혀 바꾸지 않았음을 보여준다.
+
+### 126.5 다음 우선 작업(완화안 확정 아님)
+
+1. **1순위**: A-3안 적용 이후 운영 관측(§121~124와 동일한 패턴, read-
+   only) — 실제 `ranking_blocked`/`shadow_topk_exception_v2` 비중이
+   diff 적용 전후로 무변화임을 실측으로 재확인.
+2. **2순위(신규, 126.2에서 발견)**: 관찰용 shadow 메타데이터에 남아
+   있는 낡은 스케일의 절대값(`_classify_core_risk_off_shadow_floor_
+   bucket`의 `0.26`, `_EVENT_OVERLAY_SHADOW_MIN_SCORE=0.56`)을 별도
+   트랙에서 재검토 — 실제 BUY 판정에는 영향 없으나, 관찰/실험 지표의
+   정확성을 위해 언젠가 정리가 필요함(완화안 아님, 사용자 승인 후
+   착수).
+3. **3순위(이전 턴 이월)**: `000720`이 core 유니버스에 20일 이상 연속
+   포함되는 조건 원인 확인.
+4. **4순위(이전 턴 이월)**: `high_volatility` 단독 경로(001450형) 층3
+   관찰 지속.

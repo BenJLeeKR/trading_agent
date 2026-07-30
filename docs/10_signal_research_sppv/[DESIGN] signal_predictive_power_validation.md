@@ -2758,6 +2758,29 @@ entry 설계 검토로 전환**을 확정했다. 별도 문서
   `docs/10_signal_research_sppv/[DESIGN] regime_conditional_
   entry_signal_v1.md` §125.
 
+- 작성자: Codex
+- 수정일자: 2026-07-30 KST (138차, `coverage_score` A-3안 실제
+  diff 적용 + 최소 검증, `.env` 미수정, Full pytest 미실행, 신규
+  KIS 호출 0건 — 코드 변경 포함)
+- 수정내용: `deterministic_trigger_engine.py`에서 `_CORE_RISK_
+  OFF_RANKING_MIN_SCORE=0.48→0.28`, `_CORE_RISK_OFF_SHADOW_MIN_
+  SCORE=0.22→0.02`로 변경, `_build_buy_ranking_score`에서 `0.20*
+  coverage_score` 항과 미사용 매개변수 제거. `eligibility_low_
+  feature_coverage` 하드 게이트/`coverage_score` 필드는 유지, exit
+  ranking은 범위 밖. 코드 반영 후 관찰용 shadow 메타데이터 내부의
+  하드코딩 절대값 2곳(`_classify_core_risk_off_shadow_floor_
+  bucket`의 `ranking_score>=0.26`, `_EVENT_OVERLAY_SHADOW_MIN_
+  SCORE=0.56`, 실제 BUY 판정과 무관)이 낡은 스케일에 남아 테스트
+  3건이 실패 — AskUserQuestion으로 확인해 "이번 턴 범위 유지"로
+  결정, fixture/기대값만 최소 보정(0.26/0.56은 별도 후속 트랙).
+  최소 검증: `test_deterministic_trigger_engine.py`(21 passed,
+  신규 A-3 전용 회귀 테스트 포함), 관련 5개 파일(105 passed),
+  하네스 `accept backend-file`(PASS). 신규 회귀 테스트로 `overall=
+  0.33`(차단)/`0.34`(통과) 경계가 구 threshold 대비 정확히 `0.20`
+  만큼 이동했음을 증명 — 실제 BUY 판정 경로는 완전히 무변화(완화
+  아니라 리팩터링). 상세: `docs/10_signal_research_sppv/[DESIGN]
+  regime_conditional_entry_signal_v1.md` §126.
+
 ---
 
 ## 진행 체크리스트
@@ -5805,6 +5828,21 @@ canonical),
     로직 변경 없음, 신규 KIS 호출 0건(shadow 재호출은 `kis_
     client=None`). 상세: `docs/10_signal_research_sppv/[DESIGN]
     regime_conditional_entry_signal_v1.md` §94.
+- [x] **SPPV-2.138(신설, 완료 — 코드 변경 포함)** `coverage_
+  score` A-3안 실제 diff 적용 + 최소 검증 (2026-07-30 KST, 작성자:
+  Codex, `.env` 미수정, Full pytest 미실행, 신규 KIS 호출 0건)
+  - `deterministic_trigger_engine.py`에서 `_CORE_RISK_OFF_
+    RANKING_MIN_SCORE=0.48→0.28`, `_CORE_RISK_OFF_SHADOW_MIN_
+    SCORE=0.22→0.02`, `_build_buy_ranking_score`의 `0.20*
+    coverage_score` 항 제거. 관찰용 shadow 메타데이터 내부의
+    범위 밖 절대값 2곳(`0.26`, `_EVENT_OVERLAY_SHADOW_MIN_
+    SCORE=0.56`, 실제 BUY 판정과 무관)이 낡은 스케일에 남아
+    테스트 3건이 실패 — 사용자 확인(AskUserQuestion) 결과 "이번
+    턴 범위 유지"로 결정, fixture/기대값만 최소 보정. 관련 테스트
+    21+105건 + 하네스 `accept backend-file` 통과. 신규 A-3 전용
+    회귀 테스트로 경계가 정확히 0.20만큼 이동함을 코드로 증명
+    (무변화 리팩터링, 완화 아님). 상세: `docs/10_signal_research_
+    sppv/[DESIGN] regime_conditional_entry_signal_v1.md` §126.
 - [x] **SPPV-2.137(신설, 완료)** `coverage_score`+절대 threshold
   (`0.48`/`0.22`) 재설계 비교 (2026-07-30 KST, 작성자: Codex,
   코드 미수정, `.env` 미수정, Full pytest 미실행, 신규 KIS 호출
