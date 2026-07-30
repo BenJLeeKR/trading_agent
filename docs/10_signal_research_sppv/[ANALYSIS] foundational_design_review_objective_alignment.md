@@ -3207,3 +3207,42 @@ v1.md` §134.
 (현재는 `core` 게이트 모집단에서 `strategy_alignment`가 0건이라는 사실에
 근거한 **추론 단계**)과 운영 반영·효과 확정이다. 상세: `docs/10_signal_
 research_sppv/[DESIGN] regime_conditional_entry_signal_v1.md` §135.
+
+## 34. `strategy_alignment` 직접항 제거의 threshold 영향 정량 검증(SPPV-2.148, 2026-07-30 KST)
+
+§33에서 **추론 단계로 남겨둔** "게이트 판정 무변화"를 shadow 재계산으로
+정량 확인했다(코드 미수정, Postgres read-only + 코드 read-only, 신규 KIS
+호출 0건). 이번 턴은 **threshold 영향 정량 검증**이며 **운영 효과 확정이
+아니다**. `regime_tailwind`는 **별도 트랙**을 유지한다.
+
+- **게이트 모집단 완전 무변화(사실)**: `core_risk_off_guard_active=true`
+  모집단에 `strategy_alignment=1.0`이 **최근 3거래일 0/2,401, 전체 이력
+  0/11,785**로 한 건도 없다 → `ranking_score` 평균·중앙값이 완전히
+  동일하고 `0.28`(`ranking_blocked`)·`0.02`(`shadow_topk_candidate`)·
+  `0.26`(`shadow_floor` moderate 조건) 판정 뒤집힘이 **두 창 모두 0건**
+  이다. "사실상 무변화"가 아니라 **입력값 자체가 변하지 않는다**.
+- **일반 BUY 경로(사실)**: `sa=1.0`이 7.58%/7.33% 있어 평균만 미세
+  하락(0.325032→0.323566)하지만 중앙값과 3개 threshold 판정은 불변이고
+  경계 뒤집힘도 0건이다. `_assess_buy_eligibility`에서 `ranking_score`가
+  판정에 관여하는 지점은 `risk_off+bearish_trend` 분기 안의
+  `source_type=="core"` 경로뿐이므로(코드 확인) 이 평균 하락은 실제 BUY
+  판정과 무관하다.
+- **뒤집힘 0건의 원인(사실, 전수 확인)**: `sa=1.0` 2,760건은
+  `event_overlay`(2,718)+`market_overlay`(42)에만 존재하고 `core`에는
+  0건이며 게이트 활성 레코드는 전부 `False`다. `ranking_score`가
+  min 0.2500/median 0.5075/max 0.8414로 threshold에서 멀고, 제거폭
+  `0.02` 내 뒤집힘 밴드에 각 0건이다.
+- **`core`와 `event_overlay`를 섞지 않는다**: 이 항은 `event_overlay`
+  에서만 의미가 있고 `core` 게이트에는 영향이 전혀 없다.
+- **범위 밖 관찰 지표 영향(정직 기록)**: `event_overlay`의
+  `adjusted_ranking_score >= 0.56` 통과 수는 전체 이력 1,222→1,100으로
+  **122건 이동**하고 최근 3거래일은 0건이다 — "최근 창 무변화 vs 전체
+  이력 경계 이동"의 비대칭은 **이 관찰용 지표에서만** 존재한다. 다만
+  실제 저장된 `shadow_would_pass=True` 60건 중 뒤집히는 건은 **0건**
+  이다.
+
+**결론**: 실제 BUY 판정 경로(게이트·`0.28`/`0.02`/`0.26`)는 전 구간
+무변화이고 관찰 지표의 최종 산출값도 불변이므로, **운영 실측 전 추가
+코드 수정은 필요하지 않다** — 내일 장 시작 후 D안 관측과 함께 그대로
+확인하면 된다. 상세: `docs/10_signal_research_sppv/[DESIGN] regime_
+conditional_entry_signal_v1.md` §136.

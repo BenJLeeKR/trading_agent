@@ -1,7 +1,20 @@
 # ranking_score 공식 검증 계획
 
 작성일: 2026-07-28  
-상태: [SPPV-2.147에서 갱신] `strategy_alignment` **`ranking_score`
+상태: [SPPV-2.148에서 갱신] `strategy_alignment` 직접항 제거의
+**threshold 영향 정량 검증 완료**(§6.26) — 게이트 모집단에
+`strategy_alignment=1.0`이 **0건**(최근 3거래일 n=2,401, 전체 이력
+n=11,785)이라 `ranking_score`가 한 건도 변하지 않고 `0.28`/`0.02`/
+`0.26` 판정 뒤집힘이 **두 창 모두 0건**. 일반 BUY 경로도 평균만 미세
+하락하고 판정 불변이며, `ranking_score`는 비-core 경로에서 판정에
+쓰이지 않음을 코드로 확인. 유일한 영향은 **관찰용 `0.56` 지표**에서
+전체 이력 122건 이동(최근 3거래일 0건)이나, 실제 `shadow_would_pass=
+True` 60건 중 뒤집힘은 0건. **판정: 추가 코드 수정 불필요, 내일 장
+시작 후 그대로 관찰 가능**. 이번 턴은 **threshold 영향 정량 검증**이며
+운영 효과 확정이 아니다. `regime_tailwind`는 **별도 트랙 유지**.
+상세: `[DESIGN] regime_conditional_entry_signal_v1.md` §136.
+
+[SPPV-2.147] `strategy_alignment` **`ranking_score`
 직접항(`0.02`) 제거 diff 초안 작성 완료**(§6.25) — `entry_score`
 쪽 `+0.05`는 유지, `regime_tailwind`는 범위 밖. "죽은 항 제거"가
 아니라 **`event_overlay`에서는 살아 있으나 ranking에서의 직접 중복
@@ -1213,9 +1226,11 @@ entry_signal_v1.md` §134.
       `ranking_score` 차이가 정확히 `0.55×0.05`임을 확인 +
       `entry_score` 쪽 reason code 유지 확인, (2) 기본 BUY 판정 경로
       무결성 확인.
-- [ ] **threshold 영향 정량 확인** — 미완료. "게이트 판정 무변화"는
-      `core` 게이트 모집단에서 `strategy_alignment`가 0건이라는
-      사실에 근거한 **추론**이며 shadow 재계산으로 확인하지 않았다.
+- [x] **threshold 영향 정량 확인** — **[SPPV-2.148에서 해소]**
+      shadow 재계산으로 확인 완료: 게이트 모집단에
+      `strategy_alignment=1.0`이 0건이라 `ranking_score` 무변화,
+      `0.28`/`0.02`/`0.26` 판정 뒤집힘 최근 3거래일·전체 이력 모두
+      0건. 상세: §6.26 / `[DESIGN]` §136.
 - [ ] **운영 반영·효과 확정** — 미완료(별도 관측 턴).
 - [x] **범위 밖 명시**: `regime_tailwind`는 이번 턴 대상이 아니다
       (§134.6 판정은 제거 권고이나 선행 확인 1건 잔존).
@@ -1228,6 +1243,49 @@ diff 작성 완료, `regime_tailwind` = 판정 완료·diff 미착수) 중 3개�
 
 상세: `docs/10_signal_research_sppv/[DESIGN] regime_conditional_
 entry_signal_v1.md` §135.
+
+### 6.26 SPPV-2.148 — `strategy_alignment` 직접항 제거 threshold 영향
+정량 검증(신규, 2026-07-30 KST, 완료 — 코드 미수정, 운영 효과 미확정)
+
+- [x] **shadow 재계산 방법**: 저장된 `ranking_score`에
+      `new = old - 0.02×strategy_alignment`를 적용하고 threshold는
+      **현행 값으로 양쪽 동일 적용**해 항 제거 효과만 분리.
+- [x] **게이트 모집단 완전 무변화 확인**: `core_risk_off_experiment.
+      active=true` 모집단에 `strategy_alignment=1.0`이 **최근 3거래일
+      0/2,401, 전체 이력 0/11,785** → `ranking_score` 평균·중앙값
+      완전 동일, `ranking_blocked`(59.81%/76.32%)·`shadow_topk_
+      candidate`(100%)·`shadow_floor` moderate 조건(42.27%/39.93%)
+      **모두 불변, 경계 뒤집힘 0건**.
+- [x] **일반 BUY 경로**: `sa=1.0` 7.58%/7.33% 존재로 평균만 미세 하락
+      (0.306660→0.305144 / 0.325032→0.323566), **중앙값·3개 threshold
+      판정은 모두 불변, 경계 뒤집힘 0건**.
+- [x] **뒤집힘 0건의 원인 전수 확인**: `sa=1.0` 2,760건은
+      `event_overlay`(2,718)+`market_overlay`(42)에만 존재하고 `core`
+      **0건**, 게이트 활성 레코드 **전부 False**. `ranking_score`
+      min 0.2500/median 0.5075/max 0.8414로 threshold에서 멀고,
+      제거폭 `0.02` 내 뒤집힘 밴드(`[0.28,0.30)`/`[0.26,0.28)`/
+      `[0.02,0.04)`)에 **각 0건**.
+- [x] **코드 경로 확인**: `_assess_buy_eligibility`에서 `ranking_score`
+      가 판정에 관여하는 지점은 `risk_off+bearish_trend` 분기 안의
+      `source_type=="core"` 경로뿐(`:474-486`) → 일반 경로 평균 하락은
+      실제 BUY 판정에 무의미.
+- [x] **범위 밖 관찰 지표 영향(정직 기록)**: `event_overlay`의
+      `adjusted_ranking_score >= 0.56` 통과 수가 전체 이력 1,222→1,100
+      (**122건 이동**), 최근 3거래일은 0건 — "최근 창 무변화 vs 전체
+      이력 이동"의 비대칭이 **여기서만** 존재한다. 단 실제 저장된
+      `shadow_would_pass=True` 60건 중 뒤집힘은 **0건**.
+- [x] **판정**: **추가 코드 수정 불필요** — 내일 장 시작 후 그대로
+      관찰 가능.
+- [ ] **운영 반영·효과 확정** — 미완료(내일 장 시작 후 관측 턴).
+
+**[PLAN] 상태 요약**: `strategy_alignment` 직접항 제거는 설계 판정 →
+diff 작성 → **threshold 영향 정량 검증**까지 완료됐고, 남은 것은 운영
+실측뿐이다. `regime_tailwind`는 **별도 트랙**으로 판정(제거 권고)만
+완료돼 있고 선행 확인 1건이 남아 있다. `core`와 `event_overlay`는
+분포·영향이 전혀 달라 **섞어 일반화하지 않는다.**
+
+상세: `docs/10_signal_research_sppv/[DESIGN] regime_conditional_
+entry_signal_v1.md` §136.
 
 ## 7. 완료 기준
 
