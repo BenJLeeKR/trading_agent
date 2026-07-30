@@ -1650,6 +1650,24 @@ class InMemorySignalFeatureSnapshotRepository:
         results.sort(key=lambda item: item.snapshot_at, reverse=True)
         return tuple(results[:limit])
 
+    async def list_latest_by_instrument_ids(
+        self,
+        instrument_ids: Sequence[UUID],
+        timeframe: str = "1d",
+    ) -> Sequence[SignalFeatureSnapshotEntity]:
+        """instrument_id별 최신 snapshot 1건씩(SPPV-2.144 §132.2)."""
+        wanted = set(instrument_ids)
+        if not wanted:
+            return ()
+        latest: dict[UUID, SignalFeatureSnapshotEntity] = {}
+        for item in self._items.values():
+            if item.instrument_id not in wanted or item.timeframe != timeframe:
+                continue
+            current = latest.get(item.instrument_id)
+            if current is None or item.snapshot_at > current.snapshot_at:
+                latest[item.instrument_id] = item
+        return tuple(latest.values())
+
 
 class InMemoryUniverseFreezeRunRepository:
     """In-memory implementation of ``UniverseFreezeRunRepository``."""

@@ -3102,3 +3102,41 @@ D안 diff 초안 작성이며, 착수 시 §131.1(사전순 편향은 제거가 
 79/80위 경계 이동)과 §131.4(`entry_score>=0.65` 0건 — 신호 품질 개선이지
 주문 발생 완화 아님) 제약을 전제에 명시해야 한다. 상세: `docs/10_signal_
 research_sppv/[DESIGN] regime_conditional_entry_signal_v1.md` §132.
+
+## 31. D안 diff 초안 실제 작성(SPPV-2.145, 2026-07-30 KST)
+
+§30에서 "diff 초안 착수 가능"으로 판정된 D안을 SPPV-2.144에서 닫힌 최소
+범위로 구현했다(`.env` 미수정, Full pytest 미실행, 신규 KIS 호출 0건 —
+코드 변경 포함).
+
+- **수정 범위**: §132.2 계획과 동일한 **6개 파일**. `contracts.py`/
+  `postgres/signal_feature_snapshots.py`/`memory.py`에 bulk
+  `list_latest_by_instrument_ids()` 추가, `universe_selection_types.py`에
+  `CORE_RANKING_MODE_*` 상수와 `CompositionContext.core_ranking_mode`
+  필드 추가(**기본값 = 현행 사전순**), `universe_selection.py`에 점수
+  캐시·정렬 순위 계산·step 8 분기 추가, `run_decision_loop.py`에서만
+  D안 모드 주입. `_apply_cap()`은 미수정이고 `generate_signal_feature_
+  snapshot_input.py`는 diff에서 제외했다(기본값 유지 → 순환 의존 회피).
+- **정렬 규칙**: `(snapshot 보유 여부, -overall_score, symbol)`. **사전순은
+  3번째 요소**로 앞선 두 요소가 완전히 같을 때만 도달하므로, 의미 있는
+  선택 기준이 아니라 결정성 보장용 기술 규칙으로만 남았다. 2차 정렬 키가
+  非CORE 항목에 항상 `0`이라 안정 정렬로 held/overlay 상대 순서가
+  보존된다.
+- **기본값 무변화 근거**: 필드를 지정하지 않는 호출부는 기존 정렬 코드와
+  동일한 분기로 들어가고, 신호 점수 조회 자체가 D안 모드에서만 실행되어
+  기본 경로에는 쿼리가 추가되지 않는다. 기존 단위 테스트 106건이 **수정
+  없이 전부 통과**했고, 신규 회귀 케이스가 "최고점을 줘도 기본 모드는
+  사전순 유지"를 명시적으로 고정한다.
+- **검증**: `test_universe_selection.py` 109 passed(106+3),
+  `test_run_decision_loop.py` 121 passed, 하네스 3개 PASS. 하네스 FAIL
+  2건은 `git stash` 기저 대조로 **선재 postgres 환경 실패**임을 확인했다
+  (이번 diff 원인 아님).
+
+**결론**: D안 diff 초안 작성 완료. 남은 것은 운영 반영 관측(다음 거래일
+08:50 KST freeze 대조), postgres bulk 전용 통합 테스트(환경 복구 후),
+배포(PR 머지 전이라 미반영 — 작성 시각 2026-07-30 20:23 KST는 장 외
+시간이므로 장중 배포 금지 정책이 적용되지 않고 별도 승인도 불필요하다)다.
+§131.1(사전순 편향은 제거가 아니라
+79/80위 경계 이동)과 §131.4(주문 발생 완화 아님) 제약은 그대로 유지된다.
+상세: `docs/10_signal_research_sppv/[DESIGN] regime_conditional_entry_
+signal_v1.md` §133.

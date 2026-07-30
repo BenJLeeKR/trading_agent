@@ -10251,12 +10251,27 @@ agent 설계 문서 기준으로도 순서는 다음이 맞다.
      최하위+동순위 사전순으로 cold start 시 A안과 동일 퇴화. **판정:
      D안 diff 초안 착수 가능**. 상세: `docs/10_signal_research_sppv/
      [DESIGN] regime_conditional_entry_signal_v1.md` §132.
-   - **SPPV-3(다음 착수: [1순위] `universe_selection` D안 diff 초안
-     작성 — §132.2의 6개 파일 범위, §132.3의 기본값 opt-in 구조(배치
-     무변화), §132.4의 cold start 퇴화 규칙, §132.5의 좁은 검증 세트를
-     그대로 적용. 착수 시 §131.1(사전순 편향은 제거가 아니라 79/80위
-     경계 이동)·§131.4(`entry_score>=0.65` 0건, 주문 발생 완화 아님)
-     제약을 전제에 명시(사용자 승인 시 코드 변경 턴) +
+   - **SPPV-2.145(완료, 2026-07-30 KST, D안 diff 초안 실제 작성,
+     작성자: Codex, `.env` 미수정, Full pytest 미실행, 신규 KIS 호출
+     0건 — 코드 변경 포함)**: §132.2 계획대로 6개 파일만 수정
+     (`contracts.py`/`postgres/signal_feature_snapshots.py`/`memory.py`
+     bulk `list_latest_by_instrument_ids` 추가, `universe_selection_
+     types.py` `CORE_RANKING_MODE_*` + `core_ranking_mode` 필드(**기본값
+     =현행 사전순**), `universe_selection.py` 점수 캐시 + `_core_signal_
+     sort_rank()` + step 8 분기, `run_decision_loop.py` D안 모드 주입).
+     `_apply_cap()` 미수정, `generate_signal_feature_snapshot_input.py`
+     diff 제외(순환 의존 회피). 정렬 키 `(snapshot 보유 여부,
+     -overall_score, symbol)` — 사전순은 3번째 요소로 동점 시 결정성
+     보장용. 검증: `test_universe_selection.py` 109 passed(기존 106
+     무수정 통과 + 신규 3), `test_run_decision_loop.py` 121 passed,
+     하네스 3개 PASS(FAIL 2건은 `git stash` 기저 대조로 선재 postgres
+     환경 실패 확인). 상세: `docs/10_signal_research_sppv/[DESIGN]
+     regime_conditional_entry_signal_v1.md` §133.
+   - **SPPV-3(다음 착수: [1순위] D안 diff 운영 반영 관측 — 배포 후 다음
+     거래일 08:50 KST에 생성되는 `decision_loop_intraday` freeze 내용을
+     같은 입력(전 거래일 20:00 KST snapshot)으로 계산한 D안 shadow 예측과
+     종목 단위로 대조(read-only). 배포는 PR 머지 시 장 외 시간대에
+     자동 반영되므로 별도 승인이 필요하지 않다 +
      [2순위] 관찰용 shadow 메타데이터의 낡은 스케일 절대값
      (`_classify_core_risk_off_shadow_floor_bucket`의 `0.26`,
      `_EVENT_OVERLAY_SHADOW_MIN_SCORE=0.56`) 재검토 — 실제 BUY

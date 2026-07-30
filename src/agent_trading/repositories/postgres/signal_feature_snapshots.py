@@ -126,3 +126,29 @@ class PostgresSignalFeatureSnapshotRepository:
             limit,
         )
         return tuple(row_to_entity(row, SignalFeatureSnapshotEntity) for row in rows)
+
+    async def list_latest_by_instrument_ids(
+        self,
+        instrument_ids: Sequence[UUID],
+        timeframe: str = "1d",
+    ) -> Sequence[SignalFeatureSnapshotEntity]:
+        """instrument_id별 최신 snapshot 1건씩을 배치로 조회한다.
+
+        ``instrument_status_snapshots.list_latest_by_instrument_ids``와 동일한
+        ``DISTINCT ON`` 패턴이다 — universe 구성에서 core 후보 수백 건의
+        신호 점수를 N+1 없이 읽기 위한 경로(SPPV-2.144 §132.2).
+        """
+        normalized_ids = list(dict.fromkeys(instrument_ids))
+        if not normalized_ids:
+            return ()
+        rows = await self._tx.connection.fetch(
+            """
+            SELECT DISTINCT ON (instrument_id) *
+            FROM trading.signal_feature_snapshots
+            WHERE instrument_id = ANY($1::uuid[]) AND timeframe = $2
+            ORDER BY instrument_id, snapshot_at DESC, signal_feature_snapshot_id DESC
+            """,
+            normalized_ids,
+            timeframe,
+        )
+        return tuple(row_to_entity(row, SignalFeatureSnapshotEntity) for row in rows)

@@ -41,6 +41,7 @@ from agent_trading.services.instrument_profile import (
     normalize_index_memberships,
 )
 from agent_trading.services.universe_selection_types import (
+    CORE_RANKING_MODE_SIGNAL_SCORE,
     INCLUSION_REASON_CORE,
     INCLUSION_REASON_EVENT,
     INCLUSION_REASON_HELD,
@@ -749,6 +750,69 @@ class UniverseSelectionService:
         # 경로)가 모두 이 전체 목록을 필요로 하는데, 캐시가 없으면 활성 종목
         # 스캔(시장코드 3개 × 테이블 스캔)이 매 호출마다 중복 실행된다.
         self._active_kr_equity_instruments_cache: list[object] | None = None
+        # core 후보 symbol -> 최신 snapshot overall_score 캐시 —
+        # `core_ranking_mode=signal_score`(D안)일 때만 채워진다. snapshot이
+        # 없는 종목은 키 자체가 없으며, 정렬에서 최하위로 밀린다
+        # (SPPV-2.145 / §132.4).
+        self._core_signal_score_cache: dict[str, float] | None = None
+
+    async def _prime_core_signal_score_cache(
+        self,
+        instruments: Sequence[object],
+    ) -> None:
+        """core 후보의 최신 snapshot ``overall_score``를 배치로 캐시한다.
+
+        `_prime_membership_cache`와 동일한 사전 일괄 조회 패턴이다 —
+        종목마다 `get_latest_by_instrument`를 호출하면 N+1이 된다
+        (SPPV-2.144 §132.2).
+        """
+        id_to_symbol: dict[UUID, str] = {}
+        for inst in instruments:
+            instrument_id = getattr(inst, "instrument_id", None)
+            symbol = getattr(inst, "symbol", None)
+            if instrument_id is not None and symbol:
+                id_to_symbol[instrument_id] = symbol
+        if not id_to_symbol:
+            self._core_signal_score_cache = {}
+            return
+        snapshots = await self._repos.signal_feature_snapshots.list_latest_by_instrument_ids(
+            list(id_to_symbol.keys())
+        )
+        scores: dict[str, float] = {}
+        for snapshot in snapshots:
+            symbol = id_to_symbol.get(getattr(snapshot, "instrument_id", None))
+            overall = getattr(snapshot, "overall_score", None)
+            if symbol is None or overall is None:
+                continue
+            try:
+                scores[symbol] = float(overall)
+            except (TypeError, ValueError):
+                continue
+        self._core_signal_score_cache = scores
+
+    def _core_signal_sort_rank(self, candidates: list[SelectedSymbol]) -> dict[str, int]:
+        """core 후보의 D안 정렬 순위(0-based)를 계산한다.
+
+        정렬 기준(§132.4 / SPPV-2.145):
+        1. snapshot 보유 종목이 미보유 종목보다 항상 앞선다.
+        2. 보유 종목끼리는 ``overall_score`` 내림차순.
+        3. ``overall_score``가 완전히 동일할 때만 ``symbol`` 사전순
+           — 이는 의미 있는 우선순위가 아니라 결정성 보장용 기술 규칙이다.
+        4. snapshot 미보유 종목끼리도 같은 이유로 ``symbol`` 사전순.
+        """
+        scores = self._core_signal_score_cache or {}
+        core_symbols = [
+            item.symbol for item in candidates if item.source_type == SourceType.CORE
+        ]
+        ordered = sorted(
+            core_symbols,
+            key=lambda symbol: (
+                0 if symbol in scores else 1,
+                -scores.get(symbol, 0.0),
+                symbol,
+            ),
+        )
+        return {symbol: rank for rank, symbol in enumerate(ordered)}
 
     async def _prime_membership_cache(self, instruments: Sequence[object]) -> None:
         instrument_ids = [
@@ -902,7 +966,7 @@ class UniverseSelectionService:
             step_start = now
 
         # Step 1: Core Universe
-        await self._add_core_universe(seen)
+        await self._add_core_universe(seen, ctx)
         _mark("1_core_universe")
 
         # Step 2: Held Positions (mandatory override)
@@ -930,7 +994,20 @@ class UniverseSelectionService:
         _mark("7_exclusions")
 
         # Step 8: Priority Sort (ascending priority value = highest first)
-        candidates.sort(key=lambda s: s.priority)
+        if ctx.core_ranking_mode == CORE_RANKING_MODE_SIGNAL_SCORE:
+            # D안: core 후보만 신호 점수 순으로 재정렬한다(SPPV-2.145).
+            # 2차 키는 CORE가 아닌 항목에 대해 항상 0이므로, Python의 안정
+            # 정렬 특성상 held/reconciliation/event/market/manual overlay의
+            # 기존 상대 순서는 그대로 보존된다.
+            core_rank = self._core_signal_sort_rank(candidates)
+            candidates.sort(
+                key=lambda s: (
+                    s.priority,
+                    core_rank.get(s.symbol, 0) if s.source_type == SourceType.CORE else 0,
+                )
+            )
+        else:
+            candidates.sort(key=lambda s: s.priority)
 
         # Step 9: Daily Cap
         result = self._apply_cap(candidates, ctx), market_overlay_diagnostics
@@ -953,13 +1030,16 @@ class UniverseSelectionService:
     async def _add_core_universe(
         self,
         seen: dict[str, SelectedSymbol],
+        ctx: CompositionContext | None = None,
     ) -> None:
         """Load only approved core-seed instruments as the Core Universe."""
         instruments = await self._list_active_kr_equity_instruments()
         await self._prime_membership_cache(instruments)
+        core_instruments: list[object] = []
         for inst in instruments:
             if not await self._is_core_seed_instrument(inst):
                 continue
+            core_instruments.append(inst)
             sym = inst.symbol
             if sym not in seen:
                 seen[sym] = await self._build_selected_symbol(
@@ -969,6 +1049,10 @@ class UniverseSelectionService:
                     inclusion_reason=INCLUSION_REASON_CORE,
                     instrument=inst,
                 )
+        # D안 모드일 때만 core 후보의 신호 점수를 배치 조회한다. 기본 모드는
+        # 조회 자체를 하지 않으므로 기존 경로에 쿼리가 추가되지 않는다.
+        if ctx is not None and ctx.core_ranking_mode == CORE_RANKING_MODE_SIGNAL_SCORE:
+            await self._prime_core_signal_score_cache(core_instruments)
 
     async def _add_held_positions(
         self,

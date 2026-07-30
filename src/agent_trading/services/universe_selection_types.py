@@ -65,6 +65,19 @@ INCLUSION_REASON_NEAR_HIGH = "near_high_breakout"
 INCLUSION_REASON_PRICE_VOLUME_BREAKOUT = "price_volume_breakout"
 
 
+# ── Core ranking mode constants (SPPV-2.145 / D안) ──────────────────────────
+#
+# `core_cap` 절단 시 core 후보를 어떤 기준으로 정렬할지 고르는 스위치다.
+# 기본값은 현행(`SYMBOL`)이며, D안 모드를 명시적으로 주입한 호출부만
+# 신호 점수 기준으로 재정렬된다.
+
+CORE_RANKING_MODE_SYMBOL = "symbol"
+"""현행 동작 — 종목코드 사전순(`ORDER BY symbol`)으로 core를 자른다."""
+
+CORE_RANKING_MODE_SIGNAL_SCORE = "signal_score"
+"""D안 — 최신 snapshot `overall_score` 내림차순으로 core 내부를 재정렬한다."""
+
+
 @dataclass(slots=True, frozen=True)
 class SelectedSymbol:
     """A single symbol selected for the trading universe.
@@ -133,6 +146,13 @@ class CompositionContext:
     manual_symbols : tuple[tuple[str, str], ...]
         Operator-supplied manual watchlist entries.  Each item is
         ``(symbol, market)``.  Default: empty tuple (disabled).
+    core_ranking_mode : str
+        ``core`` source_type 후보를 ``core_cap``으로 자를 때 쓰는 정렬 기준.
+        ``CORE_RANKING_MODE_SYMBOL``(기본값)은 현행 동작 — 종목코드 사전순.
+        ``CORE_RANKING_MODE_SIGNAL_SCORE``는 최신 ``signal_feature_snapshots``
+        의 ``overall_score`` 내림차순으로 core 내부만 재정렬한다(D안,
+        SPPV-2.145). 기본값이 현행이므로 이 필드를 지정하지 않는 호출부
+        (예: signal feature snapshot 입력 배치)의 동작은 바뀌지 않는다.
     """
 
     account_id: UUID
@@ -145,6 +165,7 @@ class CompositionContext:
     reconciliation_overlay_reserve: int | None = None
     pre_pool_size: int = 50
     manual_symbols: tuple[tuple[str, str], ...] = ()
+    core_ranking_mode: str = CORE_RANKING_MODE_SYMBOL
 
 
 @dataclass(slots=True, frozen=True)

@@ -2898,6 +2898,39 @@ entry 설계 검토로 전환**을 확정했다. 별도 문서
   주문 발생 완화 아님 제약을 전제에 명시). 상세: `docs/10_signal_
   research_sppv/[DESIGN] regime_conditional_entry_signal_v1.md` §132.
 
+- 작성자: Codex
+- 수정일자: 2026-07-30 KST (145차, D안 diff 초안 실제 작성, `.env`
+  미수정, Full pytest 미실행, 신규 KIS 호출 0건 — **코드 변경 포함**)
+- 수정내용: §132.2에서 닫힌 최소 범위 6개 파일만 수정했다 —
+  (1~3) `contracts.py`/`postgres/signal_feature_snapshots.py`/`memory.py`
+  에 bulk `list_latest_by_instrument_ids()` 추가(`instrument_status_
+  snapshots`의 `DISTINCT ON` 패턴 동일 적용, N+1 회피),
+  (4) `universe_selection_types.py`에 `CORE_RANKING_MODE_SYMBOL`/
+  `CORE_RANKING_MODE_SIGNAL_SCORE` 상수와 `CompositionContext.core_
+  ranking_mode` 필드 추가(**기본값 = `SYMBOL` = 현행 사전순**),
+  (5) `universe_selection.py`에 `_core_signal_score_cache` /
+  `_prime_core_signal_score_cache()` / `_core_signal_sort_rank()` 추가와
+  step 8 정렬 분기, (6) `run_decision_loop.py`에서만 D안 모드 주입.
+  `_apply_cap()`은 미수정(정적 구조 유지), `generate_signal_feature_
+  snapshot_input.py`는 diff 제외(기본값 유지 → 순환 의존 회피).
+  정렬 키는 `(snapshot 보유 여부, -overall_score, symbol)`이며 **사전순은
+  3번째 요소로 완전 동점 시에만 도달**하는 결정성 보장용 기술 규칙이다.
+  2차 정렬 키가 非CORE 항목에 항상 `0`이라 Python 안정 정렬로 held/
+  reconciliation/event/market/manual overlay 상대 순서가 보존된다.
+  검증: `tests/services/test_universe_selection.py` **109 passed**
+  (기존 106건 무수정 통과 = 무변화 회귀 확인, 신규 3케이스 추가),
+  `tests/scripts/test_run_decision_loop.py` 121 passed, 하네스 `accept
+  backend-file` 3개(universe_selection, universe_selection_types,
+  memory) PASS. `contracts.py`/`postgres/signal_feature_snapshots.py`
+  하네스 FAIL 2건은 `git stash`로 기저(HEAD) 대조 실행해 **동일 오류로
+  선재 실패**함을 확인(postgres 테스트 환경의 event loop / 1600 컬럼
+  문제, 이번 diff 원인 아님). 남겨둔 것: 운영 반영 관측(다음 거래일
+  08:50 KST freeze 대조), postgres bulk 전용 통합 테스트(환경 복구 후),
+  배포(PR 머지 전이라 미반영 — 작성 시각 20:23 KST는 장 외 시간이므로
+  장중 배포 금지 정책은 적용되지 않고 별도 승인도 불필요). 상세:
+  `docs/10_signal_research_sppv/[DESIGN]
+  regime_conditional_entry_signal_v1.md` §133.
+
 ---
 
 ## 진행 체크리스트
@@ -5945,6 +5978,30 @@ canonical),
     로직 변경 없음, 신규 KIS 호출 0건(shadow 재호출은 `kis_
     client=None`). 상세: `docs/10_signal_research_sppv/[DESIGN]
     regime_conditional_entry_signal_v1.md` §94.
+- [x] **SPPV-2.145(신설, 완료 — 코드 변경 포함)** D안 diff 초안 실제
+  작성 (2026-07-30 KST, 작성자: Codex, `.env` 미수정, Full pytest 미실행,
+  신규 KIS 호출 0건)
+  - §132.2 계획대로 **6개 파일**만 수정: `contracts.py`/`postgres/
+    signal_feature_snapshots.py`/`memory.py`(bulk `list_latest_by_
+    instrument_ids` 추가), `universe_selection_types.py`(`CORE_RANKING_
+    MODE_*` 상수 + `CompositionContext.core_ranking_mode`, **기본값=현행
+    사전순**), `universe_selection.py`(점수 캐시 + `_core_signal_sort_
+    rank()` + step 8 정렬 분기), `run_decision_loop.py`(D안 모드 주입).
+    `_apply_cap()`은 한 줄도 수정하지 않음, `generate_signal_feature_
+    snapshot_input.py`는 diff 제외(순환 의존 회피).
+  - 정렬 키 `(snapshot 보유 여부, -overall_score, symbol)` — **사전순은
+    3번째 요소**로 완전 동점 시 결정성 보장용 기술 규칙일 뿐. 2차 키가
+    非CORE에 항상 0이라 안정 정렬로 overlay 상대 순서 보존.
+  - 검증: `test_universe_selection.py` **109 passed**(기존 106 무수정
+    통과 + 신규 3), `test_run_decision_loop.py` 121 passed, 하네스
+    `accept backend-file` 3개 PASS. `contracts.py`/`postgres/signal_
+    feature_snapshots.py` 하네스 FAIL 2건은 `git stash` 기저 대조로
+    **선재 postgres 환경 실패**임을 확인(이번 diff 원인 아님).
+  - 남겨둔 것: 운영 반영 관측(다음 거래일 08:50 KST freeze 대조),
+    postgres bulk 전용 통합 테스트(환경 복구 후), 배포(PR 머지 전이라
+    미반영 — 장 외 시간이므로 배포 금지 정책 비적용, 별도 승인 불필요).
+    상세: `docs/10_signal_research_sppv/[DESIGN] regime_conditional_
+    entry_signal_v1.md` §133.
 - [x] **SPPV-2.144(신설, 완료)** D안 diff 착수 전 최소 침습성·부작용
   범위 설계 점검 (2026-07-30 KST, 작성자: Codex, 코드 미수정, `.env`
   미수정, Full pytest 미실행, 신규 KIS 호출 0건)
