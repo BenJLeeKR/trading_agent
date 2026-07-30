@@ -67,6 +67,16 @@ sync 이후 실제 런타임에 변경을 반영하는 단계다.
 - 실행 지표 `deploy_sync_run_count`, `deploy_sync_only_run_count`, `deploy_activate_run_count`, `deploy_activate_skipped_by_market_hours_count`를 추가했다.
 - `accept ci`가 `sync_source`, `activate_runtime`, activate guard, 신규 지표 존재 여부를 정적으로 검사한다.
 
+## 2026-07-30 실제 run 검증 결과
+
+GitHub Actions 실제 run으로 다음 `2`개 결과를 확인했다.
+
+- PR `#47`의 `pull_request` run `30503199183`는 `Safe harness contracts=success`, `Deployment change detector=success`, `Heavy harness contracts=skipped`로 끝났다.
+- 머지 직후 `push main` run `30503269269`는 같은 `concurrency` 그룹의 수동 dispatch run이 시작되면서 `cancelled` `1`건으로 종료됐다.
+- 사용자 승인 하에 실행한 `workflow_dispatch` run `30503269894`는 `conclusion=success`였다.
+- 이 dispatch run에서 `Market-hours deploy guard=success`, `Sync source after safe harness=success`, `Activate runtime after source sync=success`를 확인했다.
+- 이번 검증은 `deploy_main=true`, `allow_market_hours_deploy=true` override 경로 검증이다. 따라서 장중 sync-only 자동 경로 자체는 아직 별도 샘플 변경으로 검증하지 않았다.
+
 ## 권장 목표 상태
 
 장중 정책은 다음처럼 바꾸는 것을 권장한다.
