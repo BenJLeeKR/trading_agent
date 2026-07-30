@@ -2012,6 +2012,20 @@
   `docs/10_signal_research_sppv/[DESIGN] regime_conditional_entry_
   signal_v1.md` §135.
 
+- 2026-07-30 KST(SPPV-2.148, 신규 KIS 호출 0건, 완료 — 코드 미수정,
+  **운영 효과 미확정**): `strategy_alignment` 직접항 제거의 threshold
+  영향 정량 검증. 게이트 모집단(`core_risk_off_guard_active=true`)에
+  `strategy_alignment=1.0`이 **최근 3거래일 0/2,401, 전체 이력
+  0/11,785**로 없어 `ranking_score` 무변화, `0.28`/`0.02`/`0.26` 판정
+  뒤집힘 **두 창 모두 0건**. `sa=1.0` 2,760건은 `event_overlay`(2,718)+
+  `market_overlay`(42)에만 존재하고 `core` 0건 → **`event_overlay`에서만
+  의미, `core` 게이트 영향 없음**(섞어 일반화 금지). 범위 밖 관찰 지표
+  (`0.56`)만 전체 이력 122건 이동(최근 3거래일 0건)이나 실제
+  `shadow_would_pass=True` 60건 중 뒤집힘 0건. **판정: 추가 코드 수정
+  불필요, 내일 장 시작 후 그대로 관찰 가능.** `regime_tailwind`는 별도
+  트랙 유지. 상세: `docs/10_signal_research_sppv/[DESIGN] regime_
+  conditional_entry_signal_v1.md` §136.
+
 ---
 
 ## 관리 원칙
