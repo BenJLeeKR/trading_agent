@@ -1,7 +1,16 @@
 # ranking_score 공식 검증 계획
 
 작성일: 2026-07-28  
-상태: [SPPV-2.146에서 갱신] `regime_tailwind`/`strategy_alignment`
+상태: [SPPV-2.147에서 갱신] `strategy_alignment` **`ranking_score`
+직접항(`0.02`) 제거 diff 초안 작성 완료**(§6.25) — `entry_score`
+쪽 `+0.05`는 유지, `regime_tailwind`는 범위 밖. "죽은 항 제거"가
+아니라 **`event_overlay`에서는 살아 있으나 ranking에서의 직접 중복
+계상 제거**다. 최소 검증(기존 21건 무수정 통과 + 신규 2건, 관련
+105건, 하네스 `accept backend-file` PASS) 통과. **운영 효과는
+미확정**(diff 초안 + 최소 검증까지). 상세: `[DESIGN] regime_
+conditional_entry_signal_v1.md` §135.
+
+[SPPV-2.146] `regime_tailwind`/`strategy_alignment`
 잔여 설계 가치 검증 완료(§6.24) — 두 항 모두 `(source_type,
 regime_label, risk_tone)`의 **결정론적 함수**(전수 검정 15개 조합,
 비결정 0건)로 독립 정보가 없음을 확인. `strategy_alignment` 직접항
@@ -1177,6 +1186,48 @@ SPPV-2.133)에 이어 `strategy_alignment`·`regime_tailwind` 판정까지
 
 상세: `docs/10_signal_research_sppv/[DESIGN] regime_conditional_
 entry_signal_v1.md` §134.
+
+### 6.25 SPPV-2.147 — `strategy_alignment` 직접항 제거 diff 초안(신규,
+2026-07-30 KST, 완료 — 코드 변경 포함, 운영 효과 미확정)
+
+- [x] **코드 변경**: `deterministic_trigger_engine.py` 단일 파일 —
+      `_build_buy_ranking_score()`에서 `+ 0.02 * strategy_alignment`
+      항 제거, 그 항 전용이던 지역 계산 블록과 `strategy_selection`
+      매개변수(제거 후 미사용) 정리, 호출부 인자 제거.
+      `relative_activity` 1안(SPPV-2.133)·`coverage_score` A-3안
+      (SPPV-2.145)과 **동일한 패턴**.
+- [x] **제거 근거 표현 확정**: "죽은 항 제거"가 **아니다** —
+      `event_overlay`에서 전체 이력 28.93%로 살아 있으며(§134.2),
+      근거는 `_build_entry_score()`가 동일 조건 집합을 이미 `+0.05`로
+      반영하는 **직접 중복 계상 제거**다.
+- [x] **미변경 확인**: 다른 가중치(0.55/0.10/0.03), threshold 상수
+      (`0.28`/`0.02`), `_assess_core_risk_off_buy_guard`, metadata/
+      shadow 경로, `_build_exit_ranking_score`, 그리고 **`entry_score`
+      의 `strategy_alignment` `+0.05` 및 `trigger_strategy_alignment`
+      reason code**는 손대지 않았다.
+- [x] **최소 검증**: `test_deterministic_trigger_engine.py` **23
+      passed**(기존 21건 **무수정 통과** + 신규 2건), 관련 5개 파일
+      **105 passed**, 하네스 `accept backend-file` **PASS**.
+      Full pytest/외부 API 호출 없음.
+- [x] **신규 테스트 2건**: (1) `preferred_strategy`만 바꿔
+      `ranking_score` 차이가 정확히 `0.55×0.05`임을 확인 +
+      `entry_score` 쪽 reason code 유지 확인, (2) 기본 BUY 판정 경로
+      무결성 확인.
+- [ ] **threshold 영향 정량 확인** — 미완료. "게이트 판정 무변화"는
+      `core` 게이트 모집단에서 `strategy_alignment`가 0건이라는
+      사실에 근거한 **추론**이며 shadow 재계산으로 확인하지 않았다.
+- [ ] **운영 반영·효과 확정** — 미완료(별도 관측 턴).
+- [x] **범위 밖 명시**: `regime_tailwind`는 이번 턴 대상이 아니다
+      (§134.6 판정은 제거 권고이나 선행 확인 1건 잔존).
+
+**[PLAN] 상태 요약**: `ranking_score` 6개 항 중 정리 대상 4개
+(`coverage_score`·`relative_activity`·`strategy_alignment` 직접항 =
+diff 작성 완료, `regime_tailwind` = 판정 완료·diff 미착수) 중 3개의
+코드 반영이 끝났다. 남은 `entry_score`(0.55)·`allocation_quality`
+(0.10)는 실질 분산이 확인된 항이라 정리 대상이 아니다.
+
+상세: `docs/10_signal_research_sppv/[DESIGN] regime_conditional_
+entry_signal_v1.md` §135.
 
 ## 7. 완료 기준
 

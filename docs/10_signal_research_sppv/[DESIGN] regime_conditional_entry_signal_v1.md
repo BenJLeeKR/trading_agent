@@ -16859,3 +16859,112 @@ MIN_SCORE=0.28`/`_CORE_RISK_OFF_SHADOW_MIN_SCORE=0.02`와 함께 다뤄야
    확인(게이트 모집단에서 무변화 예상 검증) → 확인되면 diff 초안.
 3. **3순위**: `regime_tailwind` 제거 시 threshold 동시 조정이 완화로
    작용하는지 정량 확인(134.6 전제 조건).
+
+## §135. `strategy_alignment` 직접항 제거 diff 초안(SPPV-2.147, 2026-07-30 KST)
+
+**전제**: §134.8에서 "다음 diff 초안 후보로 바로 진행 가능"으로 판정된
+`strategy_alignment` **`ranking_score` 직접항(`0.02`)만** 제거한다.
+`entry_score` 쪽 `+0.05`는 건드리지 않으며, `regime_tailwind`는 이번
+변경 범위 밖이다. 이번 턴은 **diff 초안 + 최소 검증까지**이고 운영 효과
+확정이 아니다.
+
+### 135.1 제거 근거의 정확한 표현(중요)
+
+이 변경은 **"죽은 항 제거"가 아니다.** `strategy_alignment`는
+`event_overlay` 경로에서 전체 이력 **28.93%**(최근 3거래일 28.63%)로
+살아 있다(§134.2). 제거 근거는 어디까지나 **`ranking_score`에서의 직접
+중복 계상 제거**다 — `_build_entry_score()`가 완전히 동일한 조건 집합
+(`{swing_momentum, event_continuation}`)을 이미 `+0.05`로 반영하고
+있고(§134.1), `entry_score`는 `0.55` 가중치로 `ranking_score`에 들어가기
+때문이다.
+
+### 135.2 수정한 코드(사실)
+
+`src/agent_trading/services/deterministic_trigger_engine.py` 단일 파일:
+
+| 위치 | 변경 |
+|---|---|
+| `_build_buy_ranking_score()` score 식 | `+ 0.02 * strategy_alignment` 항 제거 |
+| 동 함수 본문 | 위 항 전용이던 `strategy_alignment` 지역 계산 블록 제거(제거 후 미사용) |
+| 동 함수 시그니처 | 위 계산 전용이던 `strategy_selection` 매개변수 제거(제거 후 미사용) |
+| 호출부(`assess_deterministic_triggers:219-223`) | 해당 인자 전달 제거 |
+| 동 함수 주석 | 제거 근거·범위 명시(§135.1 표현 그대로) |
+
+지역변수/매개변수 정리를 함께 한 것은 `relative_activity` 1안
+(SPPV-2.133)과 `coverage_score` A-3안(SPPV-2.145)에서 쓴 것과 **동일한
+패턴**이다 — 항을 지우면 그 항 전용 계산과 인자가 죽은 코드가 되므로
+같은 diff에서 정리한다.
+
+**건드리지 않은 것(사실)**: 다른 가중치(`0.55` entry / `0.10`
+allocation / `0.03` regime_tailwind), threshold 상수(`_CORE_RISK_OFF_
+RANKING_MIN_SCORE=0.28`, `_CORE_RISK_OFF_SHADOW_MIN_SCORE=0.02`),
+`_assess_core_risk_off_buy_guard`, metadata/shadow 경로, `_build_exit_
+ranking_score`, 그리고 **`_build_entry_score()`의 `strategy_alignment`
+`+0.05`와 `trigger_strategy_alignment` reason code**.
+
+### 135.3 새 산식
+
+```
+ranking_score = 0.55*entry_score + 0.10*allocation_quality
+              + 0.03*regime_tailwind
+```
+
+`ranking_score` 최댓값이 `0.02` 낮아진다. 다만 §134.5에 따라
+`0.02×strategy_alignment` 항의 표준편차 기여는 4.49%였고, **`core`
+게이트 모집단에서는 `strategy_alignment`가 전체 이력 0건**(§134.2)이라
+그 모집단에서는 항 값이 항상 `0.0`이었다 — 즉 게이트 판정에는 변화가
+없을 것으로 예상된다(해석, **정량 미검증** — §135.6 참고).
+
+### 135.4 실행한 최소 검증(사실)
+
+| 검증 | 결과 |
+|---|---|
+| `tests/services/test_deterministic_trigger_engine.py` | **23 passed**(기존 21 무수정 통과 + 신규 2) |
+| `test_trigger_proxy_attribution.py` + `test_decision_orchestrator.py` + `test_core_risk_off_topk_projection.py` + `test_decision_factory.py` + `test_expected_value_gate.py` | **105 passed** |
+| `bash scripts/harness/run.sh accept backend-file .../deterministic_trigger_engine.py` | **PASS**(`py_compile_passed=1`, `tests_run_count=3`, `test_failed_count=0`) |
+
+기존 21건이 **하나도 수정 없이 통과**했다 — 경계값 fixture 보정이 필요했던
+SPPV-2.133/2.138과 달리 이번 변경은 기존 테스트 기대치를 흔들지 않았다.
+
+신규 테스트 2건(요구된 2가지를 각각 고정):
+
+1. `test_trigger_engine_strategy_alignment_removed_from_ranking_kept_in_entry`
+   — `preferred_strategy`만 바꾼 두 입력을 비교해 `entry_score` 차이가
+   `0.05`이고 `ranking_score` 차이가 **정확히 `0.55×0.05`**임을 확인한다
+   (제거 전이라면 여기에 `0.02`가 더 붙는다). 동시에
+   `trigger_strategy_alignment` reason code가 `entry_score` 쪽에 **그대로
+   남아 있음**을 확인한다.
+2. `test_trigger_engine_buy_candidate_path_intact_after_strategy_alignment_removal`
+   — 기본 BUY 판정 경로(`buy_candidate`/`primary_candidate`/
+   `eligibility_passed`/`ranking_score`)가 깨지지 않았음을 확인한다.
+
+Full pytest / 외부 API 호출 / 운영 DB write는 수행하지 않았다.
+
+### 135.5 범위 밖 명시
+
+- **`regime_tailwind`**: 이번 턴 범위 밖이다. §134.6의 판정은 "제거
+  권고"이나 threshold 동시 조정이 게이트 모집단에서 완화로 작용할 수
+  있어 선행 확인 1건이 남아 있다.
+- **`entry_score`의 `strategy_alignment`(`+0.05`)**: 유지. 이번 변경은
+  소프트 2곳 중 1곳만 남기는 정리이며, 남기는 쪽을 `entry_score`로
+  택한 것은 `relative_activity` 1안(§121)과 동일한 보수적 선택이다.
+
+### 135.6 아직 남겨둔 것
+
+1. **threshold 영향 정량 미검증** — §135.3의 "게이트 판정 무변화 예상"은
+   `core` 게이트 모집단에서 `strategy_alignment`가 0건이라는 사실
+   (§134.2)에 근거한 추론이며, `ranking_score` shadow 재계산으로
+   확인하지 않았다. §134.9의 2순위 항목이 이 확인이었는데 이번 턴은
+   diff를 먼저 작성했으므로, **배포 전 또는 배포 후 관측에서 확인해야
+   한다.**
+2. **운영 반영·효과 미확정** — 이번 턴은 diff 초안과 최소 검증까지다.
+   운영 반영은 머지 후 배포 시점부터이며, 효과 확정은 별도 관측 턴이다.
+3. **배포 미실시** — 머지 시점의 시각에 따라 `market_hours_guard`가
+   결정한다(작성 시각 21:0x KST는 장 외).
+
+### 135.7 다음 우선 작업
+
+1. **1순위(유지)**: D안 운영 반영 관측(다음 거래일 08:50 KST freeze 대조).
+2. **2순위**: 이번 diff의 threshold 영향 정량 확인(§135.6-1) + 운영 반영
+   무변화 확인.
+3. **3순위**: `regime_tailwind` 제거 선행 확인 1건(§134.6 전제 조건).

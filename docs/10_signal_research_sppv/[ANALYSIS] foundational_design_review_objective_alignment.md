@@ -3175,3 +3175,35 @@ signal_v1.md` §133.
 진행 가능하고, `regime_tailwind`는 선행 확인 1건 후 판단한다. 상세:
 `docs/10_signal_research_sppv/[DESIGN] regime_conditional_entry_signal_
 v1.md` §134.
+
+## 33. `strategy_alignment` 직접항 제거 diff 초안(SPPV-2.147, 2026-07-30 KST)
+
+§32에서 "다음 diff 초안 후보 진행 가능"으로 판정된 `strategy_alignment`
+**`ranking_score` 직접항(`0.02`)만** 제거했다(`.env` 미수정, Full pytest
+미실행, 신규 KIS 호출 0건 — 코드 변경 포함). 이번 턴은 **diff 초안 +
+최소 검증까지이고 운영 효과 확정이 아니다.**
+
+- **제거 근거(표현 주의)**: 이 변경은 **"죽은 항 제거"가 아니다.**
+  `strategy_alignment`는 `event_overlay` 경로에서 전체 이력 **28.93%**
+  로 살아 있다(§32). 근거는 `_build_entry_score()`가 완전히 동일한 조건
+  집합을 이미 `+0.05`로 반영하는 **`ranking_score`에서의 직접 중복 계상
+  제거**다.
+- **수정 범위**: `deterministic_trigger_engine.py` 단일 파일 — 항 제거
+  + 그 항 전용 지역 계산·미사용이 된 `strategy_selection` 매개변수·
+  호출부 인자 정리(`relative_activity` 1안·`coverage_score` A-3안과
+  동일 패턴). **`entry_score` 쪽 `+0.05`와 `trigger_strategy_alignment`
+  reason code는 유지**하고, 다른 가중치·threshold·guard·metadata/shadow
+  경로·exit ranking은 손대지 않았다.
+- **`regime_tailwind`는 이번 턴 범위 밖**이다 — §32 판정은 제거 권고이나
+  threshold 동시 조정이 완화로 작용할 수 있어 선행 확인 1건이 남아 있다.
+- **최소 검증**: `test_deterministic_trigger_engine.py` **23 passed**
+  (기존 21건이 경계값 보정 없이 **무수정 통과**, 신규 2건 추가), 관련
+  5개 파일 105 passed, 하네스 `accept backend-file` PASS. 신규 테스트는
+  `preferred_strategy`만 바꿨을 때 `ranking_score` 차이가 정확히
+  `0.55×0.05`임을 확인해 **직접항이 빠지고 entry 경유분만 남았음**을
+  고정하고, 기본 BUY 판정 경로 무결성도 확인한다.
+
+**결론**: diff 초안 작성 완료. **남은 것은** threshold 영향 정량 확인
+(현재는 `core` 게이트 모집단에서 `strategy_alignment`가 0건이라는 사실에
+근거한 **추론 단계**)과 운영 반영·효과 확정이다. 상세: `docs/10_signal_
+research_sppv/[DESIGN] regime_conditional_entry_signal_v1.md` §135.
