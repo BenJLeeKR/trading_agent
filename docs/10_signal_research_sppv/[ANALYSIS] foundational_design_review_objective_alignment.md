@@ -3134,7 +3134,9 @@ research_sppv/[DESIGN] regime_conditional_entry_signal_v1.md` §132.
 
 **결론**: D안 diff 초안 작성 완료. 남은 것은 운영 반영 관측(다음 거래일
 08:50 KST freeze 대조), postgres bulk 전용 통합 테스트(환경 복구 후),
-배포(장중 금지 정책상 별도 승인)다. §131.1(사전순 편향은 제거가 아니라
+배포(PR 머지 전이라 미반영 — 작성 시각 2026-07-30 20:23 KST는 장 외
+시간이므로 장중 배포 금지 정책이 적용되지 않고 별도 승인도 불필요하다)다.
+§131.1(사전순 편향은 제거가 아니라
 79/80위 경계 이동)과 §131.4(주문 발생 완화 아님) 제약은 그대로 유지된다.
 상세: `docs/10_signal_research_sppv/[DESIGN] regime_conditional_entry_
 signal_v1.md` §133.

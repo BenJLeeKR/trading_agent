@@ -1979,7 +1979,8 @@
   동점 시 결정성 보장용 fallback으로만 남음. 검증: 109 passed(기존
   106 무수정 통과 + 신규 3), 121 passed, 하네스 3개 PASS(FAIL 2건은
   기저 대조로 선재 postgres 환경 실패 확인). 남은 것: 운영 반영 관측,
-  postgres bulk 전용 테스트, 배포(장중 금지). 상세: `docs/10_signal_
+  postgres bulk 전용 테스트, 배포(PR 머지 전이라 미반영 — 장 외 시간
+  이므로 배포 금지 정책 비적용). 상세: `docs/10_signal_
   research_sppv/[DESIGN] regime_conditional_entry_signal_v1.md` §133.
 
 ---

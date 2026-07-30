@@ -2926,7 +2926,9 @@ entry 설계 검토로 전환**을 확정했다. 별도 문서
   선재 실패**함을 확인(postgres 테스트 환경의 event loop / 1600 컬럼
   문제, 이번 diff 원인 아님). 남겨둔 것: 운영 반영 관측(다음 거래일
   08:50 KST freeze 대조), postgres bulk 전용 통합 테스트(환경 복구 후),
-  배포(장중 금지 정책). 상세: `docs/10_signal_research_sppv/[DESIGN]
+  배포(PR 머지 전이라 미반영 — 작성 시각 20:23 KST는 장 외 시간이므로
+  장중 배포 금지 정책은 적용되지 않고 별도 승인도 불필요). 상세:
+  `docs/10_signal_research_sppv/[DESIGN]
   regime_conditional_entry_signal_v1.md` §133.
 
 ---
@@ -5996,7 +5998,8 @@ canonical),
     feature_snapshots.py` 하네스 FAIL 2건은 `git stash` 기저 대조로
     **선재 postgres 환경 실패**임을 확인(이번 diff 원인 아님).
   - 남겨둔 것: 운영 반영 관측(다음 거래일 08:50 KST freeze 대조),
-    postgres bulk 전용 통합 테스트(환경 복구 후), 배포(장중 금지).
+    postgres bulk 전용 통합 테스트(환경 복구 후), 배포(PR 머지 전이라
+    미반영 — 장 외 시간이므로 배포 금지 정책 비적용, 별도 승인 불필요).
     상세: `docs/10_signal_research_sppv/[DESIGN] regime_conditional_
     entry_signal_v1.md` §133.
 - [x] **SPPV-2.144(신설, 완료)** D안 diff 착수 전 최소 침습성·부작용

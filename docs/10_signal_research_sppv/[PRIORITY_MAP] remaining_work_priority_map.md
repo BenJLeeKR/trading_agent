@@ -10270,7 +10270,8 @@ agent 설계 문서 기준으로도 순서는 다음이 맞다.
    - **SPPV-3(다음 착수: [1순위] D안 diff 운영 반영 관측 — 배포 후 다음
      거래일 08:50 KST에 생성되는 `decision_loop_intraday` freeze 내용을
      같은 입력(전 거래일 20:00 KST snapshot)으로 계산한 D안 shadow 예측과
-     종목 단위로 대조(read-only). 배포는 장중 금지 정책상 별도 승인 필요 +
+     종목 단위로 대조(read-only). 배포는 PR 머지 시 장 외 시간대에
+     자동 반영되므로 별도 승인이 필요하지 않다 +
      [2순위] 관찰용 shadow 메타데이터의 낡은 스케일 절대값
      (`_classify_core_risk_off_shadow_floor_bucket`의 `0.26`,
      `_EVENT_OVERLAY_SHADOW_MIN_SCORE=0.56`) 재검토 — 실제 BUY

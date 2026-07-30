@@ -16657,5 +16657,9 @@ Full pytest / 외부 API 호출 / 운영 DB write는 수행하지 않았다.
 4. **§131.4 제약 유지** — shadow 기준 `entry_score>=0.65` 0건이므로
    이 변경은 **신호 품질 개선이지 주문 발생(`buy_candidate`) 완화가
    아니다**.
-5. **배포 미실시** — 장중 배포 금지 정책에 따라 별도 승인/장 종료 후
-   배포가 필요하다.
+5. **배포 미실시** — PR 머지 전이라 아직 반영되지 않았다. 작성 시각
+   (2026-07-30 20:23 KST)은 장 외 시간이므로 `market_hours_guard`가
+   `allow_deploy=1`을 내보내며, **장중 배포 금지 정책은 적용되지 않고
+   별도 승인도 필요하지 않다** — 머지 시 `push main` 워크플로가
+   `sync_source`→`activate_runtime`을 자동 실행한다(`src/` 변경이라
+   `activate_required=1`).
