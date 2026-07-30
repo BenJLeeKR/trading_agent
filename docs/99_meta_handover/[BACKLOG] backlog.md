@@ -1955,6 +1955,19 @@
   signal_research_sppv/[DESIGN] regime_conditional_entry_signal_
   v1.md` §131.
 
+- 2026-07-30 KST(SPPV-2.144, 신규 KIS 호출 0건, 완료): D안 diff 착수 전
+  최소 침습성·부작용 범위 설계 점검. 운영 실측으로 시점 확정 —
+  `decision_loop_intraday` freeze 08:50 KST 하루 1회, snapshot 20:00 KST
+  → 전 거래일 종가 신호로 당일 정렬(look-ahead 불가). 최소 변경 경로
+  **6개 파일**(§131.6 "읽기 1곳" 추정 정정, 단 모두 기존 템플릿 따르는
+  추가 변경). **순환 의존 회피**: snapshot 입력 배치가 동일 `compose()`를
+  cap 80으로 호출하므로 정렬 모드 기본값을 현행 사전순으로 두고 decision
+  loop만 opt-in → 배치 무변화. 부작용은 CORE 내부 재정렬로 한정,
+  snapshot 없는 120종목은 최하위+동순위 사전순으로 cold start 시 A안과
+  동일 퇴화. **판정: D안 diff 초안 착수 가능**. 다음 작업:
+  `universe_selection` D안 diff 초안 작성. 상세: `docs/10_signal_
+  research_sppv/[DESIGN] regime_conditional_entry_signal_v1.md` §132.
+
 ---
 
 ## 관리 원칙

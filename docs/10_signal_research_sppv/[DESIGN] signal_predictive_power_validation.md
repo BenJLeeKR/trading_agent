@@ -2873,6 +2873,31 @@ entry 설계 검토로 전환**을 확정했다. 별도 문서
   상세: `docs/10_signal_research_sppv/[DESIGN] regime_conditional_
   entry_signal_v1.md` §131.
 
+- 작성자: Codex
+- 수정일자: 2026-07-30 KST (144차, D안 diff 착수 전 최소 침습성·부작용
+  범위 설계 점검, 코드 미수정, `.env` 미수정, Full pytest 미실행, 신규
+  KIS 호출 0건)
+- 수정내용: D안 정의를 "core-eligible 후보를 `signal_feature_snapshots.
+  overall_score` 기준 상위 `core_cap` 선별"로 고정하고, 운영 실측으로
+  시점을 확정(`decision_loop_intraday` freeze 08:50 KST 하루 1회 생성,
+  snapshot 20:00 KST 산출 → 전 거래일 종가 신호로 당일 정렬, look-ahead
+  불가·intraday churn 없음). 최소 변경 경로는 **6개 파일**로 §131.6의
+  "읽기 1곳 추가" 추정을 정정했으나 6개 모두 기존 템플릿(`instrument_
+  status_snapshots.list_latest_by_instrument_ids`, `_prime_membership_
+  cache`)을 따르는 추가 변경. bulk 조회 메서드는 현 계약에 없어 필수
+  (199 쿼리 회피), `_apply_cap`은 `@staticmethod`라 `compose_with_
+  diagnostics`에서 캐시 후 정렬 키만 변경. **순환 의존 회피**: snapshot
+  입력 배치가 동일 `compose()`를 cap 80으로 호출하므로 정렬 모드 기본값을
+  현행 사전순으로 두고 decision loop만 opt-in → 배치 무변화, `generate_
+  signal_feature_snapshot_input.py`는 diff 대상 아님. 부작용은 CORE 내부
+  재정렬로 한정(`priority`가 1차 정렬 키 유지), held/overlay/cap 계약과
+  충돌 없음. snapshot 없는 120종목은 최하위+동순위 사전순 처리로 cold
+  start 시 A안과 동일 퇴화. 검증 계획은 단위 테스트 3케이스(무변화 회귀
+  포함) + 하네스 `accept backend-file` + 다음 거래일 08:50 freeze 대조로
+  확정. **판정: D안 diff 초안 착수 가능**(단 §131.1 경계 이동·§131.4
+  주문 발생 완화 아님 제약을 전제에 명시). 상세: `docs/10_signal_
+  research_sppv/[DESIGN] regime_conditional_entry_signal_v1.md` §132.
+
 ---
 
 ## 진행 체크리스트
@@ -5920,6 +5945,29 @@ canonical),
     로직 변경 없음, 신규 KIS 호출 0건(shadow 재호출은 `kis_
     client=None`). 상세: `docs/10_signal_research_sppv/[DESIGN]
     regime_conditional_entry_signal_v1.md` §94.
+- [x] **SPPV-2.144(신설, 완료)** D안 diff 착수 전 최소 침습성·부작용
+  범위 설계 점검 (2026-07-30 KST, 작성자: Codex, 코드 미수정, `.env`
+  미수정, Full pytest 미실행, 신규 KIS 호출 0건)
+  - D안 정의 고정: core-eligible 후보를 `signal_feature_snapshots.
+    overall_score` 기준 상위 `core_cap` 선별. 운영 실측으로 시점 확정 —
+    `decision_loop_intraday` freeze는 **08:50 KST 하루 1회** 생성이고
+    snapshot은 20:00 KST 산출이므로 **전 거래일 종가 신호로 당일 정렬**,
+    look-ahead 구조적 불가 + intraday churn 없음.
+  - 최소 변경 경로 **6개 파일**(§131.6의 "읽기 1곳" 추정 정정) — 모두
+    기존 템플릿 따르는 추가 변경. bulk 조회 메서드가 필수(현 계약에
+    bulk 없음, 199 쿼리 회피). `_apply_cap`은 `@staticmethod`라
+    `compose_with_diagnostics`에서 캐시 후 정렬 키만 변경.
+  - **순환 의존 회피**: snapshot 입력 배치도 동일 `compose()`를 cap 80
+    으로 호출하므로, 정렬 모드 기본값을 현행 사전순으로 두고 decision
+    loop만 opt-in → 배치는 무변화, `generate_signal_feature_snapshot_
+    input.py`는 diff 대상 아님.
+  - 부작용은 CORE 내부 재정렬로 한정(source_type `priority`가 1차 키
+    유지), held/reconciliation/event/market overlay·`max_cap`·`core_cap`·
+    `market_overlay_cap`·`pre_pool_size` 모두 충돌 없음. snapshot 없는
+    120종목은 최하위+동순위 사전순으로 cold start 시 A안과 동일 퇴화.
+  - **판정: D안 diff 초안 착수 가능**. 다음 작업: `universe_selection`
+    D안 diff 초안 작성. 상세: `docs/10_signal_research_sppv/[DESIGN]
+    regime_conditional_entry_signal_v1.md` §132.
 - [x] **SPPV-2.143(신설, 완료)** `core_cap` 절단 기준 재설계안
   A/B/C/D 비교 (2026-07-30 KST, 작성자: Codex, 코드 미수정, `.env`
   미수정, Full pytest 미실행, 신규 KIS 호출 0건)
