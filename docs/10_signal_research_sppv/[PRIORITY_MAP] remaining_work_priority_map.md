@@ -10194,6 +10194,17 @@ agent 설계 문서 기준으로도 순서는 다음이 맞다.
      여부를 별도 설계 검토 트랙으로 전환. 상세: `docs/10_signal_
      research_sppv/[DESIGN] regime_conditional_entry_signal_
      v1.md` §128.
+   - **SPPV-2.141(완료, 2026-07-30 KST, `core_cap` 사전순 절단
+     왜곡 정량 검증, 작성자: Codex, 코드 미수정, `.env` 미수정,
+     Full pytest 미실행, 신규 KIS 호출 0건)**: 최근 20거래일(KST)
+     실제 core 선택(사전순) vs 기존 함수 재사용 shadow(신호 기준
+     상위 12) 비교 — 실제 평균 `entry_score`(0.1657)가 shadow
+     평균(0.3489)의 약 47%, 실제∩shadow 겹침 일평균 20.3%(12개 중
+     2~3개). `000720`(shadow 하위 10~15%, 13/20일 포함) vs
+     `009150`(shadow 상위 15~30%, 0/20일 포함) 극단 역전 사례를
+     20일 내내 일관 확인. **판정: 왜곡 큼**. 상세: `docs/10_signal_
+     research_sppv/[DESIGN] regime_conditional_entry_signal_
+     v1.md` §129.
    - **SPPV-3(다음 착수: [1순위] core-eligible 199종목 중 `core_
      cap` 절단에 신호/랭킹 기준(시가총액/거래대금/모멘텀 등) 적용
      여부 설계 검토(완화안 확정 아님, 비교 단계) +
