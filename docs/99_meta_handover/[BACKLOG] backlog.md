@@ -1888,6 +1888,20 @@
   명확히 구분). 상세: `docs/10_signal_research_sppv/[DESIGN]
   regime_conditional_entry_signal_v1.md` §125.
 
+- 2026-07-30 KST(SPPV-2.138, 신규 KIS 호출 0건, 완료 — **코드 변경
+  포함**): `coverage_score` A-3안 실제 diff 적용 + 최소 검증 —
+  `_CORE_RISK_OFF_RANKING_MIN_SCORE=0.48→0.28`, `_CORE_RISK_OFF_
+  SHADOW_MIN_SCORE=0.22→0.02`, `_build_buy_ranking_score`의 `0.20*
+  coverage_score` 항 제거. 코드 반영 후 관찰용 shadow 메타데이터
+  내부의 하드코딩 절대값 2곳(`ranking_score>=0.26`, `_EVENT_
+  OVERLAY_SHADOW_MIN_SCORE=0.56`, 실제 BUY 판정과 무관)이 낡은
+  스케일에 남아 테스트 3건 실패 — 사용자 확인 결과 "이번 턴 범위
+  유지"로 결정, fixture/기대값만 보정(0.26/0.56은 별도 후속 트랙).
+  관련 테스트 21+105건 + 하네스 `accept backend-file` 통과. 신규
+  A-3 전용 회귀 테스트로 경계가 정확히 `0.20`만큼 이동함을 증명
+  (무변화, 완화 아님). 상세: `docs/10_signal_research_sppv/
+  [DESIGN] regime_conditional_entry_signal_v1.md` §126.
+
 ---
 
 ## 관리 원칙

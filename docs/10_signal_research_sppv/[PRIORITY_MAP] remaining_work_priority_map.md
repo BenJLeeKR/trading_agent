@@ -10152,12 +10152,30 @@ agent 설계 문서 기준으로도 순서는 다음이 맞다.
      함께 이동 필요. **diff 착수 가능 여부: 다음 턴부터 가능**
      (설계 비교 단계 종료). 상세: `docs/10_signal_research_sppv/
      [DESIGN] regime_conditional_entry_signal_v1.md` §125.
-   - **SPPV-3(다음 착수: [1순위] `coverage_score`+threshold
-     재설계 A-3안(완전 제거 + `0.48→0.28`/`0.22→0.02`)의 구체적
-     diff 초안 작성 — 사용자 승인 시 코드 변경 턴으로 전환(완화가
-     아니라 리팩터링임을 명확히 서술) +
-     [2순위] A-3안 적용 이후 운영 관측(§121~124와 동일한 패턴) —
-     무변화 증명이 실측과 일치하는지 재확인(read-only) +
+   - **SPPV-2.138(완료, 2026-07-30 KST, `coverage_score` A-3안
+     실제 diff 적용 + 최소 검증, 작성자: Codex, `.env` 미수정,
+     Full pytest 미실행, 신규 KIS 호출 0건 — 코드 변경 포함)**:
+     `_CORE_RISK_OFF_RANKING_MIN_SCORE=0.48→0.28`, `_CORE_RISK_
+     OFF_SHADOW_MIN_SCORE=0.22→0.02`, `_build_buy_ranking_score`
+     의 `0.20*coverage_score` 항 제거를 실제 코드에 반영. 코드
+     반영 후 관찰용 shadow 메타데이터 내부의 하드코딩 절대값
+     2곳(`ranking_score>=0.26`, `_EVENT_OVERLAY_SHADOW_MIN_
+     SCORE=0.56`, 실제 BUY 판정과 무관)이 낡은 스케일에 남아
+     테스트 3건이 실패 — 사용자 확인(AskUserQuestion) 결과
+     "이번 턴 범위 유지"로 결정, fixture/기대값만 보정. 관련
+     테스트 21+105건 + 하네스 `accept backend-file` 통과. 신규
+     A-3 전용 회귀 테스트로 `overall=0.33`(차단)/`0.34`(통과)
+     경계가 정확히 `0.20`만큼 이동했음을 증명(무변화, 완화 아님).
+     상세: `docs/10_signal_research_sppv/[DESIGN] regime_
+     conditional_entry_signal_v1.md` §126.
+   - **SPPV-3(다음 착수: [1순위] `coverage_score` A-3안 diff
+     적용 이후 운영 관측(§121~124와 동일한 패턴) — 무변화 증명이
+     실측과 일치하는지 재확인(read-only) +
+     [2순위] 관찰용 shadow 메타데이터의 낡은 스케일 절대값
+     (`_classify_core_risk_off_shadow_floor_bucket`의 `0.26`,
+     `_EVENT_OVERLAY_SHADOW_MIN_SCORE=0.56`) 재검토 — 실제 BUY
+     판정과 무관하나 관찰 지표 정확성을 위해 별도 트랙에서 검토
+     (완화안 아님, 사용자 승인 후 착수) +
      [3순위, 하향] `relative_activity` 1안의 장기(수 거래일) 효과
      를 선택적으로 계속 관찰하되, 더 이상 1순위 결정의 선행
      조건은 아님 +
