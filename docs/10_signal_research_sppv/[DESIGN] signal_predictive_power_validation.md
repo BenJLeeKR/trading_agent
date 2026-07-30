@@ -2737,6 +2737,27 @@ entry 설계 검토로 전환**을 확정했다. 별도 문서
   `docs/10_signal_research_sppv/[DESIGN] regime_conditional_
   entry_signal_v1.md` §124.
 
+- 작성자: Codex
+- 수정일자: 2026-07-30 KST (137차, `coverage_score`+절대
+  threshold(`0.48`/`0.22`) 재설계 비교, 설계 비교 단계 완료, 코드
+  미수정, `.env` 미수정, Full pytest 미실행, 신규 KIS 호출 0건)
+- 수정내용: `0.48`은 `_assess_core_risk_off_buy_guard()`의 최우선
+  hard gate(병목의 직접 원인), `0.22`는 `shadow_topk_candidate`
+  판정에만 쓰이는 관찰용 하한(override 미선택 시 실제 영향 없음,
+  발동 이력 0건)으로 역할 분해. 게이트 모집단(전체 이력 n=13,016)
+  전수 조사 결과 `coverage_score`가 예외 없이 `1.0`임을 확인 —
+  이에 근거해 "완전 제거 + `0.48→0.28`/`0.22→0.02`로 동일 상수
+  (`0.20`) 이동"하는 **A-3안**이 현재 판정 경계를 수학적으로 완전히
+  보존함(무변화)을 증명. A안을 A-1(단순 차감, §120 기각)/A-2(재
+  정규화, §120 기각)/A-3(신규, 채택)로 세분화, B안(가중치 축소)은
+  안전성은 동일하나 `coverage_score`가 산식에 남아 구조적 이점
+  없음. `buy_candidate_threshold=0.65`/`eligibility_low_feature_
+  coverage`와 충돌 없음, `shadow_topk_exception_v2`(0.22)는 함께
+  이동 필요. **1순위: A-3안, diff 착수 가능 여부: 다음 턴부터
+  가능**(이 diff는 완화가 아니라 리팩터링임을 명확히 구분). 상세:
+  `docs/10_signal_research_sppv/[DESIGN] regime_conditional_
+  entry_signal_v1.md` §125.
+
 ---
 
 ## 진행 체크리스트
@@ -5784,6 +5805,20 @@ canonical),
     로직 변경 없음, 신규 KIS 호출 0건(shadow 재호출은 `kis_
     client=None`). 상세: `docs/10_signal_research_sppv/[DESIGN]
     regime_conditional_entry_signal_v1.md` §94.
+- [x] **SPPV-2.137(신설, 완료)** `coverage_score`+절대 threshold
+  (`0.48`/`0.22`) 재설계 비교 (2026-07-30 KST, 작성자: Codex,
+  코드 미수정, `.env` 미수정, Full pytest 미실행, 신규 KIS 호출
+  0건)
+  - 게이트 모집단(전체 이력 n=13,016) 전수 조사 결과 `coverage_
+    score`가 예외 없이 `1.0` — 이에 근거해 "완전 제거 + threshold
+    `0.48→0.28`/`0.22→0.02`로 동일 상수(`0.20`) 이동"하는 **A-3안**
+    이 현재 판정 경계를 수학적으로 완전히 보존함(무변화, 병목
+    완화 아님)을 증명. 1순위: A-3, 보류: B안(가중치 축소), 기각:
+    A-1/A-2(§120에서 이미 검증 실패). 다른 BUY 차단 장치와 충돌
+    없음. **diff 착수 가능 여부: 다음 턴부터 가능**(설계 비교
+    단계 종료, 코드 변경은 별도 승인 필요). 상세: `docs/10_signal_
+    research_sppv/[DESIGN] regime_conditional_entry_signal_
+    v1.md` §125.
 - [x] **SPPV-2.136(신설, 완료 — 관측 단계 종료)** `relative_
   activity` 1안 적용 후 운영 관측 추가 축적(2차, 최종 판정)
   (2026-07-30 KST, 작성자: Codex, 코드 미수정, `.env` 미수정,
