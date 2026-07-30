@@ -10217,9 +10217,29 @@ agent 설계 문서 기준으로도 순서는 다음이 맞다.
      수치 일부 차이(정정 완료)**, `왜곡 큼` 판정 유지. 상세: `docs/
      10_signal_research_sppv/[DESIGN] regime_conditional_entry_
      signal_v1.md` §130.
-   - **SPPV-3(다음 착수: [1순위] core-eligible 199종목 중 `core_
-     cap` 절단에 신호/랭킹 기준(시가총액/거래대금/모멘텀 등) 적용
-     여부 설계 검토(완화안 확정 아님, 비교 단계) +
+   - **SPPV-2.143(완료, 2026-07-30 KST, `core_cap` 절단 기준 재설계안
+     A/B/C/D 비교, 작성자: Codex, 코드 미수정, `.env` 미수정, Full
+     pytest 미실행, 신규 KIS 호출 0건)**: 신규 구조 제약 2건 —
+     (1) `signal_feature_snapshots` 커버리지가 core-eligible 사전순
+     1~79위 연속 구간뿐(80위 이후 120종목 0건, snapshot 배치도 동일
+     `_apply_cap()`을 자체 cap 80으로 사용) → score 기반 어떤 안도
+     사전순 편향을 제거하지 못하고 12위→79/80위로 경계만 이동,
+     (2) 유니버스가 루프 진입 시 1회 확정되고 채점은 그 이후이며
+     `universe_selection`이 `deterministic_trigger_engine`을 import
+     하지 않아 B/C안은 계층 역전 + 재배선 필요. 20거래일 비교:
+     A안 평균 entry_score 0.1535 / B안=C안 0.3489(종목집합 19/19일
+     동일 — shadow에서 단조 변환이라 B/C 우열 판정 불가) / D안
+     (snapshot 원시 `overall_score` 정렬) 0.3460(B안의 99.2%, 92.1%
+     일치). B/C/D 모두 `entry_score>=0.65` 0건 — 신호 품질 개선이지
+     주문 발생 완화 아님. `000720` A안 11일→0일, `009150` A안 0일→
+     B/C안 6일·D안 10일. **판정: 절충안 검토 필요, 다음 턴 diff
+     초안 1안은 D안**. 상세: `docs/10_signal_research_sppv/[DESIGN]
+     regime_conditional_entry_signal_v1.md` §131.
+   - **SPPV-3(다음 착수: [1순위] D안(snapshot 원시 `overall_score`
+     기준 `core_cap` 절단)의 구체적 diff 초안 설계 검토 — `_add_core_
+     universe()`/`_apply_cap()` 최소 변경 범위 확정, §131.1(snapshot
+     풀 자체가 사전순 80위로 잘려 있음)·§131.4(buy_candidate 즉각
+     개선 아님) 제약을 전제에 명시 +
      [2순위] 관찰용 shadow 메타데이터의 낡은 스케일 절대값
      (`_classify_core_risk_off_shadow_floor_bucket`의 `0.26`,
      `_EVENT_OVERLAY_SHADOW_MIN_SCORE=0.56`) 재검토 — 실제 BUY

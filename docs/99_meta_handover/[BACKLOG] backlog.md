@@ -1942,6 +1942,19 @@
   완료)**, `왜곡 큼` 판정 유지. 상세: `docs/10_signal_research_
   sppv/[DESIGN] regime_conditional_entry_signal_v1.md` §130.
 
+- 2026-07-30 KST(SPPV-2.143, 신규 KIS 호출 0건, 완료): `core_cap`
+  절단 기준 재설계안 A/B/C/D 비교. 신규 구조 제약 2건 — snapshot
+  커버리지가 core-eligible 사전순 1~79위뿐(80위 이후 0건)이라 score
+  기반 안도 사전순 편향을 제거하지 못하고 경계만 이동, 유니버스가
+  채점보다 먼저 확정돼 B/C안은 계층 역전 필요. 20거래일 비교: A안
+  평균 entry_score 0.1535 / B안=C안 0.3489(19/19일 종목집합 동일,
+  B/C 우열 판정 불가) / D안(snapshot 원시 `overall_score` 정렬)
+  0.3460(B안의 99.2%). B/C/D 모두 `entry_score>=0.65` 0건 — 신호
+  품질 개선이지 주문 발생 완화 아님. **판정: 절충안 검토 필요,
+  다음 턴 diff 초안 1안은 D안**. 완화안 미확정. 상세: `docs/10_
+  signal_research_sppv/[DESIGN] regime_conditional_entry_signal_
+  v1.md` §131.
+
 ---
 
 ## 관리 원칙

@@ -16268,3 +16268,128 @@ SPPV-2.138에서 이미 별도 후속 트랙으로 이월하기로 확인됐다.
 
 §129.2/129.4의 집계 지표(평균 entry_score, 겹침 비율, "왜곡 큼"
 최종 판정)는 정정 대상이 아니다 — 소수점까지 재현됐다.
+
+## §131. `core_cap` 절단 기준 재설계안 A/B/C/D 비교(SPPV-2.143, 2026-07-30 KST)
+
+**전제**: §128~§130에서 확인·재현된 사전순 절단 왜곡을 줄이는 재설계안을
+비교한다. 코드 수정 없음, read-only만 수행, 완화안 확정 아님 — 비교
+가능한 안을 좁히는 것이 목적이다.
+
+### 131.1 결정적 구조 제약 — snapshot 커버리지가 이미 사전순으로 절단돼 있다(신규 사실)
+
+score 기반 절단(B/C/D안)의 전제인 `signal_feature_snapshots` 커버리지를
+전수 조회한 결과(2026-07-29 기준):
+
+- snapshot 보유 종목 `81`개 중 core-eligible 교집합 `79`개.
+- 이 79개의 core-eligible 사전순 순번은 **정확히 1~79위 연속 구간**이며,
+  **사전순 80위 이후 120종목은 snapshot이 0건**이다.
+- 원인: snapshot 입력 배치(`generate_signal_feature_snapshot_input.py`)가
+  동일한 `UniverseSelectionService.compose()`/`_apply_cap()`을 쓰면서
+  자체 cap(`DEFAULT_SIGNAL_FEATURE_UNIVERSE_MAX_CAP=80`, `DEFAULT_
+  SIGNAL_FEATURE_CORE_CAP=80`, `:64-65`)만 넓게 설정한다 — 즉 **snapshot
+  풀 자체가 사전순 상위 80개로 잘려 있다**(사실).
+
+**해석**: 따라서 B/C/D안 중 무엇을 택해도 사전순 편향은 **제거되지 않고
+`12`위 경계에서 `79/80`위 경계로 이동**할 뿐이다. 사전순 편향을 근본적으로
+없애려면 snapshot 배치 cap까지 함께 다뤄야 하며, 이는 이번 비교 범위
+밖의 별도 트랙이다(명시).
+
+### 131.2 두 번째 구조 제약 — universe 선정 시점에는 score 입력이 없다(신규 사실)
+
+- `scripts/run_decision_loop.py:2521`에서 유니버스는 **루프 진입 시 1회**
+  `_load_trading_universe_with_anchor()`로 확정되고, `entry_score`/
+  `ranking_score`는 그 이후 사이클마다 종목별로 계산된다 — 즉 **선정이
+  채점보다 먼저**다.
+- `universe_selection.py`는 `deterministic_trigger_engine`을 import하지
+  않는다(계층 분리 유지). `CompositionContext`(`universe_selection_
+  types.py:101-126`)에도 `market_regime`/`strategy_selection`/
+  `portfolio_allocation` 필드가 없다.
+- 반면 `UniverseSelectionService`는 `RepositoryContainer`를 보유해
+  `signal_feature_snapshots` **repo 직접 읽기는 현재 계층에서 가능**하다
+  (이미 `instruments`/`position_snapshots`/`orders`를 읽고 있음).
+
+**해석**: `_build_entry_score()`/`_build_buy_ranking_score()`를 유니버스
+선정 시점에 호출하려면 (1) 계층 역방향 import와 (2) regime/strategy/
+allocation을 선정 이전으로 끌어올리는 대규모 재배선이 필요하다. 반면
+snapshot의 원시 점수(`overall_score` 등)로 정렬하는 방식은 추가 의존성
+없이 현재 계층 안에서 가능하다.
+
+### 131.3 비교 대상 정의
+
+| 안 | 절단 기준 | 필요 입력 |
+|---|---|---|
+| A안(현행) | `ORDER BY symbol` 사전순 + `core_cap` | 없음 |
+| B안 | core-eligible 풀에서 `entry_score` 상위 `core_cap` | entry_score(=regime/strategy/allocation 필요) |
+| C안 | core-eligible 풀에서 `ranking_score` 상위 `core_cap` | ranking_score(entry_score + 동일 의존성) |
+| D안(절충) | snapshot 원시 `overall_score` 상위 `core_cap` | `signal_feature_snapshots`만 |
+
+D안은 억지 절충이 아니라 131.2의 코드 구조가 실제로 가리키는 방향이다
+(현재 계층에서 추가 의존성 없이 구현 가능한 유일한 score 기반 안).
+
+### 131.4 20거래일(KST `2026-07-02`~`2026-07-29`, 유효 19일) 정량 비교
+
+| 안 | 평균 `entry_score` | 평균 `ranking_score`(참고) | `entry_score>=0.65`(buy_candidate 힌트) | 실제 집합 겹침 |
+|---|---|---|---|---|
+| A안(실제 운영) | **0.1535** | 0.3148 | 2건 | 100%(기준) |
+| B안 | **0.3489** | 0.2169 | **0건** | 21.4% |
+| C안 | **0.3489** | 0.2169 | **0건** | 21.4% |
+| D안 | **0.3460** | — | 0건 | (B안과 92.1% 일치) |
+
+**중요 사실 1 — B안과 C안은 shadow에서 구분되지 않는다**: 종목집합이
+**19/19일 완전 동일**했다. shadow는 allocation/regime/strategy를 대표값
+으로 통일하므로 `ranking_score = 0.55*entry_score + 상수`가 되어
+`entry_score`의 단조 변환이 된다(사실). 실제 운영에서 두 안이 갈리는
+지점은 종목별 `allocation_quality` 차이인데, 이는 계정 상태에 의존해
+shadow로 재현할 수 없다 — **B/C 선택은 이번 실측만으로는 판정 불가**.
+
+**중요 사실 2 — 절단 기준 변경은 `buy_candidate` 도달에 즉각 기여하지
+않는다**: B/C/D안 모두 `entry_score>=0.65`(`buy_candidate_threshold`)를
+넘는 종목이 **0건**이다. A안의 2건은 실제 운영의 종목별 allocation이
+반영된 값이라 shadow 값과 직접 비교할 수 없다(§129.1과 동일한 한계).
+즉 이 재설계는 **신호 품질 개선**이지 **주문 발생 완화가 아니다**(해석,
+과대 해석 금지).
+
+### 131.5 `000720`/`002790`/`009150` 사례 비교(20일 중 채택 일수)
+
+| 종목 | A안(실제) | B안 | C안 | D안 | 신호 위치 |
+|---|---|---|---|---|---|
+| `000720` | **11일** | **0일** | **0일** | **0일** | shadow 55~74위(하위권) |
+| `002790` | 7일 | 1일 | 1일 | 1일 | shadow 9~31위(중위권) |
+| `009150` | **0일** | **6일** | **6일** | **10일** | shadow 8~24위(상위권) |
+
+세 안 모두 저신호 종목(`000720`)을 완전 배제하고 고신호 종목(`009150`)을
+진입시킨다 — 의도한 방향으로 정확히 작동한다. D안은 `009150`을 B/C안
+보다 더 많이(10일) 채택했다.
+
+### 131.6 보수성 평가
+
+| 관점 | A안 | B안 | C안 | D안 |
+|---|---|---|---|---|
+| 왜곡 감소 효과 | 없음(기준) | **최대**(entry 2.27배) | 최대(B안과 동일) | **거의 최대**(B안의 99.2%) |
+| 현재 코드 구조 정합성 | 완전 | **낮음**(계층 역전 + 재배선) | **가장 낮음**(의존성 최다) | **높음**(현재 계층 유지) |
+| 운영 리스크 | 없음 | 중(선정 파이프라인 재배선) | 중~고 | **낮음**(읽기 1곳 추가) |
+| 후속 diff 복잡도 | — | 큼 | 가장 큼 | **작음** |
+
+- **가장 효과 큰 안**: B안/C안(평균 `entry_score` 0.3489) — 단 둘의 우열은
+  이번 실측으로 판정 불가.
+- **가장 보수적 안**: **D안** — 효과가 B안의 99.2%(0.3460 vs 0.3489)에
+  달하면서 계층 역전·재배선이 필요 없다. 두 기준이 **거의 일치**한다는
+  것이 이번 비교의 핵심 소득이다.
+
+### 131.7 최종 판정
+
+**절충안 검토 필요** — 다음 턴에서 diff 초안으로 넘어갈 1안은 **D안**
+(snapshot 원시 `overall_score` 기준 `core_cap` 절단)이다.
+
+근거: (1) 왜곡 감소 효과가 B안의 99.2%로 실질 동등, (2) B/C안은 계층
+역전과 선정 파이프라인 재배선을 요구하는 반면 D안은 현재 계층 안에서
+`signal_feature_snapshots` 읽기 추가만으로 가능, (3) B안과 C안의 우열은
+shadow로 판정 불가하므로 지금 둘 중 하나를 고르는 것은 근거 부족.
+
+### 131.8 다음 우선 작업(완화안 확정 아님, 1개만)
+
+1. **1순위**: D안의 구체적 diff 초안 설계 검토 — `_add_core_universe()`
+   또는 `_apply_cap()`에서 core 후보를 snapshot `overall_score` 기준으로
+   정렬하는 최소 변경 범위 확정. 단, 131.1의 제약(snapshot 풀 자체가
+   사전순 80위로 잘려 있음)과 131.4의 한계(`buy_candidate` 즉각 개선
+   아님)를 diff 착수 시 명시적으로 전제에 포함해야 한다.
