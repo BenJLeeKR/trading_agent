@@ -1928,7 +1928,8 @@
   (사전순) vs 기존 함수 재사용 shadow(신호 기준 상위 12) 비교 —
   실제 평균 `entry_score`(0.1657)가 shadow 평균(0.3489)의 약 47%,
   실제∩shadow 겹침 일평균 20.3%. `000720`(shadow 하위권, 13/20일
-  포함) vs `009150`(shadow 상위권, 0/20일 포함) 극단 역전 사례 확인.
+  [SPPV-2.142에서 정정: 11/20일] 포함) vs `009150`(shadow 상위권,
+  0/20일 포함) 극단 역전 사례 확인.
   **판정: 왜곡 큼**. 완화안 미제시. 상세: `docs/10_signal_research_
   sppv/[DESIGN] regime_conditional_entry_signal_v1.md` §129.
 
