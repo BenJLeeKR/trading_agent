@@ -1,21 +1,18 @@
 # ranking_score 공식 검증 계획
 
 작성일: 2026-07-28  
-상태: [SPPV-2.138에서 갱신] `coverage_score` A-3안 **실제 코드
-적용 완료** — `_build_buy_ranking_score`에서 `0.20*coverage_score`
-항 제거, `_CORE_RISK_OFF_RANKING_MIN_SCORE`를 `0.48→0.28`,
-`_CORE_RISK_OFF_SHADOW_MIN_SCORE`를 `0.22→0.02`로 변경. 실제 BUY
-판정 경로(하드 게이트 `0.28`, shadow 게이트 `0.02`)는 신규 전용
-회귀 테스트로 **경계 이동이 정확히 0.20임을 코드로 증명**(무변화
-리팩터링, 완화 아님). 부수 발견: 관찰용 shadow 메타데이터에
-남아 있던 낡은 스케일 절대값 2곳(`_classify_core_risk_off_
-shadow_floor_bucket`의 `0.26`, `_EVENT_OVERLAY_SHADOW_MIN_
-SCORE=0.56`, 둘 다 실제 BUY 판정과 무관)은 이번 턴 범위 밖으로
-유지(사용자 확인 완료) — 영향받은 테스트 3건은 fixture/기대값만
-보정. 최소 검증(관련 단위 테스트 21+105건, 하네스 `accept
-backend-file`) 통과. `coverage_score` 재설계 트랙은 **적용 완료로
-종료**, 다음 단계는 **운영 무변화 실측 확인**(SPPV-2.119~2.138
-참고)
+상태: [SPPV-2.139에서 갱신] `coverage_score` A-3안 **운영 무변화
+confirmed**. 장중 예외 승인으로 2026-07-30 13:21:17 KST 실제
+운영 서버에 배포됨을 확인(`ranking_min_score=0.28`/`shadow_min_
+score=0.02` 메타데이터 echo로 재확인). 배포 직전 2시간(구
+threshold, gate n=176) vs 배포 이후 누적(~39분, 신 threshold,
+gate n=64) 비교 — `ranking_blocked` 비중이 **87.5%→87.5%로
+소수점까지 동일**, `buy_candidate`/`eligibility_passed`(gate)/
+`APPROVE`/`order_request`/`final_intent='buy'`/`shadow_would_
+pass`는 배포 전후 모두 예외 없이 `0`. **판정: A-3 무변화
+confirmed, 추가 관측 불필요, 트랙 종료**. `0.26`/`_EVENT_
+OVERLAY_SHADOW_MIN_SCORE=0.56`(범위 밖 관찰용 값)은 이번 턴에서도
+건드리지 않음 — 별도 후속 트랙으로 이월(SPPV-2.119~2.139 참고)
 
 ## 1. 문서 목적
 
@@ -1067,6 +1064,39 @@ entry_signal_v1.md` §125.
 
 상세: `docs/10_signal_research_sppv/[DESIGN] regime_conditional_
 entry_signal_v1.md` §126.
+
+### 6.23 SPPV-2.139 — `coverage_score` A-3안 적용 후 운영 무변화
+실측 확인(신규, 2026-07-30 KST, 완료 — 트랙 종료)
+
+- [x] **배포 확인**: 장중 예외 승인(`workflow_dispatch`)으로
+      2026-07-30 13:21:17 KST `Activate runtime after source sync`
+      성공, `core_risk_off_experiment` 메타데이터의 `ranking_min_
+      score=0.28`/`shadow_min_score=0.02` echo로 실제 운영 활성화
+      재확인.
+- [x] **배포 전/후 실측 비교**: 배포 직전 2시간(구 threshold, gate
+      n=176) vs 배포 이후 누적(~39분, 신 threshold, gate n=64) —
+      `ranking_blocked` 비중 **87.5%→87.5%(소수점까지 동일)**,
+      `buy_candidate`/`eligibility_passed`(gate)/`APPROVE`/
+      `order_request`/`final_intent='buy'`/`shadow_would_pass`는
+      배포 전후 모두 **예외 없이 0**. gate 모집단 `coverage_score`
+      는 배포 이후에도 100%(64/64) `1.0` 유지.
+- [x] **무변화 확인 포인트 4가지 분리 판정**: (1) 실제 BUY funnel
+      출력 변화 없음, (2) `ranking_blocked` 비중 유의미한 변화
+      없음, (3) 해당 없음(비중 자체가 불변), (4) 운영 기준에서도
+      "A-3=무변화 리팩터링"이라고 말할 수 있음(SPPV-2.138의 코드
+      증명과 정확히 부합).
+- [x] **범위 준수**: `0.26`/`_EVENT_OVERLAY_SHADOW_MIN_SCORE=0.56`
+      은 이번 턴 결론에 포함하지 않음(범위 밖 관찰용 값으로만 언급).
+- [x] **최종 판정**: **A-3 무변화 confirmed, 추가 관측 불필요**.
+
+**[PLAN] 상태 요약**: `coverage_score`+threshold 재설계 트랙은
+**운영 실측까지 완료돼 완전히 종료**. 다음 단계는 별도 트랙
+(`0.26`/`0.56` 관찰용 값 정리, 사용자 승인 필요) 또는 하위 우선순위
+항목(`000720`, `high_volatility` 층3 등)이며, `ranking_score` 산식
+재설계 본 트랙 자체는 더 이상 진행할 미확정 항목이 없음.
+
+상세: `docs/10_signal_research_sppv/[DESIGN] regime_conditional_
+entry_signal_v1.md` §127.
 
 ## 7. 완료 기준
 
