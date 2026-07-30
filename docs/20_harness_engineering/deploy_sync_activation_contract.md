@@ -78,6 +78,8 @@ GitHub Actions 실제 run으로 다음 `2`개 결과를 확인했다.
 - 이번 검증은 `deploy_main=true`, `allow_market_hours_deploy=true` override 경로 검증이다. 따라서 장중 sync-only 자동 경로 자체는 아직 별도 샘플 변경으로 검증하지 않았다.
 - allowlist 파일만 수정한 PR `#49` 머지 후 `push main` run `30503894901`에서 `Market-hours deploy guard=success`, `Sync source after safe harness=success`, `Activate runtime after source sync=skipped`를 확인했다.
 - 즉 장중 자동 경로에서 `sync_source`만 실행되고 `activate_runtime`은 건너뛰는 현재 계약이 실제로 동작했다.
+- runtime-affecting 최소 변경 PR `#62` 머지 후 장외 `push main` run `30535699795`에서 `Market-hours deploy guard=success`, `Sync source after safe harness=success`, `Activate runtime after source sync=success`를 확인했다.
+- 이 run은 `workflow_dispatch` override 없이 자연 경로로 실행됐고, 남아 있던 장외 activate 실검증 `1`건을 충족했다.
 
 ## 남은 실검증 — 장종료 activate 자연 경로
 
