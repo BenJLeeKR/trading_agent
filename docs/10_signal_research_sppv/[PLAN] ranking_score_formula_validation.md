@@ -1,19 +1,20 @@
 # ranking_score 공식 검증 계획
 
 작성일: 2026-07-28  
-상태: [SPPV-2.135에서 갱신] `relative_activity` 1안 적용 후 관측
-창을 넓혀 재확인(병합 후 초기 1사이클 n=15 → 누적 약 9사이클
-n=134). **중요한 제약**: 병합 이후 실제 경과 시간은 약 41분에
-불과해 이번 턴 요청("5거래일 수준 관측")은 물리적으로 확보되지
-않음 — 캘린더 시간이 그만큼 지나야 하며 세션 내에서 앞당길 수
-없다는 점을 명시. 누적 창에서도 `buy_candidate`/`APPROVE`/
-`order_request`/`final_intent='buy'`/`shadow_topk_exception_v2`
-는 초기 1사이클과 동일하게 **0 유지**, `ranking_blocked` 비중은
-초기 1사이클(56.2%)보다 병합 이전 기준값(46.7%)에 더 가깝게
-회귀(47.8%) — §120 예측("미미한 영향")과 상충하지 않음. 핵심
-병목은 여전히 `coverage_score`+절대 threshold(`0.48`/`0.22`)
-조합. **관측 단계는 아직 진행 중(2안 유지)** — `coverage_score`
-재설계 착수 준비는 아직 안 됨(SPPV-2.119~2.135 참고)
+상태: [SPPV-2.136에서 갱신] `relative_activity` 1안 적용 후
+관측 단계 **종료**. 병합 이후 실제 경과 약 23시간(gate 모집단
+n=616, 전체 BUY-path n=1,435 — 이전 두 턴(n=15/134) 대비 4~40배
+확대, 병합 이전 1일치(n=1,037)와 같은 자릿수 도달)로 재확인한
+결과, `buy_candidate`/`APPROVE`/`order_request`/`final_intent=
+'buy'`/`shadow_topk_exception_v2`는 3개 관측 창(초기 1사이클→
+누적 9사이클→누적 23시간) 전부에서 **일관되게 0 유지**. `ranking_
+blocked` 비중은 병합 전후로 이동(99.9~100%→90~93%)했으나 병합
+직전부터 이미 시작된 이동이고 예측과 반대 방향이라 **diff 인과
+효과로 보지 않음**(교란 요인으로 판단). 핵심 병목은 여전히
+`coverage_score`+절대 threshold(`0.48`/`0.22`) 조합.
+**판정 전환: 1안(coverage_score+threshold 재설계 비교 착수)
+채택** — 관측 단계는 이번 턴으로 종료, `coverage_score` 재설계
+비교 착수 준비 완료(SPPV-2.119~2.136 참고)
 
 ## 1. 문서 목적
 
@@ -934,6 +935,46 @@ entry_signal_v1.md` §122.
 
 상세: `docs/10_signal_research_sppv/[DESIGN] regime_conditional_
 entry_signal_v1.md` §123.
+
+### 6.20 SPPV-2.136 — `relative_activity` 1안 적용 후 운영 관측
+추가 축적(2차, 최종 판정)(신규, 2026-07-30 KST, **완료 — 관측
+단계 종료**)
+
+- [x] **관측 창 확대 확인**: 병합 이후 실제 경과 약 23시간, gate
+      모집단 n=616/전체 BUY-path n=1,435 — 이전 두 턴(n=15/134)
+      대비 4~40배 확대, 병합 이전 1일치(gate n=1,037)와 같은
+      자릿수 도달(사실).
+- [x] **게이트 모집단 기준 재집계(§120과 동일 정의로 통일)**:
+      `ranking_blocked` 비중 병합 전 3일 99.9~100.0% → 병합
+      직전 30분 93.3% → 초기 1사이클 90.0% → 누적 23시간 90.7%
+      — 병합 직전부터 이미 이동 시작, 예측(제거 시 소폭 하락)과
+      반대 방향·더 큰 폭 → **diff 인과 효과 아님(교란 요인)**으로
+      판정.
+- [x] **핵심 출력 변수 안정성 확인**: `buy_candidate`/`APPROVE`/
+      `order_request`/`final_intent='buy'`/`shadow_topk_
+      exception_v2`는 표본이 40배 확대되는 3개 관측 창 전부에서
+      **일관되게 0** — 우연한 소표본 효과가 아니라 안정적 패턴으로
+      판단.
+- [x] **`eligibility_passed=True`(전체 BUY-path) 125건 상세**:
+      `001450`/`001800`/`000810` 3개 종목의 반복 관측(고정
+      ranking_score 4종)뿐, 전부 `buy_candidate=False` — 기존
+      WATCH 고정 패턴 재확인, diff 효과 아님.
+- [x] **핵심 병목 재판정**: `coverage_score`+절대 threshold
+      (`0.48`/`0.22`) 조합 재확인(신규 반박 근거 없음).
+- [x] **다음 1순위 결정(전환)**: **1안(coverage_score+threshold
+      재설계 비교 착수) 채택** — SPPV-2.134/2.135의 "2안(관측
+      연장)"에서 전환. 표본이 병합 이전 1일치와 같은 자릿수에
+      도달했고 핵심 출력 변수가 그 규모에서도 안정적으로 0을
+      유지해, 추가 관측을 늘려도 이 결론이 달라질 가능성은 낮다고
+      판단.
+
+**[PLAN] 상태 요약**: `relative_activity` 적용 후 관측 단계는
+**이번 턴으로 종료**. `coverage_score`+threshold 재설계 비교
+착수 준비는 **완료**(단, 완화안 확정/코드 diff 착수는 별도 승인
+필요).
+
+상세: `docs/10_signal_research_sppv/[DESIGN] regime_conditional_
+entry_signal_v1.md` §124.
 
 ## 7. 완료 기준
 

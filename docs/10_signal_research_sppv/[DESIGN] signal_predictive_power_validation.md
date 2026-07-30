@@ -2713,6 +2713,30 @@ entry 설계 검토로 전환**을 확정했다. 별도 문서
   착수 준비 안 됨**. 상세: `docs/10_signal_research_sppv/[DESIGN]
   regime_conditional_entry_signal_v1.md` §123.
 
+- 작성자: Codex
+- 수정일자: 2026-07-30 KST (136차, `relative_activity` 1안 적용
+  후 운영 관측 추가 축적 2차·최종 판정, 관측 단계 종료, 코드
+  미수정, `.env` 미수정, Full pytest 미실행, 신규 KIS 호출 0건)
+- 수정내용: 병합 이후 실제 경과 약 23시간, gate 모집단 n=616/
+  전체 BUY-path n=1,435로 확대(이전 두 턴 n=15/134 대비 4~40배,
+  병합 이전 1일치 n=1,037과 같은 자릿수 도달). `ranking_blocked`
+  비중(§120과 동일한 gate 정의로 재계산)은 병합 전 3일 99.9~
+  100.0%→병합 직전 30분 93.3%→초기 1사이클 90.0%→누적 23시간
+  90.7% — 병합 직전부터 이미 이동이 시작됐고 §120 예측(제거 시
+  소폭 하락)과 반대 방향·더 큰 폭이라 **diff 인과 효과 아님**
+  (교란 요인)으로 판정. `buy_candidate`·`APPROVE`·`order_
+  request`·`final_intent='buy'`·`shadow_topk_exception_v2`는
+  표본이 40배 확대되는 3개 관측 창(n=15→134→616~1435) 전부에서
+  **일관되게 0 유지**. 전체 BUY-path `eligibility_passed=True`
+  125건은 `001450`/`001800`/`000810` 3개 종목의 반복 관측(고정
+  ranking_score 4종)뿐, 전부 `buy_candidate=False` — 기존 WATCH
+  고정 패턴 재확인. 핵심 병목 재확인: `coverage_score`+절대
+  threshold(`0.48`/`0.22`). **판정 전환: 1안(coverage_score+
+  threshold 재설계 비교 착수) 채택** — SPPV-2.134/2.135의
+  "2안(관측 연장)"에서 전환, 관측 단계는 이번 턴으로 종료. 상세:
+  `docs/10_signal_research_sppv/[DESIGN] regime_conditional_
+  entry_signal_v1.md` §124.
+
 ---
 
 ## 진행 체크리스트
@@ -5760,7 +5784,23 @@ canonical),
     로직 변경 없음, 신규 KIS 호출 0건(shadow 재호출은 `kis_
     client=None`). 상세: `docs/10_signal_research_sppv/[DESIGN]
     regime_conditional_entry_signal_v1.md` §94.
-- [ ] **SPPV-2.135(신설, 진행 중)** `relative_activity` 1안 적용
+- [x] **SPPV-2.136(신설, 완료 — 관측 단계 종료)** `relative_
+  activity` 1안 적용 후 운영 관측 추가 축적(2차, 최종 판정)
+  (2026-07-30 KST, 작성자: Codex, 코드 미수정, `.env` 미수정,
+  Full pytest 미실행, 신규 KIS 호출 0건)
+  - 병합 이후 실제 경과 약 23시간(gate n=616/전체 BUY-path
+    n=1,435 — 이전 두 턴(n=15/134) 대비 4~40배 확대, 병합 이전
+    1일치(n=1,037)와 같은 자릿수 도달). `ranking_blocked` 비중은
+    99.9~100%→90~93%로 이동했으나 병합 직전부터 이미 시작·예측과
+    반대 방향이라 **diff 인과 효과 아님**(교란 요인)으로 판정.
+    `buy_candidate`·`APPROVE`·`order_request`·`final_intent=
+    'buy'`·`shadow_topk_exception_v2`는 3개 관측 창(n=15→134→
+    616~1435) 전부 **0 유지**. 핵심 병목 재확인: `coverage_
+    score`+절대 threshold(`0.48`/`0.22`). **판정 전환: 1안
+    (coverage_score+threshold 재설계 비교 착수) 채택** — 관측
+    단계 종료. 상세: `docs/10_signal_research_sppv/[DESIGN]
+    regime_conditional_entry_signal_v1.md` §124.
+- [x] **SPPV-2.135(신설, 완료)** `relative_activity` 1안 적용
   후 운영 관측 추가 축적 (2026-07-29 KST, 작성자: Codex, 코드
   미수정, `.env` 미수정, Full pytest 미실행, 신규 KIS 호출 0건)
   - 병합 이후 실제 경과 시간 약 41분(초기 1사이클 n=15 → 누적
@@ -5770,10 +5810,10 @@ canonical),
     가깝게 회귀(47.8%). `buy_candidate`·`APPROVE`·`order_
     request`·`shadow_topk_exception_v2`는 초기·누적 창 모두
     **0 유지**(변화 없음). 핵심 병목 재확인: `coverage_score`+
-    절대 threshold(`0.48`/`0.22`). **다음 1순위: 2안(추가 관측
-    연장) 유지, 관측 단계 미종료**. 상세: `docs/10_signal_
-    research_sppv/[DESIGN] regime_conditional_entry_signal_
-    v1.md` §123.
+    절대 threshold(`0.48`/`0.22`). **다음 1순위(SPPV-2.136에서
+    전환됨): 2안(추가 관측 연장) 유지, 관측 단계 미종료**. 상세:
+    `docs/10_signal_research_sppv/[DESIGN] regime_conditional_
+    entry_signal_v1.md` §123.
 - [x] **SPPV-2.134(신설)** `relative_activity` 1안 적용 후 영향
   확인 + 다음 설계 분기 확정 (완료, 2026-07-29 KST, 작성자:
   Codex, 코드 미수정, `.env` 미수정, Full pytest 미실행, 신규

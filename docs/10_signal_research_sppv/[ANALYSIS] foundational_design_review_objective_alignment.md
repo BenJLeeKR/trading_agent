@@ -2827,3 +2827,37 @@ entry_signal_v1.md` §122.
 `coverage_score` threshold 재설계는 이번 턴에서도 착수하지 않는다.
 관측 단계는 종료가 아니라 진행 중임을 명시한다. 상세: `docs/10_signal_
 research_sppv/[DESIGN] regime_conditional_entry_signal_v1.md` §123.
+
+## 22. `relative_activity` 1안 적용 후 운영 관측 추가 축적(2차, 최종 판정)(SPPV-2.136, 2026-07-30 KST)
+
+§21의 "2안(추가 관측) 유지" 판정 이후, 캘린더 시간이 실제로 경과한 뒤
+관측 창을 다시 넓혀 재확인했다(코드 미수정, `.env` 미수정, Full pytest
+미실행, 신규 KIS 호출 0건).
+
+- **관측 창 확대**: 병합 이후 실제 경과 약 23시간, gate 모집단 n=616/
+  전체 BUY-path n=1,435 — 이전 두 턴(n=15/134) 대비 4~40배 확대,
+  병합 이전 1일치(gate n=1,037)와 같은 자릿수에 도달했다.
+- **게이트 모집단 기준 재계산(§120과 동일 정의로 통일)**: `ranking_
+  blocked` 비중이 병합 전 3일 99.9~100.0%에서 병합 직전 30분 93.3%,
+  초기 1사이클 90.0%, 누적 23시간 90.7%로 이동했다. 이 이동은 병합
+  직전부터 이미 시작됐고 §120 예측(제거 시 소폭 하락)과 반대 방향·
+  더 큰 폭이므로 **diff의 인과 효과로 보지 않는다**(교란 요인 —
+  후보 종목 구성/시장 데이터 변화로 판단).
+- **핵심 출력 변수 안정성**: `buy_candidate`·`APPROVE`·`order_
+  request`·`final_intent='buy'`·`shadow_topk_exception_v2`는 표본이
+  40배 확대되는 3개 관측 창(n=15→134→616~1,435)에 걸쳐 **일관되게
+  0을 유지**했다.
+- **`eligibility_passed=True`(전체 BUY-path) 125건**: `001450`/
+  `001800`/`000810` 3개 종목의 반복 관측(고정 ranking_score 4종)뿐,
+  전부 `buy_candidate=False` — 기존 WATCH 고정 패턴 재확인, diff
+  효과 아님.
+- **핵심 병목 재판정**: `coverage_score`+절대 threshold(`0.48`/
+  `0.22`) 조합으로 재확인(신규 반박 근거 없음).
+
+**결론**: 다음 1순위를 **1안(coverage_score+threshold 재설계 비교
+착수)으로 전환**한다 — SPPV-2.134/2.135의 "2안(관측 연장)" 판정에서
+전환하는 것이며, 근거는 표본이 병합 이전 1일치와 같은 자릿수에
+도달했음에도 핵심 출력 변수가 안정적으로 0을 유지해 추가 관측으로
+이 결론이 달라질 가능성이 낮다는 판단이다. 관측 단계는 이번 턴으로
+종료한다. 상세: `docs/10_signal_research_sppv/[DESIGN] regime_
+conditional_entry_signal_v1.md` §124.
