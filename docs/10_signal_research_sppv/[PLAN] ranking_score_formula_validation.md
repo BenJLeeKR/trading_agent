@@ -1,20 +1,18 @@
 # ranking_score 공식 검증 계획
 
 작성일: 2026-07-28  
-상태: [SPPV-2.136에서 갱신] `relative_activity` 1안 적용 후
-관측 단계 **종료**. 병합 이후 실제 경과 약 23시간(gate 모집단
-n=616, 전체 BUY-path n=1,435 — 이전 두 턴(n=15/134) 대비 4~40배
-확대, 병합 이전 1일치(n=1,037)와 같은 자릿수 도달)로 재확인한
-결과, `buy_candidate`/`APPROVE`/`order_request`/`final_intent=
-'buy'`/`shadow_topk_exception_v2`는 3개 관측 창(초기 1사이클→
-누적 9사이클→누적 23시간) 전부에서 **일관되게 0 유지**. `ranking_
-blocked` 비중은 병합 전후로 이동(99.9~100%→90~93%)했으나 병합
-직전부터 이미 시작된 이동이고 예측과 반대 방향이라 **diff 인과
-효과로 보지 않음**(교란 요인으로 판단). 핵심 병목은 여전히
-`coverage_score`+절대 threshold(`0.48`/`0.22`) 조합.
-**판정 전환: 1안(coverage_score+threshold 재설계 비교 착수)
-채택** — 관측 단계는 이번 턴으로 종료, `coverage_score` 재설계
-비교 착수 준비 완료(SPPV-2.119~2.136 참고)
+상태: [SPPV-2.137에서 갱신] `relative_activity` 관측 단계는
+**종료 상태 유지**(SPPV-2.136에서 종료). `coverage_score`+절대
+threshold(`0.48`/`0.22`) **재설계 비교 완료**. 핵심 발견: 게이트
+모집단(전체 이력 n=13,016)에서 `coverage_score`가 **예외 없이
+`1.0`**임을 실측 확인 — 이에 근거해 "완전 제거 + threshold를
+동일 상수(`0.20`)만큼 함께 이동(`0.48→0.28`, `0.22→0.02`)"하는
+**A-3안**이 현재 판정 경계를 수학적으로 완전히 보존함(무변화,
+병목 완화 아님)을 증명. **1순위 설계안: A-3 채택**, 보류: B안
+(가중치 축소, 안전성 동일하나 구조적 이점 없음), 기각: A-1/A-2
+(§120에서 이미 검증 실패). **diff 착수 가능 여부: 다음 턴부터
+가능**(이번 턴은 설계 비교까지만, 코드 수정 없음). 단, 이 diff는
+완화안이 아니라 리팩터링임을 명확히 구분(SPPV-2.119~2.137 참고)
 
 ## 1. 문서 목적
 
@@ -975,6 +973,55 @@ entry_signal_v1.md` §123.
 
 상세: `docs/10_signal_research_sppv/[DESIGN] regime_conditional_
 entry_signal_v1.md` §124.
+
+### 6.21 SPPV-2.137 — `coverage_score`+절대 threshold(`0.48`/
+`0.22`) 재설계 비교(신규, 2026-07-30 KST, 완료 — 설계 비교 단계
+종료, diff 착수는 별도 승인 필요)
+
+- [x] **threshold 역할 분해**: `0.48`은 `_assess_core_risk_off_
+      buy_guard()`의 최우선 hard gate(실질적 병목의 직접 원인,
+      게이트 모집단 90~100% 차단의 원인), `0.22`는 별도의 `shadow_
+      topk_candidate` 판정에만 쓰이는 관찰/실험용 하한(override
+      미선택 시 실제 BUY 판정에 영향 없음, 활성화 이력 0건).
+      둘 다 같은 `ranking_score` 공식을 공유하므로 **함께, 동일한
+      크기로 이동해야 함**(격차 왜곡 방지).
+- [x] **핵심 발견(read-only 재검증)**: 게이트 모집단(`core_risk_
+      off` 가드 평가 대상) 전체 이력 n=13,016건 전수 조사 결과
+      `coverage_score`가 **100.0%(13,016/13,016) 전부 `1.0`**
+      (예외 0건) — 게이트 미도달 population(n=37,399 중 562건이
+      `0.1429`)은 상위 `eligibility_low_feature_coverage` 하드
+      게이트에서 이미 차단돼 여기 도달하지 않음.
+- [x] **A/B 설계안 비교**: A안(완전 제거)을 세 하위 방식으로 세분화
+      — A-1(단순 차감, threshold 미조정, §120에서 이미 기각),
+      A-2(재정규화, threshold 미조정, §120에서 이미 기각), **A-3
+      (신규: 완전 제거 + `0.48→0.28`/`0.22→0.02`로 동일 상수
+      `0.20`만큼 threshold 함께 이동)** — coverage_score≡1.0 사실에
+      의해 판정 경계가 수학적으로 완전히 보존됨(무변화 증명). B안
+      (유지, 가중치 축소 예: 0.20→0.10 + threshold 0.10만큼 이동)도
+      동일한 무변화 특성을 갖지만, `coverage_score`가 여전히 산식에
+      남아 §118의 구조적 문제(이관 검토 대상)를 해소하지 못함.
+- [x] **"제거≠완화" 명확화**: A-3/B 모두 현재의 차단율(90~100%)을
+      그대로 유지하도록 설계됨 — 이번 재설계는 **리팩터링**이며
+      **완화가 아님**을 명시. 실제 완화(threshold를 더 낮추는 등)는
+      별도의 후속 결정.
+- [x] **다른 장치와의 정합성**: `buy_candidate_threshold=0.65`
+      (entry_score 기준, coverage_score 무관 — 충돌 없음),
+      `eligibility_low_feature_coverage`(상위 별개 하드 게이트 —
+      충돌 없음), `shadow_topk_exception_v2`(0.22와 함께 이동
+      필요 — 정합성 유지), 기타 signal/activity/strategy 게이트
+      (무관 — 충돌 없음).
+- [x] **최종 권고**: **1순위 = A-3안**(완전 제거 + threshold 동일
+      상수 이동), 보류 = B안, 기각 = A-1/A-2. **diff 착수 가능
+      여부: 다음 턴부터 가능**(125.2 실측 근거 + 무변화 증명 +
+      정합성 확인 완료).
+
+**[PLAN] 상태 요약**: `relative_activity` 관측 단계는 종료 상태
+유지. `coverage_score`+threshold **재설계 비교 단계도 이번 턴으로
+종료**. diff 착수 가능 여부: **가능**(다음 턴, 코드 변경 승인
+필요, A-3안 기준).
+
+상세: `docs/10_signal_research_sppv/[DESIGN] regime_conditional_
+entry_signal_v1.md` §125.
 
 ## 7. 완료 기준
 

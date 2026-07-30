@@ -2861,3 +2861,39 @@ research_sppv/[DESIGN] regime_conditional_entry_signal_v1.md` §123.
 이 결론이 달라질 가능성이 낮다는 판단이다. 관측 단계는 이번 턴으로
 종료한다. 상세: `docs/10_signal_research_sppv/[DESIGN] regime_
 conditional_entry_signal_v1.md` §124.
+
+## 23. `coverage_score`+절대 threshold(`0.48`/`0.22`) 재설계 비교(SPPV-2.137, 2026-07-30 KST)
+
+§22의 "1안(coverage_score+threshold 재설계 비교 착수) 채택" 판정에
+따라 설계안을 비교했다(코드 미수정, `.env` 미수정, Full pytest
+미실행, 신규 KIS 호출 0건 — 설계 비교 + read-only 검증까지만 수행).
+
+- **threshold 역할 분해**: `0.48`은 `_assess_core_risk_off_buy_
+  guard()`의 최우선 hard gate로 게이트 모집단 90~100% 차단의 직접
+  원인이다. `0.22`는 별도의 `shadow_topk_candidate` 판정(관찰/실험용)
+  에만 쓰이며 override가 선택되지 않는 한 실제 BUY 판정에 영향이
+  없다(발동 이력 0건). 둘은 같은 `ranking_score` 공식을 공유하므로
+  함께 동일한 크기로 이동해야 격차가 왜곡되지 않는다.
+- **핵심 발견**: 게이트 모집단(전체 이력 n=13,016) 전수 조사 결과
+  `coverage_score`가 예외 없이 `1.0`이었다. 이 사실에 근거해 "완전
+  제거 + `0.48→0.28`/`0.22→0.02`로 동일 상수(`0.20`) 이동"하는
+  **A-3안**이 현재 판정 경계를 수학적으로 완전히 보존함(무변화)을
+  증명했다.
+- **A/B 비교**: A안을 A-1(단순 차감, §120 기각)/A-2(재정규화, §120
+  기각)/A-3(신규 도출, 채택)로 세분화했다. B안(가중치 축소, 예:
+  0.20→0.10 + threshold 0.10 이동)도 동일한 무변화 특성을 갖지만
+  `coverage_score`가 여전히 산식에 남아 구조적 문제(§118)를 해소하지
+  못한다.
+- **"제거≠완화" 명확화**: A-3/B 모두 현재 차단율을 그대로 유지하도록
+  설계된 안 — 이번 재설계는 리팩터링이며 완화가 아니다. 실제 완화는
+  별도의 후속 결정이다.
+- **정합성 확인**: `buy_candidate_threshold=0.65`(entry_score 기준,
+  무관)와 `eligibility_low_feature_coverage`(상위 별개 하드 게이트)
+  는 충돌 없음. `shadow_topk_exception_v2`(0.22)는 함께 이동 필요.
+
+**결론**: 1순위 설계안은 **A-3(완전 제거 + threshold 동일 상수
+이동)**, 보류는 B안, 기각은 A-1/A-2다. diff 착수는 다음 턴부터
+가능하며, 근거는 게이트 모집단 전수 조사(coverage_score≡1.0)와
+그에 따른 무변화 증명, 다른 장치와의 정합성 확인이다. 상세: `docs/
+10_signal_research_sppv/[DESIGN] regime_conditional_entry_signal_
+v1.md` §125.

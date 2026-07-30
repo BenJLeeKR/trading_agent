@@ -10136,52 +10136,70 @@ agent 설계 문서 기준으로도 순서는 다음이 맞다.
      threshold 재설계 비교 착수) 채택** — 관측 단계 종료. 상세:
      `docs/10_signal_research_sppv/[DESIGN] regime_conditional_
      entry_signal_v1.md` §124.
+   - **SPPV-2.137(완료, 2026-07-30 KST, `coverage_score`+절대
+     threshold(`0.48`/`0.22`) 재설계 비교, 작성자: Codex, 코드
+     미수정, `.env` 미수정, Full pytest 미실행, 신규 KIS 호출
+     0건)**: `0.48`은 hard gate(병목 직접 원인), `0.22`는
+     `shadow_topk_candidate` 판정용 관찰 하한(실제 영향 없음,
+     발동 0건)으로 역할 분해. 게이트 모집단(전체 이력 n=13,016)
+     전수 조사 결과 `coverage_score`가 예외 없이 `1.0` — 이에
+     근거해 "완전 제거 + `0.48→0.28`/`0.22→0.02`로 동일 상수
+     (`0.20`) 이동"하는 **A-3안**이 판정 경계를 수학적으로 완전히
+     보존함(무변화, 병목 완화 아님)을 증명. 1순위: A-3, 보류:
+     B안(가중치 축소), 기각: A-1/A-2(§120에서 이미 검증 실패).
+     `buy_candidate_threshold=0.65`/`eligibility_low_feature_
+     coverage`와 충돌 없음, `shadow_topk_exception_v2`(0.22)는
+     함께 이동 필요. **diff 착수 가능 여부: 다음 턴부터 가능**
+     (설계 비교 단계 종료). 상세: `docs/10_signal_research_sppv/
+     [DESIGN] regime_conditional_entry_signal_v1.md` §125.
    - **SPPV-3(다음 착수: [1순위] `coverage_score`+threshold
-     (`0.48`/`0.22`) 재설계 비교 착수 — 단독 제거가 아니라
-     재정규화/threshold 재산정 방식을 비교 설계(완화안 확정
-     아님, 비교 단계) +
-     [2순위, 하향] `relative_activity` 1안의 장기(수 거래일) 효과
+     재설계 A-3안(완전 제거 + `0.48→0.28`/`0.22→0.02`)의 구체적
+     diff 초안 작성 — 사용자 승인 시 코드 변경 턴으로 전환(완화가
+     아니라 리팩터링임을 명확히 서술) +
+     [2순위] A-3안 적용 이후 운영 관측(§121~124와 동일한 패턴) —
+     무변화 증명이 실측과 일치하는지 재확인(read-only) +
+     [3순위, 하향] `relative_activity` 1안의 장기(수 거래일) 효과
      를 선택적으로 계속 관찰하되, 더 이상 1순위 결정의 선행
      조건은 아님 +
-     [3순위] `000720`이 core 유니버스에 20일 이상 연속 포함되는
+     [4순위] `000720`이 core 유니버스에 20일 이상 연속 포함되는
      조건을 원인만 확인(완화안 아님) +
-     [4순위] 이 모집단(core+bearish_trend)이 신호 품질(overall/
+     [5순위] 이 모집단(core+bearish_trend)이 신호 품질(overall/
      slow)이 항상 깊은 음수로만 나오는 원인을 `atr_14_pct`/
      `bearish_trend` 판정과의 연결고리 관점에서 "모집단 구성"
      문제로 추가 좁힘(완화안 설계 아님) +
-     [5순위] `shadow_topk_exception_v2` 경로가 4주간 한 번도
+     [6순위] `shadow_topk_exception_v2` 경로가 4주간 한 번도
      발동하지 않은 이유가 전제조건 자체가 좁게 설계된 것인지
      시장 조건 때문인지 원인만 더 좁혀서 확인(완화안 설계 아님) +
-     [6순위] `high_volatility` 단독(=`regime_label≠bearish_
+     [7순위] `high_volatility` 단독(=`regime_label≠bearish_
      trend`) 경로로 이미 eligibility를 통과한 종목(001450형)의
      층3(AI downgrade) 완화 검토 방향으로 전환 — 이 하드 게이트
      (core+bearish_trend) 내부 탐색은 4턴 연속 후보 없음으로
      종료 +
-     [7순위] `core_risk_off_topk_v1` override가 실제로 어느
+     [8순위] `core_risk_off_topk_v1` override가 실제로 어느
      호출부에서 `deterministic_trigger_override`를 채워야
      활성화되는지 코드 경로만 확인(활성화 여부 결정은 별도 승인
      필요, 활성화해도 즉시 효과 없음이 이미 확인됨) +
-     [8순위] `risk_off_exception_eligible` 경로가 0.02%로 거의
+     [9순위] `risk_off_exception_eligible` 경로가 0.02%로 거의
      발동하지 않는 정확한 사유를 조건별로 분해 +
-     [9순위] `KIS_ENV`(paper/real) 실제 설정 확인 및 KIS 모의투자
+     [10순위] `KIS_ENV`(paper/real) 실제 설정 확인 및 KIS 모의투자
      서버 일봉 데이터 특성이 실전 서버와 다른지 공식 자료 기준
      별도 검증(사용자 확인 필요, `.env` 직접 열람 없이) +
-     [10순위] 가능하면 실전 서버/공개 시세로 같은 기간 KODEX200
+     [11순위] 가능하면 실전 서버/공개 시세로 같은 기간 KODEX200
      실제 스프레드 대조(신규 호출 필요 — 별도 턴·사용자 승인
      하에) +
-     [11순위] `market_regime.py`의 `bearish_trend` 조건이 `slow_
+     [12순위] `market_regime.py`의 `bearish_trend` 조건이 `slow_
      score`(파생)와 원시 지표를 동시 검사하는 중복 구조가 설계
      의도인지 확인 +
-     [12순위] `signal_feature_snapshots` 배치의 일별 1회 갱신
+     [13순위] `signal_feature_snapshots` 배치의 일별 1회 갱신
      주기·재사용 설계 확인(`build_signal_feature_snapshots.py`
      실행 이력) +
-     [13순위] 사용자가 `.env`에 `TRADING_UNIVERSE_MAX_CAP` 설정 후
+     [14순위] 사용자가 `.env`에 `TRADING_UNIVERSE_MAX_CAP` 설정 후
      `ops-scheduler` 재기동 → 다음 거래일 실측(§97.3 체크리스트:
      universe 크기/009150 진입/candidate pool 확대/buy_candidate~
      submit_request 변화) +
-     [14순위] 001450의 층3(AI downgrade, risk_off+volatility 축)
+     [15순위] 001450의 층3(AI downgrade, risk_off+volatility 축)
      관찰 지속(정당/과잉 여부 미확정, 완화 제안 아님) +
-     [15순위, 후순위 조정] eligibility_low_relative_activity 조건부
+     [16순위, 후순위 조정] eligibility_low_relative_activity 조건부
      완화(entry_score≥0.70 예외) 코드 diff 초안 설계 검토 — 신규
      진입 종목들의 entry_score가 낮아(0.36) 실익이 낮아짐, 전면
      완화 금지 +

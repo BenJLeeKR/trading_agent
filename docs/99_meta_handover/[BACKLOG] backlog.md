@@ -1875,6 +1875,19 @@
   채택**. 상세: `docs/10_signal_research_sppv/[DESIGN] regime_
   conditional_entry_signal_v1.md` §124.
 
+- 2026-07-30 KST(SPPV-2.137, 신규 KIS 호출 0건, 완료 — 설계 비교
+  단계 종료): `coverage_score`+절대 threshold(`0.48`/`0.22`) 재설계
+  비교. `0.48`=hard gate(병목 직접 원인), `0.22`=관찰용 하한(실제
+  영향 없음)으로 역할 분해. 게이트 모집단(전체 이력 n=13,016) 전수
+  조사 결과 `coverage_score`가 예외 없이 `1.0` — 이에 근거해 "완전
+  제거 + `0.48→0.28`/`0.22→0.02`로 동일 상수(`0.20`) 이동"하는
+  **A-3안**이 판정 경계를 수학적으로 완전히 보존함(무변화, 병목
+  완화 아님)을 증명. 1순위: A-3, 보류: B안(가중치 축소), 기각:
+  A-1/A-2(§120에서 이미 검증 실패). 다른 BUY 차단 장치와 충돌
+  없음. **diff 착수 가능 여부: 다음 턴부터 가능**(리팩터링임을
+  명확히 구분). 상세: `docs/10_signal_research_sppv/[DESIGN]
+  regime_conditional_entry_signal_v1.md` §125.
+
 ---
 
 ## 관리 원칙
