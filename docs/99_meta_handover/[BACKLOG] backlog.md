@@ -1923,6 +1923,15 @@
   상세: `docs/10_signal_research_sppv/[DESIGN] regime_conditional_
   entry_signal_v1.md` §128.
 
+- 2026-07-30 KST(SPPV-2.141, 신규 KIS 호출 0건, 완료): `core_cap`
+  사전순 절단 왜곡 정량 검증. 최근 20거래일(KST) 실제 core 선택
+  (사전순) vs 기존 함수 재사용 shadow(신호 기준 상위 12) 비교 —
+  실제 평균 `entry_score`(0.1657)가 shadow 평균(0.3489)의 약 47%,
+  실제∩shadow 겹침 일평균 20.3%. `000720`(shadow 하위권, 13/20일
+  포함) vs `009150`(shadow 상위권, 0/20일 포함) 극단 역전 사례 확인.
+  **판정: 왜곡 큼**. 완화안 미제시. 상세: `docs/10_signal_research_
+  sppv/[DESIGN] regime_conditional_entry_signal_v1.md` §129.
+
 ---
 
 ## 관리 원칙

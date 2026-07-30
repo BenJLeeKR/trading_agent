@@ -2985,3 +2985,29 @@ signal_research_sppv/[DESIGN] regime_conditional_entry_signal_v1.md`
 적용 여부를 별도 설계 검토 트랙으로 전환하는 것이다(완화안 확정
 아님). 상세: `docs/10_signal_research_sppv/[DESIGN] regime_
 conditional_entry_signal_v1.md` §128.
+
+## 27. `core_cap` 사전순 절단 왜곡 정량 검증(SPPV-2.141, 2026-07-30 KST)
+
+§26의 구조 편향 확인에 이어, 그 왜곡의 크기를 read-only로 정량 검증했다
+(코드 미수정, 기존 함수 재사용).
+
+- **방법**: 최근 20거래일(KST) 실제 core 선택(사전순 절단)과, 같은 날
+  `signal_feature_snapshots`(80~81개 후보 풀)에 기존 함수(`_build_
+  entry_score`/`_build_buy_ranking_score`)를 그대로 적용해 계산한
+  shadow(신호 기준 상위 12)를 비교했다.
+- **정량 결과**: 실제 core 평균 `entry_score`(0.1657)는 shadow
+  평균(0.3489)의 약 47%에 불과했다. 실제∩shadow 겹침은 일평균
+  20.3%(12개 중 2~3개)로, 실제 core 구성의 약 80%가 신호 기반
+  선별과 다르다.
+- **사례**: `000720`은 shadow 순위 하위 10~15%(entry_score 대부분
+  0.0)임에도 20일 중 13일 실제 포함됐고, `009150`은 shadow 순위
+  상위 15~30%(최고 8위)임에도 core 경로로 20일 중 한 번도 채택되지
+  않았다. `002790`도 `000720`보다 뚜렷이 높은 `entry_score`를 보이나
+  사전순 21위로 대부분 배제됐다. 세 종목의 역전 패턴이 20일 내내
+  일관되게 재현됐다.
+
+**결론**: **왜곡 큼** — 신호 손실(평균 entry_score 약 53% 손실)과
+구성 불일치(약 80%)가 우연이 아니라 20거래일 내내 일관된 구조적
+패턴으로 확인됐다. 다음 우선 작업은 `core_cap` 절단 기준 재설계
+검토(완화안 확정 아님, 설계 비교 단계)다. 상세: `docs/10_signal_
+research_sppv/[DESIGN] regime_conditional_entry_signal_v1.md` §129.

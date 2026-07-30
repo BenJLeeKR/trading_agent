@@ -2817,6 +2817,23 @@ entry 설계 검토로 전환**을 확정했다. 별도 문서
   상세: `docs/10_signal_research_sppv/[DESIGN] regime_conditional_
   entry_signal_v1.md` §128.
 
+- 작성자: Codex
+- 수정일자: 2026-07-30 KST (141차, `core_cap` 사전순 절단 왜곡
+  정량 검증, 코드 미수정, `.env` 미수정, Full pytest 미실행, 신규
+  KIS 호출 0건)
+- 수정내용: 최근 20거래일(KST) 실제 core 선택(사전순 절단) vs
+  기존 함수(`_build_entry_score`/`_build_buy_ranking_score`) 재사용
+  shadow(entry_score/ranking_score 상위 12) 비교. 실제 평균 entry_
+  score(0.1657)가 shadow 평균(0.3489)의 약 47%, 실제∩shadow 겹침
+  일평균 20.3%(12개 중 2~3개만 일치). `000720`(shadow 순위 하위
+  10~15%, 13/20일 포함) vs `009150`(상위 15~30%, 0/20일 포함,
+  최고 8위) 극단 역전 사례를 20일 내내 일관되게 확인. `002790`도
+  000720보다 뚜렷이 높은 entry_score를 보이나 사전순 21위로 대부분
+  배제. **판정: 왜곡 큼**(수치 기준: 신호 손실 약 53%, 구성 불일치
+  약 80%). 다음 우선 작업: `core_cap` 절단 기준 재설계 검토(완화안
+  아님, 설계 비교 단계). 상세: `docs/10_signal_research_sppv/
+  [DESIGN] regime_conditional_entry_signal_v1.md` §129.
+
 ---
 
 ## 진행 체크리스트
@@ -5864,6 +5881,19 @@ canonical),
     로직 변경 없음, 신규 KIS 호출 0건(shadow 재호출은 `kis_
     client=None`). 상세: `docs/10_signal_research_sppv/[DESIGN]
     regime_conditional_entry_signal_v1.md` §94.
+- [x] **SPPV-2.141(신설, 완료)** `core_cap` 사전순 절단 왜곡 정량
+  검증 (2026-07-30 KST, 작성자: Codex, 코드 미수정, `.env` 미수정,
+  Full pytest 미실행, 신규 KIS 호출 0건)
+  - 최근 20거래일(KST) 실제 core 선택(사전순 절단) vs 기존 함수
+    (`_build_entry_score`/`_build_buy_ranking_score`) 재사용 shadow
+    (entry_score/ranking_score 상위 12) 비교. 실제 평균 entry_
+    score(0.1657)가 shadow 평균(0.3489)의 약 47%, 실제∩shadow
+    겹침 일평균 20.3%(12개 중 2~3개). `000720`(shadow 순위 하위
+    10~15%, 13/20일 포함) vs `009150`(상위 15~30%, 0/20일 포함)
+    극단 역전 사례 확인. **판정: 왜곡 큼**. 다음 우선 작업: `core_
+    cap` 절단 기준 재설계 검토(완화안 아님, 설계 비교 단계). 상세:
+    `docs/10_signal_research_sppv/[DESIGN] regime_conditional_
+    entry_signal_v1.md` §129.
 - [x] **SPPV-2.140(신설, 완료)** `000720` core 유니버스 20거래일+
   연속 포함 원인 규명 (2026-07-30 KST, 작성자: Codex, 코드 미수정,
   `.env` 미수정, Full pytest 미실행, 신규 KIS 호출 0건)
