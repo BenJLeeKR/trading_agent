@@ -220,7 +220,6 @@ def assess_deterministic_triggers(
             entry_score=entry_score,
             market_regime=market_regime,
             portfolio_allocation=portfolio_allocation,
-            strategy_selection=strategy_selection,
         )
         if core_risk_off_guard_active:
             (
@@ -1094,7 +1093,6 @@ def _build_buy_ranking_score(
     entry_score: float,
     market_regime: MarketRegimeAssessment | None,
     portfolio_allocation: PortfolioAllocationAssessment | None,
-    strategy_selection: StrategySelectionAssessment | None,
 ) -> float:
     # relative_activity는 entry_score 내부(relative_activity_bonus)에만 반영한다.
     # ranking_score 쪽 항은 SPPV-2.132에서 소프트 중복으로 확인돼 제거함
@@ -1108,6 +1106,15 @@ def _build_buy_ranking_score(
     # 함께 낮추면 판정 경계가 수학적으로 그대로 보존된다 — 완화가 아니라
     # 무변화 리팩터링이다(docs/10_signal_research_sppv/[DESIGN]
     # regime_conditional_entry_signal_v1.md §125).
+    #
+    # strategy_alignment 직접항(0.02)도 여기서 제거했다 — _build_entry_score()가
+    # 완전히 동일한 조건 집합({swing_momentum, event_continuation})을 이미
+    # +0.05로 반영하고 있어 ranking_score에서의 이중 계상이었다(SPPV-2.146
+    # §134.1/§134.7). "죽은 항 제거"가 아니라는 점에 주의 — 이 항은
+    # event_overlay 경로에서는 전체 이력 28.93%로 살아 있고(SPPV-2.146
+    # §134.2), 제거 근거는 어디까지나 entry_score와의 직접 중복이다.
+    # entry_score 쪽 +0.05는 그대로 유지한다.
+    # regime_tailwind는 이번 변경 범위 밖이다(SPPV-2.147).
     regime_tailwind = 0.5
     if market_regime is not None:
         if market_regime.regime_label == "bullish_trend" and market_regime.risk_tone == "risk_on":
@@ -1121,18 +1128,10 @@ def _build_buy_ranking_score(
             (portfolio_allocation.max_new_capital_pct or 0.0) / 10.0
         )
 
-    strategy_alignment = 0.0
-    if strategy_selection is not None and strategy_selection.preferred_strategy in {
-        "swing_momentum",
-        "event_continuation",
-    }:
-        strategy_alignment = 1.0
-
     score = (
         0.55 * entry_score
         + 0.10 * allocation_quality
         + 0.03 * regime_tailwind
-        + 0.02 * strategy_alignment
     )
     return _clamp(score)
 

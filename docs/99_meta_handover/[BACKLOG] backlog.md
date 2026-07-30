@@ -1998,6 +1998,20 @@
   `docs/10_signal_research_sppv/[DESIGN] regime_conditional_entry_
   signal_v1.md` §134.
 
+- 2026-07-30 KST(SPPV-2.147, 신규 KIS 호출 0건, 완료 — **코드 변경
+  포함, 운영 효과 미확정**): `strategy_alignment` `ranking_score`
+  직접항(`0.02`) 제거 diff 초안. `deterministic_trigger_engine.py`
+  단일 파일에서 항 제거 + 그 항 전용 지역 계산·미사용 `strategy_
+  selection` 매개변수·호출부 인자 정리. **`entry_score` 쪽 `+0.05`와
+  `trigger_strategy_alignment` reason code는 유지**, `regime_tailwind`
+  는 범위 밖. **"죽은 항 제거"가 아니라** `event_overlay`에서 전체
+  이력 28.93%로 살아 있는 항의 **ranking 직접 중복 계상 제거**다.
+  검증: 기존 21건 **무수정 통과** + 신규 2건 = 23 passed, 관련 5개
+  파일 105 passed, 하네스 `accept backend-file` PASS. 미완료:
+  threshold 영향 정량 확인(추론 단계), 운영 반영·효과 확정. 상세:
+  `docs/10_signal_research_sppv/[DESIGN] regime_conditional_entry_
+  signal_v1.md` §135.
+
 ---
 
 ## 관리 원칙

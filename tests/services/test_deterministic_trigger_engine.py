@@ -900,3 +900,62 @@ def test_trigger_engine_instruments_event_overlay_shadow_lane_metadata() -> None
     assert experiment["shadow_strategy_pass"] is True
     assert experiment["shadow_would_pass"] is True
     assert experiment["apply_ready"] is False
+
+
+def test_trigger_engine_strategy_alignment_removed_from_ranking_kept_in_entry() -> None:
+    """SPPV-2.147 — `strategy_alignment`가 ranking_score에서만 빠졌는지 고정.
+
+    `_build_entry_score()`의 `+0.05`는 유지되고 `_build_buy_ranking_score()`의
+    직접항 `0.02`만 제거됐으므로, `preferred_strategy`만 바꾼 두 입력을 비교하면
+    ``ranking_score`` 차이가 ``entry_score`` 차이의 정확히 0.55배여야 한다
+    (제거 전이라면 여기에 0.02가 더 붙는다).
+
+    주의: 이 항은 "죽은 항"이 아니다 — `event_overlay` 경로에서는 실제로
+    발동 중이며(SPPV-2.146 §134.2), 제거 근거는 entry_score와의 직접 중복이다.
+    """
+    common = dict(
+        source_type="core",
+        signal_feature_snapshot=_make_signal(overall="0.70", fast="0.60", slow="0.65"),
+        market_regime=_make_regime(regime_label="bullish_trend", risk_tone="risk_on"),
+        portfolio_allocation=_make_portfolio(max_new_capital_pct=5.0, current_weight_pct=2.0),
+        position_snapshot=None,
+    )
+    aligned = assess_deterministic_triggers(
+        strategy_selection=_make_strategy(preferred_strategy="swing_momentum"),
+        **common,
+    )
+    not_aligned = assess_deterministic_triggers(
+        strategy_selection=_make_strategy(preferred_strategy="mean_reversion_bounce"),
+        **common,
+    )
+
+    assert aligned is not None and not_aligned is not None
+    # entry_score 쪽 +0.05는 그대로 살아 있다.
+    assert "trigger_strategy_alignment" in aligned.reason_codes
+    assert "trigger_strategy_alignment" not in not_aligned.reason_codes
+    assert aligned.entry_score is not None and not_aligned.entry_score is not None
+    entry_delta = aligned.entry_score - not_aligned.entry_score
+    assert round(entry_delta, 4) == 0.05
+
+    # ranking_score 차이는 entry_score 경유분(0.55배)뿐이어야 한다.
+    assert aligned.ranking_score is not None and not_aligned.ranking_score is not None
+    ranking_delta = aligned.ranking_score - not_aligned.ranking_score
+    assert round(ranking_delta, 4) == round(0.55 * entry_delta, 4)
+
+
+def test_trigger_engine_buy_candidate_path_intact_after_strategy_alignment_removal() -> None:
+    """SPPV-2.147 — 기본 BUY 판정 경로가 깨지지 않았는지 고정."""
+    result = assess_deterministic_triggers(
+        source_type="core",
+        signal_feature_snapshot=_make_signal(overall="0.70", fast="0.60", slow="0.65"),
+        market_regime=_make_regime(regime_label="bullish_trend", risk_tone="risk_on"),
+        strategy_selection=_make_strategy(),
+        portfolio_allocation=_make_portfolio(max_new_capital_pct=5.0, current_weight_pct=2.0),
+        position_snapshot=None,
+    )
+
+    assert result is not None
+    assert result.buy_candidate is True
+    assert result.primary_candidate == "BUY_CANDIDATE"
+    assert result.eligibility_passed is True
+    assert result.ranking_score is not None

@@ -10282,14 +10282,28 @@ agent 설계 문서 기준으로도 순서는 다음이 맞다.
      제거는 다음 diff 초안 후보 진행 가능, `regime_tailwind`는 선행
      확인 1건 필요**. 상세: `docs/10_signal_research_sppv/[DESIGN]
      regime_conditional_entry_signal_v1.md` §134.
+   - **SPPV-2.147(완료, 2026-07-30 KST, `strategy_alignment` 직접항
+     제거 diff 초안, 작성자: Codex, `.env` 미수정, Full pytest 미실행,
+     신규 KIS 호출 0건 — 코드 변경 포함, **운영 효과 미확정**)**:
+     `deterministic_trigger_engine.py` 단일 파일에서 `_build_buy_
+     ranking_score()`의 `+ 0.02 * strategy_alignment` 항 제거(+ 그 항
+     전용 지역 계산·미사용 매개변수·호출부 인자 정리). **`entry_score`
+     쪽 `+0.05`는 유지**, `regime_tailwind`는 범위 밖. **"죽은 항
+     제거"가 아니라** `event_overlay`에서 28.93%로 살아 있는 항의
+     **ranking 직접 중복 계상 제거**다. 검증: 기존 21건 **무수정
+     통과** + 신규 2건 = 23 passed, 관련 5개 파일 105 passed, 하네스
+     `accept backend-file` PASS. 미완료: threshold 영향 정량 확인
+     (추론 단계), 운영 반영·효과 확정. 상세: `docs/10_signal_research_
+     sppv/[DESIGN] regime_conditional_entry_signal_v1.md` §135.
    - **SPPV-3(다음 착수: [1순위] D안 diff 운영 반영 관측 — 배포 후 다음
      거래일 08:50 KST에 생성되는 `decision_loop_intraday` freeze 내용을
      같은 입력(전 거래일 20:00 KST snapshot)으로 계산한 D안 shadow 예측과
      종목 단위로 대조(read-only). 배포는 PR 머지 시 장 외 시간대에
      자동 반영되므로 별도 승인이 필요하지 않다 +
-     [1-B순위] `strategy_alignment` `ranking_score` 직접항(`0.02`)
-     제거의 threshold 영향 정량 확인(게이트 모집단 무변화 예상 검증)
-     → 확인되면 diff 초안 작성 +
+     [1-B순위] `strategy_alignment` 직접항 제거 diff(SPPV-2.147,
+     작성 완료)의 **threshold 영향 정량 확인 + 운영 반영 무변화 확인**
+     — 현재 "게이트 모집단 무변화"는 `core`에서 해당 항이 0건이라는
+     사실에 근거한 추론 단계이며 shadow 재계산 미실시 +
      [1-C순위] `regime_tailwind` 제거 시 threshold 동시 조정이 게이트
      모집단에서 완화로 작용하는지 정량 확인(§134.6 전제 조건) +
      [2순위] 관찰용 shadow 메타데이터의 낡은 스케일 절대값

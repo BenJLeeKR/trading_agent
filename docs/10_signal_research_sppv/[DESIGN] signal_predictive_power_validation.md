@@ -2957,6 +2957,37 @@ entry 설계 검토로 전환**을 확정했다. 별도 문서
   `docs/10_signal_research_sppv/[DESIGN] regime_conditional_entry_
   signal_v1.md` §134.
 
+- 작성자: Codex
+- 수정일자: 2026-07-30 KST (147차, `strategy_alignment` 직접항 제거
+  diff 초안, `.env` 미수정, Full pytest 미실행, 신규 KIS 호출 0건 —
+  **코드 변경 포함**)
+- 수정내용: `deterministic_trigger_engine.py` 단일 파일에서
+  `_build_buy_ranking_score()`의 `+ 0.02 * strategy_alignment` 항을
+  제거하고, 그 항 전용이던 지역 계산 블록·미사용이 된
+  `strategy_selection` 매개변수·호출부 인자를 함께 정리했다
+  (`relative_activity` 1안 SPPV-2.133, `coverage_score` A-3안
+  SPPV-2.145와 동일 패턴). **`entry_score` 쪽 `strategy_alignment`
+  `+0.05`와 `trigger_strategy_alignment` reason code는 유지**하며,
+  다른 가중치(0.55/0.10/0.03)·threshold 상수(0.28/0.02)·
+  `_assess_core_risk_off_buy_guard`·metadata/shadow 경로·
+  `_build_exit_ranking_score`는 손대지 않았다. `regime_tailwind`는
+  이번 턴 범위 밖이다. **제거 근거는 "죽은 항 제거"가 아니라**
+  `event_overlay`에서 전체 이력 28.93%로 살아 있는 항의
+  **`ranking_score` 직접 중복 계상 제거**다(§134.1/§134.7).
+  새 산식은 `0.55*entry_score + 0.10*allocation_quality +
+  0.03*regime_tailwind`이며 최댓값이 0.02 낮아진다. 최소 검증:
+  `test_deterministic_trigger_engine.py` **23 passed**(기존 21건이
+  경계값 보정 없이 **무수정 통과** + 신규 2건 추가), 관련 5개 파일
+  105 passed, 하네스 `accept backend-file` PASS. 신규 테스트는
+  (1) `preferred_strategy`만 바꿔 `ranking_score` 차이가 정확히
+  `0.55×0.05`임을 확인하며 `entry_score` 쪽 유지도 함께 고정,
+  (2) 기본 BUY 판정 경로 무결성 확인이다. **미완료(과장 방지)**:
+  threshold 영향 정량 확인은 `core` 게이트 모집단에서
+  `strategy_alignment`가 0건이라는 사실에 근거한 **추론 단계**이고
+  shadow 재계산으로 확인하지 않았으며, 운영 반영·효과는 확정되지
+  않았다. 상세: `docs/10_signal_research_sppv/[DESIGN] regime_
+  conditional_entry_signal_v1.md` §135.
+
 ---
 
 ## 진행 체크리스트
@@ -6004,6 +6035,26 @@ canonical),
     로직 변경 없음, 신규 KIS 호출 0건(shadow 재호출은 `kis_
     client=None`). 상세: `docs/10_signal_research_sppv/[DESIGN]
     regime_conditional_entry_signal_v1.md` §94.
+- [x] **SPPV-2.147(신설, 완료 — 코드 변경 포함)** `strategy_
+  alignment` 직접항 제거 diff 초안 (2026-07-30 KST, 작성자: Codex,
+  `.env` 미수정, Full pytest 미실행, 신규 KIS 호출 0건)
+  - `deterministic_trigger_engine.py` 단일 파일에서 `_build_buy_
+    ranking_score()`의 `+ 0.02 * strategy_alignment` 항 제거(+ 그 항
+    전용 지역 계산·미사용 `strategy_selection` 매개변수·호출부 인자
+    정리). **`entry_score` 쪽 `+0.05`와 `trigger_strategy_alignment`
+    reason code는 그대로 유지**, `regime_tailwind`는 범위 밖.
+  - **"죽은 항 제거"가 아니다** — `event_overlay`에서 전체 이력
+    28.93%로 살아 있으며, 근거는 `entry_score`와의 **직접 중복 계상
+    제거**다(§134.1/§134.7).
+  - 최소 검증: `test_deterministic_trigger_engine.py` **23 passed**
+    (기존 21건 **무수정 통과** + 신규 2건), 관련 5개 파일 105 passed,
+    하네스 `accept backend-file` **PASS**.
+  - 신규 테스트 2건: `ranking_score` 차이가 정확히 `0.55×0.05`임을
+    확인(= ranking 직접항이 빠졌고 entry 경유분만 남음) + 기본 BUY
+    판정 경로 무결성 확인.
+  - **미완료**: threshold 영향 정량 확인(게이트 모집단 무변화는 추론
+    단계), 운영 반영·효과 확정. 상세: `docs/10_signal_research_sppv/
+    [DESIGN] regime_conditional_entry_signal_v1.md` §135.
 - [x] **SPPV-2.146(신설, 완료)** `regime_tailwind`/`strategy_
   alignment` 잔여 설계 가치 검증 (2026-07-30 KST, 작성자: Codex,
   코드 미수정, `.env` 미수정, Full pytest 미실행, 신규 KIS 호출 0건)
