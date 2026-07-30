@@ -106,6 +106,7 @@ from agent_trading.services.universe_freeze_dedupe import (
 )
 from agent_trading.services.universe_selection import UniverseSelectionService
 from agent_trading.services.universe_selection_types import (
+    CORE_RANKING_MODE_SIGNAL_SCORE,
     CompositionContext,
     FALLBACK_ACCOUNT_ID,
 )
@@ -734,6 +735,12 @@ async def _load_trading_universe_with_anchor(
                 manual_symbols=_parse_manual_watchlist_symbols(
                     os.getenv(ENV_MANUAL_WATCHLIST)
                 ),
+                # D안(SPPV-2.145): core 후보를 종목코드 사전순이 아니라 최신
+                # snapshot overall_score 기준으로 자른다. decision loop 경로만
+                # 명시적으로 opt-in하므로, 같은 compose()를 쓰는 signal feature
+                # snapshot 입력 배치는 기본값(사전순)으로 남아 동작이 바뀌지
+                # 않는다(순환 의존 회피, §132.3).
+                core_ranking_mode=CORE_RANKING_MODE_SIGNAL_SCORE,
             )
             selected = await selector.compose(ctx)
 

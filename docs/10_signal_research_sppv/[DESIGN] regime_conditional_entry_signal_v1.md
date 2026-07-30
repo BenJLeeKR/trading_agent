@@ -16527,3 +16527,135 @@ Full pytest / 외부 API 호출 / 무거운 통합 테스트는 불필요하다.
 **`universe_selection` D안 diff 초안 작성** — 132.2의 6개 파일 범위,
 132.3의 기본값 opt-in 구조, 132.4의 cold start 퇴화 규칙, 132.5의
 검증 세트를 그대로 적용(사용자 승인 시 코드 변경 턴으로 전환).
+
+## §133. D안 diff 초안 실제 작성(SPPV-2.145, 2026-07-30 KST)
+
+**전제**: §132.6에서 "diff 초안 착수 가능"으로 판정된 D안을 SPPV-2.144에서
+닫힌 최소 범위로만 구현한다. A/B/C안으로 범위를 넓히지 않으며, 기본 동작은
+현행 무변화로 유지한다. `generate_signal_feature_snapshot_input.py`는 diff
+대상에서 제외한다.
+
+### 133.1 수정한 코드 경로(6개, §132.2 계획과 동일)
+
+| # | 파일 | 변경 내용 |
+|---|---|---|
+| 1 | `repositories/contracts.py` | `SignalFeatureSnapshotRepository`에 `list_latest_by_instrument_ids()` 계약 추가 |
+| 2 | `repositories/postgres/signal_feature_snapshots.py` | 위 구현 — `SELECT DISTINCT ON (instrument_id) ... WHERE instrument_id = ANY($1::uuid[]) AND timeframe = $2 ORDER BY instrument_id, snapshot_at DESC, signal_feature_snapshot_id DESC` |
+| 3 | `repositories/memory.py` | `InMemorySignalFeatureSnapshotRepository`에 동일 메서드(테스트용) |
+| 4 | `services/universe_selection_types.py` | `CORE_RANKING_MODE_SYMBOL`/`CORE_RANKING_MODE_SIGNAL_SCORE` 상수 + `CompositionContext.core_ranking_mode`(**기본값 = `SYMBOL` = 현행**) |
+| 5 | `services/universe_selection.py` | `_core_signal_score_cache` 필드, `_prime_core_signal_score_cache()`, `_core_signal_sort_rank()`, `_add_core_universe(seen, ctx)` 시그니처 확장, step 8 정렬 분기 |
+| 6 | `scripts/run_decision_loop.py` | `CompositionContext(... core_ranking_mode=CORE_RANKING_MODE_SIGNAL_SCORE)` 주입 |
+
+### 133.2 정렬 규칙 구현(사실)
+
+`_core_signal_sort_rank()`가 **CORE source_type 후보만** 다음 키로 정렬해
+0-based 순위를 만든다:
+
+```
+key = (0 if symbol in scores else 1,   # 1. snapshot 보유 종목이 항상 먼저
+       -scores.get(symbol, 0.0),        # 2. overall_score 내림차순
+       symbol)                          # 3. 완전 동점일 때만 사전순
+```
+
+step 8 정렬은 다음과 같이 분기한다:
+
+```
+if ctx.core_ranking_mode == CORE_RANKING_MODE_SIGNAL_SCORE:
+    candidates.sort(key=lambda s: (
+        s.priority,
+        core_rank.get(s.symbol, 0) if s.source_type == SourceType.CORE else 0,
+    ))
+else:
+    candidates.sort(key=lambda s: s.priority)   # 현행 경로 그대로
+```
+
+**사전순이 fallback으로만 남았다는 근거**: 위 키에서 `symbol`은 **3번째
+요소**이며, 앞선 두 요소(`snapshot 보유 여부`, `overall_score`)가 완전히
+같을 때만 비교에 도달한다. 즉 사전순은 **의미 있는 선택 기준이 아니라
+동점 시 결정성(deterministic ordering)을 보장하는 기술 규칙**으로만
+작동한다. snapshot 미보유 종목끼리도 같은 이유로 사전순이 쓰인다.
+
+**overlay 무변화 근거**: 2차 정렬 키가 CORE가 아닌 항목에 대해 **항상
+`0`**이므로, Python `list.sort()`의 안정(stable) 정렬 특성상 held /
+reconciliation / event / market / manual overlay의 기존 상대 순서는
+그대로 보존된다. `_apply_cap()`은 **한 줄도 수정하지 않았다**(정적
+`@staticmethod` 구조 유지, §132.2 방침).
+
+### 133.3 기본값 무변화 보장 근거(사실)
+
+1. `CompositionContext.core_ranking_mode`의 기본값이 `CORE_RANKING_MODE_
+   SYMBOL`이므로, 필드를 지정하지 않는 모든 호출부는 `else` 분기로
+   들어가 **기존 `candidates.sort(key=lambda s: s.priority)`와 동일한
+   코드**를 실행한다.
+2. 신호 점수 조회(`_prime_core_signal_score_cache`)는 `signal_score`
+   모드에서만 호출된다 — 기본 모드에서는 **쿼리가 1건도 추가되지 않는다**.
+3. `generate_signal_feature_snapshot_input.py`는 이 필드를 지정하지 않으므로
+   기본값(사전순)으로 남는다 → **"snapshot을 만들 종목을 snapshot으로
+   정하는" 순환 의존이 발생하지 않는다**(§132.3 조건 충족). 이 파일은
+   diff에 포함되지 않았다.
+4. 회귀 테스트로 확인: 기존 `tests/services/test_universe_selection.py`
+   106건이 **수정 없이 전부 통과**했고, 신규 케이스
+   `test_default_mode_keeps_symbol_order`가 "사전순 최하위 종목에 최고점을
+   줘도 기본 모드에서는 사전순 절단이 유지됨"을 명시적으로 고정한다.
+
+### 133.4 실행한 최소 검증
+
+| 검증 | 결과 |
+|---|---|
+| `tests/services/test_universe_selection.py` | **109 passed**(기존 106 + 신규 3) |
+| `tests/scripts/test_run_decision_loop.py` | **121 passed** |
+| 하네스 `accept backend-file services/universe_selection.py` | **PASS** |
+| 하네스 `accept backend-file services/universe_selection_types.py` | **PASS** |
+| 하네스 `accept backend-file repositories/memory.py` | **PASS** |
+| 하네스 `accept backend-file repositories/contracts.py` | FAIL — **선재 실패**(아래) |
+| 하네스 `accept backend-file repositories/postgres/signal_feature_snapshots.py` | FAIL — **선재 실패**(아래) |
+
+신규 단위 테스트 3케이스(`TestCoreRankingModeSignalScore`):
+1. `test_signal_score_mode_promotes_high_score_over_symbol_order` — 사전순
+   최하위(`000003`)라도 `overall_score`가 가장 높으면 `core_cap=1`에 들어옴.
+2. `test_default_mode_keeps_symbol_order` — 기본 모드 무변화 회귀.
+3. `test_missing_snapshot_sorts_last_with_symbol_tiebreak` — snapshot 미보유
+   종목은 최하위, 동점 구간에서만 사전순(`000007`, `000008`, `000001`,
+   `000002` 순서 고정).
+
+**하네스 FAIL 2건은 선재 실패임을 대조로 확인(사실)**: 두 FAIL의 실패
+테스트는 각각 `tests/repositories/test_postgres_signal_feature_snapshots.py`
+(4건)와 `tests/repositories/test_postgres_trade_decisions.py`(11건)로,
+모두 `RuntimeError: ... attached to a different loop` / `TooManyColumnsError:
+tables can have at most 1600 columns`라는 **postgres 테스트 환경 문제**다.
+내 변경을 `git stash`로 걷어낸 **기저(HEAD) 상태에서 동일한 4건이 동일한
+오류로 실패**함을 직접 확인했다(stash 후 실행 → `4 failed, 2 passed`,
+복원 후 재확인). 즉 이번 diff가 유발한 실패가 아니다. 신규 메서드를
+직접 겨냥한 postgres 테스트는 이번 턴에 추가하지 않았다(이 환경에서
+postgres 통합 테스트 자체가 동작하지 않아 신규 케이스를 넣어도 신호가
+되지 않기 때문 — 133.6에 남겨둔 항목으로 기록).
+
+`scripts/run_decision_loop.py`는 하네스 `accept backend-file` 대상이
+아니다(`valid_backend_file=0` — `src/` 전용 계약). AST 파싱 + 위
+121건 테스트로 대체 검증했다.
+
+Full pytest / 외부 API 호출 / 운영 DB write는 수행하지 않았다.
+
+### 133.5 반영 시점과 관측 방법(§132.1/§132.5 연결)
+
+이 diff는 `decision_loop_intraday` freeze 생성 경로(08:50 KST 하루 1회)에
+반영되므로, 실제 효과는 **다음 거래일 08:50 KST 이후 생성되는 freeze**
+에서 처음 관측된다. 관측 방법은 §132.5의 3번 — 그 freeze 내용을 같은
+입력(전 거래일 20:00 KST snapshot)으로 계산한 D안 shadow 예측과 종목
+단위로 대조한다.
+
+### 133.6 아직 남겨둔 것
+
+1. **운영 반영 관측 미실시** — 다음 거래일 08:50 KST 이후 freeze 대조가
+   필요하다(§133.5).
+2. **postgres bulk 메서드 전용 통합 테스트 미추가** — 현재 환경에서
+   `tests/repositories/test_postgres_*`가 선재 실패 상태라 신규 케이스가
+   신호를 주지 못한다. 환경 복구 후 별도 추가 대상.
+3. **§131.1 제약 유지** — snapshot 풀 자체가 core-eligible 사전순 1~79위로
+   잘려 있어, 이 diff는 사전순 편향을 **제거하지 않고 12위 경계를 79/80위
+   경계로 이동**시킨다. snapshot 배치 cap 재검토는 별도 트랙.
+4. **§131.4 제약 유지** — shadow 기준 `entry_score>=0.65` 0건이므로
+   이 변경은 **신호 품질 개선이지 주문 발생(`buy_candidate`) 완화가
+   아니다**.
+5. **배포 미실시** — 장중 배포 금지 정책에 따라 별도 승인/장 종료 후
+   배포가 필요하다.

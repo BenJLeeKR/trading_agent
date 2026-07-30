@@ -29,6 +29,7 @@ from agent_trading.domain.entities import (
     OrderRequestEntity,
     PositionSnapshotEntity,
     ReconciliationRunEntity,
+    SignalFeatureSnapshotEntity,
 )
 from agent_trading.domain.enums import OrderSide, OrderStatus, OrderType, TimeInForce
 from agent_trading.repositories.bootstrap import build_in_memory_repositories
@@ -38,6 +39,7 @@ from agent_trading.services.universe_selection import (
     UniverseSelectionService,
 )
 from agent_trading.services.universe_selection_types import (
+    CORE_RANKING_MODE_SIGNAL_SCORE,
     INCLUSION_REASON_CORE,
     INCLUSION_REASON_EVENT,
     INCLUSION_REASON_HELD,
@@ -2510,3 +2512,122 @@ class TestSourceTypePropagation:
         event = [s for s in result if s.symbol == "005930"]
         assert len(event) == 1
         assert event[0].source_type == SourceType.EVENT_OVERLAY
+
+
+class TestCoreRankingModeSignalScore:
+    """D안(SPPV-2.145) — core 내부를 최신 snapshot ``overall_score``로 재정렬.
+
+    핵심 계약
+    ---------
+    1. 기본값(``CORE_RANKING_MODE_SYMBOL``)에서는 기존 결과가 완전히 동일하다.
+    2. ``CORE_RANKING_MODE_SIGNAL_SCORE``에서는 사전순이 뒤인 고신호 종목이
+       ``core_cap`` 안에 들어온다.
+    3. snapshot이 없는 종목은 최하위로 밀리고, 동점 구간에서만 ``symbol``
+       사전순 fallback이 쓰인다(결정성 보장용 기술 규칙).
+    """
+
+    @staticmethod
+    def _make_snapshot(
+        instrument_id: UUID,
+        overall_score: str,
+        *,
+        timeframe: str = "1d",
+        snapshot_at: datetime | None = None,
+    ) -> SignalFeatureSnapshotEntity:
+        return SignalFeatureSnapshotEntity(
+            signal_feature_snapshot_id=uuid4(),
+            instrument_id=instrument_id,
+            timeframe=timeframe,
+            snapshot_at=snapshot_at or NOW,
+            feature_set_version="signal_backbone_v1",
+            bar_count=80,
+            overall_score=Decimal(overall_score),
+        )
+
+    @pytest.mark.asyncio
+    async def test_signal_score_mode_promotes_high_score_over_symbol_order(self) -> None:
+        """사전순 최하위 종목이라도 overall_score가 높으면 core_cap에 들어온다."""
+        repos = build_in_memory_repositories()
+        # 사전순: 000001 < 000002 < 000003. 점수는 그 역순으로 부여한다.
+        low = _make_instrument("000001")
+        mid = _make_instrument("000002")
+        high = _make_instrument("000003")
+        for inst in (low, mid, high):
+            await repos.instruments.add(inst)
+        await repos.signal_feature_snapshots.add(
+            self._make_snapshot(low.instrument_id, "0.10")
+        )
+        await repos.signal_feature_snapshots.add(
+            self._make_snapshot(mid.instrument_id, "0.50")
+        )
+        await repos.signal_feature_snapshots.add(
+            self._make_snapshot(high.instrument_id, "0.90")
+        )
+
+        svc = UniverseSelectionService(repos)
+        ctx = CompositionContext(
+            account_id=FALLBACK_ACCOUNT_ID,
+            since=NOW,
+            core_cap=1,
+            core_ranking_mode=CORE_RANKING_MODE_SIGNAL_SCORE,
+        )
+        result = await svc.compose(ctx)
+
+        core = [s for s in result if s.source_type == SourceType.CORE]
+        assert [s.symbol for s in core] == ["000003"]
+
+    @pytest.mark.asyncio
+    async def test_default_mode_keeps_symbol_order(self) -> None:
+        """기본 모드는 무변화 — 점수와 무관하게 사전순 절단을 유지한다."""
+        repos = build_in_memory_repositories()
+        low = _make_instrument("000001")
+        high = _make_instrument("000003")
+        for inst in (low, high):
+            await repos.instruments.add(inst)
+        # 사전순 최하위 종목에 최고점을 줘도 기본 모드에서는 무시돼야 한다.
+        await repos.signal_feature_snapshots.add(
+            self._make_snapshot(low.instrument_id, "0.10")
+        )
+        await repos.signal_feature_snapshots.add(
+            self._make_snapshot(high.instrument_id, "0.90")
+        )
+
+        svc = UniverseSelectionService(repos)
+        ctx = CompositionContext(
+            account_id=FALLBACK_ACCOUNT_ID,
+            since=NOW,
+            core_cap=1,
+        )
+        result = await svc.compose(ctx)
+
+        core = [s for s in result if s.source_type == SourceType.CORE]
+        assert [s.symbol for s in core] == ["000001"]
+
+    @pytest.mark.asyncio
+    async def test_missing_snapshot_sorts_last_with_symbol_tiebreak(self) -> None:
+        """snapshot 없는 종목은 최하위, 동점은 symbol 사전순 fallback."""
+        repos = build_in_memory_repositories()
+        no_snap_a = _make_instrument("000001")   # snapshot 없음
+        no_snap_b = _make_instrument("000002")   # snapshot 없음
+        tie_late = _make_instrument("000008")    # 동점(0.40), 사전순 뒤
+        tie_early = _make_instrument("000007")   # 동점(0.40), 사전순 앞
+        for inst in (no_snap_a, no_snap_b, tie_early, tie_late):
+            await repos.instruments.add(inst)
+        await repos.signal_feature_snapshots.add(
+            self._make_snapshot(tie_early.instrument_id, "0.40")
+        )
+        await repos.signal_feature_snapshots.add(
+            self._make_snapshot(tie_late.instrument_id, "0.40")
+        )
+
+        svc = UniverseSelectionService(repos)
+        ctx = CompositionContext(
+            account_id=FALLBACK_ACCOUNT_ID,
+            since=NOW,
+            core_ranking_mode=CORE_RANKING_MODE_SIGNAL_SCORE,
+        )
+        result = await svc.compose(ctx)
+
+        core = [s.symbol for s in result if s.source_type == SourceType.CORE]
+        # snapshot 보유 2종목이 먼저(동점이라 사전순), 미보유 2종목이 뒤(사전순).
+        assert core == ["000007", "000008", "000001", "000002"]

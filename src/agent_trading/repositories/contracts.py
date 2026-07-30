@@ -1059,6 +1059,20 @@ class SignalFeatureSnapshotRepository(Protocol):
     ) -> Sequence[SignalFeatureSnapshotEntity]:
         ...
 
+    async def list_latest_by_instrument_ids(
+        self,
+        instrument_ids: Sequence[UUID],
+        timeframe: str = "1d",
+    ) -> Sequence[SignalFeatureSnapshotEntity]:
+        """instrument_id별 최신 snapshot 1건씩을 한 번에 조회한다.
+
+        universe 구성 단계에서 core 후보 전체(수백 건)의 신호 점수를 읽어야
+        하는데, ``get_latest_by_instrument``를 종목마다 호출하면 N+1이 된다
+        (SPPV-2.144 §132.2). ``instrument_status_snapshots``의
+        ``list_latest_by_instrument_ids``와 동일한 계약이다.
+        """
+        ...
+
 
 class UniverseFreezeRunRepository(Protocol):
     """Store for frozen trading-universe run metadata."""

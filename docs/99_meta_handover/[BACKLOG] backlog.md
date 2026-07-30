@@ -1968,6 +1968,20 @@
   `universe_selection` D안 diff 초안 작성. 상세: `docs/10_signal_
   research_sppv/[DESIGN] regime_conditional_entry_signal_v1.md` §132.
 
+- 2026-07-30 KST(SPPV-2.145, 신규 KIS 호출 0건, 완료 — **코드 변경
+  포함**): D안 diff 초안 실제 작성. §132.2 계획대로 6개 파일만 수정 —
+  bulk `list_latest_by_instrument_ids` 추가(contracts/postgres/memory),
+  `CompositionContext.core_ranking_mode` 필드 추가(**기본값=현행
+  사전순**), `universe_selection.py` 점수 캐시+정렬 분기,
+  `run_decision_loop.py`만 D안 모드 주입. `_apply_cap()` 미수정,
+  `generate_signal_feature_snapshot_input.py` diff 제외(순환 의존 회피).
+  정렬 키 `(snapshot 보유 여부, -overall_score, symbol)`로 사전순은
+  동점 시 결정성 보장용 fallback으로만 남음. 검증: 109 passed(기존
+  106 무수정 통과 + 신규 3), 121 passed, 하네스 3개 PASS(FAIL 2건은
+  기저 대조로 선재 postgres 환경 실패 확인). 남은 것: 운영 반영 관측,
+  postgres bulk 전용 테스트, 배포(장중 금지). 상세: `docs/10_signal_
+  research_sppv/[DESIGN] regime_conditional_entry_signal_v1.md` §133.
+
 ---
 
 ## 관리 원칙
