@@ -15954,3 +15954,81 @@ exception_eligible`, `shadow_would_pass`)를 검증하며, `0.48→0.28`,
    포함되는 조건 원인 확인.
 4. **4순위(이전 턴 이월)**: `high_volatility` 단독 경로(001450형) 층3
    관찰 지속.
+
+## §127. `coverage_score` A-3안 적용 후 운영 무변화 실측 확인(SPPV-2.139, 2026-07-30 KST)
+
+**전제**: SPPV-2.138의 A-3안 diff가 PR #55(mergeCommit `7713a742`)로
+병합됐고, 장중 예외 승인(`workflow_dispatch: deploy_main=true,
+allow_market_hours_deploy=true`)으로 2026-07-30 13:21:17 KST에 실제
+운영 서버(Oracle Cloud, `Activate runtime after source sync` 성공)에
+반영됐다. 이번 턴은 그 이후 운영 decision loop에서 실제 BUY 판정
+경로가 무변화인지 read-only로 확인한다. 코드 수정 금지, `.env`
+미수정, `0.26`/`_EVENT_OVERLAY_SHADOW_MIN_SCORE=0.56`은 이번 턴에서
+건드리지 않는다.
+
+### 127.1 배포 확인(사실)
+
+- `core_risk_off_experiment` 메타데이터에 echo되는 `ranking_min_
+  score`/`shadow_min_score` 값을 직접 조회해 `0.28`/`0.02`가 실제
+  운영에서 활성 상태임을 확인했다.
+- 배포(activate) 이후 실제 경과 시간은 확인 시점(2026-07-30 14:00
+  KST) 기준 약 39분이다.
+
+### 127.2 배포 전/후 비교(read-only 재집계)
+
+| 구간 | 전체 BUY-path n | gate(core_risk_off) n | ranking_score(gate) 평균/중앙값 | `ranking_blocked` 비중 | `buy_candidate`/`eligibility_passed`(gate)/`APPROVE`/`order_request`/`final_intent='buy'`/`shadow_would_pass` |
+|---|---|---|---|---|---|
+| 배포 직전 2시간(구 threshold 0.48/0.22) | 484 | 176 | 0.2875 / 0.2567 | 154/176 (**87.5%**) | 전부 0 |
+| 배포 이후 누적(신 threshold 0.28/0.02, ~39분) | 176 | 64 | 0.1603 / 0.1344 | 56/64 (**87.5%**) | 전부 0 |
+
+- gate 모집단 `coverage_score`는 배포 이후에도 예외 없이 `1.0`
+  (64/64) — SPPV-2.137/§125.2의 전제가 배포 이후에도 그대로
+  유지됨을 재확인했다.
+- `ranking_score(gate)` 평균/중앙값은 절대값 기준으로 하락했다
+  (사실 — `0.20*coverage_score` 항 제거로 모든 레코드의 ranking_
+  score 자체가 0.20 낮아지므로 당연한 결과이며, threshold도 동일
+  하게 낮아졌으므로 이 절대값 하락 자체는 "변화"의 증거가 아니다).
+
+### 127.3 무변화 확인 포인트(사실/해석 구분)
+
+1. **실제 BUY funnel 출력이 바뀌었는가**: **아니다(사실)**. `buy_
+   candidate`, gate `eligibility_passed`, `APPROVE`, `order_
+   request`, `final_intent='buy'`, `shadow_topk_exception_v2`
+   (`shadow_would_pass`)는 배포 전후 모두 예외 없이 `0`이다.
+2. **`ranking_blocked` 비중이 유의미하게 바뀌었는가**: **아니다
+   (사실)**. 게이트 모집단 기준 `87.5%`(154/176) → `87.5%`(56/64)
+   로 **소수점까지 동일**하다.
+3. **바뀌었다면 A-3 때문인지 표본/시장 교란 때문인지**: 해당 없음
+   — 비중 자체가 변하지 않았으므로 이 질문은 성립하지 않는다.
+   (참고로 §120의 코드 반영 이전 shadow 재계산 예측은 "동일 상수를
+   양쪽에서 정확히 상쇄하면 판정 경계가 그대로 보존된다"는 것이었고,
+   이번 실측이 그 예측과 정확히 부합한다.)
+4. **지금까지 실측으로 "A-3는 무변화 리팩터링"이라고 운영 기준에서도
+   말할 수 있는가**: **그렇다(사실 기반 판단)**. gate 모집단 n=64
+   (~39분)라는 표본 규모가 크지는 않지만, ①비중이 소수점까지 정확히
+   일치하고 ②모든 핵심 출력 변수가 여전히 0을 유지하며 ③이 결과가
+   SPPV-2.138에서 코드로 이미 증명한 대수적 무변화와 정확히 일치
+   하므로, 이번 관측은 "확증"에 해당한다(추가 관측이 이 결론을
+   뒤집을 개연성은 낮다고 판단).
+
+### 127.4 범위 밖 항목(짧게만 언급)
+
+`_classify_core_risk_off_shadow_floor_bucket`의 `ranking_score>=
+0.26`과 `_EVENT_OVERLAY_SHADOW_MIN_SCORE=0.56`은 이번 턴 결론에
+포함하지 않는다 — 실제 BUY 판정과 무관한 범위 밖 관찰용 값이며,
+SPPV-2.138에서 이미 별도 후속 트랙으로 이월하기로 확인됐다.
+
+### 127.5 판정
+
+**A-3 무변화 confirmed.** 추가 관측 없이 이 트랙을 종료한다.
+
+### 127.6 다음 우선 작업(완화안 확정 아님)
+
+1. **1순위**: 관찰용 shadow 메타데이터의 낡은 스케일 절대값
+   (`0.26`, `_EVENT_OVERLAY_SHADOW_MIN_SCORE=0.56`) 재검토 착수
+   여부 결정 — 실제 BUY 판정과 무관하나 관찰 지표 정확성을 위한
+   별도 트랙(완화안 아님, 사용자 승인 필요).
+2. **2순위(이전 턴 이월)**: `000720`이 core 유니버스에 20일 이상
+   연속 포함되는 조건 원인 확인.
+3. **3순위(이전 턴 이월)**: `high_volatility` 단독 경로(001450형)
+   층3 관찰 지속.

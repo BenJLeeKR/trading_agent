@@ -1902,6 +1902,17 @@
   (무변화, 완화 아님). 상세: `docs/10_signal_research_sppv/
   [DESIGN] regime_conditional_entry_signal_v1.md` §126.
 
+- 2026-07-30 KST(SPPV-2.139, 신규 KIS 호출 0건, 완료 — 트랙 종료):
+  `coverage_score` A-3안 적용 후 운영 무변화 실측 확인. 장중 예외
+  승인으로 2026-07-30 13:21:17 KST 실제 배포됨을 확인. 배포 직전
+  2시간(gate n=176) vs 배포 이후 누적(~39분, gate n=64) 비교 —
+  `ranking_blocked` 비중 **87.5%→87.5%(소수점까지 동일)**, `buy_
+  candidate`/`APPROVE`/`order_request`/`shadow_would_pass` 등은
+  배포 전후 모두 0. **판정: A-3 무변화 confirmed**, `coverage_
+  score`+threshold 재설계 트랙 완전 종료. 상세: `docs/10_signal_
+  research_sppv/[DESIGN] regime_conditional_entry_signal_v1.md`
+  §127.
+
 ---
 
 ## 관리 원칙

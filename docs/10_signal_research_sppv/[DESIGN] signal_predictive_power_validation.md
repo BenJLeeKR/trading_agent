@@ -2781,6 +2781,26 @@ entry 설계 검토로 전환**을 확정했다. 별도 문서
   아니라 리팩터링). 상세: `docs/10_signal_research_sppv/[DESIGN]
   regime_conditional_entry_signal_v1.md` §126.
 
+- 작성자: Codex
+- 수정일자: 2026-07-30 KST (139차, `coverage_score` A-3안 적용
+  후 운영 무변화 실측 확인, 트랙 종료, 코드 미수정, `.env` 미수정,
+  Full pytest 미실행, 신규 KIS 호출 0건)
+- 수정내용: 장중 예외 승인(`workflow_dispatch: deploy_main=true,
+  allow_market_hours_deploy=true`)으로 2026-07-30 13:21:17 KST
+  실제 운영 서버에 A-3안이 반영됨을 `core_risk_off_experiment`
+  메타데이터의 `ranking_min_score=0.28`/`shadow_min_score=0.02`
+  echo로 확인. 배포 직전 2시간(구 threshold, gate n=176) vs 배포
+  이후 누적(~39분, 신 threshold, gate n=64) 비교 — `ranking_
+  blocked` 비중 **87.5%→87.5%(소수점까지 동일)**, `buy_candidate`/
+  `eligibility_passed`(gate)/`APPROVE`/`order_request`/`final_
+  intent='buy'`/`shadow_would_pass`는 배포 전후 모두 예외 없이
+  `0`. gate 모집단 `coverage_score`는 배포 이후에도 100%(64/64)
+  `1.0` 유지. **판정: A-3 무변화 confirmed, 추가 관측 불필요**.
+  `0.26`/`_EVENT_OVERLAY_SHADOW_MIN_SCORE=0.56`은 범위 밖 관찰용
+  값으로만 언급, 이번 턴 결론에 미포함. 상세: `docs/10_signal_
+  research_sppv/[DESIGN] regime_conditional_entry_signal_v1.md`
+  §127.
+
 ---
 
 ## 진행 체크리스트
@@ -5828,6 +5848,18 @@ canonical),
     로직 변경 없음, 신규 KIS 호출 0건(shadow 재호출은 `kis_
     client=None`). 상세: `docs/10_signal_research_sppv/[DESIGN]
     regime_conditional_entry_signal_v1.md` §94.
+- [x] **SPPV-2.139(신설, 완료 — 트랙 종료)** `coverage_score`
+  A-3안 적용 후 운영 무변화 실측 확인 (2026-07-30 KST, 작성자:
+  Codex, 코드 미수정, `.env` 미수정, Full pytest 미실행, 신규
+  KIS 호출 0건)
+  - 장중 예외 승인으로 배포된 A-3안이 운영에서 실제로 무변화인지
+    확인. 배포 직전 2시간(gate n=176) vs 배포 이후 누적(~39분,
+    gate n=64) — `ranking_blocked` 비중 **87.5%→87.5%(소수점까지
+    동일)**, `buy_candidate`/`APPROVE`/`order_request`/`shadow_
+    would_pass` 등 핵심 출력 변수는 배포 전후 모두 0. **판정: A-3
+    무변화 confirmed**, `coverage_score`+threshold 재설계 트랙
+    완전 종료. 상세: `docs/10_signal_research_sppv/[DESIGN]
+    regime_conditional_entry_signal_v1.md` §127.
 - [x] **SPPV-2.138(신설, 완료 — 코드 변경 포함)** `coverage_
   score` A-3안 실제 diff 적용 + 최소 검증 (2026-07-30 KST, 작성자:
   Codex, `.env` 미수정, Full pytest 미실행, 신규 KIS 호출 0건)

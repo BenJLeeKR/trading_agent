@@ -10168,56 +10168,65 @@ agent 설계 문서 기준으로도 순서는 다음이 맞다.
      경계가 정확히 `0.20`만큼 이동했음을 증명(무변화, 완화 아님).
      상세: `docs/10_signal_research_sppv/[DESIGN] regime_
      conditional_entry_signal_v1.md` §126.
-   - **SPPV-3(다음 착수: [1순위] `coverage_score` A-3안 diff
-     적용 이후 운영 관측(§121~124와 동일한 패턴) — 무변화 증명이
-     실측과 일치하는지 재확인(read-only) +
-     [2순위] 관찰용 shadow 메타데이터의 낡은 스케일 절대값
-     (`_classify_core_risk_off_shadow_floor_bucket`의 `0.26`,
-     `_EVENT_OVERLAY_SHADOW_MIN_SCORE=0.56`) 재검토 — 실제 BUY
-     판정과 무관하나 관찰 지표 정확성을 위해 별도 트랙에서 검토
-     (완화안 아님, 사용자 승인 후 착수) +
-     [3순위, 하향] `relative_activity` 1안의 장기(수 거래일) 효과
+   - **SPPV-2.139(완료, 2026-07-30 KST, `coverage_score` A-3안
+     적용 후 운영 무변화 실측 확인, 작성자: Codex, 코드 미수정,
+     `.env` 미수정, Full pytest 미실행, 신규 KIS 호출 0건 —
+     트랙 종료)**: 장중 예외 승인으로 2026-07-30 13:21:17 KST
+     실제 배포됨을 `ranking_min_score=0.28`/`shadow_min_score=
+     0.02` echo로 확인. 배포 직전 2시간(gate n=176) vs 배포 이후
+     누적(~39분, gate n=64) 비교 — `ranking_blocked` 비중
+     **87.5%→87.5%(소수점까지 동일)**, `buy_candidate`/`APPROVE`/
+     `order_request`/`shadow_would_pass` 등은 배포 전후 모두 0.
+     **판정: A-3 무변화 confirmed**, `coverage_score`+threshold
+     재설계 트랙 완전 종료. 상세: `docs/10_signal_research_sppv/
+     [DESIGN] regime_conditional_entry_signal_v1.md` §127.
+   - **SPPV-3(다음 착수: [1순위] 관찰용 shadow 메타데이터의 낡은
+     스케일 절대값(`_classify_core_risk_off_shadow_floor_bucket`
+     의 `0.26`, `_EVENT_OVERLAY_SHADOW_MIN_SCORE=0.56`) 재검토 —
+     실제 BUY 판정과 무관하나 관찰 지표 정확성을 위해 별도 트랙
+     에서 검토(완화안 아님, 사용자 승인 후 착수) +
+     [2순위, 하향] `relative_activity` 1안의 장기(수 거래일) 효과
      를 선택적으로 계속 관찰하되, 더 이상 1순위 결정의 선행
      조건은 아님 +
-     [4순위] `000720`이 core 유니버스에 20일 이상 연속 포함되는
+     [3순위] `000720`이 core 유니버스에 20일 이상 연속 포함되는
      조건을 원인만 확인(완화안 아님) +
-     [5순위] 이 모집단(core+bearish_trend)이 신호 품질(overall/
+     [4순위] 이 모집단(core+bearish_trend)이 신호 품질(overall/
      slow)이 항상 깊은 음수로만 나오는 원인을 `atr_14_pct`/
      `bearish_trend` 판정과의 연결고리 관점에서 "모집단 구성"
      문제로 추가 좁힘(완화안 설계 아님) +
-     [6순위] `shadow_topk_exception_v2` 경로가 4주간 한 번도
+     [5순위] `shadow_topk_exception_v2` 경로가 4주간 한 번도
      발동하지 않은 이유가 전제조건 자체가 좁게 설계된 것인지
      시장 조건 때문인지 원인만 더 좁혀서 확인(완화안 설계 아님) +
-     [7순위] `high_volatility` 단독(=`regime_label≠bearish_
+     [6순위] `high_volatility` 단독(=`regime_label≠bearish_
      trend`) 경로로 이미 eligibility를 통과한 종목(001450형)의
      층3(AI downgrade) 완화 검토 방향으로 전환 — 이 하드 게이트
      (core+bearish_trend) 내부 탐색은 4턴 연속 후보 없음으로
      종료 +
-     [8순위] `core_risk_off_topk_v1` override가 실제로 어느
+     [7순위] `core_risk_off_topk_v1` override가 실제로 어느
      호출부에서 `deterministic_trigger_override`를 채워야
      활성화되는지 코드 경로만 확인(활성화 여부 결정은 별도 승인
      필요, 활성화해도 즉시 효과 없음이 이미 확인됨) +
-     [9순위] `risk_off_exception_eligible` 경로가 0.02%로 거의
+     [8순위] `risk_off_exception_eligible` 경로가 0.02%로 거의
      발동하지 않는 정확한 사유를 조건별로 분해 +
-     [10순위] `KIS_ENV`(paper/real) 실제 설정 확인 및 KIS 모의투자
+     [9순위] `KIS_ENV`(paper/real) 실제 설정 확인 및 KIS 모의투자
      서버 일봉 데이터 특성이 실전 서버와 다른지 공식 자료 기준
      별도 검증(사용자 확인 필요, `.env` 직접 열람 없이) +
-     [11순위] 가능하면 실전 서버/공개 시세로 같은 기간 KODEX200
+     [10순위] 가능하면 실전 서버/공개 시세로 같은 기간 KODEX200
      실제 스프레드 대조(신규 호출 필요 — 별도 턴·사용자 승인
      하에) +
-     [12순위] `market_regime.py`의 `bearish_trend` 조건이 `slow_
+     [11순위] `market_regime.py`의 `bearish_trend` 조건이 `slow_
      score`(파생)와 원시 지표를 동시 검사하는 중복 구조가 설계
      의도인지 확인 +
-     [13순위] `signal_feature_snapshots` 배치의 일별 1회 갱신
+     [12순위] `signal_feature_snapshots` 배치의 일별 1회 갱신
      주기·재사용 설계 확인(`build_signal_feature_snapshots.py`
      실행 이력) +
-     [14순위] 사용자가 `.env`에 `TRADING_UNIVERSE_MAX_CAP` 설정 후
+     [13순위] 사용자가 `.env`에 `TRADING_UNIVERSE_MAX_CAP` 설정 후
      `ops-scheduler` 재기동 → 다음 거래일 실측(§97.3 체크리스트:
      universe 크기/009150 진입/candidate pool 확대/buy_candidate~
      submit_request 변화) +
-     [15순위] 001450의 층3(AI downgrade, risk_off+volatility 축)
+     [14순위] 001450의 층3(AI downgrade, risk_off+volatility 축)
      관찰 지속(정당/과잉 여부 미확정, 완화 제안 아님) +
-     [16순위, 후순위 조정] eligibility_low_relative_activity 조건부
+     [15순위, 후순위 조정] eligibility_low_relative_activity 조건부
      완화(entry_score≥0.70 예외) 코드 diff 초안 설계 검토 — 신규
      진입 종목들의 entry_score가 낮아(0.36) 실익이 낮아짐, 전면
      완화 금지 +

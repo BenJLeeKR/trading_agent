@@ -2930,3 +2930,32 @@ Full pytest/외부 API 호출 금지 — 코드 변경 포함, 완화가 아니�
 다음 단계는 diff 적용 이후 운영 실측으로 무변화를 재확인하는 것이다.
 상세: `docs/10_signal_research_sppv/[DESIGN] regime_conditional_
 entry_signal_v1.md` §126.
+
+## 25. `coverage_score` A-3안 적용 후 운영 무변화 실측 확인(SPPV-2.139, 2026-07-30 KST)
+
+§24의 diff가 장중 예외 승인으로 실제 운영 서버에 배포된 이후(2026-07-30
+13:21:17 KST), 실제 BUY 판정 경로가 무변화인지 read-only로 확인했다
+(코드 미수정, `.env` 미수정, `0.26`/`0.56`은 이번 턴에서도 건드리지
+않음).
+
+- **배포 확인**: `core_risk_off_experiment` 메타데이터의 `ranking_
+  min_score=0.28`/`shadow_min_score=0.02` echo로 실제 운영 활성화를
+  재확인했다.
+- **배포 전/후 비교**: 배포 직전 2시간(구 threshold, gate n=176)과
+  배포 이후 누적(~39분, 신 threshold, gate n=64)을 비교한 결과,
+  `ranking_blocked` 비중이 **87.5%→87.5%로 소수점까지 동일**했다.
+  `buy_candidate`, gate `eligibility_passed`, `APPROVE`, `order_
+  request`, `final_intent='buy'`, `shadow_would_pass`는 배포 전후
+  모두 예외 없이 `0`이었다. gate 모집단 `coverage_score`는 배포
+  이후에도 100%(64/64) `1.0`을 유지했다.
+- **무변화 확인 포인트**: 실제 BUY funnel 출력 변화 없음, `ranking_
+  blocked` 비중 유의미한 변화 없음(질문 3은 해당 없음), 운영 기준
+  에서도 "A-3=무변화 리팩터링"이라고 말할 수 있다 — SPPV-2.138의
+  코드 증명과 이번 실측이 정확히 부합한다.
+
+**결론**: **A-3 무변화 confirmed**, 추가 관측이 필요하지 않다.
+`coverage_score`+절대 threshold 재설계 트랙은 이번 턴으로 완전히
+종료됐다. 관찰용 shadow 메타데이터의 낡은 스케일 문제(0.26/0.56)는
+실제 판정과 무관하며 별도 후속 트랙으로 남는다. 상세: `docs/10_
+signal_research_sppv/[DESIGN] regime_conditional_entry_signal_v1.md`
+§127.
