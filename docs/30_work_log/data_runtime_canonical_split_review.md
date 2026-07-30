@@ -23,32 +23,31 @@
 | `data/instrument_master/source/` | 8 | 있음 | canonical 입력 후보 | 유지하되 owner와 갱신 절차 문서화 |
 | `data/instrument_master/normalized/` | 1 | 있음 | 생성물이지만 스케줄러 기본 입력 | 기본 경로 변경 전까지 유지 |
 | `data/instrument_master/archive/` | 33 | 0 | runtime/cache 후보 | Git 추적 제외 완료 |
-| `data/signal_feature_snapshot_input*.json` | 16 | 일부 있음 | 테스트·스케줄러 입력과 분석 산출물이 혼재 | 기본 입력 1개만 보존, 과거 snapshot 추적 제외 완료 |
+| `data/signal_feature_snapshot_input*.json` | 16 | 일부 있음 | 테스트·스케줄러 입력과 분석 산출물이 혼재 | 과거 snapshot 추적 제외 완료, 기본 입력도 운영 산출물로 재분류 |
 | `data/trigger_proxy_attribution*.json` | 5 | 0 | 분석 산출물 후보 | Git 추적 제외 완료 |
 | `data/ar_fdc_*.json` | 2 | 있음 | 스크립트 생성 산출물 | Git 추적 제외 완료 |
 | `data/observations/*.json` | 6 | 있음 | 문서 근거 산출물 | Git 추적 제외 완료 |
 
 ## 현재 canonical 입력 허용 목록
 
-2026-07-29 기준 남은 `data/` tracked 파일 `10`개는 [`canonical_data_contract.md`](../20_harness_engineering/canonical_data_contract.md)의 허용 목록으로 관리한다.
+2026-07-30 기준 남은 `data/` tracked 파일 `9`개는 [`canonical_data_contract.md`](../20_harness_engineering/canonical_data_contract.md)의 허용 목록으로 관리한다.
 
 | 분류 | 파일 수 | 판정 |
 | --- | ---: | --- |
 | `data/instrument_master/source/` 운영·예시 입력 | 7 | owner와 갱신 절차 문서화 후 유지 |
 | `data/instrument_master/normalized/` 스케줄러 입력 | 1 | 기본 경로 변경 전까지 유지 |
-| `data/signal_feature_snapshot_input.json` | 1 | 스케줄러·테스트 기본 입력으로 임시 유지 |
 | runtime 산출물 | 0 | 허용 목록 밖 신규 `data/` 파일은 추적 제외 |
 
 ## Codex 추천안
 
 1. `data/instrument_master/archive/` `33`개는 정확 참조가 `0`개이므로 Git 추적에서 제외했다.
 2. `data/observations/`는 `logs/`와 같은 방식으로 Markdown 링크를 코드 텍스트로 전환한 뒤 Git 추적에서 제외했다.
-3. `data/signal_feature_snapshot_input.json`은 스케줄러와 테스트 기본값이 직접 참조하므로 이번 범위에서 제거하지 않는다.
+3. `data/signal_feature_snapshot_input.json`은 일일 배치가 재생성하고 DB 갱신 입력으로 쓰는 운영 산출물이므로 Git 추적에서 제외한다.
 4. `data/instrument_master/source/`와 `data/instrument_master/normalized/`는 운영 재현성 입력으로 남기되, 추후 `data/canonical/` 또는 `data/fixtures/` 같은 명시 경로로 옮길지 별도 판단한다.
 5. top-level root JSON `24`개 중 정확 참조가 없는 `21`개는 코드 wildcard 사용 여부 감사 결과 `0`건이므로 Git 추적에서 제외했다.
 6. `data/ar_fdc_*.json` Markdown 링크 `3`개는 코드 텍스트로 전환했다.
 7. `data/ar_fdc_*.json`은 스크립트가 생성·갱신하는 산출물이므로 Git 추적에서 제외했다.
-8. 남은 `data/` tracked 파일 `10`개는 canonical 입력 허용 목록으로 문서화했다.
+8. 남은 `data/` tracked 파일 `9`개는 canonical 입력 허용 목록으로 문서화했다.
 
 ## 금지 사항
 
@@ -104,7 +103,7 @@
 - 정확 참조된 top-level root JSON 파일은 `3`개, 정확 참조 라인은 `46`개다.
 - 정확 참조 없는 top-level root JSON 파일은 `21`개다.
 - 분류 결과는 `signal_feature_default=1`, `signal_feature_historical=16`, `trigger_proxy_artifact=5`, `ar_fdc_artifact=2`다.
-- `data/signal_feature_snapshot_input.json`은 스케줄러와 테스트 기본 입력이라 제거하지 않는다.
+- `data/signal_feature_snapshot_input.json`은 당시 스케줄러와 테스트 기본 입력이라 임시 유지 대상으로 분류했다.
 - `data/ar_fdc_*.json`은 문서 Markdown 링크 `3`개와 스크립트 생성 경로 참조가 있어 링크 정리 후 별도 처리한다.
 - `signal_feature_historical`와 `trigger_proxy_artifact` `21`개는 정확 참조가 `0`개지만 wildcard 사용 여부를 추가 감사한 뒤 추적 제외한다.
 
@@ -157,3 +156,12 @@
 - 허용 목록 작성 전 full path 정확 참조가 `0`개였던 constituent CSV `3`개는 manifest의 `csv_path`와 문서 basename 참조가 각각 `3`개 있어 source package 구성 파일로 유지한다.
 - owner 분류는 `운영 데이터 관리자=5`, `스케줄러 운영자=3`, `Harness 문서 관리자=2`로 기록했다.
 - 허용 목록과 갱신 절차는 [`canonical_data_contract.md`](../20_harness_engineering/canonical_data_contract.md)에 기록했다.
+
+### 2026-07-30 — `data/signal_feature_snapshot_input.json` 운영 산출물 재분류
+
+- `data/signal_feature_snapshot_input.json` tracked 파일 `1`개를 Git 추적에서 제거했다.
+- 작업트리의 실제 파일 `1`개는 보존했다.
+- `.gitignore`에 `data/signal_feature_snapshot_input.json`을 추가해 재추적을 막았다.
+- 남은 `data/` tracked 파일은 `10`에서 `9`로 감소했다.
+- canonical 허용 목록의 JSON 파일 수는 `3`에서 `2`로 감소했다.
+- 스케줄러와 테스트의 기본 경로 문자열은 유지하되, 샘플 입력이 필요하면 fixture 또는 `.example` 파일로 분리하기로 기록했다.

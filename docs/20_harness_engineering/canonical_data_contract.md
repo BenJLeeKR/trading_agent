@@ -16,7 +16,7 @@
 
 ## 현재 허용 목록
 
-2026-07-29 기준 `data/` Git 추적 허용 목록은 `10`개다.
+2026-07-30 기준 `data/` Git 추적 허용 목록은 `9`개다.
 
 | 경로 | 유형 | owner | 갱신 절차 | 유지 근거 |
 | --- | --- | --- | --- | --- |
@@ -29,20 +29,18 @@
 | `data/instrument_master/source/kosdaq150_constituents.csv` | 운영 source CSV | 운영 데이터 관리자 | manifest의 `csv_path`와 함께 갱신 | KOSDAQ150 membership source package 구성 |
 | `data/instrument_master/source/kosdaq_master.csv` | 운영 source CSV | 스케줄러 운영자 | KIS master 원천 갱신 후 normalize 단계 실행 | instrument master sync 기본 입력 |
 | `data/instrument_master/normalized/kis_kospi_kosdaq_master_normalized_for_sync.csv` | 운영 normalized 입력 | 스케줄러 운영자 | source CSV 기준으로 normalize 후 sync 단계 실행 | instrument master sync 기본 입력 |
-| `data/signal_feature_snapshot_input.json` | 스케줄러 기본 입력 | 스케줄러 운영자 | `scripts/generate_signal_feature_snapshot_input.py`로 재생성 후 단일 파일 검증 | signal feature batch 기본 입력 |
 
 ## 현재 카운트
 
-2026-07-29 감사 결과는 다음과 같다.
+2026-07-30 감사 결과는 다음과 같다.
 
 | 항목 | 파일 수 |
 | --- | ---: |
-| `data/` tracked 파일 | 10 |
+| `data/` tracked 파일 | 9 |
 | CSV 파일 | 7 |
-| JSON 파일 | 3 |
+| JSON 파일 | 2 |
 | `data/instrument_master/source/` 파일 | 7 |
 | `data/instrument_master/normalized/` 파일 | 1 |
-| `data/signal_feature_snapshot_input.json` 파일 | 1 |
 | `data/` runtime 산출물 tracked 파일 | 0 |
 
 ## 갱신 절차
@@ -70,9 +68,10 @@
 
 ### signal feature snapshot 입력
 
-- `data/signal_feature_snapshot_input.json`은 현재 스케줄러와 테스트 기본값이 직접 참조하므로 임시 canonical 입력으로 유지한다.
-- 날짜별 snapshot 또는 분석 산출물은 Git 추적 대상이 아니다.
-- 장기적으로 테스트 fixture와 운영 입력을 분리할 필요가 있으면 별도 PR에서 `tests/fixtures/` 또는 명시된 canonical 경로로 이동한다.
+- `data/signal_feature_snapshot_input.json`은 일일 배치가 재생성하고 DB 갱신 입력으로 사용하는 운영 산출물이다.
+- 따라서 이 파일은 canonical 입력 허용 목록에 두지 않고 Git 추적에서 제외한다.
+- 스케줄러와 테스트의 기본 경로 문자열은 당장 유지할 수 있지만, 샘플 입력이 필요하면 별도 fixture 또는 `.example` 파일로 분리한다.
+- 날짜별 snapshot과 분석 산출물도 모두 Git 추적 대상이 아니다.
 
 ## 금지 사항
 
