@@ -243,7 +243,7 @@ canonical data 허용 목록과 owner 기준은 [`canonical_data_contract.md`](.
 - [x] 경로별 구성은 `data/instrument_master=42`, `data/observations=6`, `data/` 루트 JSON `24`개로 기록했다.
 - [x] 정확 참조된 tracked `data/` 파일은 `15`개, 정확 참조 라인은 `107`개로 기록했다.
 - [x] `data/instrument_master/archive/` `33`개는 정확 참조가 `0`개라 다음 추적 제외 1순위로 판정했다.
-- [x] `data/signal_feature_snapshot_input.json`은 스케줄러와 테스트 기본값이 직접 참조하므로 이번 범위에서 제거하지 않기로 했다.
+- [x] `data/signal_feature_snapshot_input.json`은 초기에는 스케줄러와 테스트 기본값 직접 참조 때문에 유지했지만, 2026-07-30에 운영 산출물로 재분류해 추적 제외했다.
 - [x] 상세 판정은 [`data_runtime_canonical_split_review.md`](../30_work_log/data_runtime_canonical_split_review.md)에 남겼다.
 
 ### P0 11차 — `data/instrument_master/archive/` tracked 파일 추적 제외
@@ -357,6 +357,7 @@ canonical data 허용 목록과 owner 기준은 [`canonical_data_contract.md`](.
 | 2026-07-29 | Codex | P0 17차 — `data/ar_fdc_*.json` Markdown 링크 전환 | 5 | `bash scripts/harness/run.sh accept docs`; `bash scripts/harness/run.sh accept ci` | `converted_ar_fdc_markdown_link_count=3`, `remaining_ar_fdc_markdown_link_count=0`, `ar_fdc_exact_reference_line_count=19`, `runtime_tracked_file_count=12` | `data/ar_fdc_*.json` 생성 경로 감사 |
 | 2026-07-29 | Codex | P0 18차 — `data/ar_fdc_*.json` tracked 파일 추적 제외 | 5 | `bash scripts/harness/run.sh accept docs`; `bash scripts/harness/run.sh accept ci` | `ar_fdc_tracked_count=0`, `ar_fdc_files_on_disk_count=2`, `runtime_tracked_file_count=10` | 남은 `data/` canonical 입력 `10`개 owner·갱신 절차 문서화 |
 | 2026-07-29 | Codex | P0 19차 — 남은 `data/` canonical 입력 허용 목록 문서화 | 5 | `bash scripts/harness/run.sh accept docs`; `bash scripts/harness/run.sh accept ci` | `data_tracked_allowlist_count=10`, `runtime_artifact_tracked_count=0`, `canonical_data_owner_documented_count=10` | P0 닫기 후보, 다음 P1 장 시간 배포 가드 |
+| 2026-07-30 | Codex | P0 20차 — `data/signal_feature_snapshot_input.json` 운영 산출물 재분류 | 4 | `bash scripts/harness/run.sh accept docs`; `bash scripts/harness/run.sh accept ci` | `signal_feature_snapshot_input_tracked_count=0`, `data_tracked_allowlist_count=9`, `runtime_artifact_tracked_count=0`, `canonical_data_json_count=2` | 샘플 입력이 필요하면 fixture 또는 `.example` 파일로 분리 |
 | 2026-07-29 | Codex | P1 1차 — 수동 재배포 입력과 최신 SHA 고정 | 4 | `bash scripts/harness/run.sh accept docs`; `bash scripts/harness/run.sh accept ci` | `deploy_manual_dispatch_input_count=2`, `deploy_manual_dispatch_requested_count=0`, `ci_contract_failed_count=0`, `deploy_workflow_count=1` | 장 시간 가드와 skip/override 지표 추가 |
 | 2026-07-29 | Codex | P1 2차 — 장 시간 배포 가드와 override 지표 | 4 | `bash scripts/harness/run.sh accept docs`; `bash scripts/harness/run.sh accept ci` | `deploy_market_hours_guard_count=1`, `deploy_market_hours_skip_metric_count=1`, `deploy_market_hours_override_metric_count=1`, `deploy_job_depends_on_market_guard_count=1` | P1 닫기 후보, 다음 P2 quick/full 계층 정리 |
 | 2026-07-29 | Codex | P2 1차 — quick/safe 단계 수와 괴리 계측 | 3 | `bash scripts/harness/run.sh accept docs`; `bash scripts/harness/run.sh accept ci` | `quick_step_count=8`, `ci_safe_step_count=8`, `local_ci_command_gap_count=6`, `quick_only_command_count=0` | `check quick` 확장 또는 `check full` 신설 판단 |

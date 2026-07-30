@@ -53,6 +53,7 @@ data/cache/
 data/local/
 data/instrument_master/archive/
 data/observations/
+data/signal_feature_snapshot_input.json
 data/signal_feature_snapshot_input_*.json
 data/trigger_proxy_attribution_*.json
 data/ar_fdc_*.json
