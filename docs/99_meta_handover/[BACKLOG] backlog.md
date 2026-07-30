@@ -1983,6 +1983,21 @@
   이므로 배포 금지 정책 비적용). 상세: `docs/10_signal_
   research_sppv/[DESIGN] regime_conditional_entry_signal_v1.md` §133.
 
+- 2026-07-30 KST(SPPV-2.146, 신규 KIS 호출 0건, 완료): `regime_
+  tailwind`/`strategy_alignment` 잔여 설계 가치 검증. 전수 검정으로
+  `(source_type, regime_label, risk_tone)` → `preferred_strategy`가
+  **15개 조합 전부 단일값·비결정 0건**임을 확인 → 두 항 모두 regime·
+  source 정보의 결정론적 함수로 독립 정보 없음. `regime_tailwind`
+  최근 3거래일 100% `0.0`(설명력 0.89%), `strategy_alignment`는
+  `core` 전체 이력 0건이나 `event_overlay` **28.93% 발동 중**(설명력
+  4.49%) — "현재 미발동" 서술이 `core` 한정이었음을 정정.
+  `buy_candidate` 168건 중 126건(75%)이 `regime_tailwind=0.0`에서
+  발생 → 완화 레버가 아니라 산식 정리 대상. **판정: `strategy_
+  alignment` 직접항 제거는 다음 diff 초안 후보 진행 가능,
+  `regime_tailwind`는 선행 확인 1건 필요**. 코드 미수정. 상세:
+  `docs/10_signal_research_sppv/[DESIGN] regime_conditional_entry_
+  signal_v1.md` §134.
+
 ---
 
 ## 관리 원칙

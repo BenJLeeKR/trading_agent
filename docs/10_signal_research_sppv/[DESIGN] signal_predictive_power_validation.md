@@ -2931,6 +2931,32 @@ entry 설계 검토로 전환**을 확정했다. 별도 문서
   `docs/10_signal_research_sppv/[DESIGN]
   regime_conditional_entry_signal_v1.md` §133.
 
+- 작성자: Codex
+- 수정일자: 2026-07-30 KST (146차, `regime_tailwind`/`strategy_
+  alignment` 잔여 설계 가치 검증, 코드 미수정, `.env` 미수정, Full
+  pytest 미실행, 신규 KIS 호출 0건)
+- 수정내용: 코드 경로 재확인 — `regime_tailwind`(0.03)는 `ranking_
+  score` 전용이고 `source_type` 분기 없음, `strategy_alignment`
+  (0.02)는 `_build_entry_score`(+0.05)와 **조건식이 글자 단위로
+  동일한 이중 계상**. 분포 재집계: `regime_tailwind`는 최근 3거래일
+  100% `0.0`/전체 이력 98.39% `0.0`, `strategy_alignment`는 `core`
+  전체 이력 `1.0` **0건**이나 `event_overlay` **28.93%**(최근
+  3거래일 28.63%)로 발동 중 — 기존 "현재 미발동" 서술이 `core`
+  한정이었음을 정정. **신규 발견**: `(source_type, regime_label,
+  risk_tone)` → `preferred_strategy` 전수 검정에서 관측 15개 조합
+  전부 단일값·비결정 0건, `event_overlay` 내부에서 같은 regime_label
+  안에 `strategy_alignment`가 갈리는 사례 0건 → `regime_label`
+  통제 후 잔여 변별력 정확히 0. 공통 3관점 분리: 산식 설명력
+  0.89%/4.49%(표준편차 기준), 중복은 두 항 모두 regime·source
+  정보의 함수, 병목 기여는 `buy_candidate` 168건 중 126건(75%)이
+  `regime_tailwind=0.0`에서 발생하고 `event_overlay` `sa=1.0`
+  2,718건의 `buy_candidate`가 0건이므로 **완화 레버가 아니라 산식
+  정리 대상**. 판정: `regime_tailwind`=제거 권고(선행 확인 1건 필요,
+  diff 후보 아직 아님), `strategy_alignment`=`ranking_score`
+  직접항 제거 권고(다음 diff 초안 후보 진행 가능). 상세:
+  `docs/10_signal_research_sppv/[DESIGN] regime_conditional_entry_
+  signal_v1.md` §134.
+
 ---
 
 ## 진행 체크리스트
@@ -5978,6 +6004,29 @@ canonical),
     로직 변경 없음, 신규 KIS 호출 0건(shadow 재호출은 `kis_
     client=None`). 상세: `docs/10_signal_research_sppv/[DESIGN]
     regime_conditional_entry_signal_v1.md` §94.
+- [x] **SPPV-2.146(신설, 완료)** `regime_tailwind`/`strategy_
+  alignment` 잔여 설계 가치 검증 (2026-07-30 KST, 작성자: Codex,
+  코드 미수정, `.env` 미수정, Full pytest 미실행, 신규 KIS 호출 0건)
+  - **신규 발견**: `(source_type, regime_label, risk_tone)` →
+    `preferred_strategy` 전수 검정에서 **15개 조합 전부 단일값,
+    비결정 0건** → 두 항 모두 regime·source 정보의 결정론적 함수로
+    독립 정보 없음. `event_overlay` 내부에서 같은 `regime_label`
+    안에 `strategy_alignment`가 갈리는 사례 0건.
+  - 분포: `regime_tailwind` 최근 3거래일 **100% `0.0`**, 전체 이력
+    98.39% `0.0`(설명력 표준편차 기준 **0.89%**). `strategy_
+    alignment` `core` 전체 이력 **0건**이나 `event_overlay`
+    **28.93% 발동 중**(설명력 **4.49%**) — 기존 "현재 미발동"
+    서술은 `core` 한정이었음을 정정.
+  - 병목 기여: `buy_candidate=True` 168건 중 **126건(75%)이
+    `regime_tailwind=0.0`**에서 발생, `event_overlay` `sa=1.0`
+    2,718건의 `buy_candidate`는 0건 → **완화 레버가 아니라 산식
+    정리 대상**.
+  - **판정**: `regime_tailwind`=제거 권고(단 threshold 동시 조정이
+    완화로 작용할 수 있어 선행 확인 1건 필요, diff 후보 아직 아님),
+    `strategy_alignment`=`ranking_score` 직접항(`0.02`) 제거 권고
+    (**다음 diff 초안 후보 진행 가능**). 상세: `docs/10_signal_
+    research_sppv/[DESIGN] regime_conditional_entry_signal_v1.md`
+    §134.
 - [x] **SPPV-2.145(신설, 완료 — 코드 변경 포함)** D안 diff 초안 실제
   작성 (2026-07-30 KST, 작성자: Codex, `.env` 미수정, Full pytest 미실행,
   신규 KIS 호출 0건)

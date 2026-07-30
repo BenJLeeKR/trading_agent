@@ -1,8 +1,23 @@
 # ranking_score 공식 검증 계획
 
 작성일: 2026-07-28  
-상태: [SPPV-2.139에서 갱신] `coverage_score` A-3안 **운영 무변화
-confirmed**. 장중 예외 승인으로 2026-07-30 13:21:17 KST 실제
+상태: [SPPV-2.146에서 갱신] `regime_tailwind`/`strategy_alignment`
+잔여 설계 가치 검증 완료(§6.24) — 두 항 모두 `(source_type,
+regime_label, risk_tone)`의 **결정론적 함수**(전수 검정 15개 조합,
+비결정 0건)로 독립 정보가 없음을 확인. `strategy_alignment` 직접항
+제거는 **다음 diff 초안 후보로 진행 가능**, `regime_tailwind` 제거는
+**선행 확인 1건 필요**. 상세: `[DESIGN] regime_conditional_entry_
+signal_v1.md` §134.
+
+[SPPV-2.140~2.145 진행 경과 — 이 문서에 미반영이었던 구간 보완]
+이 문서는 `ranking_score` **공식 자체**의 검증 계획이므로, 그 사이
+진행된 `core_cap` 절단 기준 트랙(SPPV-2.140~2.145: `000720` 구조 편향
+규명 → 왜곡 정량화 → A/B/C/D 비교 → D안 설계 점검 → D안 diff 작성·
+배포)은 **유니버스 선정 트랙**으로 이 문서 범위 밖이며, `[DESIGN]
+regime_conditional_entry_signal_v1.md` §128~§133과 `[PRIORITY_MAP]`
+에서 추적한다.
+
+[SPPV-2.139] `coverage_score` A-3안 **운영 무변화 confirmed**. 장중 예외 승인으로 2026-07-30 13:21:17 KST 실제
 운영 서버에 배포됨을 확인(`ranking_min_score=0.28`/`shadow_min_
 score=0.02` 메타데이터 echo로 재확인). 배포 직전 2시간(구
 threshold, gate n=176) vs 배포 이후 누적(~39분, 신 threshold,
@@ -433,8 +448,8 @@ SPPV-2.124에서 전체 이력까지 확장·재판정)
 |---|---|---|---|
 | `coverage_score` | 100% 1.0(무분산) | distinct 2값(1.0: 35,873건, 0.1429: 725건) | **부분 확정** |
 | `allocation_quality`(`max_new_capital_pct`) | distinct 2값(2.5: 3,191건, 3.0: 1,319건) | distinct **1,929값**(0.0/4.0/5.0 등 포함, 풍부한 연속 분산) | **확정**(전체 이력 기준) |
-| `regime_tailwind`(`risk_tone`) | 100% risk_off(무분산) | `risk_off` 36,433 / `None` 32,017 / `risk_on` **42** / `neutral` **232** | **부분 확정** |
-| `strategy_alignment`(`preferred_strategy`) | `event_continuation` 4.8%(217건) | `{swing_momentum, event_continuation}` 합계 2,562건(3.7%) | **부분 확정** |
+| `regime_tailwind`(`risk_tone`) | 100% risk_off(무분산) | `risk_off` 36,433 / `None` 32,017 / `risk_on` **42** / `neutral` **232** | **부분 확정** → [SPPV-2.146에서 확정] 최근 3거래일 100% `0.0`, 전체 이력 98.39% `0.0`, 설명력 0.89% |
+| `strategy_alignment`(`preferred_strategy`) | `event_continuation` 4.8%(217건) | `{swing_momentum, event_continuation}` 합계 2,562건(3.7%) | **부분 확정** → [SPPV-2.146에서 확정] `core` 전체 이력 **0건**이나 `event_overlay` **28.93% 발동 중** — 경로 분리 필요, 설명력 4.49% |
 
 - [x] `coverage_score`가 일반 모집단에서도 무분산인지 확인 —
       **관측 창에 따라 다르다**: 3거래일 창은 무분산(사실),
@@ -763,6 +778,12 @@ entry_signal_v1.md` §117.
       core risk-off 하드 게이트가 이미 같은 신호를 강하게
       처리하고 있어 `ranking`의 0.03 가중치는 정책적 존치
       근거가 약함. **분류: 역할 축소 검토.**
+      **[SPPV-2.146에서 판정 갱신]** 분류(역할 축소)에서
+      **제거 권고**로 상향 — 설명력이 표준편차 기준 0.89%이고
+      `(regime_label, risk_tone)`의 결정론적 함수라 독립 정보가
+      없음을 전수 검정으로 확인. 단 threshold 동시 조정이 완화로
+      작용할 수 있어 **선행 확인 1건 필요**(diff 후보 아직 아님).
+      상세: `[DESIGN] regime_conditional_entry_signal_v1.md` §134.6.
 - [x] **트랙 B-1(`relative_activity`)**: 4계층(entry_score/
       ranking/eligibility/core guard) 역할표 재정리 — 소프트
       2곳(entry+ranking)은 과잉 중복, 하드 2곳은 국면별 차등
@@ -772,6 +793,13 @@ entry_signal_v1.md` §117.
       `ranking`이 완전히 동일한 조건 집합을 검사 — 현재는 미발동
       이나 살아나면 구조적으로 확정된 중복. **분류: 중복 제거/
       정리 검토**(시급성은 낮음).
+      **[SPPV-2.146에서 정정]** "현재는 미발동"은 **`core` 한정
+      서술**이었다 — `source_type`을 분리하면 `event_overlay`에서
+      전체 이력 **28.93%(2,718/9,394)**, 최근 3거래일 **28.63%**로
+      꾸준히 발동 중이다(사실). 따라서 "죽은 항"이 아니라
+      **`entry_score`와의 이중 계상**이 제거 논거다. 직접항
+      (`0.02`) 제거는 **다음 diff 초안 후보로 진행 가능**.
+      상세: `[DESIGN] regime_conditional_entry_signal_v1.md` §134.7.
 - [x] **우선순위**: 1순위 `coverage_score`, 2순위 `relative_
       activity`, 3순위 `strategy_alignment`, 4순위 `regime_
       tailwind`.
@@ -1097,6 +1125,58 @@ entry_signal_v1.md` §126.
 
 상세: `docs/10_signal_research_sppv/[DESIGN] regime_conditional_
 entry_signal_v1.md` §127.
+
+### 6.24 SPPV-2.146 — `regime_tailwind`/`strategy_alignment` 잔여
+설계 가치 검증(신규, 2026-07-30 KST, 완료 — 코드 미수정)
+
+- [x] **코드 경로 재확인**: `regime_tailwind`(가중치 `0.03`,
+      `:1111-1116`)는 `ranking_score` 전용, `source_type` 분기
+      없음. `strategy_alignment`(가중치 `0.02`, `:1124-1129`)는
+      `_build_entry_score():1223-1228`과 **조건식이 글자 단위로
+      동일한 이중 계상**. `ranking_score` 총 기여
+      `0.55×0.05+0.02=0.0475` 중 직접항이 42%(사실).
+- [x] **분포 재집계(3거래일/2주/전체 이력)**: `regime_tailwind`는
+      최근 3거래일 **100% `0.0`**, 2주 99.52%, 전체 이력 98.39%
+      (`1.0` 42건, `0.5` 11건, 없음 562건). `strategy_alignment`는
+      `core` 전체 이력 **`1.0` 0건**, `event_overlay` **28.93%**,
+      `market_overlay` 1.95%, `reconciliation_overlay` 0건(사실).
+- [x] **결정론적 함수 전수 검정(신규 발견)**: `(source_type,
+      regime_label, risk_tone)` → `preferred_strategy` 관계에서
+      관측 **15개 조합 전부 단일값, 비결정 0건**. `event_overlay`
+      내부에서 같은 `regime_label` 안에 `strategy_alignment`가
+      갈리는 사례 **0건** → `regime_label` 통제 후 잔여 변별력
+      **정확히 0**(사실).
+- [x] **공통 3관점 분리**: (1) 산식 설명력 — 표준편차 기준
+      `regime_tailwind` **0.89%** / `strategy_alignment` **4.49%**
+      (`ranking_score` 표준편차 0.1161 대비), (2) 중복 — 두 항 모두
+      이미 `entry_score`·eligibility 하드 게이트가 소비하는 regime·
+      source 정보의 함수, (3) 병목 기여 — 전체 이력
+      `buy_candidate=True` 168건 중 **126건(75%)이
+      `regime_tailwind=0.0`**(`core`+`risk_off`)에서 발생, `event_
+      overlay` `sa=1.0` 2,718건의 `buy_candidate`는 **0건** →
+      **두 항은 완화 레버가 아니라 산식 정리 대상**(사실+해석).
+- [x] **`regime_tailwind` 판정**: **제거 권고**(가중치 축소는 이미
+      0.03이고 98.39%가 `0.0`이라 실익 없음). 단 threshold 동시
+      조정이 게이트 모집단에서 **완화로 작용할 수 있어** 선행 확인
+      1건 필요 — **diff 후보 아직 아님**.
+- [x] **`strategy_alignment` 판정**: **`ranking_score` 직접항
+      (`0.02`) 제거 권고**, `entry_score` 쪽(`+0.05`)은 범위 밖
+      유지. `event_overlay`에서 살아 있으므로 "죽은 항" 논거는
+      성립하지 않고 **이중 계상 제거**가 논거다. 경로 분리안은
+      regime 정보 3중 반복이라 비권고.
+- [x] **diff 후보 판정**: `strategy_alignment` 직접항 제거는
+      **다음 diff 초안 후보로 진행 가능**(`relative_activity` 1안과
+      동일 패턴, 게이트 모집단 무변화 예상 — 정량 확인 1건 선행).
+
+**[PLAN] 상태 요약**: `ranking_score` 6개 항 중 `coverage_score`
+(제거·배포 완료, SPPV-2.145)·`relative_activity`(제거·배포 완료,
+SPPV-2.133)에 이어 `strategy_alignment`·`regime_tailwind` 판정까지
+완료됐다. 남은 항은 `entry_score`(0.55)와 `allocation_quality`
+(0.10)이며 둘 다 실질 분산이 확인된 항이라 정리 대상이 아니다.
+**코드 diff는 이번 턴 미착수.**
+
+상세: `docs/10_signal_research_sppv/[DESIGN] regime_conditional_
+entry_signal_v1.md` §134.
 
 ## 7. 완료 기준
 

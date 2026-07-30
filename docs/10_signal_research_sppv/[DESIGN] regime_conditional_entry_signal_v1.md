@@ -16663,3 +16663,199 @@ Full pytest / 외부 API 호출 / 운영 DB write는 수행하지 않았다.
    별도 승인도 필요하지 않다** — 머지 시 `push main` 워크플로가
    `sync_source`→`activate_runtime`을 자동 실행한다(`src/` 변경이라
    `activate_required=1`).
+
+## §134. `regime_tailwind` / `strategy_alignment` 잔여 설계 가치 검증(SPPV-2.146, 2026-07-30 KST)
+
+**전제**: `ranking_score` 재설계 트랙에서 남은 두 보조항만 대상으로 한다.
+코드 수정 없음, read-only 코드 확인 + Postgres read-only 조회만 사용,
+신규 KIS 호출 0건. 운영 실측(다음 거래일 08:50 KST freeze 대조)은 별도
+턴이며 이번 턴 범위가 아니다.
+
+### 134.1 코드 경로 재확인(사실)
+
+`_build_buy_ranking_score()`(`deterministic_trigger_engine.py:1111-1136`):
+
+- **`regime_tailwind`**(가중치 `0.03`, `:1111-1116`): `0.5` 기본,
+  `bullish_trend AND risk_on`이면 `1.0`, `risk_tone=='risk_off'`이면
+  `0.0`. `ranking_score`에만 존재하고 `entry_score`에는 없다.
+  `source_type` 분기 없음.
+- **`strategy_alignment`**(가중치 `0.02`, `:1124-1129`):
+  `preferred_strategy ∈ {swing_momentum, event_continuation}`이면 `1.0`.
+  **`_build_entry_score()`(`:1223-1228`)에 완전히 동일한 조건이
+  `+0.05`(reason code `trigger_strategy_alignment`)로 존재**한다 —
+  조건식·대상 집합이 글자 단위로 같은 완전 중복이다.
+- `entry_score`가 `ranking_score`에 `0.55`로 들어가므로
+  `strategy_alignment`의 `ranking_score` 총 기여는
+  `0.55×0.05 + 0.02 = 0.0475`이고, 그중 직접항(`0.02`)이 42%다(사실).
+
+### 134.2 분포 재집계(BUY-path, read-only 신규 조회)
+
+`metadata.eligibility_path='buy'` 모집단 기준.
+
+**`regime_tailwind`**
+
+| 창 | n | `0.0` | `0.5` | `1.0` | market_regime 없음 |
+|---|---|---|---|---|---|
+| 최근 3거래일(07-28~30 KST) | 4,709 | **4,709(100.0%)** | 0 | 0 | 0 |
+| 최근 2주(07-16~ KST) | 13,294 | 13,230(99.52%) | 0 | 0 | 64(0.48%) |
+| 전체 이력 | 38,212 | 37,597(98.39%) | 11(0.03%) | 42(0.11%) | 562(1.47%) |
+
+**`strategy_alignment`**(`source_type` 분리)
+
+| 창 | source_type | n | `0.0` | `1.0` |
+|---|---|---|---|---|
+| 최근 3거래일 | `core` | 3,462 | **3,462(100.0%)** | **0** |
+| 최근 3거래일 | `event_overlay` | 1,247 | 890(71.37%) | **357(28.63%)** |
+| 전체 이력 | `core` | 23,643 | 23,480(99.31%) | **0**(None 163) |
+| 전체 이력 | `event_overlay` | 9,394 | 6,621(70.48%) | **2,718(28.93%)** |
+| 전체 이력 | `market_overlay` | 2,151 | 1,767(82.15%) | 42(1.95%) |
+| 전체 이력 | `reconciliation_overlay` | 3,024 | 3,022(99.93%) | 0 |
+
+### 134.3 재현 여부(기존 서술 대조)
+
+- **재현됨**: `regime_tailwind`가 최근 관측 창에서 사실상 무분산
+  (SPPV-2.120/§107의 "전수 0.0")이라는 서술 — 최근 3거래일 100% `0.0`
+  으로 재현. 전체 이력에서는 완전 무분산이 아니라는 SPPV-2.124의 보정도
+  재현(`1.0` 42건, `0.5` 11건).
+- **재현됨**: `strategy_alignment`가 `core`에서 죽어 있다는 SPPV-2.128/
+  2.129의 판정 — **전체 이력 `core` 23,643건 중 `1.0`이 0건**으로 재현.
+- **재현되지 않음(신규 정정 필요 없음, 범위 확장)**: 기존 서술은
+  `strategy_alignment`를 "현재 미발동"으로 다뤘으나(§118 트랙 B-2 등),
+  `source_type`을 분리하면 **`event_overlay`에서는 전체 이력 28.93%,
+  최근 3거래일 28.63%로 꾸준히 발동 중**이다(사실). 즉 "미발동"은
+  `core` 한정 서술이며, 경로를 합쳐 보면 부정확하다.
+
+### 134.4 결정적 신규 발견 — 두 항 모두 regime 정보의 결정론적 함수(사실)
+
+`(source_type, regime_label, risk_tone)` → `preferred_strategy` 관계를
+BUY-path 전체 이력에서 전수 검정한 결과, **관측된 15개 조합 전부가
+단일 `preferred_strategy`로 결정되며 비결정적 조합이 0건**이다.
+
+특히 `event_overlay` 내부 교차표는 완전히 분리된다:
+
+| regime_label | preferred_strategy | `strategy_alignment` | n |
+|---|---|---|---|
+| `bearish_trend` | `defensive_low_volatility_rotation` | `0.0` | 6,621 |
+| `range_bound` | `event_continuation` | `1.0` | 1,450 |
+| `bullish_trend` | `event_continuation` | `1.0` | 1,268 |
+
+**같은 `regime_label` 안에서 `strategy_alignment`가 갈리는 사례가 단 한
+건도 없다.** 즉 `regime_label`을 통제하면 `strategy_alignment`의 잔여
+변별력은 **정확히 0**이다(사실, 전수 검정).
+
+`regime_tailwind`는 코드 정의상 `(regime_label, risk_tone)`의 함수이므로
+같은 성질을 애초에 갖는다.
+
+**해석**: 두 항이 `ranking_score`에 넣는 정보는 이미
+① `entry_score`의 regime 보정(`+0.10` bullish / `+0.05` risk_on /
+`-0.15` risk_off), ② `entry_score`의 `strategy_alignment`(`+0.05`),
+③ eligibility/`_is_core_risk_off_regime` 하드 게이트가 모두 소비하는
+동일한 regime·source 정보다. 독립 정보 추가분은 없다.
+
+### 134.5 공통 3관점 분리 정리
+
+**(1) `ranking_score` 산식 안에서의 설명력(사실)**
+
+전체 이력에서 두 항을 모두 산출할 수 있는 n=37,650 기준:
+
+| 항 | 평균 | 표준편차 | `ranking_score` 표준편차(0.1161) 대비 |
+|---|---|---|---|
+| `0.03×regime_tailwind` | 0.000038 | 0.001034 | **0.89%** |
+| `0.02×strategy_alignment` | 0.001466 | 0.005213 | **4.49%** |
+
+`ranking_score` 평균은 0.3250이다. 즉 `regime_tailwind`는 산식 변동의
+1% 미만을, `strategy_alignment`는 약 4.5%를 설명한다.
+
+**(2) 다른 gate/threshold/source_type 분기와의 중복(사실)**
+
+134.4의 전수 검정으로 **두 항 모두 `(source_type, regime_label,
+risk_tone)`의 결정론적 함수**임이 확인됐고, 그 세 입력은 이미
+`entry_score`·eligibility 하드 게이트·`_is_core_risk_off_regime`에서
+사용된다. `strategy_alignment`는 추가로 `entry_score`와 **조건식이
+완전히 동일한 이중 계상**이다(134.1).
+
+**(3) 현재 병목 완화에 실제로 기여할 가능성(사실 + 해석)**
+
+- 전체 이력 `buy_candidate=True`는 **168건**이며 구성은 `core` 126건
+  (`bullish_trend/risk_off`) + `market_overlay` 42건
+  (`bullish_trend/risk_on`)이다. 이들의 `entry_score` 평균은 0.8102,
+  **최솟값 0.7856**으로 `buy_candidate_threshold=0.65`를 크게 상회한다
+  (사실).
+- **`core` 126건은 `risk_tone='risk_off'`이므로 `regime_tailwind=0.0`
+  이다** — 즉 역사적 `buy_candidate`의 75%(126/168)가
+  `regime_tailwind` 기여 `0`으로 발생했다(사실). 두 항이 병목 통과의
+  드라이버가 아니라는 직접 증거다.
+- `event_overlay`에서 `strategy_alignment=1.0`인 2,718건 중
+  `eligibility_passed`는 544건(20.01%)이지만 **`buy_candidate`는 0건**
+  이다(사실). 반면 `sa=0.0`인 6,621건은 `eligibility_passed`도 0건이다 —
+  이 20% vs 0% 격차는 134.4에 따라 `regime_label`이 설명하는 것이고
+  `strategy_alignment` 고유 기여가 아니다(해석).
+- **결론(해석)**: 두 항 중 어느 것을 제거·축소해도 병목 완화 효과는
+  없다. 반대로 **병목을 악화시키지도 않는다**(기여 규모가 각각 0.89% /
+  4.49%). 즉 이 두 항은 **완화 레버가 아니라 산식 정리 대상**이다.
+
+### 134.6 `regime_tailwind` 판정
+
+**제거가 가장 타당하다**(단, 이번 턴은 코드 미수정).
+
+근거: (1) 최근 3거래일 100% `0.0`, 전체 이력 98.39% `0.0`로 사실상
+상수, (2) 산식 설명력이 표준편차 기준 0.89%로 무의미, (3)
+`(regime_label, risk_tone)`의 결정론적 함수라 독립 정보가 없고 그 정보는
+`entry_score` regime 보정과 하드 게이트가 이미 강하게 소비, (4) 비영값
+53건 중 `1.0` 42건은 전부 `market_overlay`+`bullish_trend/risk_on`이라
+특정 국면·경로에 완전히 종속되며 그 국면은 `entry_score`가 이미 +0.15
+로 반영한다.
+
+가중치 축소는 실익이 없다 — 이미 0.03이고 98.39%가 `0.0`이라 축소해도
+관측 가능한 변화가 없다. 유지 근거는 "국면 정보를 ranking에도 남겨둔다"
+는 정책적 선호뿐이며, 실측 근거는 없다(해석).
+
+**전제 조건**: `coverage_score` 제거(SPPV-2.145)와 마찬가지로
+`ranking_score` 최댓값이 `0.03` 줄어들므로, `_CORE_RISK_OFF_RANKING_
+MIN_SCORE=0.28`/`_CORE_RISK_OFF_SHADOW_MIN_SCORE=0.02`와 함께 다뤄야
+판정 경계가 보존된다. 다만 `regime_tailwind`는 `coverage_score`와 달리
+**게이트 모집단에서 상수가 아니라 값이 이미 `0.0`**이므로, 게이트
+모집단(`core`+`risk_off`)에서는 제거해도 `ranking_score`가 변하지
+않는다 — threshold를 함께 내리면 오히려 완화가 된다는 점을 diff 설계 시
+반드시 구분해야 한다(해석, 미검증 — 다음 턴 정량 확인 대상).
+
+### 134.7 `strategy_alignment` 판정
+
+**`ranking_score`의 직접항(`0.02`) 제거가 타당하다. 단 `entry_score`
+쪽(`+0.05`)은 이번 판정 범위 밖으로 남긴다**(이번 턴 코드 미수정).
+
+근거: (1) `entry_score`와 **조건식이 완전히 동일한 이중 계상**(134.1) —
+`relative_activity` 1안(SPPV-2.132/2.133)과 정확히 같은 성격의 소프트
+중복이고, 그때 채택한 "소프트 2곳 중 1곳만 유지" 원칙을 그대로 적용할
+수 있다, (2) `regime_label` 통제 후 잔여 변별력이 전수 검정으로 0(134.4),
+(3) `ranking_score` 설명력 4.49%는 전부 `regime_label`이 이미 설명하는
+분량이다.
+
+**"완전 제거"가 아니라 "경로 분리"도 아닌 이유**: `core`에서 0건이라는
+사실만 보면 제거로 보이지만, `event_overlay`에서 28.93% 발동 중이므로
+**항 자체가 죽은 것은 아니다**(134.3). 따라서 "죽은 항이니 지운다"는
+논거는 성립하지 않고, 성립하는 논거는 **`entry_score`와의 중복 제거**
+뿐이다. `source_type`별로 가중치를 달리 주는 경로 분리안은 134.4에 따라
+`regime_label` 정보를 세 번째로 반복하는 셈이라 권하지 않는다(해석).
+
+### 134.8 다음 diff 초안 후보 판정
+
+- **`strategy_alignment` 직접항 제거: 다음 diff 초안 후보로 바로 진행
+  가능**. `relative_activity` 1안과 동일한 패턴(단일 항 제거,
+  `entry_score` 미변경)이고, 게이트 모집단에서의 threshold 영향은
+  `0.02×strategy_alignment`이며 `core` 게이트 모집단에서
+  `strategy_alignment`가 전체 이력 0건이므로 **해당 모집단에서는 값이
+  항상 `0.0` → 제거 시 `ranking_score` 무변화**로 예상된다(해석,
+  다음 턴 정량 확인 필요).
+- **`regime_tailwind` 제거: 아직 후보로 올리지 않는다**. 134.6의 전제
+  조건(threshold 동시 조정이 완화로 작용할 수 있음)이 정량 확인되지
+  않았다. 선행 확인 1건이 필요하다.
+
+### 134.9 다음 우선 작업(완화안 확정 아님)
+
+1. **1순위**: D안 운영 반영 관측(다음 거래일 08:50 KST freeze 대조) —
+   이미 배포된 변경의 확인이므로 우선순위 유지.
+2. **2순위**: `strategy_alignment` 직접항 제거의 threshold 영향 정량
+   확인(게이트 모집단에서 무변화 예상 검증) → 확인되면 diff 초안.
+3. **3순위**: `regime_tailwind` 제거 시 threshold 동시 조정이 완화로
+   작용하는지 정량 확인(134.6 전제 조건).

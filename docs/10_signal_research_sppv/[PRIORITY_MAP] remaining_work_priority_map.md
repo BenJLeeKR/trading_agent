@@ -10267,11 +10267,31 @@ agent 설계 문서 기준으로도 순서는 다음이 맞다.
      하네스 3개 PASS(FAIL 2건은 `git stash` 기저 대조로 선재 postgres
      환경 실패 확인). 상세: `docs/10_signal_research_sppv/[DESIGN]
      regime_conditional_entry_signal_v1.md` §133.
+   - **SPPV-2.146(완료, 2026-07-30 KST, `regime_tailwind`/`strategy_
+     alignment` 잔여 설계 가치 검증, 작성자: Codex, 코드 미수정,
+     `.env` 미수정, Full pytest 미실행, 신규 KIS 호출 0건)**: 전수
+     검정으로 `(source_type, regime_label, risk_tone)` →
+     `preferred_strategy`가 **15개 조합 전부 단일값·비결정 0건**임을
+     확인 → 두 항 모두 regime·source 정보의 결정론적 함수로 독립
+     정보 없음. `regime_tailwind` 최근 3거래일 100% `0.0`(설명력
+     0.89%), `strategy_alignment` `core` 전체 이력 0건이나
+     `event_overlay` **28.93% 발동 중**(설명력 4.49%) — "현재 미발동"
+     서술이 `core` 한정이었음을 정정. `buy_candidate` 168건 중
+     126건(75%)이 `regime_tailwind=0.0`에서 발생 → **완화 레버가
+     아니라 산식 정리 대상**. **판정: `strategy_alignment` 직접항
+     제거는 다음 diff 초안 후보 진행 가능, `regime_tailwind`는 선행
+     확인 1건 필요**. 상세: `docs/10_signal_research_sppv/[DESIGN]
+     regime_conditional_entry_signal_v1.md` §134.
    - **SPPV-3(다음 착수: [1순위] D안 diff 운영 반영 관측 — 배포 후 다음
      거래일 08:50 KST에 생성되는 `decision_loop_intraday` freeze 내용을
      같은 입력(전 거래일 20:00 KST snapshot)으로 계산한 D안 shadow 예측과
      종목 단위로 대조(read-only). 배포는 PR 머지 시 장 외 시간대에
      자동 반영되므로 별도 승인이 필요하지 않다 +
+     [1-B순위] `strategy_alignment` `ranking_score` 직접항(`0.02`)
+     제거의 threshold 영향 정량 확인(게이트 모집단 무변화 예상 검증)
+     → 확인되면 diff 초안 작성 +
+     [1-C순위] `regime_tailwind` 제거 시 threshold 동시 조정이 게이트
+     모집단에서 완화로 작용하는지 정량 확인(§134.6 전제 조건) +
      [2순위] 관찰용 shadow 메타데이터의 낡은 스케일 절대값
      (`_classify_core_risk_off_shadow_floor_bucket`의 `0.26`,
      `_EVENT_OVERLAY_SHADOW_MIN_SCORE=0.56`) 재검토 — 실제 BUY

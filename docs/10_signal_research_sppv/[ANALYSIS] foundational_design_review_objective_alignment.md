@@ -3140,3 +3140,38 @@ research_sppv/[DESIGN] regime_conditional_entry_signal_v1.md` §132.
 79/80위 경계 이동)과 §131.4(주문 발생 완화 아님) 제약은 그대로 유지된다.
 상세: `docs/10_signal_research_sppv/[DESIGN] regime_conditional_entry_
 signal_v1.md` §133.
+
+## 32. `regime_tailwind`/`strategy_alignment` 잔여 설계 가치 검증(SPPV-2.146, 2026-07-30 KST)
+
+`ranking_score` 재설계 트랙에서 남은 두 보조항만 read-only로 검증했다
+(코드 미수정, 신규 KIS 호출 0건, 운영 실측은 별도 턴).
+
+- **결정적 신규 발견**: `(source_type, regime_label, risk_tone)` →
+  `preferred_strategy` 관계를 BUY-path 전체 이력에서 전수 검정한 결과
+  **관측 15개 조합 전부가 단일값이고 비결정 조합이 0건**이다.
+  `event_overlay` 내부에서 같은 `regime_label` 안에 `strategy_alignment`
+  가 갈리는 사례도 0건이다 → `regime_label`을 통제하면 잔여 변별력이
+  **정확히 0**. `regime_tailwind`는 코드 정의상 이미 `(regime_label,
+  risk_tone)`의 함수다. 즉 두 항 모두 `entry_score` regime 보정과
+  eligibility 하드 게이트가 이미 소비하는 정보의 재계상이다.
+- **분포**: `regime_tailwind`는 최근 3거래일 100% `0.0`, 전체 이력
+  98.39% `0.0`. `strategy_alignment`는 `core` 전체 이력 `1.0`이 **0건**
+  이지만 `event_overlay`에서 **28.93%(최근 3거래일 28.63%)** 발동 중이다
+  — 기존 "현재 미발동" 서술은 `core` 한정이었음을 정정한다.
+- **공통 3관점**: (1) 산식 설명력은 표준편차 기준 각각 **0.89%** /
+  **4.49%**(`ranking_score` 표준편차 0.1161 대비), (2) 중복은 위
+  전수 검정으로 확정, (3) 병목 기여는 — 전체 이력 `buy_candidate=True`
+  168건 중 **126건(75%)이 `regime_tailwind=0.0`**(`core`+`risk_off`)
+  에서 발생했고 `event_overlay`의 `sa=1.0` 2,718건에서 `buy_candidate`는
+  **0건**이다. 따라서 두 항은 **완화 레버가 아니라 산식 정리 대상**이다.
+- **판정**: `regime_tailwind`는 **제거 권고**이나 threshold 동시 조정이
+  게이트 모집단에서 완화로 작용할 수 있어 선행 확인 1건이 필요하다
+  (diff 후보 아직 아님). `strategy_alignment`는 **`ranking_score`
+  직접항(`0.02`) 제거 권고**이며 `entry_score` 쪽은 범위 밖으로 남긴다 —
+  `event_overlay`에서 살아 있으므로 "죽은 항" 논거가 아니라 **이중 계상
+  제거**가 논거다.
+
+**결론**: `strategy_alignment` 직접항 제거는 다음 diff 초안 후보로 바로
+진행 가능하고, `regime_tailwind`는 선행 확인 1건 후 판단한다. 상세:
+`docs/10_signal_research_sppv/[DESIGN] regime_conditional_entry_signal_
+v1.md` §134.
