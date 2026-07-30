@@ -117,6 +117,7 @@ canonical data 허용 목록과 owner 기준은 [`canonical_data_contract.md`](.
 - [x] `accept ci`가 위 신규 출력과 정적 규칙 존재 여부를 검사하도록 확장한다.
 - [x] 실제 `sync_source` / `activate_runtime` job 분리와 장중 sync-only 실행 조건을 workflow에 반영한다.
 - [x] `accept ci`가 `sync_source`, `activate_runtime`, activate guard, sync/activate 실행 지표 존재 여부를 검사하도록 확장한다.
+- [~] 장종료 activate 자연 경로를 `push main` run `1`건으로 검증하고 run id·지표를 기록한다.
 
 완료 기준:
 
@@ -132,6 +133,7 @@ canonical data 허용 목록과 owner 기준은 [`canonical_data_contract.md`](.
 - `deploy_sync_only_run_metric_count=1`
 - `deploy_activate_run_metric_count=1`
 - `deploy_activate_skipped_by_market_hours_metric_count=1`
+- 장외 `push main` 실run `1`건에서 `Activate runtime after source sync=success`가 기록된다.
 
 ## 완료된 작업
 
@@ -371,6 +373,7 @@ canonical data 허용 목록과 owner 기준은 [`canonical_data_contract.md`](.
 | 2026-07-30 | Codex | P5 2차 — `sync_source` / `activate_runtime` job 분리와 장중 sync-only 조건 반영 | 5 | `bash scripts/harness/run.sh accept docs`; `bash scripts/harness/run.sh accept ci` | `deploy_sync_job_present_count=1`, `deploy_activate_job_present_count=1`, `deploy_activate_guard_present_count=1`, `deploy_sync_only_run_metric_count=1`, `deploy_activate_run_metric_count=1`, `deploy_activate_skipped_by_market_hours_metric_count=1`, `ci_contract_failed_count=0` | 다음은 수동 재배포 dispatch 문서 예시와 운영 runbook 정리 |
 | 2026-07-30 | Codex | P5 3차 — GitHub Actions 실배포 run 검증 | 2 | `gh pr checks 47 --watch`; `gh run view 30503269894`; `gh run view 30503269269` | `pr_safe_harness_success_count=1`, `push_main_run_cancelled_count=1`, `dispatch_run_success_count=1`, `dispatch_sync_run_success_count=1`, `dispatch_activate_run_success_count=1`, `dispatch_market_override_count=1` | 장중 sync-only 전용 검증용 allowlist-only 샘플 변경 또는 운영 runbook 정리 |
 | 2026-07-30 | Codex | P5 4차 — 장중 sync-only 자동 경로 실run 검증 | 2 | `bash scripts/harness/run.sh py-compile scripts/check_index_membership_staleness.py`; `gh pr checks 49 --watch`; `gh run view 30503894901` | `sync_only_pr_safe_harness_success_count=1`, `sync_only_push_run_success_count=1`, `sync_only_market_guard_success_count=1`, `sync_only_sync_source_success_count=1`, `sync_only_activate_skipped_count=1`, `sync_only_dispatch_run_count=0` | 다음은 장종료 activate 자연 경로 검증 또는 runbook 보강 |
+| 2026-07-30 | Codex | P5 5차 — 장종료 activate 자연 경로 runbook 고정 | 3 | `bash scripts/harness/run.sh accept docs` | `required_file_missing_count=0`, `documented_run_sh_command_missing_count=0`, `semantic_check_failed_count=0` | 다음은 장외 시간 `push main` 실run `1`건으로 `activate_runtime=success` 확인 |
 
 ## 갱신 규칙
 
