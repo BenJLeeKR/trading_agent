@@ -2834,6 +2834,22 @@ entry 설계 검토로 전환**을 확정했다. 별도 문서
   아님, 설계 비교 단계). 상세: `docs/10_signal_research_sppv/
   [DESIGN] regime_conditional_entry_signal_v1.md` §129.
 
+- 작성자: Codex
+- 수정일자: 2026-07-30 KST (142차, SPPV-2.141 핵심 수치 재현성
+  검증, 코드 미수정, `.env` 미수정, Full pytest 미실행, 신규 KIS
+  호출 0건)
+- 수정내용: 동일 방법론·동일 20거래일 창(`2026-07-02`~`2026-07-29`
+  KST)으로 재실행. 핵심 집계 지표(실제 평균 `entry_score` 0.1657,
+  shadow 평균 0.3489, 겹침 20.3%)는 소수점까지 정확히 재현됨을
+  확인. `000720` 실제 포함일수는 §129 완료 보고문의 "13일"이 원본
+  로그 재대조 결과 수동 집계 오류였음을 확인해 "11일"로 정정,
+  shadow 순위 하한도 `000720`(58→55위)/`002790`(14→9위) 정정 —
+  관측 시점·모집단 정의·계산 로직 차이가 아니라 완료 보고 시
+  전사 오류. **판정: 방향은 재현되나 수치 일부 차이(정정 완료)**,
+  `왜곡 큼` 판정 유지(핵심 집계 지표 재현 + 정정 수치도 원래
+  결론을 강화). 상세: `docs/10_signal_research_sppv/[DESIGN]
+  regime_conditional_entry_signal_v1.md` §130.
+
 ---
 
 ## 진행 체크리스트
@@ -5881,6 +5897,18 @@ canonical),
     로직 변경 없음, 신규 KIS 호출 0건(shadow 재호출은 `kis_
     client=None`). 상세: `docs/10_signal_research_sppv/[DESIGN]
     regime_conditional_entry_signal_v1.md` §94.
+- [x] **SPPV-2.142(신설, 완료)** SPPV-2.141 핵심 수치 재현성 검증
+  (2026-07-30 KST, 작성자: Codex, 코드 미수정, `.env` 미수정, Full
+  pytest 미실행, 신규 KIS 호출 0건)
+  - 동일 방법론·동일 20거래일 창으로 재실행 — 핵심 집계 지표(실제
+    평균 entry_score 0.1657, shadow 평균 0.3489, 겹침 20.3%)는
+    소수점까지 정확히 재현. `000720` 실제 포함일수는 원 보고문
+    "13일"이 완료 보고 시 수동 집계 오류였음을 확인해 "11일"로
+    정정, shadow 순위 하한도 `000720`(58→55위)/`002790`(14→9위)
+    정정. **판정: 방향은 재현되나 수치 일부 차이(정정 완료)**,
+    `왜곡 큼` 판정은 유지(핵심 집계 지표 재현 + 정정 수치도 결론
+    강화). 상세: `docs/10_signal_research_sppv/[DESIGN] regime_
+    conditional_entry_signal_v1.md` §130.
 - [x] **SPPV-2.141(신설, 완료)** `core_cap` 사전순 절단 왜곡 정량
   검증 (2026-07-30 KST, 작성자: Codex, 코드 미수정, `.env` 미수정,
   Full pytest 미실행, 신규 KIS 호출 0건)

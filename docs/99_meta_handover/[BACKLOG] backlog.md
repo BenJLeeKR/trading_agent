@@ -1932,6 +1932,15 @@
   **판정: 왜곡 큼**. 완화안 미제시. 상세: `docs/10_signal_research_
   sppv/[DESIGN] regime_conditional_entry_signal_v1.md` §129.
 
+- 2026-07-30 KST(SPPV-2.142, 신규 KIS 호출 0건, 완료): SPPV-2.141
+  핵심 수치 재현성 검증. 동일 방법론·동일 20거래일 창 재실행 —
+  핵심 집계 지표(entry_score 평균 0.1657/0.3489, 겹침 20.3%)는
+  소수점까지 재현. `000720` 실제 포함일수는 원 보고문 "13일"이
+  완료 보고 시 수동 집계 오류였음을 확인해 "11일"로 정정, shadow
+  순위 하한도 정정. **판정: 방향은 재현되나 수치 일부 차이(정정
+  완료)**, `왜곡 큼` 판정 유지. 상세: `docs/10_signal_research_
+  sppv/[DESIGN] regime_conditional_entry_signal_v1.md` §130.
+
 ---
 
 ## 관리 원칙

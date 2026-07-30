@@ -10205,6 +10205,17 @@ agent 설계 문서 기준으로도 순서는 다음이 맞다.
      20일 내내 일관 확인. **판정: 왜곡 큼**. 상세: `docs/10_signal_
      research_sppv/[DESIGN] regime_conditional_entry_signal_
      v1.md` §129.
+   - **SPPV-2.142(완료, 2026-07-30 KST, SPPV-2.141 핵심 수치
+     재현성 검증, 작성자: Codex, 코드 미수정, `.env` 미수정, Full
+     pytest 미실행, 신규 KIS 호출 0건)**: 동일 방법론·동일 20거래일
+     창으로 재실행 — 핵심 집계 지표(실제 평균 entry_score 0.1657,
+     shadow 평균 0.3489, 겹침 20.3%)는 소수점까지 재현. `000720`
+     실제 포함일수는 원 보고문 "13일"이 완료 보고 시 수동 집계
+     오류였음을 확인해 "11일"로 정정, shadow 순위 하한도 `000720`
+     (58→55위)/`002790`(14→9위) 정정. **판정: 방향은 재현되나
+     수치 일부 차이(정정 완료)**, `왜곡 큼` 판정 유지. 상세: `docs/
+     10_signal_research_sppv/[DESIGN] regime_conditional_entry_
+     signal_v1.md` §130.
    - **SPPV-3(다음 착수: [1순위] core-eligible 199종목 중 `core_
      cap` 절단에 신호/랭킹 기준(시가총액/거래대금/모멘텀 등) 적용
      여부 설계 검토(완화안 확정 아님, 비교 단계) +
