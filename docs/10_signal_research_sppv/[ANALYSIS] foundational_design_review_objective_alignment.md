@@ -3066,3 +3066,39 @@ v1.md` §130.
 **결론**: **절충안 검토 필요** — 다음 턴 diff 초안으로 넘어갈 1안은
 **D안**(snapshot 원시 `overall_score` 기준 절단)이다. 상세: `docs/10_
 signal_research_sppv/[DESIGN] regime_conditional_entry_signal_v1.md` §131.
+
+## 30. D안 diff 착수 전 설계 점검(SPPV-2.144, 2026-07-30 KST)
+
+§29에서 다음 diff 후보로 확정된 D안이 실제로 최소 침습 변경인지 read-only로
+점검했다(코드 미수정, 구현 아님).
+
+- **D안 정의 고정**: core-eligible 후보를 `signal_feature_snapshots.
+  overall_score` 기준 상위 `core_cap`으로 선별. 운영 실측으로 시점을
+  확정했다 — `decision_loop_intraday` freeze는 **08:50 KST 하루 1회**
+  생성되고 snapshot은 20:00 KST 산출이므로, D안은 **전 거래일 종가
+  신호로 당일 유니버스를 정렬**한다(look-ahead 구조적 불가, intraday
+  churn 없음).
+- **최소 변경 경로는 6개 파일**이며, §29 시점 추정("읽기 1곳 추가")을
+  정정한다[SPPV-2.144에서 정정]. 다만 6개 모두 저장소 내 기존 템플릿
+  (`instrument_status_snapshots.list_latest_by_instrument_ids`,
+  `_prime_membership_cache`)을 따르는 추가 변경이다. `SignalFeature
+  SnapshotRepository` 계약에 bulk 조회가 없어 199 쿼리를 피하려면 bulk
+  메서드 추가가 전제이며, `_apply_cap`은 `@staticmethod`라 정렬은
+  `compose_with_diagnostics`에서 캐시 후 정렬 키로만 반영해야 한다.
+- **순환 의존 회피가 핵심 조건**: snapshot 입력 배치도 동일한
+  `compose()`를 자체 cap(80)으로 호출해 "어느 종목에 snapshot을 만들지"를
+  정하므로, 정렬을 전역 변경하면 순환이 생긴다. 정렬 모드 기본값을 현행
+  사전순으로 두고 decision loop만 opt-in하면 배치는 무변화로 남는다 —
+  이 조건이 D안을 최소 침습으로 만든다.
+- **부작용 범위**: source_type `priority`가 1차 정렬 키로 유지되므로
+  재정렬은 **CORE 내부에서만** 발생하고, held/reconciliation/event/
+  market/manual overlay와 `max_cap`·`core_cap`·`market_overlay_cap`·
+  `pre_pool_size` 계약에는 충돌이 없다. snapshot이 없는 120종목은
+  최하위+동순위 사전순으로 처리해 cold start에서 현행 A안과 동일하게
+  안전 퇴화시킨다.
+
+**결론**: **D안 diff 초안 착수 가능**. 다음 작업은 `universe_selection`
+D안 diff 초안 작성이며, 착수 시 §131.1(사전순 편향은 제거가 아니라
+79/80위 경계 이동)과 §131.4(`entry_score>=0.65` 0건 — 신호 품질 개선이지
+주문 발생 완화 아님) 제약을 전제에 명시해야 한다. 상세: `docs/10_signal_
+research_sppv/[DESIGN] regime_conditional_entry_signal_v1.md` §132.

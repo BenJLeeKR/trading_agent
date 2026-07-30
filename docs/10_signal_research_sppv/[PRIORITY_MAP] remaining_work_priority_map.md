@@ -10235,11 +10235,28 @@ agent 설계 문서 기준으로도 순서는 다음이 맞다.
      B/C안 6일·D안 10일. **판정: 절충안 검토 필요, 다음 턴 diff
      초안 1안은 D안**. 상세: `docs/10_signal_research_sppv/[DESIGN]
      regime_conditional_entry_signal_v1.md` §131.
-   - **SPPV-3(다음 착수: [1순위] D안(snapshot 원시 `overall_score`
-     기준 `core_cap` 절단)의 구체적 diff 초안 설계 검토 — `_add_core_
-     universe()`/`_apply_cap()` 최소 변경 범위 확정, §131.1(snapshot
-     풀 자체가 사전순 80위로 잘려 있음)·§131.4(buy_candidate 즉각
-     개선 아님) 제약을 전제에 명시 +
+   - **SPPV-2.144(완료, 2026-07-30 KST, D안 diff 착수 전 최소 침습성·
+     부작용 범위 설계 점검, 작성자: Codex, 코드 미수정, `.env` 미수정,
+     Full pytest 미실행, 신규 KIS 호출 0건)**: D안 정의 고정 + 운영
+     실측으로 시점 확정(`decision_loop_intraday` freeze 08:50 KST 하루
+     1회, snapshot 20:00 KST → 전 거래일 종가 신호로 당일 정렬,
+     look-ahead 불가). 최소 변경 경로 **6개 파일**(§131.6 "읽기 1곳"
+     추정 정정, 단 6개 모두 기존 템플릿 따르는 추가 변경). bulk 조회
+     메서드 추가가 전제(현 계약 없음, 199 쿼리 회피), `_apply_cap`은
+     `@staticmethod`라 `compose_with_diagnostics`에서 캐시 후 정렬 키만
+     변경. **순환 의존 회피**: snapshot 입력 배치가 동일 `compose()`를
+     cap 80으로 호출하므로 정렬 모드 기본값을 현행 사전순으로 두고
+     decision loop만 opt-in → 배치 무변화. 부작용은 CORE 내부 재정렬로
+     한정, held/overlay/cap 계약 충돌 없음, snapshot 없는 120종목은
+     최하위+동순위 사전순으로 cold start 시 A안과 동일 퇴화. **판정:
+     D안 diff 초안 착수 가능**. 상세: `docs/10_signal_research_sppv/
+     [DESIGN] regime_conditional_entry_signal_v1.md` §132.
+   - **SPPV-3(다음 착수: [1순위] `universe_selection` D안 diff 초안
+     작성 — §132.2의 6개 파일 범위, §132.3의 기본값 opt-in 구조(배치
+     무변화), §132.4의 cold start 퇴화 규칙, §132.5의 좁은 검증 세트를
+     그대로 적용. 착수 시 §131.1(사전순 편향은 제거가 아니라 79/80위
+     경계 이동)·§131.4(`entry_score>=0.65` 0건, 주문 발생 완화 아님)
+     제약을 전제에 명시(사용자 승인 시 코드 변경 턴) +
      [2순위] 관찰용 shadow 메타데이터의 낡은 스케일 절대값
      (`_classify_core_risk_off_shadow_floor_bucket`의 `0.26`,
      `_EVENT_OVERLAY_SHADOW_MIN_SCORE=0.56`) 재검토 — 실제 BUY

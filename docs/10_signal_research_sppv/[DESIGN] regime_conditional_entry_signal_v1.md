@@ -16393,3 +16393,137 @@ shadow로 판정 불가하므로 지금 둘 중 하나를 고르는 것은 근�
    정렬하는 최소 변경 범위 확정. 단, 131.1의 제약(snapshot 풀 자체가
    사전순 80위로 잘려 있음)과 131.4의 한계(`buy_candidate` 즉각 개선
    아님)를 diff 착수 시 명시적으로 전제에 포함해야 한다.
+
+## §132. D안 diff 착수 전 최소 침습성·부작용 범위 설계 점검(SPPV-2.144, 2026-07-30 KST)
+
+**전제**: §131.7에서 다음 diff 후보로 확정된 D안이 실제로 최소 침습
+변경인지, 어떤 코드 경로만 바꾸면 되는지, 부작용 범위가 어디까지인지를
+read-only로 닫는다. 구현·완화안 확정 아님. A안은 비교 후보가 아니라
+현행 오류 상태로만 취급하고, B/C안은 계층 역전이 필요한 안으로 제외한다.
+
+### 132.1 D안 정의 고정(사실)
+
+> **D안**: core-eligible 후보 중 `signal_feature_snapshots.overall_score`
+> 기준 상위 `core_cap`개를 선별한다(현행 `ORDER BY symbol` 사전순 절단을
+> 대체).
+
+**어느 시점 snapshot인가** — 운영 실측으로 확정했다:
+
+| 항목 | 실제 시각(KST) | 근거 |
+|---|---|---|
+| `signal_feature_snapshots.snapshot_at` | 20:00 | 장후 배치 산출물 |
+| `signal_feature_after_market` freeze 생성 | 20:10 | `universe_freeze_runs` 실측 |
+| `decision_loop_intraday` freeze 생성 | **08:50** | `universe_freeze_runs` 실측(07-28/29/30 일관) |
+
+decision loop 유니버스는 **08:50 KST에 하루 1회** 확정되어 종일 재사용
+되므로(`_load_intraday_frozen_universe_with_anchor`), 그 시점에 존재하는
+최신 snapshot은 **전 거래일 20:00 KST 산출물**이다. 즉 D안은 **전 거래일
+종가 신호로 당일 유니버스를 정렬**하며 **look-ahead가 구조적으로
+불가능**하다(사실). 또한 정렬이 하루 1회만 일어나므로 intraday churn이
+발생하지 않는다.
+
+### 132.2 최소 변경 경로(사실) — §131.6 추정치 정정
+
+§131.6에서 D안 diff 복잡도를 "읽기 1곳 추가"로 추정했으나, 코드를
+직접 확인한 결과 **6개 파일**이 필요하다[SPPV-2.144에서 정정].
+다만 6개 모두 저장소 내 **기존 템플릿을 그대로 따르는 추가(additive)
+변경**이라 개별 난이도는 낮다.
+
+| # | 파일 | 변경 | 기존 템플릿 |
+|---|---|---|---|
+| 1 | `repositories/contracts.py` | `SignalFeatureSnapshotRepository`에 bulk 조회 메서드 추가 | `instrument_status_snapshots.list_latest_by_instrument_ids` |
+| 2 | `repositories/postgres/signal_feature_snapshots.py` | 위 구현(`SELECT DISTINCT ON (instrument_id) ... WHERE instrument_id = ANY($1::uuid[])`) | `postgres/instrument_status_snapshots.py:110-127`(거의 동일 구조) |
+| 3 | `repositories/memory.py` | `InMemorySignalFeatureSnapshotRepository`(`:1614`)에 동일 메서드 | 동 클래스 기존 메서드 |
+| 4 | `services/universe_selection_types.py` | `CompositionContext`에 정렬 모드 필드 추가(**기본값=현행 사전순**) | 기존 `core_cap`/`event_overlay_cap` 옵셔널 필드 |
+| 5 | `services/universe_selection.py` | `_prime_signal_score_cache()` + step 8 정렬 키를 `(priority, -score)`로 | `_prime_membership_cache`(`:753`)와 동일 패턴 |
+| 6 | `scripts/run_decision_loop.py` | `CompositionContext` 생성 시 새 필드 지정 | 기존 cap 전달부 |
+
+**왜 bulk 조회 메서드가 필수인가(사실)**: 현재 `SignalFeatureSnapshot
+Repository` 계약에는 `add`/`get_latest_by_instrument`/`list_by_instrument`
+만 있고 **bulk 조회가 없다**. core-eligible 199종목을 개별 조회하면
+199 쿼리가 되는데, 유니버스 합성은 이미 성능 문제가 문서화된 경로다
+(`universe_selection.py:939-943` 주석: 다른 API 대비 20~300배 느림).
+따라서 bulk 메서드는 선택이 아니라 전제다.
+
+**왜 `_apply_cap` 자체를 고치지 않는가(사실)**: `_apply_cap`은
+`@staticmethod`(`:1726-1730`)라 `self._repos`에 접근할 수 없고,
+`SelectedSymbol`에는 `instrument_id`도 점수 필드도 없다(`universe_
+selection_types.py:86-92`). 따라서 점수는 **instance method인
+`compose_with_diagnostics` 안에서 미리 캐시**하고 step 8 정렬 키에만
+반영하는 것이 최소 경로다.
+
+### 132.3 순환 의존을 피하는 핵심 설계 결정(사실 + 판정)
+
+`scripts/generate_signal_feature_snapshot_input.py`도 **동일한
+`UniverseSelectionService.compose()`**를 자체 cap(`core_cap=80`,
+`:64-65`)으로 호출해 "어느 종목에 snapshot을 만들지"를 결정한다
+(`:682-690`). 따라서 `_apply_cap`/정렬을 **전역으로** 바꾸면
+"snapshot을 만들 종목을 snapshot으로 정한다"는 순환이 생긴다(사실).
+
+**회피 방법**: #4의 정렬 모드 필드 **기본값을 현행 사전순으로 두고**,
+`run_decision_loop` 경로만 score 모드를 opt-in한다. 그러면
+snapshot 입력 배치는 **코드·동작 모두 무변화**로 남고 순환이 발생하지
+않는다 — 이것이 D안을 "최소 침습"으로 만드는 결정적 조건이며,
+`generate_signal_feature_snapshot_input.py`는 **diff 대상이 아니다**.
+
+### 132.4 부작용 범위
+
+| 영역 | 영향 | 근거 |
+|---|---|---|
+| intraday decision loop | **있음(의도된 변경)** — 08:50 KST 유니버스 구성 1회 변경 | 132.1 |
+| signal feature snapshot input 배치 | **없음** — 기본값 사전순 유지 | 132.3 |
+| universe freeze 재사용 경로 | **없음** — freeze 읽기/쓰기 로직 불변, 내용만 바뀜. `decision_loop_intraday`와 `signal_feature_after_market`은 **freeze_purpose가 분리**돼 서로 간섭 없음(실측) | 132.1 표 |
+| held / reconciliation overlay | **없음** — `_apply_cap`에서 cap 이전에 무조건 통과/예약 처리 | `_apply_cap:1741-1752` |
+| event / market / manual overlay | **없음** — source_type별 `priority`가 1차 정렬 키로 유지되므로 재정렬은 **CORE 내부에서만** 발생 | step 8 정렬 키 `(priority, -score)` |
+| `max_cap`(30) | 충돌 없음 — `non_held_count >= max_cap` break가 상위 제약으로 그대로 선행 | `_apply_cap` |
+| `core_cap`(12) | 충돌 없음 — 슬롯 수는 불변, **어느 종목이 채울지만** 변경 | `_apply_cap` |
+| `market_overlay_cap` / `pre_pool_size` | 충돌 없음 — `_add_market_overlay` 별도 경로, core 정렬과 무관 | `_add_market_overlay:1238` |
+
+**같은 날 snapshot이 없는 종목 처리(설계 확정 필요 항목)**: §131.1에서
+확인한 대로 core-eligible 199종목 중 **snapshot 보유는 사전순 1~79위
+79종목뿐**이다. 나머지 120종목은 점수가 없으므로 정렬 키에서 **최하위로
+밀되(예: `-inf`), 동순위 내부는 기존 사전순을 유지**하는 것이 현행 동작을
+가장 적게 흔드는 처리다(해석). 이 규칙이 있어야 cold start(snapshot 0건)
+에서도 **현행 A안과 동일한 결과로 안전하게 퇴화**한다 — diff 초안에
+반드시 포함해야 하는 조건이다.
+
+### 132.5 검증 계획(이번 턴 실행 안 함, 계획만 확정)
+
+full suite 없이 가능한 가장 좁은 세트:
+
+1. **단위 테스트**: `tests/services/test_universe_selection.py`(기존 파일)
+   에 케이스 3개만 추가 — (a) score 모드에서 고신호 종목이 사전순 하위
+   여도 `core_cap` 안에 들어오는지, (b) snapshot 없는 종목이 최하위로
+   밀리고 동순위는 사전순 유지인지, (c) **기본값(사전순 모드)에서 기존
+   결과가 완전히 동일한지**(무변화 회귀). in-memory repo(#3)로 충족.
+2. **하네스**: `bash scripts/harness/run.sh accept backend-file
+   src/agent_trading/services/universe_selection.py` (+ repo 파일 변경분
+   각 1회).
+3. **운영 read-only 대조**: diff 반영 후 **다음 거래일 08:50 KST**에
+   생성되는 `decision_loop_intraday` freeze 내용을, 같은 입력(전 거래일
+   20:00 snapshot)으로 계산한 D안 shadow 예측과 종목 단위로 대조
+   (§131.4와 동일 스크립트 재사용). 예측 일치 = 반영 확인.
+
+Full pytest / 외부 API 호출 / 무거운 통합 테스트는 불필요하다.
+
+### 132.6 최종 판정
+
+**D안 diff 초안 착수 가능.**
+
+근거: (1) 필요한 6개 변경이 모두 저장소 내 기존 템플릿을 따르는 추가
+변경이고, (2) 정렬 모드 기본값을 현행으로 두면 snapshot 배치는 무변화라
+순환 의존이 발생하지 않으며, (3) 부작용이 CORE 내부 재정렬 + 08:50 KST
+1회 구성으로 한정되고 held/overlay/cap 계약과 충돌하지 않으며,
+(4) cold start 퇴화 규칙(132.4)으로 안전 장치가 확보되고, (5) 좁은
+검증 세트(132.5)로 무변화 회귀까지 확인 가능하다.
+
+단, diff 착수 시 다음 2개 제약을 전제에 명시해야 한다: §131.1(snapshot
+풀 자체가 사전순 79/80위로 잘려 있어 사전순 편향은 제거가 아니라 경계
+이동), §131.4(`entry_score>=0.65` 0건 — 신호 품질 개선이지 주문 발생
+완화 아님).
+
+### 132.7 다음 우선 작업(1개만)
+
+**`universe_selection` D안 diff 초안 작성** — 132.2의 6개 파일 범위,
+132.3의 기본값 opt-in 구조, 132.4의 cold start 퇴화 규칙, 132.5의
+검증 세트를 그대로 적용(사용자 승인 시 코드 변경 턴으로 전환).
