@@ -2801,6 +2801,22 @@ entry 설계 검토로 전환**을 확정했다. 별도 문서
   research_sppv/[DESIGN] regime_conditional_entry_signal_v1.md`
   §127.
 
+- 작성자: Codex
+- 수정일자: 2026-07-30 KST (140차, `000720` core 유니버스 20거래일+
+  연속 포함 원인 규명, 코드 미수정, `.env` 미수정, Full pytest
+  미실행, 신규 KIS 호출 0건)
+- 수정내용: `UniverseSelectionService._is_core_seed_instrument()`
+  가 `000720`을 KOSPI200 index membership으로 core-eligible 판정,
+  `_apply_cap()`의 `core_cap=12`(운영 실측 확인) 절단이 동일
+  priority 종목 간 안정 정렬로 원래 순서(`InstrumentRepository.
+  list_active_by_market()`의 SQL `ORDER BY symbol`, 사전순)를
+  유지함을 코드로 확인. core-eligible 199종목 전수 재현 결과
+  `000720`은 사전순 10위(항상 cap 이내), `002790`은 21위·`009150`
+  은 59위(둘 다 cap 밖) — 신호/랭킹과 무관한 구조적 편향임을
+  코드+실측으로 닫힌 근거로 확인. **판정: 구조 편향 확인**.
+  상세: `docs/10_signal_research_sppv/[DESIGN] regime_conditional_
+  entry_signal_v1.md` §128.
+
 ---
 
 ## 진행 체크리스트
@@ -5848,6 +5864,18 @@ canonical),
     로직 변경 없음, 신규 KIS 호출 0건(shadow 재호출은 `kis_
     client=None`). 상세: `docs/10_signal_research_sppv/[DESIGN]
     regime_conditional_entry_signal_v1.md` §94.
+- [x] **SPPV-2.140(신설, 완료)** `000720` core 유니버스 20거래일+
+  연속 포함 원인 규명 (2026-07-30 KST, 작성자: Codex, 코드 미수정,
+  `.env` 미수정, Full pytest 미실행, 신규 KIS 호출 0건)
+  - `_is_core_seed_instrument()`가 `000720`을 KOSPI200 index
+    membership으로 core-eligible 판정, `_apply_cap()`의 `core_
+    cap=12` 절단이 동일 priority 종목 간 안정 정렬로 원 순서(DB
+    `ORDER BY symbol`, 사전순)를 유지 — `000720`은 core-eligible
+    199종목 중 사전순 **10위**로 항상 cap 이내 채택. 비교 종목
+    `002790`(21위)/`009150`(59위)은 cap 밖. **판정: 구조 편향
+    확인**(신호/랭킹과 무관한 사전순 절단). 상세: `docs/10_signal_
+    research_sppv/[DESIGN] regime_conditional_entry_signal_
+    v1.md` §128.
 - [x] **SPPV-2.139(신설, 완료 — 트랙 종료)** `coverage_score`
   A-3안 적용 후 운영 무변화 실측 확인 (2026-07-30 KST, 작성자:
   Codex, 코드 미수정, `.env` 미수정, Full pytest 미실행, 신규

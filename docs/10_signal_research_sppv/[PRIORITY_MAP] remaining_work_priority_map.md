@@ -10180,16 +10180,31 @@ agent 설계 문서 기준으로도 순서는 다음이 맞다.
      **판정: A-3 무변화 confirmed**, `coverage_score`+threshold
      재설계 트랙 완전 종료. 상세: `docs/10_signal_research_sppv/
      [DESIGN] regime_conditional_entry_signal_v1.md` §127.
-   - **SPPV-3(다음 착수: [1순위] 관찰용 shadow 메타데이터의 낡은
-     스케일 절대값(`_classify_core_risk_off_shadow_floor_bucket`
-     의 `0.26`, `_EVENT_OVERLAY_SHADOW_MIN_SCORE=0.56`) 재검토 —
-     실제 BUY 판정과 무관하나 관찰 지표 정확성을 위해 별도 트랙
-     에서 검토(완화안 아님, 사용자 승인 후 착수) +
-     [2순위, 하향] `relative_activity` 1안의 장기(수 거래일) 효과
+   - **SPPV-2.140(완료, 2026-07-30 KST, `000720` core 유니버스
+     20거래일+ 연속 포함 원인 규명, 작성자: Codex, 코드 미수정,
+     `.env` 미수정, Full pytest 미실행, 신규 KIS 호출 0건)**:
+     `_is_core_seed_instrument()`가 `000720`을 KOSPI200 index
+     membership으로 core-eligible 판정, `_apply_cap()`의 `core_
+     cap=12`(운영 실측) 절단이 안정 정렬로 `ORDER BY symbol`
+     (사전순) 원래 순서를 유지. core-eligible 199종목 중 `000720`
+     은 사전순 10위(항상 cap 이내), `002790`은 21위·`009150`은
+     59위(둘 다 cap 밖) — 신호/랭킹과 무관한 구조적 편향임을
+     코드+실측으로 확인. **판정: 구조 편향 확인**. 다음 우선
+     작업(완화안 아님): core-eligible 후보에 신호/랭킹 기준 적용
+     여부를 별도 설계 검토 트랙으로 전환. 상세: `docs/10_signal_
+     research_sppv/[DESIGN] regime_conditional_entry_signal_
+     v1.md` §128.
+   - **SPPV-3(다음 착수: [1순위] core-eligible 199종목 중 `core_
+     cap` 절단에 신호/랭킹 기준(시가총액/거래대금/모멘텀 등) 적용
+     여부 설계 검토(완화안 확정 아님, 비교 단계) +
+     [2순위] 관찰용 shadow 메타데이터의 낡은 스케일 절대값
+     (`_classify_core_risk_off_shadow_floor_bucket`의 `0.26`,
+     `_EVENT_OVERLAY_SHADOW_MIN_SCORE=0.56`) 재검토 — 실제 BUY
+     판정과 무관하나 관찰 지표 정확성을 위해 별도 트랙에서 검토
+     (완화안 아님, 사용자 승인 후 착수) +
+     [3순위, 하향] `relative_activity` 1안의 장기(수 거래일) 효과
      를 선택적으로 계속 관찰하되, 더 이상 1순위 결정의 선행
      조건은 아님 +
-     [3순위] `000720`이 core 유니버스에 20일 이상 연속 포함되는
-     조건을 원인만 확인(완화안 아님) +
      [4순위] 이 모집단(core+bearish_trend)이 신호 품질(overall/
      slow)이 항상 깊은 음수로만 나오는 원인을 `atr_14_pct`/
      `bearish_trend` 판정과의 연결고리 관점에서 "모집단 구성"
