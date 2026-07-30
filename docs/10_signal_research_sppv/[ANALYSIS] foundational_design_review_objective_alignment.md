@@ -2959,3 +2959,29 @@ entry_signal_v1.md` §126.
 실제 판정과 무관하며 별도 후속 트랙으로 남는다. 상세: `docs/10_
 signal_research_sppv/[DESIGN] regime_conditional_entry_signal_v1.md`
 §127.
+
+## 26. `000720` core 유니버스 20거래일+ 연속 포함 원인 규명(SPPV-2.140, 2026-07-30 KST)
+
+완화안/코드수정 없이 read-only로 원인을 규명했다.
+
+- **코드 경로**: `_is_core_seed_instrument()`가 `000720`을 KOSPI200
+  index membership(`market_segment=KOSPI`)으로 core-eligible 판정.
+  `_apply_cap()`의 `core_cap`(운영 실측 `12`) 절단은 동일 priority
+  종목 간 안정 정렬로 원래 순서를 유지하며, 그 순서는
+  `InstrumentRepository.list_active_by_market()`의 SQL `ORDER BY
+  symbol` — 순수 종목코드 사전순이다. "anchor" 종목 개념은 코드에
+  없다.
+- **실측**: core-eligible 199종목 전수 재현 결과 `000720`은 사전순
+  **10위**(항상 `core_cap=12` 이내), 비교 종목 `002790`은 21위,
+  `009150`은 59위(둘 다 cap 밖). 2026-07-01~07-30(KST) `trade_
+  decisions` 조회에서 `000720`은 관측된 모든 거래일에 core 자격을
+  유지하고, `002790`은 8일만 산발적으로, `009150`은 core 경로로
+  전혀 나타나지 않는다 — 순번과 정확히 일치한다.
+
+**결론**: **구조 편향 확인**(가능성이 아니라 코드+실측으로 닫힌
+근거) — `core_cap` 절단 기준이 트레이딩 신호·랭킹과 무관한 종목코드
+사전순이라, 사전순위가 높은 소수 종목만 구조적으로 매일 core에
+고정 포함된다. 다음 우선 작업은 core-eligible 후보에 신호/랭킹 기준
+적용 여부를 별도 설계 검토 트랙으로 전환하는 것이다(완화안 확정
+아님). 상세: `docs/10_signal_research_sppv/[DESIGN] regime_
+conditional_entry_signal_v1.md` §128.

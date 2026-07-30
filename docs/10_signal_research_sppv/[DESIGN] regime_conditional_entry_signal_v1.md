@@ -16032,3 +16032,83 @@ SPPV-2.138에서 이미 별도 후속 트랙으로 이월하기로 확인됐다.
    연속 포함되는 조건 원인 확인.
 3. **3순위(이전 턴 이월)**: `high_volatility` 단독 경로(001450형)
    층3 관찰 지속.
+
+## §128. `000720` core 유니버스 20거래일+ 연속 포함 원인 규명(SPPV-2.140, 2026-07-30 KST)
+
+**전제**: 완화안/코드수정 없이 read-only로만 원인을 규명한다.
+
+### 128.1 코드 경로(사실)
+
+- `UniverseSelectionService._is_core_seed_instrument()`
+  (`universe_selection.py:788`): (1) `instrument.metadata["core_universe"]`
+  명시 플래그 → (2) `market_segment=="KOSPI" AND index_memberships ∩
+  {KOSPI100/KOSPI200/KOSPI_LARGE 등}` → (3) 하드코딩 allowlist
+  `APPROVED_CORE_UNIVERSE_SYMBOLS`(`core_universe_seed.py:17`) 순으로
+  판정. `000720`은 (3)에는 없으나 metadata에 `index_memberships:
+  ["KOSPI200"]`, `market_segment: "KOSPI"`가 있어 (2)로 core-eligible
+  판정된다(DB 직접 조회 확인).
+- `_apply_cap()`(`universe_selection.py:1727`): `SourceType.CORE`
+  후보 수를 `ctx.core_cap`(기본/운영 실측값 `12`)으로 절단한다.
+  `candidates`는 직전에 `priority` 기준 정렬되는데(`compose_with_
+  diagnostics` step 8), CORE 항목은 전부 동일 `priority=5`라 Python
+  안정 정렬 특성상 **정렬 전 원래 순서가 그대로 유지**된다.
+- 그 원래 순서는 `_list_active_kr_equity_instruments()` →
+  `InstrumentRepository.list_active_by_market()`(`repositories/
+  postgres/instruments.py:169`)의 SQL `ORDER BY symbol` — **순수
+  종목코드 알파벳/숫자 사전순**이며 트레이딩 신호·랭킹과 무관하다.
+- 결론: `core_cap` 절단 시 실제로 채택되는 종목은 "core-eligible
+  후보 중 종목코드가 사전순으로 가장 앞선 `core_cap`개"로 완전히
+  고정된다. `TRADING_UNIVERSE_CORE_CAP`/`TRADING_UNIVERSE_MAX_CAP`는
+  단순 개수 상한이며, "anchor" 종목 개념은 코드에 없다(`UniverseAnchor
+  Metadata`는 유니버스 산출 방식(env override/intraday freeze/실시간
+  compose)을 기록하는 감사 메타데이터일 뿐, 특정 종목을 cap에서
+  제외하지 않는다). held_position/reconciliation_overlay만 cap에서
+  예외된다.
+
+### 128.2 운영 실측(read-only, 사실)
+
+- 게이트 모집단 전수 조회(`instruments` 테이블, `market_code=KRX,
+  is_active=true, asset_class=kr_stock`, `ORDER BY symbol`)로
+  core-eligible 후보 전체 `199`건을 재현했다.
+- `000720`의 사전순 순번: **10위**(`core_cap=12` 이내 — 항상 채택).
+- 비교 종목: `002790` **21위**(cap 밖), `009150` **59위**(cap 밖,
+  단 별도 allowlist에도 등재돼 있으나 순번상 이 경로로는 미채택).
+- 2026-07-01~07-30(KST) `trade_decisions` 조회: `000720`은 관측된
+  모든 거래일(레코드가 존재하는 20일 전부)에서 `source_type=core`
+  또는 `event_overlay`(이벤트 발생일에만 상위 우선순위로 덮어씀,
+  근본적인 core-eligible 자격은 매일 유지)로 나타난다. 같은 기간
+  `002790`은 8일만 산발적으로 나타나고(대부분 core, 1일 event_
+  overlay), `009150`은 core로는 전혀 나타나지 않는다(별도 트랙
+  §PRIORITY_MAP 13순위 항목 — `TRADING_UNIVERSE_MAX_CAP` 확대 실측
+  대상과 일치).
+- 운영 환경 실측 확인: 컨테이너 env `TRADING_UNIVERSE_CORE_CAP=12`,
+  `TRADING_UNIVERSE_MAX_CAP=30` — 기본값과 동일하게 운영 중.
+
+### 128.3 원인 분해(코드+실측으로 닫힌 근거)
+
+- **정상 지속 포함이 아니다** — 신호/랭킹 기반의 "정상적으로 계속
+  선택되는" 결과가 아니라, 애초에 신호 기반 순위 결정 단계 자체가
+  없다.
+- **데이터/캐시/freeze 반복 효과도 아니다** — intraday freeze는
+  하루 안에서만 재사용되고, 매 거래일 새로 `compose()`가 실행되지만
+  입력(종목코드 사전순)이 매번 동일해 결과가 항상 같을 뿐이다.
+- **cap/selection 구조 편향이다(확인됨)** — `core_cap=12` 절단이
+  종목코드 알파벳/숫자 순서에 의해 결정되고, 이 순서는 거래일·시장
+  상황과 무관하게 고정돼 있다. `000720`이 사전순 10위라는 사실 하나
+  만으로 왜 20일+ 연속 포함되는지 완전히 설명된다(코드 경로 + DB
+  실측이 정확히 일치).
+
+### 128.4 최종 판정
+
+**구조 편향 가능성 있음** — 정확히는 "가능성"이 아니라 코드+실측으로
+**확인된 구조적 편향**이다: `core_cap` 절단 기준이 트레이딩 신호와
+무관한 종목코드 사전순이라, `core_cap` 이내 사전순위를 가진 소수
+종목(예: `000720`)만 구조적으로 매일 core에 고정 포함되고 나머지
+약 190여 개 KOSPI200 후보는 core 경로로는 사실상 진입할 수 없다.
+
+### 128.5 다음 우선 작업(완화안 확정 아님, 1개만 제시)
+
+1. **1순위**: core-eligible 199종목 중 `core_cap` 절단에 신호/랭킹
+   기준(예: 시가총액, 거래대금, 모멘텀)을 적용할지 여부를 설계
+   검토 트랙으로 전환 — 이번 턴은 원인 규명만이며 완화안 설계는
+   별도 승인 후 착수.

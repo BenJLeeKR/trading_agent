@@ -1913,6 +1913,16 @@
   research_sppv/[DESIGN] regime_conditional_entry_signal_v1.md`
   §127.
 
+- 2026-07-30 KST(SPPV-2.140, 신규 KIS 호출 0건, 완료): `000720` core
+  유니버스 20거래일+ 연속 포함 원인 규명. `_is_core_seed_instrument()`
+  가 KOSPI200 index membership으로 core-eligible 판정, `_apply_
+  cap()`의 `core_cap=12`(운영 실측) 절단이 `ORDER BY symbol`(사전순)
+  안정 정렬을 유지 — core-eligible 199종목 중 `000720`은 사전순
+  10위(항상 cap 이내), `002790`은 21위·`009150`은 59위(둘 다 cap
+  밖). **판정: 구조 편향 확인**(코드+실측 근거). 완화안 미제시.
+  상세: `docs/10_signal_research_sppv/[DESIGN] regime_conditional_
+  entry_signal_v1.md` §128.
+
 ---
 
 ## 관리 원칙
