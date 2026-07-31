@@ -179,6 +179,7 @@ Makefile에서는 승인 필요 명령을 `heavy-*` target으로 노출한다. �
 - `quick_only_command_count`: `check quick`에만 있고 CI `safe` 확장 집합에는 없는 고유 명령 수.
 - `full_ci_command_gap_count`: CI `safe`가 `check full`보다 추가로 강제하는 고유 명령 수.
 - `full_only_command_count`: `check full`에만 있고 CI `safe` 확장 집합에는 없는 고유 명령 수.
+- `node20_target_action_count`: Node 20 대상 메이저(`actions/checkout@v4`, `actions/setup-python@v5`, `actions/setup-node@v4`)를 아직 사용하는 workflow step 수.
 - `pip_install_command_count`: workflow 안의 Python dependency 설치 명령 수.
 - `pip_install_without_constraints_count`: `requirements.lock` 제약 없이 실행되는 workflow의 `pip install` 명령 수.
 - `deploy_manual_dispatch_input_count`: `workflow_dispatch`에 선언된 수동 재배포 입력 수. 현재 계약 값은 `2`다.
@@ -199,7 +200,7 @@ Makefile에서는 승인 필요 명령을 `heavy-*` target으로 노출한다. �
 - `deploy_sync_only_blocked_count_output_count`: `changes` job이 `sync_only_blocked_count` 출력을 선언하고 기록하는 workflow 수.
 - `deploy_sync_only_allowlist_defined_count`: 장중 sync-only 허용 `scripts/` allowlist가 workflow에 정의된 수.
 - `deploy_runtime_affecting_path_rule_count`: runtime-affecting 경로 denylist 규칙이 workflow에 정의된 수.
-- `ci_contract_failed_count`: `workflow_dispatch` 수동 재배포 입력, 최신 `origin/main` SHA 고정, heavy 수동 실행 조건, version pin 같은 CI 계약 실패 수.
+- `ci_contract_failed_count`: `workflow_dispatch` 수동 재배포 입력, 최신 `origin/main` SHA 고정, heavy 수동 실행 조건, version pin, Node 20 대상 액션 잔존 같은 CI 계약 실패 수.
 - `runtime_tracked_file_count`: Git이 추적 중인 `logs/`, `tmp/`, `data/` 파일 수. 현재는 정리 진행을 위한 정보 지표이며, 합의된 허용 목록 정리 후 실패 지표로 전환한다.
 - `legacy_docker_compose_count`: workflow 안에서 v1 `docker-compose` 명령을 사용하는 수.
 
