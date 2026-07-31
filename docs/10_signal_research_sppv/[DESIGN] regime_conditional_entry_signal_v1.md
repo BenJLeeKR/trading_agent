@@ -17809,3 +17809,27 @@ freeze 실측 계획에 영향을 주지 않는다.
 `tests/db/test_migrations_run.py` 총 8 passed. 배포 워크플로 순서 문제(1번)는
 이번 재시도에서는 "빌드 먼저 → migrate"를 수동으로 실행해 우회했으나, 근본
 수정(harness.yml의 migrate/build 순서 교체)은 별도 후속 작업으로 남긴다.
+
+**[SPPV-2.154 최종 결과, 2026-07-31 17:42 KST 실측]** — PR #77 머지 후
+`docker compose build migrate && docker compose run --rm migrate` 실행 결과:
+0001~0051은 이력에 기록돼 전부 스킵, **0052만 실제로 실행**돼 17:42:23→
+17:42:35(12초) 완료. 실행 후 운영 DB 실측:
+
+| 항목 | 결과 |
+|---|---|
+| `attnum` | **1600 → 42**(완전 리셋, `dropped=0`) |
+| `trade_decisions` 행 수 | 72,809(변화 없음) |
+| outgoing FK 3개 | `agent_run_id`/`decision_context_id`/`instrument_id` 정상 |
+| incoming FK 3개 | `execution_attempts`/`guardrail_evaluations`/`order_requests` 전부 새 테이블로 재연결 |
+| 인덱스 | 7개(PK 포함) 정상 |
+| 임시 테이블 | 제거 완료 |
+| 자식 테이블 행 수 | 58,423 / 6,969 / 1,380 — 원래와 동일 |
+| FK 정합성(고아 행) | 0건 |
+
+**이 이슈는 완전히 종결됐다.** `trading.trade_decisions`는 이제 컬럼 42개로
+정상화됐고, 재발 방지 장치(이력 테이블 + 컷오프 백필)가 반영돼 향후
+마이그레이션은 항상 정확히 한 번만 실행된다. 유일하게 남은 후속 과제는
+배포 워크플로 순서 문제(`docker compose run --rm migrate`가
+`docker compose up -d --build`보다 먼저 실행되는 것) — 다음에 코드와
+마이그레이션이 함께 바뀌는 배포가 있으면 다시 수동 리빌드가 필요할 수
+있다.
