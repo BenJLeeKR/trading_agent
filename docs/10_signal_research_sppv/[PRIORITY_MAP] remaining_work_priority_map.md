@@ -10356,11 +10356,28 @@ agent 설계 문서 기준으로도 순서는 다음이 맞다.
      관련 123 passed, 하네스 2건 PASS. 상세:
      `docs/10_signal_research_sppv/[DESIGN] regime_conditional_entry_
      signal_v1.md` §139.
-   - **SPPV-3(다음 착수: [1순위] **S5 운영 반영 관측** — 다음 장후 배치
-     (20:10 KST) 로그에서 `core_covered`/`core_eligible_total`/
-     `coverage_ratio`가 100%에 근접하는지, KIS `market_data` 예산 안에서
-     처리되는지 확인하고, 다음 거래일 08:50 KST freeze에서 STALE/MISSING
-     계층이 상위를 차지하지 않는지 대조(read-only) +
+   - **SPPV-2.152(완료, 2026-07-31 15:31 KST, S5 배치 반영 준비 상태 점검 +
+     배치 전 기준선 확정, 작성자: Codex, 코드 미수정, `.env` 미수정, Full
+     pytest 미실행, 신규 KIS 호출 0건 — **배치 실측 미수행**)**: 요청된
+     장후 배치 실측은 확인 시각(15:31 KST)이 배치 예정(20:10 KST)보다
+     이전이라 수행 불가임을 실측 확정(오늘자 freeze 0건·snapshot 0건·최신
+     snapshot 07-30 20:00 KST). 추정 대체 없이 범위를 조정해 (a) S5가
+     **컨테이너 재기동 없이 coverage 모드로 실행될 준비 완료**임을 확인
+     (bind mount + `create_subprocess_exec` + cap 인자 미전달 →
+     서브프로세스 기본값 `None` 사용, 컨테이너 내 import로 직접 확인),
+     (b) **배치 전 기준선** 확정: core-eligible 211, **FRESH 80 / STALE 66 /
+     MISSING 65**, stale 핵심 8종목 전부 STALE(37~42일). 내일 freeze 실측은
+     추가 세팅 없이 read-only만으로 충분. 상세:
+     `docs/10_signal_research_sppv/[DESIGN] regime_conditional_entry_
+     signal_v1.md` §140.
+   - **SPPV-3(다음 착수: [1순위] **오늘 20:10 KST 배치 직후 실측** — §140.3의
+     6개 항목: freeze `target_count` 80→211 근처 / `signal feature coverage`
+     로그와 shortfall WARNING / stale 핵심 8종목의 `snapshot_at`이
+     2026-07-31 20:00 KST로 갱신 / 3계층 재분포(기준선 FRESH 80 대비) /
+     `fetch_error`·tail retry·KIS 예산·timeout 발생 여부 / input·batch
+     두 단계 모두 `ok=True` +
+     [1-B순위] **다음 거래일 2026-08-03(월) 08:50 KST freeze 실측** —
+     §140.2 기준선과 계층 분포·종목 구성 대조(read-only) +
      [1-B순위] **D안 순수 효과 재측정** — S5로 stale bias가 사라진 뒤
      §137.5의 2.13배(상한)를 다시 측정 +
      [1-B순위] `strategy_alignment` 제거의 **게이트 영향 재관측** —

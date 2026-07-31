@@ -3124,6 +3124,37 @@ entry 설계 검토로 전환**을 확정했다. 별도 문서
   상세: `docs/10_signal_research_sppv/[DESIGN] regime_conditional_entry_
   signal_v1.md` §139.
 
+- 작성자: Codex
+- 수정일자: 2026-07-31 KST (152차, S5 배치 반영 준비 상태 점검 + 배치 전
+  기준선 확정, 코드 미수정, `.env` 미수정, Full pytest 미실행, 신규 KIS 호출
+  0건 — **장후 배치 실측은 미수행**)
+- 수정내용: 요청된 "20:10 KST 장후 배치 실측"은 **확인 시각이 15:31 KST로
+  배치 예정보다 약 4시간 39분 이전**이라 수행할 수 없음을 실측으로 확정했다
+  (오늘자 `signal_feature_after_market` freeze **0건**, 오늘자 snapshot
+  **0건**, 최신 `snapshot_at` 여전히 **2026-07-30 20:00 KST**). 추정으로
+  대체하지 않고 범위를 (a) S5 반영 준비 상태 점검과 (b) 배치 전 기준선
+  확정으로 조정했다. **(a)** PR #72가 장중 머지로 `sync_source`/
+  `activate_runtime`이 모두 skip됐지만, 호스트 작업트리가 운영 경로이고
+  컨테이너가 소스를 bind mount하므로 `git pull`이 `sync_source`와 동일한
+  파일 상태를 만들며, `run_ops_scheduler._run_command()`가
+  `asyncio.create_subprocess_exec`로 매 실행 새 프로세스를 띄우고
+  `SignalFeatureBatchRuntimeSpec.build_input_command()`가 cap 인자를 전달하지
+  않아 cap이 **서브프로세스 자신의 기본값**에서 읽히므로(ops-scheduler에 cap
+  상수 import 0건) **컨테이너 재기동 없이 coverage 모드로 실행될 준비가
+  완료**된 상태다 — 컨테이너 안에서 모듈을 직접 import해 `core_cap=None`/
+  `max_cap=None`, `core_signal_freshness_max_age_days` 필드,
+  `CORE_SIGNAL_TIER_STALE=1`, `count_core_eligible`/`_core_signal_tier`
+  존재를 확인했다. **(b)** 배치 전 기준선은 core-eligible **211종목**
+  (coverage 목표치), 3계층 **FRESH 80(37.9%) / STALE 66(31.3%) /
+  MISSING 65(30.8%)**, 직전 stale 핵심 8종목 전부 STALE(`021240`/`023530`/
+  `028260` 37일, `032830` 39일, `042700`/`196170`/`329180`/`402340` 42일)
+  이다. 내일 freeze 실측은 **추가 세팅 없이 read-only만으로 충분**하나,
+  오늘 밤 배치 성공이 전제이며 배치 실패 시 나타나는 개선은 "S5 효과"가
+  아니라 "guard 단독 작동"으로 해석해야 한다(구분 필요). 다음 거래일은
+  07-31이 금요일이므로 **2026-08-03(월)**이다. 상세:
+  `docs/10_signal_research_sppv/[DESIGN] regime_conditional_entry_
+  signal_v1.md` §140.
+
 ---
 
 ## 진행 체크리스트
@@ -6171,6 +6202,30 @@ canonical),
     로직 변경 없음, 신규 KIS 호출 0건(shadow 재호출은 `kis_
     client=None`). 상세: `docs/10_signal_research_sppv/[DESIGN]
     regime_conditional_entry_signal_v1.md` §94.
+- [x] **SPPV-2.152(신설, 완료 — 코드 미수정, **배치 실측 미수행**)**
+  S5 배치 반영 준비 상태 점검 + 배치 전 기준선 확정 (2026-07-31 15:31 KST,
+  작성자: Codex, `.env` 미수정, Full pytest 미실행, 신규 KIS 호출 0건)
+  - **요청된 장후 배치 실측은 수행 불가**: 확인 시각 15:31 KST < 배치 예정
+    20:10 KST. 오늘자 `signal_feature_after_market` freeze **0건**, 오늘자
+    snapshot **0건**, 최신 `snapshot_at` 여전히 **07-30 20:00 KST**를 실측
+    확인. **추정으로 대체하지 않고** 범위를 준비 상태 점검 + 기준선 확정으로
+    조정했다.
+  - **S5 런타임 반영 확인**: PR #72가 장중(13:35 KST) 머지로 `sync_source`/
+    `activate_runtime`이 모두 skip됐음에도, 호스트 작업트리=운영 경로 +
+    bind mount 구조와 `create_subprocess_exec` 기동 방식 덕에 **컨테이너
+    재기동 없이 coverage 모드로 실행될 준비 완료**. 컨테이너 안에서 직접
+    import해 `core_cap=None`/`max_cap=None`, freshness 필드,
+    `CORE_SIGNAL_TIER_STALE=1`, `count_core_eligible`/`_core_signal_tier`
+    존재 확인. cap은 `build_input_command`가 전달하지 않으므로 **서브프로세스
+    기본값**에서 읽힌다(ops-scheduler에 cap 상수 import 0건).
+  - **배치 전 기준선**: core-eligible **211**, 3계층 **FRESH 80(37.9%) /
+    STALE 66(31.3%) / MISSING 65(30.8%)**, 직전 stale 핵심 8종목 전부 STALE
+    (경과 37~42일).
+  - **내일 freeze 실측 준비**: **추가 세팅 불필요, read-only만으로 충분**
+    (단 오늘 밤 배치 성공이 전제이고, 배치 실패 시의 개선은 "S5 효과"가
+    아니라 "guard 단독 작동"으로 해석해야 함). 다음 거래일은 07-31이
+    금요일이므로 **2026-08-03(월)**. 상세: `docs/10_signal_research_sppv/
+    [DESIGN] regime_conditional_entry_signal_v1.md` §140.
 - [x] **SPPV-2.151(신설, 완료 — 코드 변경 포함, 운영 효과 미확정)**
   S5 구현 = 생성 모집단 정렬 + freshness guard (2026-07-31 KST, 작성자:
   Codex, `.env` 미수정, Full pytest 미실행, 신규 KIS 호출 0건)

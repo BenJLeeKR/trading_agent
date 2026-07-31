@@ -1,7 +1,20 @@
 # ranking_score 공식 검증 계획
 
 작성일: 2026-07-28  
-상태: [SPPV-2.151에서 갱신] **S5 구현 완료**(§6.29, 2026-07-31 KST) —
+상태: [SPPV-2.152에서 갱신] **S5 배치 반영 준비 상태 확인 + 배치 전 기준선
+확정**(§6.30, 2026-07-31 15:31 KST). **요청된 "장후 배치 실측"은 수행 불가**
+— 확인 시각이 배치 예정(20:10 KST)보다 약 4시간 39분 이전이고, 오늘자
+`signal_feature_after_market` freeze 0건·오늘자 snapshot 0건·최신 snapshot이
+여전히 07-30 20:00 KST임을 실측으로 확인했다(추정으로 대체하지 않음).
+확인한 것: PR #72가 장중 머지로 `sync_source`/`activate_runtime`이 모두
+skip됐으나, 호스트 작업트리=운영 경로 + bind mount 구조와
+`create_subprocess_exec` 기동 방식 때문에 **컨테이너 재기동 없이 coverage
+모드로 실행될 준비가 완료**됐다(컨테이너 내 import로 `core_cap=None`/
+`max_cap=None` 직접 확인). 배치 전 기준선: core-eligible **211**,
+**FRESH 80 / STALE 66 / MISSING 65**, 직전 stale 핵심 8종목 전부 STALE
+(경과 37~42일). 상세: `[DESIGN] regime_conditional_entry_signal_v1.md` §140.
+
+[SPPV-2.151] **S5 구현 완료**(§6.29, 2026-07-31 KST) —
 `signal_feature_snapshot` 배치가 **장후 20:10 KST 실행이라 소요 시간 증가를
 제약으로 두지 않는다는 전제**로, 배치 cap 기본값을 `80 → None`(**절단하지
 않음 = coverage 모드**)으로 바꿔 **생성 모집단이 소비 모집단(core-eligible
@@ -1460,6 +1473,48 @@ entry_signal_v1.md` §138.
 
 상세: `docs/10_signal_research_sppv/[DESIGN] regime_conditional_
 entry_signal_v1.md` §139.
+
+### 6.30 SPPV-2.152 — S5 배치 반영 준비 상태 점검 + 배치 전 기준선 확정
+(신규, 2026-07-31 15:31 KST, 완료 — 코드 미수정, **배치 실측은 미수행**)
+
+- [x] **범위 조정 근거(사실)**: 확인 시각 15:31 KST < 배치 예정 20:10 KST.
+      오늘자 `signal_feature_after_market` freeze **0건**, 오늘자 snapshot
+      **0건**, 최신 `snapshot_at` 여전히 **2026-07-30 20:00 KST**. 따라서
+      배치 실측 항목(생성 종목 수·coverage 비율·stale 해소·fetch_error/
+      retry/budget)은 **이번 턴에서 측정 불가**이며 추정으로 대체하지 않는다.
+- [x] **S5 런타임 반영 확인**: 호스트 `main`(`be3dbf43`) ↔ ops-scheduler
+      컨테이너 md5 4파일 일치. 컨테이너 안에서 모듈을 직접 import해
+      `core_cap=None`/`max_cap=None`, `core_signal_freshness_max_age_days`
+      필드 존재, `CORE_SIGNAL_TIER_STALE=1`, `count_core_eligible`/
+      `_core_signal_tier` 존재를 확인.
+- [x] **`activate_runtime` skip에도 반영된 이유**: 호스트 작업트리가 운영
+      경로이고 컨테이너가 bind mount하므로 `git pull`이 `sync_source`와 동일
+      파일 상태를 만든다. 또한 `_run_command()`가
+      `asyncio.create_subprocess_exec`로 매번 새 프로세스를 띄우고
+      `build_input_command()`가 cap 인자를 전달하지 않으므로 cap은
+      **서브프로세스 자신의 기본값**에서 읽힌다(ops-scheduler에 cap 상수
+      import 0건).
+- [x] **배치 전 기준선 확정**: core-eligible **211**(coverage 목표치),
+      3계층 `FRESH 80(37.9%) / STALE 66(31.3%) / MISSING 65(30.8%)`,
+      직전 stale 핵심 8종목 전부 **STALE**(`021240`/`023530`/`028260` 37일,
+      `032830` 39일, `042700`/`196170`/`329180`/`402340` 42일).
+- [x] **내일 freeze 실측 준비 판정**: **추가 세팅 불필요, read-only 실측만
+      으로 충분**. D안 정렬과 guard(5일)가 이미 코드 상수로 런타임에 반영됨.
+      단 오늘 밤 배치 성공이 전제이고, 배치 실패 시 나타나는 개선은
+      "S5 효과"가 아니라 "guard 단독 작동"으로 해석해야 한다.
+- [ ] **오늘 20:10 KST 배치 실측** — 미수행(다음 턴). §140.3의 6개 항목
+      (target_count 80→211 근처 / coverage 로그·shortfall WARNING /
+      8종목 갱신 / 3계층 재분포 / fetch_error·retry·budget·timeout /
+      input·batch 두 단계 ok) 확인 필요.
+- [ ] **다음 거래일 08:50 KST freeze 실측** — 미수행. 07-31이 금요일이므로
+      다음 거래일은 **2026-08-03(월)**이다.
+
+**[PLAN] 상태 요약**: S5는 코드 반영 + 런타임 준비까지 확인됐고, 남은 것은
+**오늘 밤 배치 실측 → 다음 거래일 freeze 실측** 두 단계다. 이번 턴은 그
+대조를 위한 **기준선 확정**까지만 수행했다.
+
+상세: `docs/10_signal_research_sppv/[DESIGN] regime_conditional_
+entry_signal_v1.md` §140.
 
 ## 7. 완료 기준
 

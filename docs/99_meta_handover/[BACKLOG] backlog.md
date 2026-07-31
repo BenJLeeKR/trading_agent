@@ -2079,6 +2079,24 @@
   `market_data` 예산 실측. 상세: `docs/10_signal_research_sppv/[DESIGN]
   regime_conditional_entry_signal_v1.md` §139.
 
+- 2026-07-31 KST(SPPV-2.152, 신규 KIS 호출 0건, 완료 — 코드 미수정,
+  **배치 실측 미수행**): S5 배치 반영 준비 상태 점검 + **배치 전 기준선
+  확정**. 요청된 장후 배치 실측은 확인 시각 **15:31 KST**가 배치 예정
+  **20:10 KST**보다 이전이라 수행 불가임을 실측으로 확정했다(오늘자
+  `signal_feature_after_market` freeze 0건, 오늘자 snapshot 0건, 최신
+  `snapshot_at` 여전히 07-30 20:00 KST) — 추정으로 대체하지 않았다.
+  확인한 것: PR #72가 장중 머지로 `sync_source`/`activate_runtime` 모두
+  skip됐으나 호스트 작업트리=운영 경로 + bind mount + `create_subprocess_
+  exec` 기동 + cap 인자 미전달(서브프로세스 기본값 사용) 구조 덕에
+  **컨테이너 재기동 없이 coverage 모드로 실행될 준비 완료**(컨테이너 내
+  import로 `core_cap=None`/`max_cap=None` 직접 확인). **배치 전 기준선**:
+  core-eligible **211**, **FRESH 80(37.9%) / STALE 66(31.3%) /
+  MISSING 65(30.8%)**, stale 핵심 8종목 전부 STALE(경과 37~42일). 내일
+  freeze 실측은 추가 세팅 없이 read-only만으로 충분(단 오늘 밤 배치 성공이
+  전제, 실패 시 개선은 "guard 단독 작동"으로 해석). 다음 거래일은
+  **2026-08-03(월)**. 상세: `docs/10_signal_research_sppv/[DESIGN]
+  regime_conditional_entry_signal_v1.md` §140.
+
 ---
 
 ## 관리 원칙
