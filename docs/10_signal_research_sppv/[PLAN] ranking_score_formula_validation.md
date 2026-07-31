@@ -1,7 +1,19 @@
 # ranking_score 공식 검증 계획
 
 작성일: 2026-07-28  
-상태: [SPPV-2.150에서 갱신] **stale snapshot 근본 원인 규명 + 구조 대응안
+상태: [SPPV-2.151에서 갱신] **S5 구현 완료**(§6.29, 2026-07-31 KST) —
+`signal_feature_snapshot` 배치가 **장후 20:10 KST 실행이라 소요 시간 증가를
+제약으로 두지 않는다는 전제**로, 배치 cap 기본값을 `80 → None`(**절단하지
+않음 = coverage 모드**)으로 바꿔 **생성 모집단이 소비 모집단(core-eligible
+전체)을 구조적으로 덮게** 했다("80종목 유지"는 보수안으로 남기지 않음).
+동시에 D안 정렬에 **3계층 freshness guard**(FRESH/STALE/MISSING, 기본값
+`None`=무변화, decision loop만 5일 주입)와 **커버리지 관측 지표**(shortfall
+WARNING)를 넣었다. **축1은 근본 원인 대응, 축2는 guardrail**로 역할이 달라
+둘 다 필요하다. 검증: 기존 109건 **무수정 통과** + 신규 5건 = 114 passed,
+관련 123 passed, 하네스 2건 PASS. **운영 효과는 미확정**(다음 배치·freeze
+관측 필요). 상세: `[DESIGN] regime_conditional_entry_signal_v1.md` §139.
+
+[SPPV-2.150] **stale snapshot 근본 원인 규명 + 구조 대응안
 비교 완료**(§6.28, 2026-07-31 KST) — 원인은 "배치 누락"이 아니라
 **`signal_feature_snapshots`의 생성 모집단과 소비 모집단이 서로 다른 cap과
 정렬 기준으로 같은 `compose()`를 호출하는 계약 불일치**다(생성: `core_cap=80`
@@ -1401,6 +1413,53 @@ entry_signal_v1.md` §137.
 
 상세: `docs/10_signal_research_sppv/[DESIGN] regime_conditional_
 entry_signal_v1.md` §138.
+
+### 6.29 SPPV-2.151 — S5 구현(생성 모집단 정렬 + freshness guard)
+(신규, 2026-07-31 KST, 완료 — **코드 변경 포함, 운영 효과 미확정**)
+
+**전제 명시**: 배치는 장후 **20:10 KST** 실행이라 **소요 시간 증가를 제약으로
+두지 않고** KIS `market_data` 예산도 과하게 아끼지 않는다. **"80종목 유지"는
+보수안으로 남기지 않는다.**
+
+- [x] **축1 생성 모집단 정렬(근본 원인 대응)**: 배치 cap 기본값
+      `DEFAULT_SIGNAL_FEATURE_CORE_CAP`/`_UNIVERSE_MAX_CAP`을 `80 → None`
+      으로 바꾸고, `CompositionContext.max_cap`에 **`None` = 절단하지 않음
+      (coverage 모드)** 의미를 추가해 `_apply_cap`의 절단 지점 두 곳을 모두
+      무효화. 상수 상향(`80→300`)을 택하지 않은 이유는 그것도 **절단 가능한
+      cap**이라 후보가 늘면 조용히 재발하기 때문(§138.3).
+- [x] **부수 이점**: 배치가 core 상한을 두지 않으므로 정렬 기준이 선택에
+      영향을 주지 않아 **SPPV-2.145 §132.3의 순환 의존 회피 제약이 소멸**.
+- [x] **축2 freshness guard(guardrail)**: `_core_signal_sort_rank()` 정렬
+      키를 `(tier, -overall_score, symbol)` 3계층으로 코드화
+      (`CORE_SIGNAL_TIER_FRESH/STALE/MISSING` 명명 상수). stale을 실패로
+      막지 않고 **하향**시키는 계약. `core_signal_freshness_max_age_days`
+      기본값 `None`(=무변화), decision loop만 **5일** 주입(정상 1일 +
+      주말 3일 + 배치 1회 실패 흡수).
+- [x] **축3 커버리지 관측 지표**: 배치가 `core_covered`/
+      `core_eligible_total`/`coverage_ratio`를 매 실행 로그로 남기고
+      shortfall 시 **WARNING**. `count_core_eligible()`은
+      `_is_core_seed_instrument`를 재사용해 생성/소비 기준 일치.
+- [x] **둘 중 하나만으로 불충분한 이유 명시**: S2 단독은 배치 부분 실패·
+      신규 상장 시 stale이 상위를 차지(코드가 stale을 구분할 수단 없음),
+      S1 단독은 생성 모집단이 좁아 **편향이 80위 경계로 이동한 상태로 고정**.
+- [x] **최소 검증**: `test_universe_selection.py` **114 passed**(기존
+      **109건 무수정 통과** + 신규 5), 관련 스크립트 테스트 123 passed,
+      하네스 `accept backend-file` 2건 PASS, 배치 import/`--help` 확인.
+      신규 테스트에 **기본값 무변화 회귀**(`test_freshness_guard_off_keeps_
+      stale_first`)를 포함.
+- [ ] **운영 반영 관측** — 미완료. 다음 장후 배치(20:10 KST) 커버리지 지표와
+      다음 거래일 08:50 KST freeze의 계층 분포 확인 필요.
+- [ ] **KIS `market_data` 예산 실측** — 미완료. 80 → 약 211종목 호출량이
+      실제 예산 안에서 처리되는지 다음 배치 로그로 확인(예산 소진 시 부분
+      실패가 나면 축2 guard가 작동).
+
+**[PLAN] 상태 요약**: stale snapshot 트랙은 **근본 원인 대응 코드까지
+반영**됐고 남은 것은 운영 실측이다. 이번 구현에서 **축1(생성 모집단 정렬)은
+근본 원인 대응**, **축2(freshness guard)는 guardrail**로 성격이 다르다는 점을
+분리해 기록했다.
+
+상세: `docs/10_signal_research_sppv/[DESIGN] regime_conditional_
+entry_signal_v1.md` §139.
 
 ## 7. 완료 기준
 

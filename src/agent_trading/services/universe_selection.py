@@ -42,6 +42,9 @@ from agent_trading.services.instrument_profile import (
 )
 from agent_trading.services.universe_selection_types import (
     CORE_RANKING_MODE_SIGNAL_SCORE,
+    CORE_SIGNAL_TIER_FRESH,
+    CORE_SIGNAL_TIER_MISSING,
+    CORE_SIGNAL_TIER_STALE,
     INCLUSION_REASON_CORE,
     INCLUSION_REASON_EVENT,
     INCLUSION_REASON_HELD,
@@ -750,11 +753,13 @@ class UniverseSelectionService:
         # 경로)가 모두 이 전체 목록을 필요로 하는데, 캐시가 없으면 활성 종목
         # 스캔(시장코드 3개 × 테이블 스캔)이 매 호출마다 중복 실행된다.
         self._active_kr_equity_instruments_cache: list[object] | None = None
-        # core 후보 symbol -> 최신 snapshot overall_score 캐시 —
+        # core 후보 symbol -> (최신 snapshot overall_score, snapshot_at) 캐시 —
         # `core_ranking_mode=signal_score`(D안)일 때만 채워진다. snapshot이
-        # 없는 종목은 키 자체가 없으며, 정렬에서 최하위로 밀린다
-        # (SPPV-2.145 / §132.4).
-        self._core_signal_score_cache: dict[str, float] | None = None
+        # 없는 종목은 키 자체가 없으며, 정렬에서 MISSING 계층(최하위)이 된다
+        # (SPPV-2.145 §132.4 / SPPV-2.151 §139).
+        # snapshot_at을 함께 보관하는 이유: 신선도 계층(FRESH/STALE)을
+        # 판정하려면 점수만으로는 부족하다.
+        self._core_signal_score_cache: dict[str, tuple[float, datetime | None]] | None = None
 
     async def _prime_core_signal_score_cache(
         self,
@@ -778,40 +783,75 @@ class UniverseSelectionService:
         snapshots = await self._repos.signal_feature_snapshots.list_latest_by_instrument_ids(
             list(id_to_symbol.keys())
         )
-        scores: dict[str, float] = {}
+        scores: dict[str, tuple[float, datetime | None]] = {}
         for snapshot in snapshots:
             symbol = id_to_symbol.get(getattr(snapshot, "instrument_id", None))
             overall = getattr(snapshot, "overall_score", None)
             if symbol is None or overall is None:
                 continue
             try:
-                scores[symbol] = float(overall)
+                scores[symbol] = (float(overall), getattr(snapshot, "snapshot_at", None))
             except (TypeError, ValueError):
                 continue
         self._core_signal_score_cache = scores
 
-    def _core_signal_sort_rank(self, candidates: list[SelectedSymbol]) -> dict[str, int]:
+    @staticmethod
+    def _core_signal_tier(
+        snapshot_at: datetime | None,
+        max_age_days: int | None,
+        *,
+        now_kst: datetime,
+    ) -> int:
+        """snapshot 신선도 계층을 판정한다(SPPV-2.151 / S5 freshness guard).
+
+        ``max_age_days is None``이면 신선도 판정을 하지 않으므로 snapshot이
+        있는 모든 종목이 ``CORE_SIGNAL_TIER_FRESH``다 — 즉 이 필드를 지정하지
+        않는 호출부의 정렬 결과는 바뀌지 않는다(하위 호환).
+        """
+        if max_age_days is None or snapshot_at is None:
+            return CORE_SIGNAL_TIER_FRESH
+        age_days = (now_kst.date() - snapshot_at.astimezone(_KST).date()).days
+        return (
+            CORE_SIGNAL_TIER_FRESH
+            if age_days <= max_age_days
+            else CORE_SIGNAL_TIER_STALE
+        )
+
+    def _core_signal_sort_rank(
+        self,
+        candidates: list[SelectedSymbol],
+        max_age_days: int | None = None,
+    ) -> dict[str, int]:
         """core 후보의 D안 정렬 순위(0-based)를 계산한다.
 
-        정렬 기준(§132.4 / SPPV-2.145):
-        1. snapshot 보유 종목이 미보유 종목보다 항상 앞선다.
-        2. 보유 종목끼리는 ``overall_score`` 내림차순.
+        정렬 기준(§132.4 / SPPV-2.145, §139 / SPPV-2.151):
+        1. **신선도 계층**이 1차 키다 — FRESH > STALE > MISSING.
+           ``max_age_days``가 ``None``이면 계층 판정을 하지 않아 snapshot
+           보유 종목은 전부 FRESH가 되므로 기존 동작과 동일하다.
+        2. 같은 계층 안에서는 ``overall_score`` 내림차순.
         3. ``overall_score``가 완전히 동일할 때만 ``symbol`` 사전순
            — 이는 의미 있는 우선순위가 아니라 결정성 보장용 기술 규칙이다.
-        4. snapshot 미보유 종목끼리도 같은 이유로 ``symbol`` 사전순.
+        4. MISSING 계층 내부도 같은 이유로 ``symbol`` 사전순.
+
+        stale snapshot을 "실패"로 처리해 전체를 막지 않고 계층으로 **하향**
+        시키는 것이 계약이다 — 배치가 일부 실패해도 유니버스 구성 자체는
+        계속 진행되어야 하기 때문이다.
         """
         scores = self._core_signal_score_cache or {}
+        now_kst = datetime.now(_KST)
         core_symbols = [
             item.symbol for item in candidates if item.source_type == SourceType.CORE
         ]
-        ordered = sorted(
-            core_symbols,
-            key=lambda symbol: (
-                0 if symbol in scores else 1,
-                -scores.get(symbol, 0.0),
-                symbol,
-            ),
-        )
+
+        def _key(symbol: str) -> tuple[int, float, str]:
+            entry = scores.get(symbol)
+            if entry is None:
+                return (CORE_SIGNAL_TIER_MISSING, 0.0, symbol)
+            score, snapshot_at = entry
+            tier = self._core_signal_tier(snapshot_at, max_age_days, now_kst=now_kst)
+            return (tier, -score, symbol)
+
+        ordered = sorted(core_symbols, key=_key)
         return {symbol: rank for rank, symbol in enumerate(ordered)}
 
     async def _prime_membership_cache(self, instruments: Sequence[object]) -> None:
@@ -935,6 +975,22 @@ class UniverseSelectionService:
         self._active_kr_equity_instruments_cache = result
         return result
 
+    async def count_core_eligible(self) -> int:
+        """core-eligible 후보 총수를 센다(커버리지 관측용, SPPV-2.151 §139.4).
+
+        `_add_core_universe`와 **동일한 판정 함수**(`_is_core_seed_instrument`)를
+        재사용하므로 생성/소비 어느 쪽과도 기준이 어긋나지 않는다. 활성 종목
+        목록과 membership 캐시는 이미 인스턴스 캐시를 타므로 추가 쿼리 부담이
+        사실상 없다.
+        """
+        instruments = await self._list_active_kr_equity_instruments()
+        await self._prime_membership_cache(instruments)
+        total = 0
+        for inst in instruments:
+            if await self._is_core_seed_instrument(inst):
+                total += 1
+        return total
+
     async def compose(self, ctx: CompositionContext) -> list[SelectedSymbol]:
         selected, _ = await self.compose_with_diagnostics(ctx)
         return selected
@@ -999,7 +1055,10 @@ class UniverseSelectionService:
             # 2차 키는 CORE가 아닌 항목에 대해 항상 0이므로, Python의 안정
             # 정렬 특성상 held/reconciliation/event/market/manual overlay의
             # 기존 상대 순서는 그대로 보존된다.
-            core_rank = self._core_signal_sort_rank(candidates)
+            core_rank = self._core_signal_sort_rank(
+                candidates,
+                ctx.core_signal_freshness_max_age_days,
+            )
             candidates.sort(
                 key=lambda s: (
                     s.priority,
@@ -1812,9 +1871,16 @@ class UniverseSelectionService:
         candidates: list[SelectedSymbol],
         ctx: CompositionContext,
     ) -> list[SelectedSymbol]:
-        """Apply daily cap, optionally excluding held positions."""
+        """Apply daily cap, optionally excluding held positions.
+
+        ``ctx.max_cap is None``은 **절단하지 않음(coverage 모드)**을 뜻한다 —
+        선별(selection)이 아니라 커버리지가 목적인 호출부(장후 signal feature
+        배치)가 core 모집단을 조용히 잘라내지 않도록 하기 위한 계약이다
+        (SPPV-2.151 / §139). ``core_cap`` 역시 ``None``이면 core 전용 상한을
+        두지 않는다.
+        """
         if not ctx.exclude_held_from_cap:
-            return candidates[: ctx.max_cap]
+            return candidates if ctx.max_cap is None else candidates[: ctx.max_cap]
 
         capped: list[SelectedSymbol] = []
         non_held_count = 0
@@ -1835,7 +1901,7 @@ class UniverseSelectionService:
                     reconciliation_exempt_count += 1
                     continue
 
-            if non_held_count >= ctx.max_cap:
+            if ctx.max_cap is not None and non_held_count >= ctx.max_cap:
                 break
             if (
                 sym.source_type == SourceType.CORE

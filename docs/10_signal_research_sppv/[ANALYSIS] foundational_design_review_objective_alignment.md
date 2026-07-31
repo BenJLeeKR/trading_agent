@@ -3332,3 +3332,46 @@ S3(생성·보관 구조 분리)는 범위 과도, S4(정렬 키를 snapshot 비
 
 상세: `docs/10_signal_research_sppv/[DESIGN] regime_conditional_entry_
 signal_v1.md` §138.
+
+## 37. S5 구현 — 생성 모집단 정렬 + freshness guard(SPPV-2.151, 2026-07-31 KST)
+
+§36에서 1순위로 확정된 S5를 구현했다(`.env` 미수정, Full pytest 미실행, 신규
+KIS 호출 0건 — 코드 변경 포함, **운영 효과 미확정**).
+
+**전제(명시)**: `signal_feature_snapshot` 배치는 **장후 20:10 KST** 실행이라
+**소요 시간 증가를 제약으로 두지 않고** KIS 예산도 과하게 아끼지 않는다.
+따라서 **"80종목 유지"를 보수안으로 남기지 않았다.**
+
+- **축1 — 생성 모집단 정렬(근본 원인 대응)**: 배치 cap 기본값을 `80 → None`
+  으로 바꾸고 `CompositionContext.max_cap`에 **`None` = 절단하지 않음
+  (coverage 모드)** 의미를 추가해 `_apply_cap`의 절단 지점 두 곳을 무효화했다.
+  배치는 selection이 아니라 **coverage job**이므로 core 모집단을 자를 이유가
+  없다. 상수 상향(`80→300`)은 **여전히 절단 가능한 cap**이라 후보가 늘면
+  조용히 재발하므로 택하지 않았다. 부수 이점으로 정렬 기준이 배치의 선택
+  결과에 영향을 주지 않게 되어 **§30(SPPV-2.145)의 순환 의존 회피 제약이
+  소멸**한다.
+- **축2 — freshness guard(guardrail)**: 정렬 키를
+  `(tier, -overall_score, symbol)` **3계층**(FRESH/STALE/MISSING)으로
+  코드화했다. 계층 상수를 이름 있는 상수로 선언해 임시 예외처리가 아니라
+  **명시된 정렬 규칙**임을 남겼고, stale을 실패로 막지 않고 **하향**시켜
+  배치 부분 실패에도 유니버스 구성이 계속되게 했다. 기본값은 `None`
+  (=기존 동작)이며 decision loop만 **5일**을 주입한다.
+- **축3 — 커버리지 관측 지표**: 배치가 매 실행 `core_covered`/
+  `core_eligible_total`/`coverage_ratio`를 남기고 shortfall 시 WARNING을
+  낸다. cap을 없애도 `_apply_exclusions`나 instrument master 변화로 커버리지가
+  떨어질 수 있고, 지표가 없으면 그 하락이 조용히 stale로 되돌아온다.
+
+**둘 중 하나만으로 불충분한 이유**: S2 단독은 배치 부분 실패·신규 상장 시
+오래된 점수가 상위를 그대로 차지한다(코드가 stale을 구분할 수단이 없다).
+S1 단독은 생성 모집단이 좁은 채로 남아 **사전순 편향이 12위에서 80위 경계로
+이동한 상태로 고정**된다. **축1은 근본 원인 대응, 축2는 guardrail**로 역할이
+다르므로 대체 관계가 아니다.
+
+**검증**: `test_universe_selection.py` **114 passed**(기존 **109건 무수정
+통과** + 신규 5건, 그중 1건이 **기본값 무변화 회귀** 고정), 관련 스크립트
+테스트 123 passed, 하네스 `accept backend-file` 2건 PASS.
+
+**결론**: stale snapshot의 **근본 원인 대응 코드까지 반영**됐다. 남은 것은
+운영 실측(다음 배치 커버리지 지표 + 다음 거래일 freeze 계층 분포)과 KIS
+`market_data` 예산 확인이다. 상세: `docs/10_signal_research_sppv/[DESIGN]
+regime_conditional_entry_signal_v1.md` §139.

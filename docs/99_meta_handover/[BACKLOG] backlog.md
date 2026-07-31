@@ -2060,6 +2060,25 @@
   211종목 약 3분, 약 2.6배, 사용자 승인 필요). 상세: `docs/10_signal_
   research_sppv/[DESIGN] regime_conditional_entry_signal_v1.md` §138.
 
+- 2026-07-31 KST(SPPV-2.151, 신규 KIS 호출 0건, 완료 — **코드 변경 포함,
+  운영 효과 미확정**): **S5 구현** = 생성 모집단 정렬 + freshness guard.
+  전제로 배치가 장후 20:10 KST 실행이라 **소요 시간 증가를 제약으로 두지
+  않음**("80종목 유지"는 보수안으로 남기지 않음). **축1(근본 원인 대응)**:
+  배치 cap 기본값 `80 → None`(**coverage 모드=절단하지 않음**),
+  `CompositionContext.max_cap`에 `None` 의미 추가로 `_apply_cap` 절단 지점
+  2곳 무효화 → 생성 모집단이 소비 모집단(core-eligible 전체)을 구조적으로
+  덮음. 상수 상향(`80→300`)은 여전히 절단 가능해 기각. 부수 이점으로
+  **SPPV-2.145 순환 의존 회피 제약 소멸**. **축2(guardrail)**:
+  `_core_signal_sort_rank()`를 `(tier, -score, symbol)` **3계층**(FRESH/
+  STALE/MISSING 명명 상수)으로 코드화, stale을 실패로 막지 않고 하향,
+  기본값 `None`=무변화이고 decision loop만 **5일** 주입. **축3**: 배치
+  커버리지 지표 + shortfall WARNING. **둘 중 하나만으로 불충분** — S2 단독은
+  배치 부분 실패 시 stale이 상위 차지, S1 단독은 편향이 80위 경계로 이동해
+  고정. 검증: **114 passed**(기존 109건 무수정 + 신규 5, 무변화 회귀 포함),
+  관련 123 passed, 하네스 2건 PASS. **미완료**: 운영 반영 관측, KIS
+  `market_data` 예산 실측. 상세: `docs/10_signal_research_sppv/[DESIGN]
+  regime_conditional_entry_signal_v1.md` §139.
+
 ---
 
 ## 관리 원칙

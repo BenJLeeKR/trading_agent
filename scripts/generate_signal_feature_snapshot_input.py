@@ -43,6 +43,7 @@ from agent_trading.services.universe_selection import UniverseSelectionService
 from agent_trading.services.universe_selection_types import (
     CompositionContext,
     FALLBACK_ACCOUNT_ID,
+    SourceType,
 )
 from scripts.run_decision_loop import (
     ACCOUNT_ALIAS,
@@ -61,8 +62,15 @@ DEFAULT_SIGNAL_FEATURE_TRIGGER_TYPE = (
     DEFAULT_SIGNAL_FEATURE_AFTER_MARKET_TRIGGER_TYPE
 )
 DEFAULT_SIGNAL_FEATURE_SELECTION_VERSION = "universe_selection.freeze.v1"
-DEFAULT_SIGNAL_FEATURE_UNIVERSE_MAX_CAP = 80
-DEFAULT_SIGNAL_FEATURE_CORE_CAP = 80
+# 장후 signal feature 배치는 **selection이 아니라 coverage** job이다.
+# decision loop(소비 측)는 core-eligible 후보 전체를 D안 정렬 대상으로 삼는데,
+# 이 배치가 cap으로 core 모집단을 잘라내면 "정렬 입력이 존재하지 않는 종목"이
+# 생겨 stale snapshot 정렬로 이어진다(SPPV-2.150 §138 근본 원인).
+# 따라서 기본값을 `None`(=절단하지 않음)으로 두어 생성 모집단이 소비 모집단을
+# 구조적으로 덮게 만든다. 배치는 장후 20:10 KST에 돌고 소요 시간을 제약으로
+# 두지 않으므로(SPPV-2.151 전제) cap으로 아낄 이유가 없다.
+DEFAULT_SIGNAL_FEATURE_UNIVERSE_MAX_CAP: int | None = None
+DEFAULT_SIGNAL_FEATURE_CORE_CAP: int | None = None
 DEFAULT_SIGNAL_FEATURE_MARKET_OVERLAY_CAP = 10
 DEFAULT_SIGNAL_FEATURE_PRE_POOL_SIZE = 80
 DEFAULT_SIGNAL_FEATURE_BATCH_SIZE = 15
@@ -148,13 +156,19 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         "--universe-max-cap",
         type=int,
         default=DEFAULT_SIGNAL_FEATURE_UNIVERSE_MAX_CAP,
-        help="feature 배치용 trading universe non-held cap",
+        help=(
+            "feature 배치용 trading universe non-held cap. "
+            "미지정(기본)은 절단하지 않음(coverage 모드)"
+        ),
     )
     parser.add_argument(
         "--core-cap",
         type=int,
         default=DEFAULT_SIGNAL_FEATURE_CORE_CAP,
-        help="feature 배치용 core source_type cap",
+        help=(
+            "feature 배치용 core source_type cap. "
+            "미지정(기본)은 절단하지 않음(coverage 모드)"
+        ),
     )
     parser.add_argument(
         "--market-overlay-cap",
@@ -632,8 +646,8 @@ async def _resolve_frozen_universe(
     repos: Any,
     end_date: date,
     freeze_purpose: str,
-    universe_max_cap: int,
-    core_cap: int,
+    universe_max_cap: int | None,
+    core_cap: int | None,
     market_overlay_cap: int,
     pre_pool_size: int,
 ) -> UniverseFreezeResolution:
@@ -701,6 +715,38 @@ async def _resolve_frozen_universe(
         )
         for item in selected
     )
+
+    # 커버리지 관측 지표(SPPV-2.151 §139.4) — 생성 모집단이 소비 모집단
+    # (core-eligible 전체)을 실제로 덮었는지 매 실행마다 남긴다. cap을 무제한
+    # 으로 두더라도 `_apply_exclusions`(유동성/우선주 등)나 instrument master
+    # 변화로 커버리지가 떨어질 수 있는데, 지표가 없으면 그 하락이 조용히
+    # stale snapshot 정렬로 되돌아온다.
+    core_covered = sum(
+        1 for item in selected if item.source_type == SourceType.CORE
+    )
+    core_eligible_total = await selector.count_core_eligible()
+    coverage_ratio = (
+        round(core_covered / core_eligible_total, 4) if core_eligible_total else None
+    )
+    logger.info(
+        "signal feature coverage: core_covered=%d core_eligible_total=%d "
+        "coverage_ratio=%s universe_total=%d core_cap=%s max_cap=%s",
+        core_covered,
+        core_eligible_total,
+        coverage_ratio,
+        len(composed_universe),
+        core_cap,
+        universe_max_cap,
+    )
+    if core_eligible_total and core_covered < core_eligible_total:
+        logger.warning(
+            "signal feature coverage shortfall: core_covered=%d < "
+            "core_eligible_total=%d (missing=%d) — 소비 측 D안 정렬에서 "
+            "stale/missing 계층으로 밀리는 종목이 생긴다",
+            core_covered,
+            core_eligible_total,
+            core_eligible_total - core_covered,
+        )
 
     freeze_run_id = uuid4()
     freeze_items: list[UniverseFreezeRunItemEntity] = []
