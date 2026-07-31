@@ -3375,3 +3375,37 @@ S1 단독은 생성 모집단이 좁은 채로 남아 **사전순 편향이 12�
 운영 실측(다음 배치 커버리지 지표 + 다음 거래일 freeze 계층 분포)과 KIS
 `market_data` 예산 확인이다. 상세: `docs/10_signal_research_sppv/[DESIGN]
 regime_conditional_entry_signal_v1.md` §139.
+
+## 38. S5 배치 반영 준비 상태 점검 + 배치 전 기준선(SPPV-2.152, 2026-07-31 KST)
+
+**요청된 "장후 배치 실측"은 이번 턴에서 수행할 수 없다(사실)**: 확인 시각이
+**2026-07-31 15:31 KST**로 배치 예정(**20:10 KST**)보다 약 4시간 39분 이전이다.
+오늘자 `signal_feature_after_market` freeze **0건**, 오늘자 snapshot **0건**,
+최신 `snapshot_at`이 여전히 **2026-07-30 20:00 KST**임을 확인했다. **추정으로
+대체하지 않고** 범위를 준비 상태 점검 + 기준선 확정으로 조정했다.
+
+- **S5 런타임 반영(사실)**: PR #72가 장중(13:35 KST) 머지로 `sync_source`/
+  `activate_runtime`이 **모두 skip**됐음에도 런타임에는 코드가 들어와 있다.
+  호스트 작업트리가 운영 경로이고 컨테이너가 소스를 bind mount하므로
+  `git pull`이 `sync_source`와 동일한 파일 상태를 만들기 때문이다. 컨테이너
+  안에서 모듈을 직접 import해 `core_cap=None`/`max_cap=None`, freshness 필드,
+  `CORE_SIGNAL_TIER_STALE=1`, `count_core_eligible`/`_core_signal_tier` 존재를
+  확인했다.
+- **컨테이너 재기동이 필요 없는 이유(사실)**: `_run_command()`가
+  `asyncio.create_subprocess_exec`로 매 실행 새 프로세스를 띄우고,
+  `build_input_command()`가 cap 인자를 전달하지 않으므로 cap은 **서브프로세스
+  자신의 기본값**에서 읽힌다(ops-scheduler에 cap 상수 import 0건). 따라서
+  오늘 밤 배치는 **coverage 모드로 실행될 준비가 완료**된 상태다 — 단 이는
+  "실행됐다"가 아니라 "실행될 상태"다.
+- **배치 전 기준선(사실)**: core-eligible **211종목**, 3계층
+  **FRESH 80(37.9%) / STALE 66(31.3%) / MISSING 65(30.8%)**, 직전 stale
+  핵심 8종목 전부 STALE(경과 37~42일).
+- **내일 freeze 실측 준비(판정)**: **추가 세팅 불필요, read-only만으로 충분**.
+  단 오늘 밤 배치 성공이 전제이고, 배치가 실패한 경우에 나타나는 개선은
+  "S5 효과"가 아니라 **"guard 단독 작동"**으로 해석해야 한다.
+
+**결론**: S5는 코드 반영과 런타임 준비까지 확인됐고, 남은 것은 **오늘 밤
+배치 실측 → 다음 거래일(2026-08-03 월) 08:50 KST freeze 실측** 두 단계다.
+이번 턴은 그 대조를 위한 기준선 확정까지만 수행했다. 상세:
+`docs/10_signal_research_sppv/[DESIGN] regime_conditional_entry_signal_v1.md`
+§140.

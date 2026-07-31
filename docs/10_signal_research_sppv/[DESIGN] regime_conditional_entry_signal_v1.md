@@ -17608,3 +17608,110 @@ Full pytest / 외부 API 실호출 / 운영 DB write는 수행하지 않았다.
 2. **2순위**: D안 순수 효과 재측정(stale bias 제거 후).
 3. **3순위**: `strategy_alignment` 게이트 영향 재관측(게이트 활성일).
 4. **4순위**: `regime_tailwind` 제거 선행 확인(별도 트랙).
+
+## §140. S5 배치 반영 준비 상태 점검 + 배치 전 기준선 확정(SPPV-2.152, 2026-07-31 KST)
+
+**중요 사실 — 이번 턴에서 요청된 "장후 배치 실측"은 수행할 수 없다**:
+확인 시각이 **2026-07-31 15:31 KST**로, 장후 signal feature 배치 예정 시각
+(**20:10 KST**)보다 **약 4시간 39분 이전**이다. 실측으로 확인한 바:
+
+- 오늘(2026-07-31) `signal_feature_after_market` freeze: **0건**
+- 오늘자 snapshot rows: **0건**
+- `signal_feature_snapshots`의 최신 `snapshot_at`: 여전히 **2026-07-30 20:00 KST**
+
+따라서 §140은 **배치 실측이 아니라 (a) S5 반영 준비 상태 점검과
+(b) 배치 전 기준선 확정**으로 범위를 조정했다. 실제 배치 실측은 20:10 KST
+이후 별도 턴에서 수행한다(추정으로 대체하지 않는다).
+
+### 140.1 S5 코드의 운영 반영 상태(사실)
+
+PR #72는 **장중(13:35 KST)에 머지**돼 `market_guard_in_market_hours=1`로
+`sync_source`/`activate_runtime`이 **모두 skip**됐다(§SPPV-2.151 보고).
+그런데도 런타임에는 코드가 들어와 있다 — 확인한 경로는 다음과 같다.
+
+| 확인 | 결과 |
+|---|---|
+| 호스트 `main`(`be3dbf43`) ↔ `ops-scheduler` 컨테이너 md5sum(4파일) | **전부 일치** |
+| 컨테이너 안에서 모듈을 실제 import해 읽은 기본값 | `core_cap=None`, `max_cap=None` |
+| `CompositionContext.core_signal_freshness_max_age_days` 필드 | 존재 |
+| `CORE_SIGNAL_TIER_STALE` 상수 | `1` |
+| `UniverseSelectionService.count_core_eligible` / `_core_signal_tier` | 둘 다 존재 |
+
+**왜 `activate_runtime` 없이도 반영됐는가(사실)**: 이 저장소 작업트리가 곧
+운영 서버 경로이고 컨테이너가 소스를 bind mount하므로, 호스트 `git pull`이
+사실상 `sync_source`와 동일한 파일 상태를 만든다(SPPV-2.149 §137.1에서 확인한
+구조와 동일).
+
+**왜 컨테이너 재기동 없이도 배치가 새 코드를 쓰는가(사실)**:
+`run_ops_scheduler._run_command()`가 `asyncio.create_subprocess_exec`로
+**매 실행 새 프로세스**를 띄우고(`:1778`), `SignalFeatureBatchRuntimeSpec.
+build_input_command()`는 `--core-cap`/`--universe-max-cap`을 **전달하지
+않는다**(`--output`/`--output-format`/`--freeze-purpose`/`--trigger-type`만).
+즉 cap 값은 **서브프로세스 자신의 기본값**에서 읽히며, 그 기본값이 위 표대로
+이미 `None`이다. 장기 프로세스인 ops-scheduler에 cap 상수가 import되어 있지도
+않다(grep 0건).
+
+**판정**: 오늘 20:10 KST 배치는 **컨테이너 재기동 없이 coverage 모드로
+실행될 준비가 되어 있다**(사실 기반). 다만 이는 "실행됐다"가 아니라
+"실행될 상태"라는 점을 구분한다.
+
+### 140.2 배치 전 기준선(사실) — 내일 대조용
+
+`core-eligible = 211종목`(오늘 배치의 coverage 목표치).
+
+**3계층 분포**(guard `max_age=5일`, 2026-07-31 KST 기준):
+
+| 계층 | 종목 수 | 비율 |
+|---|---|---|
+| FRESH | **80** | 37.9% |
+| STALE | **66** | 31.3% |
+| MISSING | **65** | 30.8% |
+
+**직전 stale 핵심 8종목의 배치 전 상태**(전부 STALE):
+
+| 종목 | 최신 snapshot(KST) | 경과 |
+|---|---|---|
+| `021240` / `023530` / `028260` | 2026-06-24 20:00 | 37일 |
+| `032830` | 2026-06-22 20:00 | 39일 |
+| `042700` / `196170` / `329180` / `402340` | 2026-06-19 20:00 | 42일 |
+
+### 140.3 오늘 밤 배치에서 확인할 것(다음 턴 체크리스트)
+
+1. `signal_feature_after_market` freeze의 `target_count`가 **80 → 211 근처**로
+   올라갔는가(coverage 모드 반영).
+2. 배치 로그에 `signal feature coverage: core_covered=... core_eligible_total=211
+   coverage_ratio=...`가 남았는가, `coverage shortfall` WARNING이 났는가
+   (§139.4 지표).
+3. 위 8종목의 `snapshot_at`이 **2026-07-31 20:00 KST**로 갱신됐는가.
+4. 3계층 분포가 `FRESH 80 / STALE 66 / MISSING 65` → **FRESH 대폭 증가**로
+   바뀌었는가.
+5. `fetch_error_rows` 건수, tail retry 발동 여부, KIS `market_data` 예산 소진·
+   timeout 발생 여부 — 80 → 211종목으로 호출량이 약 2.6배 늘어난 첫 실행이라
+   **부분 실패가 가장 나기 쉬운 지점**이다.
+6. 입력 생성 단계(`after_market_signal_feature_input`)와 적재 단계
+   (`after_market_signal_feature_batch`) **둘 다** `ok=True`인가.
+
+### 140.4 내일 08:50 KST freeze 실측 준비 상태(판정)
+
+- **추가 세팅 불필요, read-only 실측만으로 충분하다**(사실 기반 판정):
+  D안 정렬(`core_ranking_mode=signal_score`)과 freshness guard(5일)는 이미
+  `run_decision_loop.py`에 주입돼 있고, 그 값도 서브프로세스 기본값이 아니라
+  코드 상수라 런타임에 반영돼 있다(§140.1).
+- **단, 전제 조건이 하나 있다**: 오늘 밤 배치가 성공해야 내일 freeze에서
+  stale bias 감소를 볼 수 있다. 배치가 실패하거나 부분 실패하면 내일
+  freeze는 여전히 STALE 계층 위주로 구성될 수 있는데, 그 경우에도 **guard가
+  STALE을 FRESH 뒤로 밀기 때문에 오늘(07-31) freeze보다는 개선**되는 것이
+  설계 의도다 — 다만 그 시나리오는 "S5 효과 확인"이 아니라 "guard 단독 작동
+  확인"으로 해석해야 한다(해석, 구분 필요).
+- **추정 금지 항목**: 오늘 배치 결과를 보지 않은 상태에서 내일 freeze가
+  개선될 것이라고 단정하지 않는다. §140.3의 6개 항목을 먼저 닫아야 한다.
+
+### 140.5 다음 우선 작업
+
+1. **1순위**: 오늘 20:10 KST 배치 직후 §140.3 6개 항목 실측(read-only).
+2. **2순위**: 내일(2026-08-03 월, 07-31이 금요일이므로 다음 거래일)
+   08:50 KST freeze에서 계층 분포와 종목 구성 실측 — §140.2 기준선과 대조.
+3. **3순위**: D안 순수 효과 재측정(stale bias 제거 후, §137.5의 2.13배 상한
+   재산정).
+4. **4순위**: `strategy_alignment` 게이트 영향 재관측 / `regime_tailwind`
+   선행 확인(각각 별도 트랙).
