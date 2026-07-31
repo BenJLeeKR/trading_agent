@@ -186,6 +186,16 @@ pip_install_without_constraints = [
     for path, line_no, line in pip_install_lines
     if "--constraint requirements.lock" not in line
 ]
+node20_target_action_hits = [
+    (path, line_no, line.strip())
+    for path, text in workflow_text_by_path.items()
+    for line_no, line in enumerate(text.splitlines(), 1)
+    if (
+        "uses: actions/checkout@v4" in line
+        or "uses: actions/setup-python@v5" in line
+        or "uses: actions/setup-node@v4" in line
+    )
+]
 
 def contains(path: Path, *needles: str) -> bool:
     if not path.exists():
@@ -488,6 +498,7 @@ contract_checks = [
     ("workflow_uses_setup_node_pin", "node-version-file: admin_ui/.nvmrc" in workflow_text),
     ("workflow_uses_postgres_pin", "POSTGRES_VERSION=\"$(cat .postgres-version)\"" in workflow_text and "\"postgres:${POSTGRES_VERSION}\"" in workflow_text),
     ("workflow_uses_requirements_lock_constraints", len(pip_install_lines) > 0 and len(pip_install_without_constraints) == 0),
+    ("workflow_avoids_node20_target_actions", len(node20_target_action_hits) == 0),
     ("workflow_heavy_requires_dispatch", "if: github.event_name == 'workflow_dispatch' && inputs.run_heavy == 'true'" in workflow_text),
     ("workflow_heavy_sets_allow_flag", 'HARNESS_ALLOW_HEAVY: "1"' in workflow_text),
     ("workflow_deploy_depends_on_safe", "needs.safe.result == 'success'" in workflow_text and "sync_source:" in workflow_text and "activate_runtime:" in workflow_text),
@@ -552,6 +563,7 @@ metrics = {
     "deploy_runtime_affecting_path_rule_count": deploy_runtime_affecting_path_rule_count,
     "runtime_tracked_file_count": len(tracked_runtime_files),
     "legacy_docker_compose_count": len(legacy_docker_compose_hits),
+    "node20_target_action_count": len(node20_target_action_hits),
     "pip_install_command_count": len(pip_install_lines),
     "pip_install_without_constraints_count": len(pip_install_without_constraints),
     "ci_contract_failed_count": len(failed_contract_checks),
@@ -587,6 +599,7 @@ informational_metrics = {
     "deploy_sync_only_allowlist_defined_count",
     "deploy_runtime_affecting_path_rule_count",
     "runtime_tracked_file_count",
+    "node20_target_action_count",
     "pip_install_command_count",
 }
 passed = all(
@@ -646,6 +659,11 @@ if deploy_missing_proxy_reload_workflows:
 if legacy_docker_compose_hits:
     print("DETAIL legacy_docker_compose:")
     for source, line_no, line in legacy_docker_compose_hits:
+        print(f"- {source.relative_to(root)}:{line_no}: {line}")
+
+if node20_target_action_hits:
+    print("DETAIL node20_target_actions:")
+    for source, line_no, line in node20_target_action_hits:
         print(f"- {source.relative_to(root)}:{line_no}: {line}")
 
 if destructive_runtime_clean_lines:
