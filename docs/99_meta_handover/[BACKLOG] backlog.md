@@ -2141,6 +2141,14 @@
   passed. 상세: `docs/10_signal_research_sppv/[DESIGN] regime_conditional_
   entry_signal_v1.md` §141(SPPV-2.154 추가분).
 
+  **[최종 결과, 17:42 KST 실측]**: PR #77 머지 후
+  `docker compose build migrate && docker compose run --rm migrate` 실행 —
+  0001~0051 전부 이력 스킵, **0052만 실제 실행**(12초 완료). 결과:
+  `attnum` **1600→42**(완전 리셋), 행 수 72,809 유지, FK 6개(outgoing 3 +
+  incoming 3) 전부 정상 재연결, 자식 테이블 행 수 동일, 고아 행 0건.
+  **이슈 완전 종결.** 유일한 후속 과제는 배포 워크플로 순서 문제
+  (migrate가 build보다 먼저 실행됨) — 별도 트랙.
+
 ---
 
 ## 관리 원칙
