@@ -10326,12 +10326,27 @@ agent 설계 문서 기준으로도 순서는 다음이 맞다.
      가능해 **상한으로만** 읽어야 함. **신규 발견: stale snapshot 정렬**.
      상세: `docs/10_signal_research_sppv/[DESIGN] regime_conditional_
      entry_signal_v1.md` §137.
-   - **SPPV-3(다음 착수: [1순위] **stale snapshot 정렬 대응 설계 검토**
-     (SPPV-2.149 신규 발견) — snapshot 배치가 하루 81종목만 갱신하는데
-     core-eligible이 211종목이라 배치 풀 밖 종목이 오래된 snapshot으로
-     정렬된다(오늘 core 12개 중 8개가 6월 snapshot). 배치 풀 커버리지를
-     read-only로 정량화하고 D안 정렬 키에 신선도 조건을 둘지 검토
-     (완화안 아님, 별도 트랙) +
+   - **SPPV-2.150(완료, 2026-07-31 KST, stale snapshot 근본 원인 규명 +
+     구조 대응안 비교, 작성자: Codex, 코드 미수정, `.env` 미수정, Full
+     pytest 미실행, 신규 KIS 호출 0건 — 설계 검증 턴)**: 원인을 "배치
+     누락"이 아니라 **생성 모집단 vs 소비 모집단의 계약 불일치**로 재규정
+     (생성 `core_cap=80`+사전순 / 소비 `core_cap=12`+신호순 211종목 /
+     freshness 조건 0건). 실측: 소비 core 12개 중 생성 모집단 포함
+     **4개(33.3%)**, core-eligible 211개 중 신선(0~1일) **79개(37.4%)** /
+     31일+ **66개** / snapshot 없음 **65개**. S0~S5 6개 안 8축 비교 후
+     **1순위 = S5**(S2 생성 모집단 정렬 + S1 freshness guard 안전망).
+     S1 단독은 편향을 12위→80위 경계로 옮긴 상태로 고정하는 임시처방이라
+     기각, S3 범위 과도, S4는 D안 설계 후퇴. S2에서 `core_cap ≥ 후보 수`가
+     되면 **순환 의존 제약 자체가 소멸**하는 구조적 이점 확인. 상세:
+     `docs/10_signal_research_sppv/[DESIGN] regime_conditional_entry_
+     signal_v1.md` §138.
+   - **SPPV-3(다음 착수: [1순위] **S5 diff 초안 설계** — 단 착수 전
+     **KIS `market_data` 예산·배치 시간 선행 확인 필수**(80종목 66.36초 →
+     211종목 약 3분, 호출량 약 2.6배, **사용자 승인 필요**). diff 범위는
+     (a) 배치 `core_cap`/`universe_max_cap` 기본값 상향 또는 ops-scheduler
+     명시 전달, (b) `_prime_core_signal_score_cache`에 freshness guard
+     (`CompositionContext` 필드, 기본값은 무제한=현행 무변화 권고),
+     (c) 신선도 커버리지 관측 지표 추가 +
      [1-B순위] `strategy_alignment` 제거의 **게이트 영향 재관측** —
      SPPV-2.149에서 오늘 게이트 활성이 0/264라 검증 불가였으므로,
      게이트가 실제 활성화되는 날(`core`+`bearish_trend`+`risk_off`)에

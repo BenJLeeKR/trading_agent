@@ -3287,3 +3287,48 @@ conditional_entry_signal_v1.md` §136.
 `strategy_alignment` 영향 재관측, (3) `regime_tailwind` 선행 확인이다.
 상세: `docs/10_signal_research_sppv/[DESIGN] regime_conditional_entry_
 signal_v1.md` §137.
+
+## 36. stale snapshot 근본 원인 규명 + 구조 대응안 비교(SPPV-2.150, 2026-07-31 KST)
+
+§35에서 신규 발견한 stale snapshot 문제를 **"배치 누락"으로 축소하지 않고**
+구조적으로 닫았다(코드 미수정, read-only + docker logs, 신규 KIS 호출 0건).
+
+**근본 원인 — 중심 문장**
+
+> `signal_feature_snapshots`를 **만드는 모집단(생성)**과 그것을 정렬 입력으로
+> **쓰는 모집단(소비)**이 서로 다른 cap과 다른 정렬 기준으로 같은
+> `UniverseSelectionService.compose()`를 호출하고, 둘 사이에 **신선도 계약이
+> 전혀 없다.**
+
+**3축 실측(사실)**
+- **축1 생성**: 배치가 `core_cap=80` + **`core_ranking_mode` 미지정(=사전순)**
+  으로 호출(ops-scheduler가 `--core-cap` 미전달). 실측 core 79종목, 사전순
+  순번 범위 `(1, 84)` — `_apply_exclusions` 때문에 연속 구간이 아니다.
+- **축2 소비**: decision loop가 `core_cap=12` + `core_ranking_mode=signal_
+  score`로 호출해 core-eligible **211종목 전체**를 정렬 대상으로 삼는다.
+  오늘 소비 core 12개 중 생성 모집단 포함은 **4개(33.3%)**뿐이다.
+- **축3 freshness 부재**: `WHERE`절에 시간 조건이 없고 정렬·캐시 어디에도
+  신선도 조건이 **0건**이다. core-eligible 211개 중 신선(0~1일) **79개
+  (37.4%)**, 31일+ **66개**, snapshot 없음 **65개**.
+
+**"코드 한 줄 수정"으로 부족한 이유**: freshness guard 단독(S1)은 stale을
+숨기지만 D안이 신선 79개(=사전순 상위) 안에서만 작동하게 만들어 **편향이
+12위 경계에서 80위 경계로 회귀**한다(§29의 §131.1 예측 상태로 되돌아감).
+생성/소비 불일치도 그대로 남고, 후보 수·cap·exclusions가 변하면 재발하며
+snapshot 없는 65개의 영구 배제가 고정된다.
+
+**대응안 비교 결론**: S0(현재 결함 상태)~S5 6개 안을 8축으로 비교해
+**1순위 = S5**를 택했다 — **S2(배치 `core_cap`을 core-eligible 전체로 확대해
+생성=소비를 만드는 것)가 근본**이고, **S1(freshness guard)은 재발 방지
+안전망**이다. S2에서 `core_cap`이 후보 수 이상이 되면 정렬 기준이 선택에
+영향을 주지 않으므로 **SPPV-2.145의 순환 의존 회피 제약 자체가 소멸**한다.
+S3(생성·보관 구조 분리)는 범위 과도, S4(정렬 키를 snapshot 비의존 지표로
+교체)는 D안 설계 후퇴로 기각했다.
+
+**선행 확인 필요(미확정)**: 배치 입력 생성이 KIS 차트 API를 호출하며 80종목에
+66.36초 소요되므로, 211종목 확대 시 호출량 약 2.6배·약 3분이 된다. KIS
+`market_data` 예산과 장후 스케줄 창 침범 여부는 **사용자 승인이 필요한
+항목**이며 diff 착수 전에 닫아야 한다.
+
+상세: `docs/10_signal_research_sppv/[DESIGN] regime_conditional_entry_
+signal_v1.md` §138.

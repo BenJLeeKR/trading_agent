@@ -2045,6 +2045,21 @@
   211종목). 상세: `docs/10_signal_research_sppv/[DESIGN] regime_
   conditional_entry_signal_v1.md` §137.
 
+- 2026-07-31 KST(SPPV-2.150, 신규 KIS 호출 0건, 완료 — 코드 미수정, 설계
+  검증 턴): stale snapshot **근본 원인 규명 + 구조 대응안 비교**. 원인은
+  "배치 누락"이 아니라 **`signal_feature_snapshots`의 생성 모집단과 소비
+  모집단이 서로 다른 cap·정렬 기준으로 같은 `compose()`를 호출하는 계약
+  불일치**다(생성 `core_cap=80`+사전순 / 소비 `core_cap=12`+신호순
+  211종목 / freshness 조건 0건). 실측: 소비 core 12개 중 생성 모집단 포함
+  **4개(33.3%)**, core-eligible 211개 중 신선(0~1일) **79개(37.4%)** /
+  31일+ **66개** / snapshot 없음 **65개**. S0~S5 6개 안을 8축 비교해
+  **1순위 = S5**(생성 모집단 정렬 + freshness guard 안전망) 채택 —
+  freshness guard 단독은 편향을 12위→80위 경계로 옮긴 상태로 고정하는
+  임시처방이라 기각. S2에서 `core_cap ≥ 후보 수`면 **순환 의존 제약 소멸**.
+  **선행 확인 필요**: KIS `market_data` 예산·배치 시간(80종목 66.36초 →
+  211종목 약 3분, 약 2.6배, 사용자 승인 필요). 상세: `docs/10_signal_
+  research_sppv/[DESIGN] regime_conditional_entry_signal_v1.md` §138.
+
 ---
 
 ## 관리 원칙
