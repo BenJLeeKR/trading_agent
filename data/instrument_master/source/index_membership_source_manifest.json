@@ -1,7 +1,7 @@
 {
-  "source_name": "operator_uploaded_csv",
-  "source_ref": "local-upload-2026-06-24",
-  "as_of_date": "2026-06-24",
+  "source_name": "krx_manual",
+  "source_ref": "local-upload",
+  "as_of_date": "2026-07-31",
   "entries": [
     {
       "membership_code": "KOSPI100",
