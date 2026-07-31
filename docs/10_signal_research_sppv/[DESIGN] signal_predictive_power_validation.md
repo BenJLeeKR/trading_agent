@@ -3051,6 +3051,40 @@ entry 설계 검토로 전환**을 확정했다. 별도 문서
   `docs/10_signal_research_sppv/[DESIGN] regime_conditional_entry_
   signal_v1.md` §137.
 
+- 작성자: Codex
+- 수정일자: 2026-07-31 KST (150차, stale snapshot 근본 원인 규명 + 구조
+  대응안 비교, 코드 미수정, `.env` 미수정, Full pytest 미실행, 신규 KIS
+  호출 0건 — 설계 검증 턴)
+- 수정내용: stale snapshot 문제를 "배치 누락"으로 축소하지 않고 **생성
+  모집단 vs 소비 모집단의 계약 불일치**로 재규정했다. 축1 생성은
+  `generate_signal_feature_snapshot_input.py`가 `compose()`를
+  `core_cap=80`(`DEFAULT_SIGNAL_FEATURE_CORE_CAP`) + **`core_ranking_mode`
+  미지정(=사전순)**으로 호출하고 ops-scheduler가 `--core-cap`을 전달하지
+  않아 항상 기본값이며, 실측 core 79종목의 사전순 순번 범위는 `(1, 84)`로
+  `_apply_exclusions` 때문에 연속 구간이 아니다. 축2 소비는 decision loop가
+  `core_cap=12` + `core_ranking_mode=signal_score`로 호출해 core-eligible
+  **211종목 전체**를 정렬 대상으로 삼으며, 오늘 소비 core 12개 중 생성
+  모집단에 포함된 것은 **4개(33.3%)**뿐이다. 축3은 freshness 부재로,
+  `list_latest_by_instrument_ids` `WHERE`절에 시간 조건이 없고
+  `_prime_core_signal_score_cache`/`_core_signal_sort_rank`에 신선도 조건이
+  **0건**이어서 31일 지난 점수가 어제 점수와 동등하게 경쟁한다 —
+  core-eligible 211개 중 신선(0~1일)은 **79개(37.4%)**, 31일+ **66개**,
+  snapshot 없음 **65개**다. "코드 한 줄 수정"(freshness guard 단독 = S1)이
+  부족한 이유는 (1) stale은 숨지만 D안이 신선 79개(사전순 상위) 안에서만
+  작동해 **편향이 12위에서 80위 경계로 회귀**하고, (2) 생성/소비 불일치가
+  그대로 남고, (3) 후보 수·cap·exclusions 변형 시 재발하며 snapshot 없는
+  65개의 영구 배제가 고정된다는 것이다. 6개 안(S0 현재 결함 상태 ~ S5)을
+  8축으로 비교해 **1순위 = S5(S2 생성 모집단 정렬 + S1 freshness guard
+  안전망)**로 판정했다. S2에서 `core_cap`이 후보 수 이상이 되면 정렬
+  기준이 선택에 영향을 주지 않아 **SPPV-2.145 §132.3의 순환 의존 회피
+  제약 자체가 불필요해진다**는 구조적 이점도 확인했다. **선행 확인
+  필요(미완료)**: 배치 입력 생성이 KIS 차트 API를 호출하며 80종목에
+  66.36초 소요되므로(07-30 21:19~21:20 KST 로그) 211종목 확대 시 호출량
+  약 2.6배·약 3분으로 늘어난다 — KIS `market_data` 예산과 장후 스케줄 창
+  침범 여부는 **사용자 승인이 필요한 항목**이며 diff 착수 전에 닫아야 한다.
+  상세: `docs/10_signal_research_sppv/[DESIGN] regime_conditional_entry_
+  signal_v1.md` §138.
+
 ---
 
 ## 진행 체크리스트
@@ -6098,6 +6132,28 @@ canonical),
     로직 변경 없음, 신규 KIS 호출 0건(shadow 재호출은 `kis_
     client=None`). 상세: `docs/10_signal_research_sppv/[DESIGN]
     regime_conditional_entry_signal_v1.md` §94.
+- [x] **SPPV-2.150(신설, 완료 — 설계 검증 턴, 코드 미수정)** stale
+  snapshot 근본 원인 규명 + 구조 대응안 비교 (2026-07-31 KST, 작성자:
+  Codex, `.env` 미수정, Full pytest 미실행, 신규 KIS 호출 0건)
+  - **근본 원인 재규정**: "배치 누락"이 아니라 **`signal_feature_
+    snapshots`의 생성 모집단과 소비 모집단이 서로 다른 cap·정렬 기준으로
+    같은 `compose()`를 호출하는 계약 불일치**. §137.6의 "배치 81종목"
+    서술은 결과이지 원인이 아님을 정정.
+  - 3축 실측: 생성=`core_cap=80`+사전순(ops-scheduler가 `--core-cap`
+    미전달), 소비=`core_cap=12`+신호순 211종목, freshness 조건 **0건**.
+    소비 core 12개 중 생성 모집단 포함 **4개(33.3%)**. core-eligible
+    211개 중 신선(0~1일) **79개(37.4%)** / 31일+ **66개** / snapshot
+    없음 **65개**.
+  - **S1(freshness guard 단독)이 부족한 이유**: stale은 숨지만 D안이
+    신선 79개(=사전순 상위) 안에서만 작동해 **편향이 12위→80위 경계로
+    회귀**하고, 생성/소비 불일치가 유지되며, 변형 국면에서 재발한다.
+  - 6개 안(S0~S5) 8축 비교 후 **1순위 = S5(생성 모집단 정렬 + freshness
+    guard 안전망)**. S2로 `core_cap ≥ 후보 수`가 되면 **순환 의존 자체가
+    소멸**한다는 구조적 이점 확인. S3는 범위 과도, S4는 D안 설계 후퇴.
+  - **선행 확인 필요(미완료)**: KIS `market_data` 예산·배치 시간
+    (80종목 66.36초 → 211종목 약 3분 추정, 호출량 약 2.6배) —
+    **사용자 승인 필요**. 상세: `docs/10_signal_research_sppv/[DESIGN]
+    regime_conditional_entry_signal_v1.md` §138.
 - [x] **SPPV-2.149(신설, 완료 — 효과 확정 아님)** D안 + `strategy_
   alignment` 제거 첫 운영 반영 실측 (2026-07-31 KST, 작성자: Codex,
   코드 미수정, `.env` 미수정, Full pytest 미실행, 신규 KIS 호출 0건)

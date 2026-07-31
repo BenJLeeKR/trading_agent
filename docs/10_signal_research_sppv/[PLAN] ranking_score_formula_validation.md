@@ -1,7 +1,20 @@
 # ranking_score 공식 검증 계획
 
 작성일: 2026-07-28  
-상태: [SPPV-2.149에서 갱신] **첫 운영 반영 실측 완료**(§6.27, 2026-07-31
+상태: [SPPV-2.150에서 갱신] **stale snapshot 근본 원인 규명 + 구조 대응안
+비교 완료**(§6.28, 2026-07-31 KST) — 원인은 "배치 누락"이 아니라
+**`signal_feature_snapshots`의 생성 모집단과 소비 모집단이 서로 다른 cap과
+정렬 기준으로 같은 `compose()`를 호출하는 계약 불일치**다(생성: `core_cap=80`
++ 사전순 / 소비: `core_cap=12` + 신호순 211종목 / freshness 조건 0건).
+실측: 소비 core 12개 중 생성 모집단 포함은 **4개(33.3%)**, core-eligible
+211개 중 신선(0~1일)은 **79개(37.4%)**, 31일+ stale 66개, snapshot 없음
+65개. **1순위 설계안: S5(= 생성 모집단을 소비 풀에 정렬 + freshness guard
+안전망)**. freshness guard 단독(S1)은 편향을 12위→80위 경계로 옮긴 상태로
+고정시키는 임시처방이라 기각. **선행 확인 필요: KIS `market_data` 예산과
+배치 시간(80종목 66초 → 211종목 약 3분 추정, 사용자 승인 필요)**.
+상세: `[DESIGN] regime_conditional_entry_signal_v1.md` §138.
+
+[SPPV-2.149] **첫 운영 반영 실측 완료**(§6.27, 2026-07-31
 KST) — 오늘 08:50:41 KST `decision_loop_intraday` freeze가 생성되고 core
 12종목이 기존 왜곡 상태(사전순 top12)와 **한 종목도 겹치지 않아** D안이
 운영에서 작동함을 확인. shadow 예측은 **실질 12/12 일치**(차이 1건은
@@ -1347,6 +1360,47 @@ snapshot 정렬 대응, (4) `regime_tailwind` 선행 확인이다.
 
 상세: `docs/10_signal_research_sppv/[DESIGN] regime_conditional_
 entry_signal_v1.md` §137.
+
+### 6.28 SPPV-2.150 — stale snapshot 근본 원인 규명 + 구조 대응안 비교
+(신규, 2026-07-31 KST, 완료 — 코드 미수정, 설계 검증 턴)
+
+- [x] **근본 원인 재규정**: "배치 누락"이 아니라 **생성 모집단 vs 소비
+      모집단의 계약 불일치**. §137.6의 "배치가 하루 81종목만 갱신"은
+      결과이지 원인이 아님을 정정.
+- [x] **축1 생성 모집단**: 배치가 `compose()`를 `core_cap=80` +
+      **`core_ranking_mode` 미지정(=사전순)**으로 호출. ops-scheduler가
+      `--core-cap`을 전달하지 않아 항상 기본값. 실측 core 79종목,
+      사전순 순번 범위 `(1, 84)`(연속 아님 — `_apply_exclusions` 영향).
+- [x] **축2 소비 모집단**: decision loop는 `core_cap=12` +
+      `core_ranking_mode=signal_score`로 호출해 **211종목 전체**를 정렬
+      대상으로 삼음. 오늘 소비 core 12개 중 생성 모집단 포함은
+      **4개(33.3%)**.
+- [x] **축3 freshness 부재**: `list_latest_by_instrument_ids` `WHERE`절에
+      시간 조건 없음, `_prime_core_signal_score_cache`/
+      `_core_signal_sort_rank`에 신선도 조건 **0건**(grep). core-eligible
+      211개 중 신선(0~1일) **79개(37.4%)**, 2~7일 1개, 31일+ **66개**,
+      snapshot 없음 **65개**.
+- [x] **"코드 한 줄 수정"이 부족한 이유 3가지 명시**: (1) stale은 숨지만
+      D안이 신선 79개(=사전순 상위) 안에서만 작동해 **편향이 80위 경계로
+      회귀**, (2) 생성/소비 불일치 유지, (3) 후보 수·cap·exclusions 변형
+      시 재발하고 snapshot 없는 65개는 영구 배제 고정.
+- [x] **대응안 6개 비교**(S0 현재 결함 상태 / S1 freshness guard 단독 /
+      S2 생성 모집단 정렬 / S3 생성·보관 구조 분리 / S4 정렬 키 교체 /
+      **S5 = S2+S1**) — 8개 축(근본 해결력·리팩터링 범위·순환 의존·계약
+      충돌·재발 방지력·운영 난이도·검증 가능성·임시처방 여부)으로 비교.
+- [x] **최종 1순위: S5**. S2가 근본(생성=소비, 순환 의존 소멸), S1은
+      안전망. S1 단독은 임시처방, S3는 범위 과도, S4는 D안 설계 후퇴.
+- [ ] **선행 확인(미완료)**: KIS `market_data` 예산과 배치 시간 —
+      80종목 66.36초(07-30 21:19~21:20 KST 로그) → 211종목 약 3분 추정,
+      호출량 약 2.6배. **사용자 승인 필요**, diff 착수 전 닫아야 함.
+
+**[PLAN] 상태 요약**: `ranking_score` 산식 정리는 마무리 단계이고, 이번
+트랙은 **유니버스 선정 경로의 데이터 계약 문제**로 옮겨왔다. S5는 배치
+파라미터 + freshness guard + 관측 지표의 좁은 범위이며, 착수 전 KIS 예산
+확인이 선행 조건이다. **코드 diff는 이번 턴 미착수.**
+
+상세: `docs/10_signal_research_sppv/[DESIGN] regime_conditional_
+entry_signal_v1.md` §138.
 
 ## 7. 완료 기준
 
