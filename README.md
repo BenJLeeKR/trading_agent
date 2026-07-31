@@ -46,13 +46,6 @@ Docker 사용:
 docker compose up -d db
 ```
 
-또는 로컬 PostgreSQL에서 직접 `trading` 데이터베이스와 사용자를 생성:
-
-```sql
-CREATE USER trading WITH PASSWORD 'trading';
-CREATE DATABASE trading OWNER trading;
-```
-
 ### 4. 마이그레이션 실행
 
 ```bash
