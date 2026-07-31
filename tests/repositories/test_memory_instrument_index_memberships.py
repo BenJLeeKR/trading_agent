@@ -39,3 +39,26 @@ async def test_get_latest_effective_from_returns_max_active_date() -> None:
     latest = await repos.instrument_index_memberships.get_latest_effective_from()
 
     assert latest == date(2026, 6, 27)
+
+
+@pytest.mark.asyncio
+async def test_get_latest_effective_from_prefers_metadata_as_of_date() -> None:
+    repos = build_in_memory_repositories()
+    instrument_id = uuid4()
+
+    await repos.instrument_index_memberships.sync_current_memberships(
+        instrument_id,
+        ["KOSPI200"],
+        effective_from=date(2026, 6, 27),
+    )
+    await repos.instrument_index_memberships.sync_current_memberships(
+        instrument_id,
+        ["KOSPI200"],
+        effective_from=date(2026, 6, 27),
+        metadata={"as_of_date": "2026-07-31"},
+        refresh_existing_metadata=True,
+    )
+
+    latest = await repos.instrument_index_memberships.get_latest_effective_from()
+
+    assert latest == date(2026, 7, 31)

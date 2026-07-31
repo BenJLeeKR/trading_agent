@@ -1869,6 +1869,40 @@ class TestIndexMembershipStaleness:
         assert data["threshold_days"] == 7
         assert data["is_stale"] is True
 
+    def test_prefers_metadata_as_of_date_for_staleness(self) -> None:
+        repos = build_in_memory_repositories()
+        instrument_id = uuid4()
+        effective_from = date(2026, 6, 27)
+        reflected_date = date(2026, 7, 31)
+        asyncio.run(
+            repos.instrument_index_memberships.sync_current_memberships(
+                instrument_id,
+                ["KOSPI200"],
+                effective_from=effective_from,
+            )
+        )
+        asyncio.run(
+            repos.instrument_index_memberships.sync_current_memberships(
+                instrument_id,
+                ["KOSPI200"],
+                effective_from=effective_from,
+                metadata={"as_of_date": reflected_date.isoformat()},
+                refresh_existing_metadata=True,
+            )
+        )
+
+        app = create_app(repos=repos, auth_enabled=False)
+        with TestClient(app) as client:
+            response = client.get(
+                "/instruments/index-membership/staleness?as_of=2026-07-31"
+            )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["latest_effective_from"] == reflected_date.isoformat()
+        assert data["age_days"] == 0
+        assert data["is_stale"] is False
+
 
 class TestPositions:
     """Position / cash-balance inspection endpoints."""

@@ -167,7 +167,16 @@ class PostgresInstrumentIndexMembershipRepository:
     async def get_latest_effective_from(self) -> date | None:
         row = await self._tx.connection.fetchrow(
             """
-            SELECT MAX(effective_from) AS latest_effective_from
+            SELECT MAX(
+                COALESCE(
+                    CASE
+                        WHEN NULLIF(metadata ->> 'as_of_date', '') IS NOT NULL
+                        THEN (metadata ->> 'as_of_date')::date
+                        ELSE NULL
+                    END,
+                    effective_from
+                )
+            ) AS latest_effective_from
             FROM trading.instrument_index_memberships
             WHERE effective_to IS NULL
             """

@@ -1799,11 +1799,18 @@ class InMemoryInstrumentIndexMembershipRepository:
         return tuple(sorted(instrument_ids, key=str))
 
     async def get_latest_effective_from(self) -> date | None:
-        active_dates = [
-            item.effective_from
-            for item in self._items.values()
-            if item.effective_to is None
-        ]
+        active_dates: list[date] = []
+        for item in self._items.values():
+            if item.effective_to is not None:
+                continue
+            as_of_date = item.metadata.get("as_of_date")
+            if isinstance(as_of_date, str):
+                try:
+                    active_dates.append(date.fromisoformat(as_of_date))
+                    continue
+                except ValueError:
+                    pass
+            active_dates.append(item.effective_from)
         return max(active_dates) if active_dates else None
 
 

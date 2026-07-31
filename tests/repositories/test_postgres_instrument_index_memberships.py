@@ -155,3 +155,38 @@ async def test_get_latest_effective_from_returns_max_active_date(
 
     assert latest is not None
     assert latest >= date(2026, 6, 27)
+
+
+@pytest.mark.asyncio
+async def test_get_latest_effective_from_prefers_metadata_as_of_date(
+    postgres_repos,
+) -> None:
+    instrument = InstrumentEntity(
+        instrument_id=uuid4(),
+        symbol="T399662",
+        market_code="KRX",
+        asset_class="kr_stock",
+        currency="KRW",
+        name="테스트metadata종목",
+        exchange_code="KRX",
+        market_segment="KOSPI",
+        is_active=True,
+    )
+    await postgres_repos.instruments.add(instrument)
+
+    await postgres_repos.instrument_index_memberships.sync_current_memberships(
+        instrument.instrument_id,
+        ["KOSPI200"],
+        effective_from=date(2026, 6, 27),
+    )
+    await postgres_repos.instrument_index_memberships.sync_current_memberships(
+        instrument.instrument_id,
+        ["KOSPI200"],
+        effective_from=date(2026, 6, 27),
+        metadata={"as_of_date": "2026-07-31"},
+        refresh_existing_metadata=True,
+    )
+
+    latest = await postgres_repos.instrument_index_memberships.get_latest_effective_from()
+
+    assert latest == date(2026, 7, 31)
