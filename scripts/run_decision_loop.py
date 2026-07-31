@@ -312,6 +312,14 @@ ENV_MANUAL_WATCHLIST = "TRADING_UNIVERSE_MANUAL_SYMBOLS"
 ENV_TRADING_UNIVERSE_CORE_CAP = "TRADING_UNIVERSE_CORE_CAP"
 ENV_TRADING_UNIVERSE_MAX_CAP = "TRADING_UNIVERSE_MAX_CAP"
 DEFAULT_DECISION_LOOP_INTRADAY_FREEZE_PURPOSE = "decision_loop_intraday"
+
+# D안(core signal-score 정렬)에서 snapshot을 FRESH로 볼 최대 경과 일수(KST
+# 달력일). 장후 signal feature 배치는 거래일 20:10 KST에 돌므로 08:50 KST
+# 유니버스 확정 시점의 최신 snapshot은 정상적으로 전 거래일 산출물(경과 1일)
+# 이다. 금요일 배치 -> 월요일 확정(경과 3일)과 배치 1회 실패를 함께 흡수할
+# 여유로 5일을 둔다. 초과분은 STALE 계층으로 하향되고 snapshot이 없는 종목은
+# MISSING 계층(최하위)이 된다(SPPV-2.151 §139.3).
+DEFAULT_CORE_SIGNAL_FRESHNESS_MAX_AGE_DAYS = 5
 KST = ZoneInfo("Asia/Seoul")
 _APPLY_CORE_RISK_OFF_TOPK = (
     os.environ.get("DETERMINISTIC_TRIGGER_APPLY_CORE_RISK_OFF_TOPK", "0") == "1"
@@ -738,9 +746,16 @@ async def _load_trading_universe_with_anchor(
                 # D안(SPPV-2.145): core 후보를 종목코드 사전순이 아니라 최신
                 # snapshot overall_score 기준으로 자른다. decision loop 경로만
                 # 명시적으로 opt-in하므로, 같은 compose()를 쓰는 signal feature
-                # snapshot 입력 배치는 기본값(사전순)으로 남아 동작이 바뀌지
-                # 않는다(순환 의존 회피, §132.3).
+                # snapshot 입력 배치는 기본값(사전순)으로 남는다(§132.3).
                 core_ranking_mode=CORE_RANKING_MODE_SIGNAL_SCORE,
+                # S5 freshness guard(SPPV-2.151): 생성 모집단을 소비 모집단에
+                # 맞춰 넓혔더라도, 배치 부분 실패·신규 상장·상장폐지 등으로
+                # 특정 종목 snapshot이 누락되면 오래된 점수가 정렬 상위를
+                # 차지할 수 있다. 그 경우를 STALE/MISSING 계층으로 하향시켜
+                # 막는 안전망이다(정렬 실패로 전체를 막지 않는다).
+                core_signal_freshness_max_age_days=(
+                    DEFAULT_CORE_SIGNAL_FRESHNESS_MAX_AGE_DAYS
+                ),
             )
             selected = await selector.compose(ctx)
 

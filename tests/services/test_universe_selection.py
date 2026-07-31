@@ -2631,3 +2631,156 @@ class TestCoreRankingModeSignalScore:
         core = [s.symbol for s in result if s.source_type == SourceType.CORE]
         # snapshot 보유 2종목이 먼저(동점이라 사전순), 미보유 2종목이 뒤(사전순).
         assert core == ["000007", "000008", "000001", "000002"]
+
+
+class TestCoverageModeAndFreshnessGuard:
+    """SPPV-2.151 / S5 — 생성 모집단 정렬(coverage 모드) + freshness guard.
+
+    이 두 축은 각각만으로는 불충분하다는 것이 설계 전제다:
+    - coverage 모드만 있으면 배치 부분 실패 시 stale 점수가 상위를 차지한다.
+    - freshness guard만 있으면 생성 모집단이 좁은 채로 남아, 정렬이 사실상
+      "생성 모집단 안"으로 축소된다(사전순 편향이 경계만 이동).
+    따라서 두 계약을 각각 테스트로 고정한다.
+    """
+
+    @staticmethod
+    def _snapshot(
+        instrument_id: UUID,
+        overall_score: str,
+        *,
+        age_days: int = 0,
+    ) -> SignalFeatureSnapshotEntity:
+        return SignalFeatureSnapshotEntity(
+            signal_feature_snapshot_id=uuid4(),
+            instrument_id=instrument_id,
+            timeframe="1d",
+            snapshot_at=NOW - timedelta(days=age_days),
+            feature_set_version="signal_backbone_v1",
+            bar_count=80,
+            overall_score=Decimal(overall_score),
+        )
+
+    @pytest.mark.asyncio
+    async def test_max_cap_none_covers_all_core_without_truncation(self) -> None:
+        """coverage 모드(max_cap=None)는 core 모집단을 절단하지 않는다."""
+        repos = build_in_memory_repositories()
+        for i in range(1, 16):
+            await repos.instruments.add(_make_instrument(f"0000{i:02d}"))
+
+        svc = UniverseSelectionService(repos)
+        # 기존 왜곡 상태 재현: cap이 있으면 절단된다.
+        capped = await svc.compose(
+            CompositionContext(
+                account_id=FALLBACK_ACCOUNT_ID, since=NOW, max_cap=5, core_cap=5
+            )
+        )
+        assert len([s for s in capped if s.source_type == SourceType.CORE]) == 5
+
+        # coverage 모드: 절단 없음.
+        svc2 = UniverseSelectionService(repos)
+        covered = await svc2.compose(
+            CompositionContext(
+                account_id=FALLBACK_ACCOUNT_ID, since=NOW, max_cap=None, core_cap=None
+            )
+        )
+        assert len([s for s in covered if s.source_type == SourceType.CORE]) == 15
+
+    @pytest.mark.asyncio
+    async def test_count_core_eligible_matches_composed_core(self) -> None:
+        """커버리지 지표용 count가 실제 compose 결과와 같은 기준을 쓴다."""
+        repos = build_in_memory_repositories()
+        for sym in ("000001", "000002", "000003"):
+            await repos.instruments.add(_make_instrument(sym))
+
+        svc = UniverseSelectionService(repos)
+        total = await svc.count_core_eligible()
+        composed = await svc.compose(
+            CompositionContext(
+                account_id=FALLBACK_ACCOUNT_ID, since=NOW, max_cap=None, core_cap=None
+            )
+        )
+        assert total == 3
+        assert total == len([s for s in composed if s.source_type == SourceType.CORE])
+
+    @pytest.mark.asyncio
+    async def test_stale_snapshot_demoted_below_fresh(self) -> None:
+        """STALE(기준 초과)은 점수가 더 높아도 FRESH 전체보다 뒤로 밀린다."""
+        repos = build_in_memory_repositories()
+        stale_high = _make_instrument("000001")   # 고득점이나 30일 경과
+        fresh_low = _make_instrument("000002")    # 저득점이나 어제
+        for inst in (stale_high, fresh_low):
+            await repos.instruments.add(inst)
+        await repos.signal_feature_snapshots.add(
+            self._snapshot(stale_high.instrument_id, "0.90", age_days=30)
+        )
+        await repos.signal_feature_snapshots.add(
+            self._snapshot(fresh_low.instrument_id, "0.10", age_days=1)
+        )
+
+        svc = UniverseSelectionService(repos)
+        result = await svc.compose(
+            CompositionContext(
+                account_id=FALLBACK_ACCOUNT_ID,
+                since=NOW,
+                core_cap=1,
+                core_ranking_mode=CORE_RANKING_MODE_SIGNAL_SCORE,
+                core_signal_freshness_max_age_days=5,
+            )
+        )
+        core = [s.symbol for s in result if s.source_type == SourceType.CORE]
+        assert core == ["000002"]
+
+    @pytest.mark.asyncio
+    async def test_freshness_guard_off_keeps_stale_first(self) -> None:
+        """guard 미지정(기본값 None)은 기존 동작 — stale 고득점이 그대로 1위."""
+        repos = build_in_memory_repositories()
+        stale_high = _make_instrument("000001")
+        fresh_low = _make_instrument("000002")
+        for inst in (stale_high, fresh_low):
+            await repos.instruments.add(inst)
+        await repos.signal_feature_snapshots.add(
+            self._snapshot(stale_high.instrument_id, "0.90", age_days=30)
+        )
+        await repos.signal_feature_snapshots.add(
+            self._snapshot(fresh_low.instrument_id, "0.10", age_days=1)
+        )
+
+        svc = UniverseSelectionService(repos)
+        result = await svc.compose(
+            CompositionContext(
+                account_id=FALLBACK_ACCOUNT_ID,
+                since=NOW,
+                core_cap=1,
+                core_ranking_mode=CORE_RANKING_MODE_SIGNAL_SCORE,
+            )
+        )
+        core = [s.symbol for s in result if s.source_type == SourceType.CORE]
+        assert core == ["000001"]
+
+    @pytest.mark.asyncio
+    async def test_tier_order_fresh_then_stale_then_missing(self) -> None:
+        """3계층 순서가 FRESH -> STALE -> MISSING으로 고정된다."""
+        repos = build_in_memory_repositories()
+        fresh = _make_instrument("000009")     # 사전순 뒤, FRESH
+        stale = _make_instrument("000005")     # 중간, STALE
+        missing = _make_instrument("000001")   # 사전순 앞, snapshot 없음
+        for inst in (missing, stale, fresh):
+            await repos.instruments.add(inst)
+        await repos.signal_feature_snapshots.add(
+            self._snapshot(fresh.instrument_id, "0.10", age_days=1)
+        )
+        await repos.signal_feature_snapshots.add(
+            self._snapshot(stale.instrument_id, "0.90", age_days=40)
+        )
+
+        svc = UniverseSelectionService(repos)
+        result = await svc.compose(
+            CompositionContext(
+                account_id=FALLBACK_ACCOUNT_ID,
+                since=NOW,
+                core_ranking_mode=CORE_RANKING_MODE_SIGNAL_SCORE,
+                core_signal_freshness_max_age_days=5,
+            )
+        )
+        core = [s.symbol for s in result if s.source_type == SourceType.CORE]
+        assert core == ["000009", "000005", "000001"]

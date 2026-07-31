@@ -10340,13 +10340,29 @@ agent 설계 문서 기준으로도 순서는 다음이 맞다.
      되면 **순환 의존 제약 자체가 소멸**하는 구조적 이점 확인. 상세:
      `docs/10_signal_research_sppv/[DESIGN] regime_conditional_entry_
      signal_v1.md` §138.
-   - **SPPV-3(다음 착수: [1순위] **S5 diff 초안 설계** — 단 착수 전
-     **KIS `market_data` 예산·배치 시간 선행 확인 필수**(80종목 66.36초 →
-     211종목 약 3분, 호출량 약 2.6배, **사용자 승인 필요**). diff 범위는
-     (a) 배치 `core_cap`/`universe_max_cap` 기본값 상향 또는 ops-scheduler
-     명시 전달, (b) `_prime_core_signal_score_cache`에 freshness guard
-     (`CompositionContext` 필드, 기본값은 무제한=현행 무변화 권고),
-     (c) 신선도 커버리지 관측 지표 추가 +
+   - **SPPV-2.151(완료, 2026-07-31 KST, S5 구현 = 생성 모집단 정렬 +
+     freshness guard, 작성자: Codex, `.env` 미수정, Full pytest 미실행,
+     신규 KIS 호출 0건 — **코드 변경 포함, 운영 효과 미확정**)**: 배치가
+     장후 20:10 KST 실행이라 **시간 제약을 두지 않는다는 전제**로,
+     배치 cap 기본값을 `80 → None`(**coverage 모드=절단하지 않음**)으로
+     바꿔 생성 모집단이 소비 모집단(core-eligible 전체)을 구조적으로 덮게
+     함("80종목 유지"는 보수안으로 남기지 않음). 상수 상향(`80→300`)은
+     여전히 절단 가능해 기각. 부수 이점: **순환 의존 회피 제약 소멸**.
+     동시에 `_core_signal_sort_rank()`를 `(tier, -score, symbol)` **3계층**
+     (FRESH/STALE/MISSING, 명명 상수)으로 코드화하고 기본값 `None`(무변화),
+     decision loop만 **5일** 주입. 배치 **커버리지 관측 지표 + shortfall
+     WARNING** 추가. **축1=근본 원인 대응, 축2=guardrail**로 역할 분리.
+     검증: **114 passed**(기존 109건 무수정 + 신규 5, 무변화 회귀 포함),
+     관련 123 passed, 하네스 2건 PASS. 상세:
+     `docs/10_signal_research_sppv/[DESIGN] regime_conditional_entry_
+     signal_v1.md` §139.
+   - **SPPV-3(다음 착수: [1순위] **S5 운영 반영 관측** — 다음 장후 배치
+     (20:10 KST) 로그에서 `core_covered`/`core_eligible_total`/
+     `coverage_ratio`가 100%에 근접하는지, KIS `market_data` 예산 안에서
+     처리되는지 확인하고, 다음 거래일 08:50 KST freeze에서 STALE/MISSING
+     계층이 상위를 차지하지 않는지 대조(read-only) +
+     [1-B순위] **D안 순수 효과 재측정** — S5로 stale bias가 사라진 뒤
+     §137.5의 2.13배(상한)를 다시 측정 +
      [1-B순위] `strategy_alignment` 제거의 **게이트 영향 재관측** —
      SPPV-2.149에서 오늘 게이트 활성이 0/264라 검증 불가였으므로,
      게이트가 실제 활성화되는 날(`core`+`bearish_trend`+`risk_off`)에

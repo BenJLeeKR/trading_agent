@@ -78,6 +78,29 @@ CORE_RANKING_MODE_SIGNAL_SCORE = "signal_score"
 """D안 — 최신 snapshot `overall_score` 내림차순으로 core 내부를 재정렬한다."""
 
 
+# ── Core signal freshness tier (SPPV-2.151 / S5 freshness guard) ─────────────
+#
+# `CORE_RANKING_MODE_SIGNAL_SCORE`에서 core 후보를 정렬할 때, snapshot의
+# 신선도를 1차 키로 쓴다. "stale이면 전체 실패"가 아니라 **계층을 나눠
+# 하향**시키는 명시적 계약이다 — 예외처리가 아니라 정렬 규칙이다.
+#
+#   FRESH   : snapshot이 있고 기준 일수 이내      -> 정상 경쟁
+#   STALE   : snapshot이 있으나 기준 일수 초과    -> FRESH 전체보다 뒤
+#   MISSING : snapshot 자체가 없음                -> 최하위
+#
+# 각 계층 내부에서는 `overall_score` 내림차순, 완전 동점일 때만 `symbol`
+# 사전순(결정성 보장용 기술 규칙)을 쓴다.
+
+CORE_SIGNAL_TIER_FRESH = 0
+"""snapshot 보유 + 기준 일수 이내."""
+
+CORE_SIGNAL_TIER_STALE = 1
+"""snapshot 보유하나 기준 일수 초과 — FRESH 뒤로 하향."""
+
+CORE_SIGNAL_TIER_MISSING = 2
+"""snapshot 없음 — 최하위."""
+
+
 @dataclass(slots=True, frozen=True)
 class SelectedSymbol:
     """A single symbol selected for the trading universe.
@@ -121,9 +144,11 @@ class CompositionContext:
     since : datetime
         Look-back window for event-driven overlay (events ingested after
         this timestamp are considered).
-    max_cap : int
+    max_cap : int | None
         Maximum number of non-held symbols in the final universe.
-        Default: 30.
+        Default: 30. ``None``은 **절단하지 않음(coverage 모드)** — 선별이
+        아니라 커버리지가 목적인 호출부(장후 signal feature 배치)가 core
+        모집단을 조용히 잘라내지 않게 하기 위한 값이다(SPPV-2.151).
     core_cap : int | None
         Maximum number of ``core`` source symbols allowed inside the
         non-held universe. ``None`` means no separate core-only limit.
@@ -153,11 +178,17 @@ class CompositionContext:
         의 ``overall_score`` 내림차순으로 core 내부만 재정렬한다(D안,
         SPPV-2.145). 기본값이 현행이므로 이 필드를 지정하지 않는 호출부
         (예: signal feature snapshot 입력 배치)의 동작은 바뀌지 않는다.
+    core_signal_freshness_max_age_days : int | None
+        ``CORE_RANKING_MODE_SIGNAL_SCORE`` 정렬에서 snapshot을 FRESH로 볼
+        최대 경과 일수(KST 달력일 기준). 초과분은 STALE 계층으로 하향되고,
+        snapshot이 없는 종목은 MISSING 계층(최하위)이 된다(SPPV-2.151 / S5).
+        ``None``(기본값)은 신선도 판정을 하지 않음 — 즉 이 필드를 지정하지
+        않는 호출부의 동작은 바뀌지 않는다.
     """
 
     account_id: UUID
     since: datetime
-    max_cap: int = 30
+    max_cap: int | None = 30
     core_cap: int | None = None
     event_overlay_cap: int | None = None
     exclude_held_from_cap: bool = True
@@ -166,6 +197,7 @@ class CompositionContext:
     pre_pool_size: int = 50
     manual_symbols: tuple[tuple[str, str], ...] = ()
     core_ranking_mode: str = CORE_RANKING_MODE_SYMBOL
+    core_signal_freshness_max_age_days: int | None = None
 
 
 @dataclass(slots=True, frozen=True)

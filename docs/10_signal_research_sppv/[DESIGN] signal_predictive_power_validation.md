@@ -3085,6 +3085,45 @@ entry 설계 검토로 전환**을 확정했다. 별도 문서
   상세: `docs/10_signal_research_sppv/[DESIGN] regime_conditional_entry_
   signal_v1.md` §138.
 
+- 작성자: Codex
+- 수정일자: 2026-07-31 KST (151차, S5 구현 = 생성 모집단 정렬 + freshness
+  guard, `.env` 미수정, Full pytest 미실행, 신규 KIS 호출 0건 — **코드
+  변경 포함, 운영 효과 미확정**)
+- 수정내용: `signal_feature_snapshot` 배치가 **장후 20:10 KST** 실행이라
+  **소요 시간 증가를 제약으로 두지 않는다는 전제**로 S5를 구현했다
+  (**"80종목 유지"는 보수안으로 남기지 않음**). **축1(근본 원인 대응)**은
+  배치 cap 기본값을 `80 → None`으로 바꾸고 `CompositionContext.max_cap`에
+  **`None` = 절단하지 않음(coverage 모드)** 의미를 추가해 `_apply_cap`의
+  절단 지점 두 곳을 모두 무효화한 것이다 — 배치는 selection이 아니라
+  coverage job이므로 core 모집단을 자를 이유가 없고, 상수 상향(`80→300`)은
+  여전히 절단 가능한 cap이라 후보가 늘면 조용히 재발하므로 택하지 않았다.
+  부수 이점으로 배치가 core 상한을 두지 않아 정렬 기준이 선택에 영향을
+  주지 않게 되어 **SPPV-2.145 §132.3의 순환 의존 회피 제약이 소멸**한다.
+  **축2(guardrail)**는 `_core_signal_sort_rank()`의 정렬 키를
+  `(tier, -overall_score, symbol)` 3계층으로 코드화한 것이다
+  (`CORE_SIGNAL_TIER_FRESH/STALE/MISSING`을 명명 상수로 선언해 임시
+  예외처리가 아니라 명시된 정렬 규칙임을 남겼고, stale을 실패로 막지 않고
+  **하향**시켜 배치 부분 실패에도 유니버스 구성이 계속되게 했다).
+  `core_signal_freshness_max_age_days` 기본값은 `None`(=신선도 판정 없음
+  =기존 동작)이고 decision loop만 **5일**을 주입한다(정상 경과 1일 + 주말
+  3일 + 배치 1회 실패 흡수). **축3**으로 배치가 매 실행 커버리지 지표
+  (`core_covered`/`core_eligible_total`/`coverage_ratio`)를 남기고
+  shortfall 시 WARNING을 내도록 했다 — cap을 없애도 `_apply_exclusions`나
+  instrument master 변화로 커버리지가 떨어질 수 있고, 지표가 없으면 그
+  하락이 조용히 stale/missing 계층으로 되돌아온다. **둘 중 하나만으로
+  불충분한 이유**: S2 단독은 배치 부분 실패·신규 상장 시 오래된 점수가
+  상위를 그대로 차지하고(코드가 stale을 구분할 수단이 없음), S1 단독은
+  생성 모집단이 좁은 채로 남아 FRESH 계층이 사실상 배치가 덮은 ~80종목이
+  되어 **사전순 편향이 12위에서 80위 경계로 이동한 상태로 고정**된다.
+  검증: `tests/services/test_universe_selection.py` **114 passed**(기존
+  **109건 무수정 통과** + 신규 5건, 그중 `test_freshness_guard_off_keeps_
+  stale_first`가 **기본값 무변화 회귀**를 고정), 관련 스크립트 테스트 123
+  passed, 하네스 `accept backend-file` 2건 PASS, 배치 import/`--help`
+  확인. **미완료**: 운영 반영 관측(다음 배치 커버리지 지표 + 다음 거래일
+  freeze 계층 분포), KIS `market_data` 예산 실측(80 → 약 211종목).
+  상세: `docs/10_signal_research_sppv/[DESIGN] regime_conditional_entry_
+  signal_v1.md` §139.
+
 ---
 
 ## 진행 체크리스트
@@ -6132,6 +6171,28 @@ canonical),
     로직 변경 없음, 신규 KIS 호출 0건(shadow 재호출은 `kis_
     client=None`). 상세: `docs/10_signal_research_sppv/[DESIGN]
     regime_conditional_entry_signal_v1.md` §94.
+- [x] **SPPV-2.151(신설, 완료 — 코드 변경 포함, 운영 효과 미확정)**
+  S5 구현 = 생성 모집단 정렬 + freshness guard (2026-07-31 KST, 작성자:
+  Codex, `.env` 미수정, Full pytest 미실행, 신규 KIS 호출 0건)
+  - **전제**: 배치는 장후 **20:10 KST** 실행이라 **소요 시간 증가를 제약으로
+    두지 않음**. **"80종목 유지"는 보수안으로 남기지 않음.**
+  - **축1(근본 원인 대응)**: 배치 cap 기본값 `80 → None`(**coverage
+    모드=절단하지 않음**)으로 바꿔 생성 모집단이 소비 모집단(core-eligible
+    전체)을 구조적으로 덮게 함. `CompositionContext.max_cap`에 `None`
+    의미를 추가해 `_apply_cap` 절단 지점 2곳 무효화. 상수 상향(`80→300`)은
+    여전히 절단 가능해 재발하므로 기각. 부수 이점으로 **SPPV-2.145
+    §132.3 순환 의존 회피 제약이 소멸**.
+  - **축2(guardrail)**: `_core_signal_sort_rank()` 정렬 키를
+    `(tier, -overall_score, symbol)` 3계층으로 코드화(`CORE_SIGNAL_TIER_
+    FRESH/STALE/MISSING` 명명 상수). stale을 실패로 막지 않고 **하향**.
+    기본값 `None`=무변화, decision loop만 **5일** 주입.
+  - **축3**: 배치 커버리지 관측 지표 + shortfall **WARNING** 추가.
+  - **둘 중 하나만으로 불충분**: S2 단독은 배치 부분 실패 시 stale이 상위를
+    차지, S1 단독은 **편향이 80위 경계로 이동한 상태로 고정**.
+  - 검증: **114 passed**(기존 **109건 무수정 통과** + 신규 5, 무변화 회귀
+    포함), 관련 123 passed, 하네스 2건 PASS. **미완료**: 운영 반영 관측,
+    KIS 예산 실측. 상세: `docs/10_signal_research_sppv/[DESIGN] regime_
+    conditional_entry_signal_v1.md` §139.
 - [x] **SPPV-2.150(신설, 완료 — 설계 검증 턴, 코드 미수정)** stale
   snapshot 근본 원인 규명 + 구조 대응안 비교 (2026-07-31 KST, 작성자:
   Codex, `.env` 미수정, Full pytest 미실행, 신규 KIS 호출 0건)

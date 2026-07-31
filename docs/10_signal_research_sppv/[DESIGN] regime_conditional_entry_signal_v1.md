@@ -17466,3 +17466,145 @@ coverage"를 분리할 실익이 사라진다.
 3. **3순위**: D안 순수 효과 분리(stale bias 제거 후 순효과) — S5 반영
    후에는 stale bias가 사라지므로 그때 재측정이 더 정확하다.
 4. **4순위**: `regime_tailwind` 제거 선행 확인 1건(별도 트랙).
+
+## §139. S5 구현 — 생성 모집단 정렬 + freshness guard(SPPV-2.151, 2026-07-31 KST)
+
+**전제(명시)**: `signal_feature_snapshot` 배치는 **장후 20:10 KST**에 실행되므로
+이번 트랙에서는 **배치 소요 시간 증가를 제약으로 두지 않고**, KIS
+`market_data` 예산도 지나치게 아끼지 않는다. 따라서 **"80종목 유지"는
+보수안으로 남기지 않는다** — 목표는 §138.1의 근본 원인(생성 모집단 vs 소비
+모집단 불일치) 해소다.
+
+### 139.1 수정한 코드(4개 파일)
+
+| 파일 | 변경 | 역할 |
+|---|---|---|
+| `services/universe_selection_types.py` | `max_cap: int \| None`(None = **coverage 모드**), `CORE_SIGNAL_TIER_FRESH/STALE/MISSING` 상수, `CompositionContext.core_signal_freshness_max_age_days`(기본 `None`) | 계약 |
+| `services/universe_selection.py` | `_apply_cap`이 `max_cap is None`을 절단 없음으로 처리, `_prime_core_signal_score_cache`가 `(score, snapshot_at)` 보관, `_core_signal_tier()` 신설, `_core_signal_sort_rank()`가 3계층 정렬, `count_core_eligible()` 신설 | 구현 |
+| `scripts/generate_signal_feature_snapshot_input.py` | 배치 cap 기본값 `80 → None`(coverage), 커버리지 관측 지표 + shortfall 경고 | 생성 측 |
+| `scripts/run_decision_loop.py` | `core_signal_freshness_max_age_days=5` 주입 | 소비 측 |
+
+### 139.2 축 1 — 생성 모집단 정렬(근본 원인 대응)
+
+**구조적 문장**: **장후 signal feature 배치는 selection job이 아니라
+coverage job이다.** 따라서 core 모집단을 cap으로 잘라낼 이유가 없다.
+
+이를 상수 상향(`80 → 300`)으로 처리하지 않은 이유(사실 기반):
+`80 → 300`은 여전히 **절단 가능한 cap**이므로 core-eligible이 300을 넘는
+순간 조용히 다시 잘린다 — §138.3에서 지적한 "다음 변형 국면에서 재발"이
+그대로 남는다. 대신 `CompositionContext.max_cap`에 **`None` = 절단하지 않음**
+이라는 의미를 추가하고(`_apply_cap`의 두 절단 지점 모두 반영), 배치 기본값을
+`None`으로 두어 **cap이 원인이 될 수 있는 경로 자체를 제거**했다.
+
+**코드 경로로 닫기**: 배치는 `compose()` → `_apply_cap()`을 타는데,
+`ctx.max_cap is None`이면 `non_held_count >= ctx.max_cap` 분기와
+`candidates[: ctx.max_cap]` 슬라이스가 모두 무효화되고, `core_cap=None`이면
+core 전용 상한도 없다. 즉 배치의 core 산출물은
+`_add_core_universe`(=`_is_core_seed_instrument` 판정 결과) 전체에서
+`_apply_exclusions`만 통과 여부로 걸러진 집합이 된다 — 이는 소비 측 D안
+정렬 대상과 **동일한 판정 함수에서 나온 동일 모집단**이다.
+
+**부수 이점(사실)**: 배치의 `core_cap`이 후보 수 제한을 두지 않으므로
+정렬 기준이 선택 결과에 영향을 주지 않는다 → SPPV-2.145 §132.3에서 순환
+의존 회피를 위해 둔 제약("배치는 반드시 기본값 사전순을 유지해야 한다")이
+**불필요해지고 순환 위험 자체가 소멸**한다.
+
+### 139.3 축 2 — freshness guard(안전망, 명시적 정렬 계약)
+
+`_core_signal_sort_rank()`의 정렬 키를 **3계층**으로 코드화했다:
+
+```
+key = (tier, -overall_score, symbol)
+  tier: CORE_SIGNAL_TIER_FRESH(0)   snapshot 보유 + 경과일 <= max_age
+        CORE_SIGNAL_TIER_STALE(1)   snapshot 보유 + 경과일 >  max_age
+        CORE_SIGNAL_TIER_MISSING(2) snapshot 없음
+```
+
+- **stale을 실패로 처리해 전체를 막지 않는다** — 계층으로 **하향**시킨다.
+  배치가 일부 실패해도 유니버스 구성 자체는 계속 진행돼야 하기 때문이다.
+- `symbol` 사전순은 여전히 **3번째 요소**로, 완전 동점일 때만 도달하는
+  결정성 보장용 기술 규칙이다(§133.2 계약 유지).
+- 계층 상수를 `universe_selection_types.py`에 이름 있는 상수로 선언해
+  "임시 예외처리"가 아니라 **명시된 정렬 규칙**임을 코드로 남겼다.
+- `max_age_days=None`이면 `_core_signal_tier()`가 항상 FRESH를 반환하므로
+  **기존 동작과 완전히 동일**하다(하위 호환).
+- 소비 측 기본값은 **5일**(`run_decision_loop.py`): 정상 경로는 경과 1일
+  (전 거래일 20:10 KST 배치 → 당일 08:50 KST 확정)이고, 금요일 배치 →
+  월요일 확정(경과 3일)과 **배치 1회 실패**를 함께 흡수하는 여유다.
+
+### 139.4 축 3 — 커버리지 관측 지표(재발 조기 감지)
+
+배치가 매 실행마다 다음을 로그로 남긴다:
+
+```
+signal feature coverage: core_covered=N core_eligible_total=M
+coverage_ratio=R universe_total=T core_cap=None max_cap=None
+```
+
+`core_covered < core_eligible_total`이면 **WARNING**으로 shortfall과
+누락 수를 남긴다. cap을 무제한으로 두더라도 `_apply_exclusions`(유동성·
+우선주 등)나 instrument master 변화로 커버리지가 떨어질 수 있는데, 지표가
+없으면 그 하락이 **조용히 stale/missing 계층으로 되돌아온다**.
+`count_core_eligible()`은 `_is_core_seed_instrument`를 재사용하므로 생성/
+소비 어느 쪽과도 기준이 어긋나지 않고, 활성 종목·membership 캐시를 타서
+추가 쿼리 부담이 사실상 없다.
+
+### 139.5 왜 둘 중 하나만으로는 불충분한가(코드/운영 관점)
+
+| 하나만 고칠 때 | 남는 문제 |
+|---|---|
+| **생성 모집단만 확대(S2 단독)** | 배치가 **부분 실패**하거나 신규 상장·상장폐지로 특정 종목 snapshot이 누락되는 순간, 그 종목의 오래된 점수가 정렬 상위를 그대로 차지한다. `list_latest_by_instrument_ids`는 시간 조건이 없으므로(§138.2 축3) 코드가 stale을 구분할 방법이 아예 없다 — 운영상 배치 실패는 상시 가능한 사건이다. |
+| **freshness guard만 추가(S1 단독)** | stale은 사라지지만 **생성 모집단이 좁은 채로 남아** FRESH 계층이 사실상 "배치가 덮은 ~80종목"이 된다. 즉 D안 정렬이 그 안에서만 작동해 **사전순 편향이 12위 경계에서 80위 경계로 이동한 상태로 고정**된다(§138.3). snapshot 없는 종목은 MISSING 계층에 영구 고정된다. |
+
+**결론**: S2는 **근본 원인 대응**(생성=소비를 만들어 stale이 발생할 구조적
+이유를 제거), S1은 **guardrail**(그래도 생기는 예외를 정렬 계약으로 흡수)
+이다. 둘은 대체 관계가 아니라 **역할이 다른 계층**이므로 함께 넣어야 한다.
+
+### 139.6 실행한 최소 검증
+
+| 검증 | 결과 |
+|---|---|
+| `tests/services/test_universe_selection.py` | **114 passed**(기존 **109건 무수정 통과** + 신규 5) |
+| `tests/scripts/test_run_decision_loop.py` + `test_universe_freeze_dedupe.py` | **123 passed** |
+| 하네스 `accept backend-file universe_selection.py` | **PASS** |
+| 하네스 `accept backend-file universe_selection_types.py` | **PASS** |
+| 배치 스크립트 import + `--help` 파싱 | OK(`core_cap`/`max_cap` 기본값 `None` 확인) |
+
+신규 테스트 5건(`TestCoverageModeAndFreshnessGuard`):
+1. `test_max_cap_none_covers_all_core_without_truncation` — cap 있으면 5개로
+   절단, coverage 모드는 15개 전부 유지.
+2. `test_count_core_eligible_matches_composed_core` — 커버리지 지표용 count가
+   실제 compose 결과와 동일 기준.
+3. `test_stale_snapshot_demoted_below_fresh` — 30일 경과 고득점(0.90)이
+   1일 경과 저득점(0.10)보다 **뒤로 밀림**.
+4. `test_freshness_guard_off_keeps_stale_first` — **기본값(None)에서는 기존
+   동작 유지**(stale 고득점이 1위) = 무변화 회귀 고정.
+5. `test_tier_order_fresh_then_stale_then_missing` — FRESH → STALE → MISSING
+   순서 고정(사전순이 계층을 뒤집지 못함을 함께 확인).
+
+Full pytest / 외부 API 실호출 / 운영 DB write는 수행하지 않았다.
+
+### 139.7 아직 남겨둔 것
+
+1. **운영 반영 관측 미실시** — 다음 장후 배치(20:10 KST)에서 커버리지 지표가
+   `core_covered ≈ core_eligible_total`로 올라오는지, 그리고 다음 거래일
+   08:50 KST freeze에서 STALE/MISSING 계층이 상위를 차지하지 않는지 확인이
+   필요하다. **이번 턴은 diff 작성 + 최소 검증까지다.**
+2. **KIS `market_data` 예산 실측 미확인** — 80 → 약 211종목으로 늘어나는
+   호출량이 실제 예산 안에서 처리되는지는 다음 배치 로그로 확인해야 한다
+   (전제상 시간 제약은 두지 않으나, 예산 소진 시 부분 실패가 발생할 수 있고
+   그때는 §139.3의 guard가 작동한다).
+3. **`_apply_exclusions`로 인한 잔여 커버리지 격차** — cap을 제거해도 유동성·
+   우선주 필터로 일부 core-eligible이 빠질 수 있다. 이는 설계상 의도된
+   제외이며, §139.4 지표로 규모를 관측한 뒤 필요하면 별도 판단한다.
+4. **D안 순수 효과 재측정** — S5 반영 후 stale bias가 사라지면 §137.5의
+   2.13배(상한)를 다시 측정해야 정확한 순효과가 나온다.
+5. **`regime_tailwind` 제거 선행 확인** — 별도 트랙 유지.
+
+### 139.8 다음 우선 작업
+
+1. **1순위**: S5 운영 반영 관측 — 다음 배치 커버리지 지표 + 다음 거래일
+   freeze의 계층 분포(read-only).
+2. **2순위**: D안 순수 효과 재측정(stale bias 제거 후).
+3. **3순위**: `strategy_alignment` 게이트 영향 재관측(게이트 활성일).
+4. **4순위**: `regime_tailwind` 제거 선행 확인(별도 트랙).
