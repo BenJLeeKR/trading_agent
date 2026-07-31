@@ -2097,6 +2097,32 @@
   **2026-08-03(월)**. 상세: `docs/10_signal_research_sppv/[DESIGN]
   regime_conditional_entry_signal_v1.md` §140.
 
+- 2026-07-31 KST(SPPV-2.153, 신규 KIS 호출 0건, 완료 — **SPPV 트랙과 무관**):
+  **`trading.trade_decisions`의 attnum(컬럼 슬롯) 1600 한도 도달 수정.**
+  PR #73 배포 후 Postgres 로그 점검 중 발견 — 살아있는 컬럼 42개인데 attnum이
+  하드 리밋 1600에 도달, 삭제된 컬럼 슬롯 1558개 영구 소모. 원인: 이력 테이블
+  없이 매 부팅마다 `db/migrations/*.sql` 전체를 재실행하는 러너 구조에서
+  `0021`/`0022`(ADD 4컬럼)와 `0026`(같은 4컬럼 DROP)이 파일명 사전순으로
+  매 부팅마다 짝으로 재생돼 attnum을 영구 소모. 다른 테이블은 스캔 결과 전부
+  `dropped=0`으로 깨끗(고립된 이슈). 수정 3갈래: **(c)** `run.py`에서
+  `TooManyColumnsError`를 다른 `Duplicate*Error`와 분리해 raise(오판·실패
+  은폐 방지) **(b)** `trading.schema_migrations` 이력 테이블 도입 — 기존
+  스키마 있는 DB는 현재 파일 전체 백필(재실행 없음), 새 DB는 백필 없이 정상
+  실행(재발 방지, 근본) **(a)** `db/migrations/0051_recreate_trade_decisions_
+  reset_attnum.sql` — rename → `LIKE ... INCLUDING DEFAULTS INCLUDING
+  CONSTRAINTS INCLUDING INDEXES`로 재생성(attnum 리셋) → FK 3개 재추가 →
+  데이터 72,809 rows 복사 → 자식 테이블(`execution_attempts`/
+  `guardrail_evaluations`/`order_requests`) FK 재연결 → 임시 테이블 제거,
+  단일 트랜잭션. 검증: 운영 DB에 대해 `COMMIT`→`ROLLBACK` 드라이런 실행 —
+  오류 없이 완료, 상태 완전 무변화 확인. `tests/db/test_migrations_run.py`
+  신규 7건(전부 fake connection, 실제 DB 연결 없이 오프라인 검증) —
+  7 passed. 하네스 `accept backend-file run.py` PASS(import graph로 신규
+  테스트 자동 탐색). `tests/db/` 전체 18 passed(기존 11건 무수정 + 신규 7).
+  **실제 반영은 셸에서 직접 실행하지 않고 git 파이프라인(커밋→PR→사용자
+  머지 확인→배포 트리거)을 통해서만 이뤄진다** — 다음 배포 시 컨테이너
+  부팅 과정에서 `0051`이 자동 적용된다. 상세: `docs/10_signal_research_
+  sppv/[DESIGN] regime_conditional_entry_signal_v1.md` §141.
+
 ---
 
 ## 관리 원칙

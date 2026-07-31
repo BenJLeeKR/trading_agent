@@ -17715,3 +17715,70 @@ build_input_command()`는 `--core-cap`/`--universe-max-cap`을 **전달하지
    재산정).
 4. **4순위**: `strategy_alignment` 게이트 영향 재관측 / `regime_tailwind`
    선행 확인(각각 별도 트랙).
+
+## §141. trade_decisions attnum(컬럼 슬롯) 1600 한도 도달 수정(SPPV-2.153, 2026-07-31 KST)
+
+**SPPV 트랙과는 무관한 별도 이슈다.** PR #73 머지 후 운영 배포 시 Postgres
+로그에서 다수의 ERROR가 발견되어 이상 유무를 확인한 결과, 대부분은 마이그레이션
+러너 설계상 정상(이력 테이블 없이 매 부팅마다 전체 SQL 재실행, Postgres가
+실패 문장을 항상 ERROR로 남김)이었으나, `trading.trade_decisions`의
+"tables can have at most 1600 columns" 에러는 **실제 구조적 버그**로 확인돼
+같은 턴에서 수정했다. SPPV 배치/문서 갱신 흐름과는 완전히 분리된 작업이며,
+편의상 SPPV 문서에만 짧게 기록한다(자세한 배경은 백로그 참고).
+
+**확인된 사실**: `trade_decisions`는 살아있는 컬럼 42개, `attnum`(컬럼 슬롯)
+최댓값이 하드 리밋인 **1600에 도달**, 삭제됐지만 슬롯을 영구 소모한 컬럼
+**1558개**. 원인은 `0021_add_pipeline_stop_fields.sql`/
+`0022_add_phase_trace_to_trade_decisions.sql`(4개 ADD)과
+`0026_drop_bridge_columns_from_trade_decisions.sql`(같은 4개 DROP)이 파일명
+사전순(`0021 < 0022 < 0026`)으로 **매 컨테이너 부팅마다 함께 재생**되며 —
+이력 테이블이 없어 `run_all_migrations()`가 매 부팅마다 `db/migrations/*.sql`
+전체를 재실행하기 때문 — attnum을 영구 소모한 것이다. 다른 테이블은 스캔
+결과 전부 `dropped=0`으로 깨끗했다(고립된 이슈).
+
+**수정(3갈래, (c)→(b)→(a) 순서로 적용)**:
+1. **(c) 오판 방지**: `src/agent_trading/db/migrations/run.py`의 예외 처리에서
+   `TooManyColumnsError`를 다른 `Duplicate*Error`와 분리해 **raise**하도록
+   수정. 기존에는 범용 `except PostgresError` 분기에 걸려 "이미 적용됨"
+   WARNING으로 삼켜져, 앞으로 이 테이블에 정말 새 컬럼을 추가해도 실패가
+   은폐될 위험이 있었다.
+2. **(b) 재발 방지**: 같은 파일에 `trading.schema_migrations` 이력(ledger)
+   테이블을 도입. 기존 스키마가 이미 존재하는 DB(운영/개발)는 현재 파일
+   전체를 "이미 적용됨"으로 백필(재실행 없음), 완전히 새 DB(테스트 등)는
+   백필 없이 정상적으로 하나씩 실행되며 각자 이력에 기록되도록 분기했다.
+   이 두 갈래를 나눈 이유는 백필을 무조건 적용하면 신규 DB에서 스키마 자체가
+   생성되지 않아 테스트가 깨지기 때문이다. 이후 `run_all_migrations()`는
+   이력에 없는 파일만 실행한다 — 같은 파일이 두 번 다시 실행되지 않으므로
+   ADD+DROP 짝이 있어도 재부팅마다 attnum을 소모하는 일이 원천적으로 없어진다.
+3. **(a) 실제 복구**: `db/migrations/0051_recreate_trade_decisions_reset_attnum.sql`
+   추가. 테이블을 임시 이름으로 rename → `LIKE ... INCLUDING DEFAULTS
+   INCLUDING CONSTRAINTS INCLUDING INDEXES`로 같은 이름의 새 테이블 생성
+   (attnum이 1부터 재시작) → 이 테이블이 참조하는 FK 3개(`agent_runs`/
+   `decision_contexts`/`instruments`) 재추가 → 데이터 72,809 rows 복사 →
+   이 테이블을 참조하는 자식 테이블(`execution_attempts`/
+   `guardrail_evaluations`/`order_requests`)의 FK를 새 테이블로 재연결 →
+   임시 테이블 제거. 단일 트랜잭션이라 중간 실패 시 전부 롤백된다. 트리거·뷰
+   의존성 없음을 사전 확인했고, 이미 존재하던 `trade_decisions_bak_phase7`
+   백업(42컬럼, 현재 스키마와 정확히 일치)이 과거 동일 작업 준비 흔적으로
+   확인돼 참고했다.
+
+**검증**:
+- **드라이런**: `0051` SQL의 `COMMIT`을 `ROLLBACK`으로 바꿔 실제 운영 DB에
+  대해 실행 — 오류 없이 완료, 이후 상태 확인 결과 `max_attnum=1600`/
+  `live=42`/`dropped=1558`/행 수 72,809로 **완전히 변화 없음**(ROLLBACK 확인).
+- **단위 테스트**: `tests/db/test_migrations_run.py` 신규 7건, 전부 fake
+  connection/pool로 실제 DB 연결 없이 오프라인 검증(`TooManyColumnsError`
+  raise, `DuplicateColumnError` 흡수 유지, 이력 백필 3분기, `run_all_
+  migrations`가 이력에 있는 파일을 건너뛰는지/새 파일은 실행하는지) —
+  **7 passed**.
+- 하네스 `accept backend-file src/agent_trading/db/migrations/run.py` →
+  **PASS**(import graph로 `tests/db/test_migrations_run.py` 자동 탐색·실행).
+- `tests/db/` 전체 회귀: **18 passed**(기존 11건 무수정 통과 + 신규 7).
+- **실제 반영은 셸에서 직접 실행하지 않고, 이 저장소의 기존 git 파이프라인
+  (커밋 → PR → 사용자 머지 확인 → 배포 트리거)을 통해서만 이뤄진다** — 운영
+  DB에 대한 직접 커밋은 감사 추적성이 떨어지고 이 세션의 다른 모든 변경과
+  일관성이 없기 때문이다. `0051`은 다음 배포 시 컨테이너 부팅 과정에서
+  자동 적용된다.
+
+**SPPV-2.152와의 관계**: 없음(무관). 오늘 20:10 KST 장후 배치, 다음 거래일
+freeze 실측 계획에 영향을 주지 않는다.
