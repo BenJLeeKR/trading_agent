@@ -10311,16 +10311,33 @@ agent 설계 문서 기준으로도 순서는 다음이 맞다.
      수정 불필요, 내일 장 시작 후 그대로 관찰 가능**. 상세:
      `docs/10_signal_research_sppv/[DESIGN] regime_conditional_entry_
      signal_v1.md` §136.
-   - **SPPV-3(다음 착수: [1순위] D안 diff 운영 반영 관측 — 배포 후 다음
-     거래일 08:50 KST에 생성되는 `decision_loop_intraday` freeze 내용을
-     같은 입력(전 거래일 20:00 KST snapshot)으로 계산한 D안 shadow 예측과
-     종목 단위로 대조(read-only). 배포는 PR 머지 시 장 외 시간대에
-     자동 반영되므로 별도 승인이 필요하지 않다 +
-     [1-B순위] `strategy_alignment` 직접항 제거의 **운영 반영 무변화
-     확인** — threshold 영향 정량 검증은 SPPV-2.148에서 완료(게이트
-     모집단 `sa=1.0` 0건 → 판정 뒤집힘 두 창 모두 0건, 추가 코드 수정
-     불필요)이므로, 남은 것은 내일 장 시작 후 운영 실측뿐이며 1순위
-     D안 관측과 함께 수행 가능 +
+   - **SPPV-2.149(완료, 2026-07-31 KST, D안 + `strategy_alignment` 제거
+     첫 운영 반영 실측, 작성자: Codex, 코드 미수정, `.env` 미수정, Full
+     pytest 미실행, 신규 KIS 호출 0건 — **효과 확정 아님**)**: 오늘
+     `08:50:41 KST` freeze 생성(`target_count=13`, core 12 +
+     `event_overlay` 1), core 12종목이 기존 왜곡 상태(사전순 top12)와
+     **교집합 0** → D안 운영 작동 확인, shadow 예측 **실질 12/12 일치**.
+     `000720` 사전순 10위→D안 125위 **core 탈락**(왜곡 해소 첫 사례),
+     `001450` 사전순 16위→**1위 진입**. `strategy_alignment`는 `core`
+     264건·`event_overlay` 22건 모두 `sa=1.0` 0건으로 SPPV-2.148과 충돌
+     없음, funnel 전부 0. **보류/실패**: 오늘 게이트 활성 0/264로 게이트
+     영향 검증 불가, D안 순수 효과는 2.13배 관측되나 stale snapshot
+     bias(6월>7월 +0.0682, core 12개 중 8개 6월 snapshot)가 약 25% 설명
+     가능해 **상한으로만** 읽어야 함. **신규 발견: stale snapshot 정렬**.
+     상세: `docs/10_signal_research_sppv/[DESIGN] regime_conditional_
+     entry_signal_v1.md` §137.
+   - **SPPV-3(다음 착수: [1순위] **stale snapshot 정렬 대응 설계 검토**
+     (SPPV-2.149 신규 발견) — snapshot 배치가 하루 81종목만 갱신하는데
+     core-eligible이 211종목이라 배치 풀 밖 종목이 오래된 snapshot으로
+     정렬된다(오늘 core 12개 중 8개가 6월 snapshot). 배치 풀 커버리지를
+     read-only로 정량화하고 D안 정렬 키에 신선도 조건을 둘지 검토
+     (완화안 아님, 별도 트랙) +
+     [1-B순위] `strategy_alignment` 제거의 **게이트 영향 재관측** —
+     SPPV-2.149에서 오늘 게이트 활성이 0/264라 검증 불가였으므로,
+     게이트가 실제 활성화되는 날(`core`+`bearish_trend`+`risk_off`)에
+     재관측 +
+     [1-C순위] D안 **순수 효과 분리** — 2.13배 관측치에서 stale snapshot
+     bias를 제거한 순효과 추정(현재 상한만 확보) +
      [1-C순위] `regime_tailwind` 제거 시 threshold 동시 조정이 게이트
      모집단에서 완화로 작용하는지 정량 확인(§134.6 전제 조건) +
      [2순위] 관찰용 shadow 메타데이터의 낡은 스케일 절대값

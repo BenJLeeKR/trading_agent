@@ -1,7 +1,22 @@
 # ranking_score 공식 검증 계획
 
 작성일: 2026-07-28  
-상태: [SPPV-2.148에서 갱신] `strategy_alignment` 직접항 제거의
+상태: [SPPV-2.149에서 갱신] **첫 운영 반영 실측 완료**(§6.27, 2026-07-31
+KST) — 오늘 08:50:41 KST `decision_loop_intraday` freeze가 생성되고 core
+12종목이 기존 왜곡 상태(사전순 top12)와 **한 종목도 겹치지 않아** D안이
+운영에서 작동함을 확인. shadow 예측은 **실질 12/12 일치**(차이 1건은
+우선주 `_apply_exclusions` 미모델링으로 완전 설명). `000720`이 사전순
+10위→D안 125위로 **core 탈락**(§128/§129 왜곡 해소 첫 사례),
+`001450`이 사전순 16위→**1위 진입**. `strategy_alignment`는 `core`
+264건 중 `sa=1.0` **0건**으로 SPPV-2.148 결론과 충돌 없음. 단 **오늘
+게이트 활성이 0건이라 게이트 영향은 검증 불가(보류)**이고, D안의 순수
+신호 개선 효과는 **stale snapshot bias(6월 평균이 7월보다 +0.0682 높음,
+core 12개 중 8개가 6월 snapshot)** 때문에 분리 실패 — 관측된 2.13배는
+**상한**으로만 읽어야 한다. **신규 발견: stale snapshot 정렬**(§137.6).
+이번 턴은 **첫 운영 반영 확인**이며 효과 확정이 아니다.
+상세: `[DESIGN] regime_conditional_entry_signal_v1.md` §137.
+
+[SPPV-2.148] `strategy_alignment` 직접항 제거의
 **threshold 영향 정량 검증 완료**(§6.26) — 게이트 모집단에
 `strategy_alignment=1.0`이 **0건**(최근 3거래일 n=2,401, 전체 이력
 n=11,785)이라 `ranking_score`가 한 건도 변하지 않고 `0.28`/`0.02`/
@@ -1286,6 +1301,52 @@ diff 작성 → **threshold 영향 정량 검증**까지 완료됐고, 남은 �
 
 상세: `docs/10_signal_research_sppv/[DESIGN] regime_conditional_
 entry_signal_v1.md` §136.
+
+### 6.27 SPPV-2.149 — D안 + `strategy_alignment` 제거 첫 운영 반영 실측
+(신규, 2026-07-31 KST, 완료 — 코드 미수정, **효과 확정 아님**)
+
+- [x] **런타임 반영 확인**: 호스트 `main`(`3609b62e`)과 `app`/
+      `ops-scheduler` 컨테이너 md5sum 4파일 전부 일치 + 런타임 파일 내용
+      직접 조회로 D안 3요소(`CORE_RANKING_MODE_SIGNAL_SCORE` 정의·
+      `run_decision_loop:743` 주입·bulk repo 메서드)와
+      `strategy_alignment` 제거(ranking 산식 0건 / entry_score 유지)
+      확인. threshold는 `0.28`/`0.02`.
+- [x] **오늘 freeze 생성 확인**: `2026-07-31 08:50:41 KST`,
+      `target_count=13`(core 12 + `event_overlay` 1),
+      `selection_version=decision_loop_intraday.freeze.v1`.
+- [x] **D안 작동 확인**: core 12종목이 기존 왜곡 상태(사전순 top12)와
+      **교집합 0**. shadow 예측 **실질 12/12 일치**(1차 11/12의 차이는
+      allowlist 경로 누락, 2차 11/12의 차이는 우선주 `_apply_exclusions`
+      미모델링 — 둘 다 재현 측 미모델링으로 완전 설명).
+- [x] **핵심 종목**: `001450` 1위 진입(사전순 16위), `000720` **탈락**
+      (사전순 10위→D안 125위, `overall_score=−0.7055`),
+      `002790` 13위·`000810` 22위·`009150` 49위·`000660` 66위 탈락.
+- [x] **`strategy_alignment` 운영 실측(`core`/`event_overlay` 분리)**:
+      `core` 264건 `sa=1.0` **0건**, `event_overlay` 22건도 0건(오늘
+      regime `bearish_trend`). funnel은 `ranking_blocked`/`buy_candidate`/
+      `eligibility_passed`(event)/`final_intent=buy`/`APPROVE`/
+      `order_request` 모두 **0**. SPPV-2.148 결론과 **충돌 없음**.
+- [ ] **게이트 영향 검증** — **보류**. 오늘 `core_risk_off_experiment.
+      active`가 0/264로 게이트가 아예 발동하지 않아 §136의 "게이트 판정
+      무변화"는 반증도 확증도 되지 않았다. 게이트 활성일 재관측 필요.
+- [ ] **D안 순수 효과 분리** — **실패**. 동일 regime 조건에서 사전순
+      top12 평균 `entry_score` 0.2380 → 실제 core12 0.5067(2.13배)이나,
+      실제 core12 중 8/12가 6월 snapshot 기반이고 6월 평균이 7월보다
+      +0.0682 높아 stale bias가 격차의 약 25%를 설명할 수 있다.
+      **2.13배는 상한으로만 읽어야 한다.**
+- [x] **신규 발견 기록**: stale snapshot 정렬 — snapshot 배치가 하루
+      81종목만 갱신하는데 core-eligible은 211종목이라, 배치 풀 밖 종목이
+      **오래된 snapshot으로 정렬**된다(오늘 core 12개 중 8개가 6월
+      snapshot). §131.1 제약이 "경계 이동"이 아니라 이 형태로 발현됐다.
+
+**[PLAN] 상태 요약**: `ranking_score` 산식 정리 3건(`coverage_score`·
+`relative_activity`·`strategy_alignment` 직접항)과 유니버스 D안이 모두
+운영에 반영됐고 첫 반영 실측까지 끝났다. 남은 미확정은 (1) 게이트
+활성일의 `strategy_alignment` 영향, (2) D안 순수 효과 분리, (3) stale
+snapshot 정렬 대응, (4) `regime_tailwind` 선행 확인이다.
+
+상세: `docs/10_signal_research_sppv/[DESIGN] regime_conditional_
+entry_signal_v1.md` §137.
 
 ## 7. 완료 기준
 

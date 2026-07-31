@@ -3246,3 +3246,44 @@ research_sppv/[DESIGN] regime_conditional_entry_signal_v1.md` §135.
 코드 수정은 필요하지 않다** — 내일 장 시작 후 D안 관측과 함께 그대로
 확인하면 된다. 상세: `docs/10_signal_research_sppv/[DESIGN] regime_
 conditional_entry_signal_v1.md` §136.
+
+## 35. D안 + `strategy_alignment` 제거 첫 운영 반영 실측(SPPV-2.149, 2026-07-31 KST)
+
+2026-07-31 KST 장 시작 직후 read-only 실측이다(코드 미수정, 신규 KIS 호출
+0건). 이번 턴은 **첫 운영 반영 확인**이며 **효과 확정이 아니다**. 현행
+사전순 방식은 정상 후보안이 아니라 **기존 왜곡 상태**로만 취급한다.
+
+- **런타임 반영(사실)**: 컨테이너 md5 4파일 일치 + 파일 내용으로 D안
+  3요소와 `strategy_alignment` ranking 산식 제거(entry_score 쪽 유지),
+  threshold `0.28`/`0.02`를 확인했다.
+- **오늘 freeze(사실)**: `2026-07-31 08:50:41 KST`, `target_count=13`
+  (core 12 + `event_overlay` 1). core 12종목이 기존 왜곡 상태(사전순
+  top12)와 **교집합 0** — D안이 운영에서 작동했다. shadow 예측은 **실질
+  12/12 일치**이고, 차이 2건은 각각 재현 측이 allowlist 경로와 우선주
+  `_apply_exclusions`를 모델링하지 않은 데서 비롯됐다.
+- **왜곡 해소 첫 사례(사실)**: `000720`이 사전순 10위(20거래일+ 상시 포함,
+  §26/§27)에서 `overall_score=−0.7055`(211개 중 125위)로 **core 탈락**했고,
+  `001450`이 사전순 16위에서 최고 신호(+0.4516)로 **1위 진입**했다. 저신호
+  유지·고신호 탈락 양방향 왜곡이 동시에 해소됐다.
+- **`strategy_alignment`(사실, `core`/`event_overlay` 분리)**: `core`
+  264건과 `event_overlay` 22건 모두 `sa=1.0`이 0건이고 funnel
+  (`ranking_blocked`/`buy_candidate`/`APPROVE`/`order_request`/
+  `final_intent=buy`)은 전부 0으로, §34의 shadow 결론과 **충돌하지
+  않는다**.
+- **보류·실패(과장 금지)**: 오늘 게이트가 **0/264로 아예 발동하지 않아**
+  §34의 "게이트 판정 무변화"는 반증도 확증도 되지 않았다. D안 순수 효과는
+  동일 regime 비교에서 2.13배(0.2380→0.5067)로 관측되나, 실제 core12 중
+  **8/12가 6월 snapshot** 기반이고 6월 평균이 7월보다 +0.0682 높아
+  **stale bias가 격차의 약 25%를 설명할 수 있다** → **2.13배는 상한**이며
+  순수 효과 분리는 실패했다.
+- **신규 발견(사실)**: **stale snapshot 정렬** — snapshot 배치는 하루
+  81종목만 갱신하는데 core-eligible은 211종목이라, 배치 풀 밖 종목이
+  오래된 snapshot으로 정렬된다. §29의 §131.1 제약이 "경계 이동"이 아니라
+  이 형태로 발현됐다.
+
+**결론**: D안과 `strategy_alignment` 제거의 **첫 운영 반영은 확인**됐고
+왜곡 해소 사례도 관측됐다. 다만 **효과 확정은 아니며**, 다음 우선 작업은
+(1) stale snapshot 정렬 대응 설계 검토, (2) 게이트 활성일의
+`strategy_alignment` 영향 재관측, (3) `regime_tailwind` 선행 확인이다.
+상세: `docs/10_signal_research_sppv/[DESIGN] regime_conditional_entry_
+signal_v1.md` §137.

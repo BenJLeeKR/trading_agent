@@ -2026,6 +2026,25 @@
   트랙 유지. 상세: `docs/10_signal_research_sppv/[DESIGN] regime_
   conditional_entry_signal_v1.md` §136.
 
+- 2026-07-31 KST(SPPV-2.149, 신규 KIS 호출 0건, 완료 — 코드 미수정,
+  **효과 확정 아님**): D안 + `strategy_alignment` 제거 **첫 운영 반영
+  실측**. 오늘 `08:50:41 KST` `decision_loop_intraday` freeze 생성
+  (`target_count=13`, core 12 + `event_overlay` 1)이고 core 12종목이
+  기존 왜곡 상태(사전순 top12)와 **교집합 0** → D안 운영 작동 확인,
+  전일 20:00 KST snapshot 기준 shadow 예측 **실질 12/12 일치**(차이는
+  allowlist 경로·우선주 제외 미모델링). `000720`이 사전순 10위→D안
+  125위(`overall_score=−0.7055`)로 **core 탈락**(§128/§129 왜곡 해소 첫
+  사례), `001450`이 사전순 16위→**1위 진입**. `strategy_alignment`는
+  `core` 264건·`event_overlay` 22건 모두 `sa=1.0` 0건으로 SPPV-2.148과
+  충돌 없음, funnel(`ranking_blocked`/`buy_candidate`/`APPROVE`/
+  `order_request`/`final_intent=buy`) 전부 0. **보류/실패**: 오늘 게이트
+  활성 0/264로 게이트 영향 검증 불가, D안 순수 효과는 동일 regime 비교
+  2.13배(0.2380→0.5067)이나 stale snapshot bias(6월>7월 +0.0682, core
+  12개 중 8개 6월 snapshot)가 약 25% 설명 가능해 **상한으로만** 읽어야
+  함. **신규 발견: stale snapshot 정렬**(배치 81종목/일 vs core-eligible
+  211종목). 상세: `docs/10_signal_research_sppv/[DESIGN] regime_
+  conditional_entry_signal_v1.md` §137.
+
 ---
 
 ## 관리 원칙
