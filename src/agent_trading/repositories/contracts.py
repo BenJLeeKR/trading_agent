@@ -1128,10 +1128,12 @@ class InstrumentIndexMembershipRepository(Protocol):
         ...
 
     async def get_latest_effective_from(self) -> date | None:
-        """가장 최근에 반영된 membership 갱신 시각(``effective_from``)을 반환한다.
+        """가장 최근에 반영된 membership 기준일을 반환한다.
 
         UNIV-4: 지수 편입 데이터 staleness 감시용 — 활성(``effective_to IS
-        NULL``) row 전체 중 최댓값. 데이터가 전혀 없으면 ``None``."""
+        NULL``) row 전체 중 metadata의 ``as_of_date``가 있으면 그 값을 우선
+        사용하고, 없으면 ``effective_from``을 사용한다. 데이터가 전혀 없으면
+        ``None``."""
         ...
 
 
