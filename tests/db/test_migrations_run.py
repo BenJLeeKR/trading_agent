@@ -141,6 +141,32 @@ class TestLedgerBootstrap:
         assert {a[0] for a in args} == {"0001_a.sql", "0002_b.sql"}
 
     @pytest.mark.asyncio
+    async def test_backfill_excludes_files_past_cutoff(self) -> None:
+        """SPPV-2.153 실사고 재현: 같은 배포에서 이력과 함께 추가된 새
+        마이그레이션(컷오프보다 뒤)은 백필 대상이 아니라 실제로 실행돼야
+        한다."""
+        conn = _FakeConn(
+            fetchval_returns={
+                "count(*) FROM trading.schema_migrations": 0,
+                "to_regclass": True,
+            }
+        )
+        files = [
+            Path("0001_a.sql"),
+            Path(migrations_run._LEDGER_BOOTSTRAP_CUTOFF_FILENAME),
+            Path("0051_new_migration_in_same_deploy.sql"),
+        ]
+
+        await migrations_run._bootstrap_ledger_if_needed(conn, files)
+
+        assert len(conn.executemany_calls) == 1
+        _, args = conn.executemany_calls[0]
+        backfilled = {a[0] for a in args}
+        assert "0051_new_migration_in_same_deploy.sql" not in backfilled
+        assert migrations_run._LEDGER_BOOTSTRAP_CUTOFF_FILENAME in backfilled
+        assert "0001_a.sql" in backfilled
+
+    @pytest.mark.asyncio
     async def test_no_backfill_for_fresh_db(self) -> None:
         conn = _FakeConn(
             fetchval_returns={

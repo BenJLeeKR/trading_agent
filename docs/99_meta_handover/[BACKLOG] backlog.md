@@ -2123,6 +2123,24 @@
   부팅 과정에서 `0051`이 자동 적용된다. 상세: `docs/10_signal_research_
   sppv/[DESIGN] regime_conditional_entry_signal_v1.md` §141.
 
+- 2026-07-31 KST(SPPV-2.154, 신규 KIS 호출 0건, 완료 — **SPPV 트랙과 무관**):
+  **SPPV-2.153 배포 후속 — 0051이 실행되지 않은 사고 수정.** 두 가지 원인이
+  겹쳤다: (1) 배포 워크플로가 `docker compose run --rm migrate`를
+  `docker compose up -d --build`보다 먼저 실행해 migrate가 항상 stale
+  이미지로 도는 순서 문제(별도 후속 과제로 남김), (2) 이미지 재빌드 후
+  재시도했을 때 `_bootstrap_ledger_if_needed`가 백필 시점에 존재하던 파일
+  전체(51개)를 백필하면서 **0051 자신까지 포함**시켜, 실행 없이 "적용됨"으로
+  기록된 더 심각한 자체 버그. attnum은 그대로 1600으로 남아있음을 실측 확인.
+  수정: `run.py`에 `_LEDGER_BOOTSTRAP_CUTOFF_FILENAME = "0050_..."` 상수
+  추가 — 백필이 이 파일까지만 포함하도록 제한해 향후 신규 마이그레이션은
+  백필 대상이 될 수 없고 항상 실제로 실행됨을 보장. 잘못 기록된 0051 이력
+  행은 무해하게 남기고, 같은 DDL을
+  `0052_recreate_trade_decisions_reset_attnum_retry.sql`로 재등록. 운영 DB
+  드라이런(`COMMIT`→`ROLLBACK`) 재검증 — 오류 없음, 상태 무변화. 신규 회귀
+  테스트 1건 추가(사고 재현) — `tests/db/test_migrations_run.py` 총 8
+  passed. 상세: `docs/10_signal_research_sppv/[DESIGN] regime_conditional_
+  entry_signal_v1.md` §141(SPPV-2.154 추가분).
+
 ---
 
 ## 관리 원칙

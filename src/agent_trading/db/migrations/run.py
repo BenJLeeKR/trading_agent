@@ -48,6 +48,16 @@ CREATE TABLE IF NOT EXISTS trading.schema_migrations (
 );
 """
 
+# 이력 도입 시점(SPPV-2.153) 기준으로 이미 존재했던 마지막 파일. 백필은 이
+# 파일까지만 포함해야 한다 — 그렇지 않으면 이력 도입과 "같은 배포"에 새로
+# 추가된 마이그레이션(예: 0051)까지 백필에 휩쓸려 "이미 적용됨"으로 표시
+# 되고, 실제로는 한 번도 실행되지 않는 사고가 난다(SPPV-2.153 배포에서 실제
+# 발생 — 0051이 attnum을 리셋하는 실제 DDL을 한 번도 실행하지 못한 채 이력에
+# 기록됨). 파일명이 4자리 zero-padded 번호라 문자열 비교로 안전하게 컷오프
+# 판정이 된다. 앞으로 추가되는 모든 마이그레이션은 이 상수를 절대 넘지
+# 않으므로, 신규 파일은 백필 대상이 될 수 없고 항상 실제로 실행된다.
+_LEDGER_BOOTSTRAP_CUTOFF_FILENAME = "0050_add_order_submission_attempts_submitted_at_index.sql"
+
 
 async def _ensure_migration_ledger(conn: asyncpg.Connection) -> None:
     """``trading.schema_migrations`` 이력 테이블이 없으면 만든다."""
@@ -80,7 +90,11 @@ async def _bootstrap_ledger_if_needed(
     )
     if not schema_exists:
         return
-    filenames = [f.name for f in sql_files]
+    filenames = [
+        f.name
+        for f in sql_files
+        if f.name <= _LEDGER_BOOTSTRAP_CUTOFF_FILENAME
+    ]
     if not filenames:
         return
     await conn.executemany(
