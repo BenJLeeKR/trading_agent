@@ -3018,6 +3018,39 @@ entry 설계 검토로 전환**을 확정했다. 별도 문서
   `docs/10_signal_research_sppv/[DESIGN] regime_conditional_entry_
   signal_v1.md` §136.
 
+- 작성자: Codex
+- 수정일자: 2026-07-31 KST (149차, D안 + `strategy_alignment` 제거 첫
+  운영 반영 실측, 코드 미수정, `.env` 미수정, Full pytest 미실행, 신규
+  KIS 호출 0건 — **효과 확정 아님**)
+- 수정내용: 런타임 반영을 md5(4파일 일치)와 파일 내용 직접 조회로 확인했다
+  (D안 3요소, `strategy_alignment` ranking 산식 0건 / entry_score 유지,
+  threshold `0.28`/`0.02`). 오늘 `decision_loop_intraday` freeze가
+  **2026-07-31 08:50:41 KST**에 `target_count=13`(core 12 + `event_
+  overlay` 1)으로 생성됐고, core 12종목이 기존 왜곡 상태(사전순 top12)와
+  **한 종목도 겹치지 않아** D안이 운영에서 작동함을 확인했다. 전일 20:00
+  KST snapshot 기준 shadow 예측은 **실질 12/12 일치**이며, 1차 11/12의
+  차이는 재현 측이 `_is_core_seed_instrument`의 allowlist 경로를,
+  2차 11/12의 차이는 `_apply_exclusions`의 우선주 제외(`005935`
+  삼성전자우)를 모델링하지 않은 데서 비롯됐다(둘 다 재현 측 미모델링).
+  핵심 종목은 `000720`이 사전순 10위에서 D안 125위(`overall_score=
+  −0.7055`)로 **core 탈락**해 §128/§129의 왜곡이 해소된 첫 사례가 됐고,
+  `001450`이 사전순 16위에서 최고 신호(+0.4516)로 **1위 진입**했다.
+  `strategy_alignment`는 `core` 264건과 `event_overlay` 22건 모두
+  `sa=1.0`이 0건으로 SPPV-2.148 결론과 충돌하지 않았고, funnel
+  (`ranking_blocked`/`buy_candidate`/`final_intent=buy`/`APPROVE`/
+  `order_request`)은 전부 0이었다. **보류·실패 항목을 과장 없이 기록한다**:
+  오늘 `core_risk_off_experiment.active`가 0/264로 게이트가 발동하지 않아
+  §136의 "게이트 판정 무변화"는 반증도 확증도 되지 않았고, D안 순수 효과는
+  동일 regime 조건 비교에서 사전순 top12 평균 `entry_score` 0.2380 →
+  실제 core12 0.5067(2.13배)로 관측되나 실제 core12 중 8/12가 6월
+  snapshot 기반이고 6월 평균이 7월보다 +0.0682 높아 **stale bias가 격차의
+  약 25%를 설명할 수 있어 2.13배는 상한으로만 읽어야 한다**. **신규
+  발견**은 stale snapshot 정렬로, snapshot 배치가 하루 81종목만 갱신하는데
+  core-eligible은 211종목이라 배치 풀 밖 종목이 오래된 snapshot으로
+  정렬된다(§131.1 제약이 "경계 이동"이 아닌 이 형태로 발현). 상세:
+  `docs/10_signal_research_sppv/[DESIGN] regime_conditional_entry_
+  signal_v1.md` §137.
+
 ---
 
 ## 진행 체크리스트
@@ -6065,6 +6098,32 @@ canonical),
     로직 변경 없음, 신규 KIS 호출 0건(shadow 재호출은 `kis_
     client=None`). 상세: `docs/10_signal_research_sppv/[DESIGN]
     regime_conditional_entry_signal_v1.md` §94.
+- [x] **SPPV-2.149(신설, 완료 — 효과 확정 아님)** D안 + `strategy_
+  alignment` 제거 첫 운영 반영 실측 (2026-07-31 KST, 작성자: Codex,
+  코드 미수정, `.env` 미수정, Full pytest 미실행, 신규 KIS 호출 0건)
+  - **런타임 반영 확인**: 컨테이너 md5 4파일 일치 + 파일 내용으로 D안
+    3요소·`strategy_alignment` 제거(ranking 0건/entry 유지)·threshold
+    (`0.28`/`0.02`) 확인.
+  - **오늘 freeze**: `2026-07-31 08:50:41 KST`, `target_count=13`
+    (core 12 + `event_overlay` 1). core 12종목이 기존 왜곡 상태(사전순
+    top12)와 **교집합 0** → D안 운영 작동 확인. shadow 예측 **실질
+    12/12 일치**(차이 1건은 우선주 `_apply_exclusions` 미모델링).
+  - **핵심 종목**: `000720` 사전순 10위→D안 125위(`overall_score=
+    −0.7055`)로 **core 탈락**(§128/§129 왜곡 해소 첫 사례),
+    `001450` 사전순 16위→**1위 진입**. `002790`(13위)·`000810`(22위)·
+    `009150`(49위)·`000660`(66위) 탈락.
+  - **`strategy_alignment`**: `core` 264건 `sa=1.0` **0건**,
+    `event_overlay` 22건도 0건 → SPPV-2.148과 **충돌 없음**. funnel은
+    `buy_candidate`/`APPROVE`/`order_request`/`final_intent=buy` 모두 0.
+  - **보류/실패(과장 금지)**: 오늘 게이트 활성 0/264라 **게이트 영향
+    검증 불가**. D안 순수 효과는 동일 regime 비교 2.13배(0.2380→0.5067)
+    이나 **stale snapshot bias**(6월 평균이 7월보다 +0.0682 높고 core
+    12개 중 8개가 6월 snapshot)가 격차의 약 25%를 설명 가능 → **2.13배는
+    상한**.
+  - **신규 발견**: stale snapshot 정렬 — 배치가 하루 81종목만 갱신하는데
+    core-eligible은 211종목이라 풀 밖 종목이 오래된 snapshot으로 정렬됨.
+    상세: `docs/10_signal_research_sppv/[DESIGN] regime_conditional_
+    entry_signal_v1.md` §137.
 - [x] **SPPV-2.148(신설, 완료)** `strategy_alignment` 직접항 제거
   threshold 영향 정량 검증 (2026-07-30 KST, 작성자: Codex, 코드 미수정,
   `.env` 미수정, Full pytest 미실행, 신규 KIS 호출 0건 — **운영 효과

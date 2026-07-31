@@ -17107,3 +17107,181 @@ SHADOW_MIN_SCORE(0.56)`를 포함한다. `sa=1.0`이 `event_overlay`에 집중�
    확인을 **한 번에** 관측.
 2. **2순위**: `regime_tailwind` 제거 선행 확인 1건(§134.6 전제 조건) —
    별도 트랙 유지.
+
+## §137. D안 + `strategy_alignment` 제거 첫 운영 반영 실측(SPPV-2.149, 2026-07-31 KST)
+
+**전제**: 2026-07-31 KST 장 시작 직후 실측이다. 코드 수정 없음, Docker
+logs/런타임 파일 + Postgres read-only만 사용, 신규 KIS 호출 0건. 이번 턴은
+**"첫 운영 반영 확인"까지**이며 **효과 확정이 아니다**. 현행 사전순 방식은
+정상 후보안이 아니라 **기존 왜곡 상태**로만 취급한다.
+
+### 137.1 런타임 반영 상태(사실)
+
+호스트 `main`(`3609b62e`)과 `agent_trading-app-1`/`agent_trading-ops-
+scheduler` 컨테이너의 md5sum이 4개 파일 전부 일치했고, 런타임 파일 내용을
+직접 조회해 다음을 확인했다:
+
+| 확인 항목 | 결과 |
+|---|---|
+| `CORE_RANKING_MODE_SIGNAL_SCORE` 정의 | 존재 |
+| `run_decision_loop.py:743` `core_ranking_mode=CORE_RANKING_MODE_SIGNAL_SCORE` | 주입됨 |
+| `list_latest_by_instrument_ids`(bulk repo) | 존재 |
+| `_build_buy_ranking_score` 내 `0.02 * strategy_alignment` | **0건(제거 확인)** |
+| `trigger_strategy_alignment`(entry_score 쪽) | 존재(**유지 확인**) |
+| `_CORE_RISK_OFF_RANKING_MIN_SCORE` / `_SHADOW_MIN_SCORE` | `0.28` / `0.02` |
+
+### 137.2 오늘 freeze 생성 실측(사실)
+
+| 항목 | 값 |
+|---|---|
+| `business_date` / `freeze_purpose` | `2026-07-31` / `decision_loop_intraday` |
+| **생성 시각(KST)** | **2026-07-31 08:50:41** |
+| `run_id` | `6c7a4e92-b615-48a9-bf86-13c0689eb4e0` |
+| `selection_version` | `decision_loop_intraday.freeze.v1` |
+| `target_count` / items | 13 / 13 |
+| `source_type` 분포 | `core` 12 + `event_overlay` 1 |
+| core 12종목 | `001450, 004370, 005830, 009970, 021240, 023530, 028260, 032830, 042700, 196170, 329180, 402340` |
+| 비-core | `000720`(`event_overlay`) |
+
+**핵심 사실**: 이 12종목은 기존 왜곡 상태(사전순 상위 12 =
+`000080·000100·000120·000150·000210·000240·000270·000660·000670·000720·
+000810·000880`, SPPV-2.140 확인)와 **한 종목도 겹치지 않는다**. D안이
+실제 운영 경로에서 작동했다.
+
+### 137.3 D안 shadow 예측 대조(사실)
+
+전일 20:00 KST snapshot(=08:50 시점 최신)을 입력으로 `(snapshot 보유 여부,
+−`overall_score`, `symbol`)` 정렬을 재현했다.
+
+- 1차 재현: **11/12 일치(91.7%)** — 예측에만 `138040`, 실제에만 `196170`.
+  원인: 재현이 `_is_core_seed_instrument`의 **하드코딩 allowlist 경로**
+  (`APPROVED_CORE_UNIVERSE_SYMBOLS`)를 빠뜨렸다. `196170`은 `market_
+  segment=KOSDAQ`이라 index-membership 경로로는 core가 되지 않고 allowlist
+  경로로 편입된다(사실, DB 확인).
+- 2차 재현(allowlist 경로 포함, core-eligible n=**211**): **11/12 일치
+  (91.7%)** — 예측에만 `005935`, 실제에만 `021240`.
+  원인: `005935`는 **삼성전자우(우선주)**로 `_apply_exclusions`(step 7,
+  cap보다 먼저 실행)의 `_looks_like_preferred_or_special_share`에서
+  제외된다(사실, `name='삼성전자우'` 확인). shadow는 exclusions를
+  모델링하지 않았다.
+
+**판정**: 두 차이 모두 **shadow 재현의 미모델링 요소로 완전히 설명**되며,
+그 요소를 반영하면 **실질 12/12 일치**다. D안 정렬 로직 자체는 예측대로
+동작했다(사실+해석).
+
+### 137.4 핵심 종목 포함/탈락(사실)
+
+| 종목 | `overall_score` | D안 순위 | 사전순위(기존 왜곡) | 오늘 core freeze |
+|---|---|---|---|---|
+| `001450` | **+0.4516** | **1위** | 16위 | **포함** |
+| `002790` | +0.1888 | 13위 | 21위 | 탈락(경계 1칸 밖) |
+| `000810` | +0.0968 | 22위 | **11위** | 탈락 |
+| `009150` | −0.2285 | 49위 | 59위 | 탈락 |
+| `000660` | −0.4235 | 66위 | **8위** | 탈락 |
+| `000720` | **−0.7055** | **125위** | **10위** | **탈락**(단 `event_overlay`로 편입) |
+
+- `000720`은 기존 왜곡 상태에서 사전순 10위로 **20거래일+ 연속 core 고정**
+  이었으나(§128), 오늘 `overall_score`가 −0.7055(211개 중 125위)로 **core
+  에서 탈락**했다 — §129의 "저신호 종목이 사전순 때문에 유지된다"는 왜곡이
+  실제로 해소된 첫 사례다(사실).
+- `001450`은 사전순 16위로 cap 밖이었으나 최고 신호(+0.4516)로 **1위 진입**
+  — "고신호 종목이 사전순 때문에 탈락한다"는 반대편 왜곡도 해소됐다.
+- `000660`(사전순 8위)·`000810`(11위)은 기존 왜곡 상태에서는 상시 포함
+  이었으나 신호가 낮아 탈락했다.
+
+### 137.5 D안 반영 효과 — 동일 regime 조건 비교(사실 + 중요한 한계)
+
+오늘 최빈 regime(`bullish_trend`/`risk_off`)과 대표 allocation으로 통일해
+기존 함수 `_build_entry_score()`로 계산했다.
+
+| 집합 | 평균 `entry_score` |
+|---|---|
+| 기존 왜곡 상태(사전순 top12) | **0.2380** |
+| 오늘 실제 freeze(D안 core12) | **0.5067** |
+| 격차 | +0.2687(**2.13배**) |
+
+**한계 — 이 배수를 그대로 효과로 읽으면 안 된다(사실 기반 경고)**:
+오늘 실제 core 12개 중 전일(07-30) snapshot 기반은 **4개뿐**이고
+**8개는 6월 19~24일 snapshot**(약 5~6주 stale)이다. 반면 사전순 top12는
+**12개 전부 07-30 snapshot**이다. 그리고 snapshot 날짜별 `overall_score`
+평균을 집계하면 **6월 평균(−0.3380)이 7월 평균(−0.4062)보다 +0.0682 높다**
+(사실). 즉 stale snapshot을 쓰는 종목이 체계적으로 유리하다.
+
+- stale bias(+0.0682)는 관측 격차(+0.2687)의 **약 25%**를 설명할 수 있다.
+- 다만 월별 `max(overall_score)`는 0.44~0.55로 비슷해 상위권에서는 월 차이가
+  작다(사실).
+- **따라서 2.13배는 상한으로 보아야 하며, 순수 D안 효과는 그보다 작다**
+  (해석). 이번 턴에서 순수 효과를 분리하지는 못했다 — **미확정**.
+
+### 137.6 신규 발견 — stale snapshot 정렬(§131.1 제약의 새로운 발현)
+
+`list_latest_by_instrument_ids`는 시간 필터 없이 **절대 최신** snapshot을
+가져온다. snapshot 배치는 하루 **81종목**만 갱신하는데 core-eligible은
+**211종목**이므로, 배치 풀 밖 종목은 **오래된 snapshot으로 정렬**된다.
+그 결과 오늘 core 12개 중 8개가 6월 snapshot 기반으로 선정됐다(사실).
+
+§131.1에서 "snapshot 풀이 사전순으로 잘려 있어 D안은 편향을 제거하지 않고
+경계만 이동시킨다"고 기록했는데, D안 적용 후 그 제약은 **"경계 이동"이
+아니라 "stale snapshot 우선 선정"이라는 형태로 나타났다**(신규 사실).
+이는 §131.1 예측을 부분적으로 벗어난 발현 방식이며, 별도 후속 트랙이
+필요하다.
+
+### 137.7 `strategy_alignment` 제거 운영 실측(사실, `core`/`event_overlay` 분리)
+
+오늘 08:50:49~10:43:30 KST, 전체 decision n=286.
+
+| 항목 | `core` | `event_overlay` |
+|---|---|---|
+| BUY-path n | 264(12종목×22사이클) | 22(`000720`×22) |
+| `core_risk_off_experiment.active` | **0건** | 0건 |
+| `strategy_alignment=1.0` | **0건** | **0건** |
+| `entry_score` 평균/중앙값 | 0.4929 / 0.5064 | 0.6788 / 0.6788 |
+| `ranking_score` 평균/중앙값 | 0.3032 / 0.3085 | 0.3983 / 0.3983 |
+| `ranking_blocked` | **0** | 0 |
+| `eligibility_passed` | 132(50.0%) | 0 |
+| `buy_candidate` | **0** | **0** |
+| `final_intent='buy'` | **0** | **0** |
+| `APPROVE` | **0** | **0** |
+| `order_request` | **0** | **0** |
+
+**SPPV-2.148 shadow 결론과의 충돌 여부 → 충돌 없음(사실)**:
+- `core`에서 `strategy_alignment=1.0`이 **0건** — §136.3의 "게이트 모집단·
+  `core`에 `sa=1.0` 없음"이 오늘 운영에서도 재현됐다.
+- 오늘은 `core_risk_off` 게이트가 **한 건도 활성화되지 않아**(0/264)
+  `ranking_blocked`도 0이다. 따라서 §136이 검증한 "게이트 판정 무변화"는
+  **오늘 데이터로는 반증도 확증도 되지 않았다** — 게이트 자체가 발동하지
+  않았기 때문이다(사실, 과장 금지).
+- `event_overlay`도 오늘은 `preferred_strategy=defensive_low_volatility_
+  rotation`(regime `bearish_trend`)이라 `sa=1.0`이 0건이다 — §134.2의
+  "`event_overlay` 28.93% 발동"은 오늘 창에서는 재현되지 않았다(사실).
+
+### 137.8 재현된 것 / 재현되지 않은 것
+
+**재현됨**
+- D안 정렬 로직 작동(실질 12/12 예측 일치, §137.3)
+- `000720`의 사전순 기반 상시 포함 왜곡 해소(§129 → 실제 탈락, §137.4)
+- `001450`의 고신호 진입(§129의 반대편 왜곡 해소)
+- `core`에서 `strategy_alignment=1.0` 0건(§136.3)
+- 런타임 코드 반영(§137.1)
+- freeze 08:50 KST 하루 1회 생성 구조(§132.1)
+
+**재현되지 않음(또는 판정 보류)**
+- **`strategy_alignment` 제거의 게이트 영향** — 오늘 게이트 활성이 0건이라
+  검증 불가(반증도 확증도 아님)
+- **`event_overlay`의 `sa=1.0` 28.93% 발동**(§134.2) — 오늘 regime이
+  `bearish_trend`라 0건
+- **D안의 순수 신호 개선 효과** — 2.13배 관측되나 stale snapshot bias가
+  약 25%를 설명할 수 있어 순수 효과 분리 실패(§137.5)
+
+**신규 발견(예측 밖)**
+- stale snapshot 정렬(§137.6) — core 12개 중 8개가 6월 snapshot 기반
+
+### 137.9 다음 우선 작업
+
+1. **1순위(신규)**: stale snapshot 정렬 문제(§137.6) — snapshot 배치 풀
+   (81/일)이 core-eligible(211)을 못 덮는 구조를 read-only로 정량화하고,
+   D안 정렬 키에 신선도 조건(예: 최근 N거래일 이내 snapshot만 유효)을
+   둘지 설계 검토. **완화안 아님, 별도 트랙.**
+2. **2순위**: `strategy_alignment` 제거의 게이트 영향 확인 — 게이트가 실제
+   활성화되는 날(`core`+`bearish_trend`+`risk_off`)에 재관측.
+3. **3순위**: `regime_tailwind` 제거 선행 확인 1건(§134.6, 별도 트랙 유지).
