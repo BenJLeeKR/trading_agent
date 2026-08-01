@@ -87,7 +87,7 @@
 - 분석 문서의 과거 산출물 링크를 계속 클릭 가능하게 유지할지 결정한다.
 - 유지한다면 대표 산출물만 `docs/90_reference/artifacts/` 같은 보존 경로로 이동한다.
 - 유지하지 않는다면 문서 링크를 “역사적 산출물명” 텍스트로 바꾸고 `logs/` 전체를 추적 제외한다.
-- 현재 정책은 [`runtime_artifact_policy.md`](../20_harness_engineering/runtime_artifact_policy.md)를 따른다.
+- 현재 정책은 [`runtime_artifact_policy.md`](../80_harness_engineering/runtime_artifact_policy.md)를 따른다.
 
 ### 3단계 — `data/` canonical 분리
 
@@ -123,7 +123,7 @@ Codex 추천은 다음과 같다.
 - 정확 참조된 `logs/` tracked 파일은 `166`개, 정확 참조 라인은 `413`개다.
 - 정확 참조 파일 확장자 분포는 `.json=95`, `.log=68`, `.jsonl=2`, `.txt=1`이다.
 - 대표 산출물 대량 보존보다 Markdown 링크를 코드 텍스트로 전환하는 정책을 우선한다.
-- 정책 기준은 [`runtime_artifact_policy.md`](../20_harness_engineering/runtime_artifact_policy.md)에 기록했다.
+- 정책 기준은 [`runtime_artifact_policy.md`](../80_harness_engineering/runtime_artifact_policy.md)에 기록했다.
 
 ### 2026-07-29 — `docs/03_execution_order` `logs/` Markdown 링크 전환
 
@@ -245,5 +245,5 @@ Codex 추천은 다음과 같다.
 - CSV 파일은 `7`개, JSON 파일은 `3`개다.
 - owner가 문서화된 허용 파일은 `10`개다.
 - 허용 목록 밖 신규 `data/` 파일은 runtime 산출물로 보고 Git 추적에서 제외하기로 기록했다.
-- 상세 계약은 [`canonical_data_contract.md`](../20_harness_engineering/canonical_data_contract.md)에 남겼다.
+- 상세 계약은 [`canonical_data_contract.md`](../80_harness_engineering/canonical_data_contract.md)에 남겼다.
 - `.gitignore`에 `data/signal_feature_snapshot_input_*.json`과 `data/trigger_proxy_attribution_*.json`를 추가했다.

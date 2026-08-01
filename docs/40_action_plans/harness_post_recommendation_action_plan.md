@@ -37,7 +37,7 @@
 
 분류 상세는 [`runtime_write_path_inventory.md`](../30_work_log/runtime_write_path_inventory.md)를 따른다.
 `data/` 상세 분리 판정은 [`data_runtime_canonical_split_review.md`](../30_work_log/data_runtime_canonical_split_review.md)를 따른다.
-canonical data 허용 목록과 owner 기준은 [`canonical_data_contract.md`](../20_harness_engineering/canonical_data_contract.md)를 따른다.
+canonical data 허용 목록과 owner 기준은 [`canonical_data_contract.md`](../80_harness_engineering/canonical_data_contract.md)를 따른다.
 
 ### P1 — 장 시간 배포 가드와 수동 재배포 진입점
 
@@ -147,7 +147,7 @@ canonical data 허용 목록과 owner 기준은 [`canonical_data_contract.md`](.
 
 ### 하네스 계약과 문서 체계
 
-- [x] `docs/20_harness_engineering/` 아래에 Harness Engineering 규칙성 문서를 모았다.
+- [x] `docs/80_harness_engineering/` 아래에 Harness Engineering 규칙성 문서를 모았다.
 - [x] `Definition of Done` 문서를 추가해 AI가 완료를 주장할 수 있는 조건을 명시했다.
 - [x] 우회 행동 금지 정책을 추가하고 hard fail과 review 대상의 차이를 문서화했다.
 - [x] `CLAUDE.md`가 `AGENTS.md`와 Harness Engineering 문서를 참조하도록 정리했다.
@@ -199,14 +199,14 @@ canonical data 허용 목록과 owner 기준은 [`canonical_data_contract.md`](.
 - [x] `logs/` 정확 참조 라인은 `413`개로 기록했다.
 - [x] 정확 참조 파일 확장자 분포는 `.json=95`, `.log=68`, `.jsonl=2`, `.txt=1`로 기록했다.
 - [x] 대표 산출물 대량 보존보다 Markdown 링크를 코드 텍스트로 전환하는 정책을 우선하기로 결정했다.
-- [x] 정책 기준은 [`runtime_artifact_policy.md`](../20_harness_engineering/runtime_artifact_policy.md)에 기록했다.
+- [x] 정책 기준은 [`runtime_artifact_policy.md`](../80_harness_engineering/runtime_artifact_policy.md)에 기록했다.
 
 ### P0 6차 — `docs/03_execution_order` `logs/` Markdown 링크 전환
 
 - [x] 저위험 후보인 `docs/30_work_log`와 `docs/99_meta_handover`에는 전환 대상 Markdown 링크가 `0`개임을 확인했다.
 - [x] 전체 문서의 `logs/` Markdown 링크 `28`개 중 `20`개를 코드 텍스트로 전환했다.
 - [x] `docs/03_execution_order`의 `logs/` Markdown 링크 `19`개를 전환했다.
-- [x] `docs/20_harness_engineering/runtime_artifact_policy.md`의 예시 링크 `1`개를 전환했다.
+- [x] `docs/80_harness_engineering/runtime_artifact_policy.md`의 예시 링크 `1`개를 전환했다.
 - [x] 남은 `logs/` Markdown 링크는 `8`개다.
 - [x] 처리 기록은 [`runtime_write_path_reference_audit.md`](../30_work_log/runtime_write_path_reference_audit.md)에 남겼다.
 
@@ -329,7 +329,7 @@ canonical data 허용 목록과 owner 기준은 [`canonical_data_contract.md`](.
 - [x] `data/` runtime 산출물 tracked 파일은 `0`개로 분류했다.
 - [x] 허용 목록 작성 전 full path 정확 참조가 `0`개였던 constituent CSV `3`개는 manifest `csv_path`와 문서 basename 참조를 근거로 source package 구성 파일로 유지했다.
 - [x] owner 분류 `운영 데이터 관리자=5`, `스케줄러 운영자=3`, `Harness 문서 관리자=2`를 기록했다.
-- [x] 허용 목록과 갱신 절차는 [`canonical_data_contract.md`](../20_harness_engineering/canonical_data_contract.md)에 기록했다.
+- [x] 허용 목록과 갱신 절차는 [`canonical_data_contract.md`](../80_harness_engineering/canonical_data_contract.md)에 기록했다.
 - [x] 처리 기록은 [`data_runtime_canonical_split_review.md`](../30_work_log/data_runtime_canonical_split_review.md)와 [`runtime_write_path_reference_audit.md`](../30_work_log/runtime_write_path_reference_audit.md)에 남겼다.
 
 ## 작업 이력
