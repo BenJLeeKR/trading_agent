@@ -3185,6 +3185,38 @@ entry 설계 검토로 전환**을 확정했다. 별도 문서
   확인이다. 상세: `docs/10_signal_research_sppv/[DESIGN] regime_conditional_
   entry_signal_v1.md` §142.
 
+- 작성자: Codex
+- 수정일자: 2026-08-01 KST (156차, [SPPV-2.156에서 정정] SPPV-2.155 수치
+  정정 — authoritative 코드 경로 재검증, 코드 미수정, `.env` 미수정,
+  Full pytest 미실행, 신규 KIS 호출 0건, 이력 보존형 정정)
+- 수정내용: 사용자가 SPPV-2.155의 core-eligible(211)/covered(203)/
+  FRESH·STALE·MISSING(204/1/6) 수치가 authoritative 코드 경로와
+  충돌한다고 지적해 재검증했다. 원인은 §142의 heuristic 스크립트가
+  `_is_core_seed_instrument()`가 실제로 참조하는
+  `trading.instrument_index_memberships` 관계형 테이블 대신
+  `instruments.metadata.index_memberships` JSON 필드를 읽었기 때문이다
+  — 이 필드는 5종목(`000990`/`0126Z0`/`267270`/`456040`/`483650`)에서
+  전부 `None`이었지만 실제 테이블엔 KOSPI200/100 멤버십이 정상 기록돼
+  있었다. `UniverseSelectionService.count_core_eligible()`와
+  `signal_feature_snapshots.list_latest_by_instrument_ids()`를 read-only
+  트랜잭션(자동 롤백)으로 직접 호출해 재계산한 결과 **core-eligible
+  216**, **07-31 배치로 정확히 갱신된 종목(covered) 207(95.8%)**,
+  **FRESH(guard 5일 기준) 208(96.3%)**, **STALE 1(0.5%, 우연히 이전과
+  동일)**, **MISSING 7(3.2%)**이다. 이 5종목 중 4종목은 07-31 배치로 이미
+  fresh snapshot을 받았고(FRESH 204→208), 1종목(`0126Z0`, 삼성에피스
+  홀딩스)은 snapshot 자체가 없어 MISSING이 6→7로 늘었다. `target_count
+  =207`과 `snapshot_count=208`의 1건 차이는 오류가 아니라 `069500`
+  (KODEX 200 ETF)이 regime 벤치마크 계산용으로
+  `_with_regime_benchmark_symbol()`(SPPV-2.72)에 의해 항상 배치 입력에
+  강제 추가되기 때문이며, 거래 후보가 아니므로 freeze의 `target_count`엔
+  포함되지 않지만 snapshot 생성 대상에는 포함되는 서로 다른 산출물이다.
+  가장 중요한 것은 **"stale bias 사실상 해소"라는 핵심 결론이
+  authoritative 수치(FRESH 96.3%, STALE 0.5%)로도 그대로 재현돼 유지된다는
+  점**이다 — 정정 대상은 수치 표기였지 판단이 아니었다. 기존 §142/§39/
+  §6.31/[PRIORITY_MAP]/[BACKLOG] 문구는 삭제하지 않고 이력 보존형으로
+  정정 주석을 병기했다. 상세: `docs/10_signal_research_sppv/[DESIGN]
+  regime_conditional_entry_signal_v1.md` §143.
+
 ---
 
 ## 진행 체크리스트
@@ -6232,6 +6264,29 @@ canonical),
     로직 변경 없음, 신규 KIS 호출 0건(shadow 재호출은 `kis_
     client=None`). 상세: `docs/10_signal_research_sppv/[DESIGN]
     regime_conditional_entry_signal_v1.md` §94.
+- [x] **SPPV-2.156([SPPV-2.156에서 정정] 완료 — 코드 미수정,
+  authoritative 재검증, 이력 보존형 정정)** SPPV-2.155 수치 정정
+  (2026-08-01 17:51 KST, 작성자: Codex, `.env` 미수정, Full pytest
+  미실행, 신규 KIS 호출 0건)
+  - SPPV-2.155의 core-eligible/coverage/3계층 수치는
+    `instruments.metadata.index_memberships` JSON을 읽는 heuristic으로
+    산출됐으나, 실제 서비스는 `trading.instrument_index_memberships`
+    관계형 테이블을 참조한다 — **다른 모집단 정의**였다.
+  - `UniverseSelectionService.count_core_eligible()` +
+    `list_latest_by_instrument_ids()`(authoritative 경로)로 재계산:
+    **core-eligible 211→216**, **covered(07-31 배치 정확 갱신) 203→207
+    (95.8%)**, **FRESH(guard 5일) 204→208(96.3%)**, **STALE 1(유지)**,
+    **MISSING 6→7(3.2%)**.
+  - 원인 5종목(`000990`/`0126Z0`/`267270`/`456040`/`483650`) 전부
+    `metadata.index_memberships=None`인데 실제 테이블엔 KOSPI200/100
+    멤버십 존재 — 수동 전사 오류나 배제 규칙 차이 아님.
+  - `target_count=207` vs `snapshot_count=208`은 **오류 아님** —
+    `069500`(KODEX 200, regime 벤치마크로 항상 강제 추가, SPPV-2.72)
+    때문.
+  - **핵심 결론("stale bias 사실상 해소")은 authoritative 수치로도
+    재현되어 유지됨.**
+  상세: `docs/10_signal_research_sppv/[DESIGN] regime_conditional_entry_
+  signal_v1.md` §143.
 - [x] **SPPV-2.155(신설, 완료 — 코드 미수정, S5 배치 실측 완료)**
   07-31 20:10 KST 장후 배치 결과 실측 (2026-08-01 17:34 KST, 작성자: Codex,
   `.env` 미수정, Full pytest 미실행, 신규 KIS 호출 0건)

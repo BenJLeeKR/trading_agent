@@ -2170,6 +2170,33 @@
   상세: `docs/10_signal_research_sppv/[DESIGN] regime_conditional_entry_
   signal_v1.md` §142.
 
+- 2026-08-01 KST(SPPV-2.156, 신규 KIS 호출 0건, 완료 — 코드 미수정,
+  **[SPPV-2.156에서 정정], 이력 보존형**): **SPPV-2.155 수치 정정 —
+  authoritative 코드 경로 재검증.** SPPV-2.155의 core-eligible(211)/
+  covered(203)/FRESH·STALE·MISSING(204/1/6)이 `instruments.metadata.
+  index_memberships` JSON을 읽는 heuristic으로 산출된 값이었고, 실제
+  서비스(`_is_core_seed_instrument()`)는 `trading.instrument_index_
+  memberships` 관계형 테이블을 참조함을 확인 — **다른 모집단 정의**였다.
+  `UniverseSelectionService.count_core_eligible()` +
+  `signal_feature_snapshots.list_latest_by_instrument_ids()`(실제 서비스
+  경로)를 read-only 트랜잭션(자동 롤백)으로 직접 호출해 재계산:
+  **core-eligible 211→216**, **07-31 배치로 정확히 갱신된 종목(covered)
+  203→207(95.8%)**, **FRESH(guard 5일) 204→208(96.3%)**, **STALE
+  1(유지, 우연히 동일)**, **MISSING 6→7(3.2%)**. 원인 5종목(`000990`/
+  `0126Z0`/`267270`/`456040`/`483650`) 전부 `metadata.index_memberships
+  =None`인데 실제 테이블엔 KOSPI200/100 멤버십이 정상 기록돼 있었다 —
+  수동 전사 오류나 배제 규칙 차이가 아니라 잘못된 데이터 소스를 읽은
+  것이 원인. 이 중 4종목은 07-31 배치로 이미 fresh snapshot을 받았고,
+  1종목(`0126Z0`, 삼성에피스홀딩스)은 snapshot이 없어 MISSING이 됐다.
+  `target_count=207` vs `snapshot_count=208`의 1건 차이는 `069500`
+  (KODEX 200 ETF)이 regime 벤치마크로 항상 배치 입력에 강제 추가되기
+  때문(`_with_regime_benchmark_symbol()`, SPPV-2.72)으로 **오류 아님**.
+  **"stale bias 사실상 해소"라는 핵심 결론은 authoritative 수치로도
+  재현돼 유지됨** — 정정 대상은 수치 표기이지 판단이 아니다. 기존
+  §142/§39/§6.31/[PRIORITY_MAP] 문구는 삭제하지 않고 이력 보존형으로
+  정정 주석을 병기했다. 상세: `docs/10_signal_research_sppv/[DESIGN]
+  regime_conditional_entry_signal_v1.md` §143.
+
 ---
 
 ## 관리 원칙

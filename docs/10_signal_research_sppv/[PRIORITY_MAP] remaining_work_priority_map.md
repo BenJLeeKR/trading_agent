@@ -10385,8 +10385,26 @@ agent 설계 문서 기준으로도 순서는 다음이 맞다.
      freeze는 추가 세팅 불필요, read-only만으로 충분. 상세:
      `docs/10_signal_research_sppv/[DESIGN] regime_conditional_entry_
      signal_v1.md` §142.
+   - **SPPV-2.156([SPPV-2.156에서 정정] 완료, 2026-08-01 17:51 KST,
+     SPPV-2.155 수치 정정 — authoritative 코드 경로 재검증, 작성자: Codex,
+     코드 미수정, `.env` 미수정, Full pytest 미실행, 신규 KIS 호출 0건,
+     이력 보존형 정정)**: SPPV-2.155의 core-eligible(211)/covered(203)/
+     FRESH·STALE·MISSING(204/1/6)이 `metadata.index_memberships` JSON을
+     읽는 heuristic 오류였음을 확인. `UniverseSelectionService.
+     count_core_eligible()`/`list_latest_by_instrument_ids()`(실제 서비스
+     경로)로 재계산: **core-eligible 216**, **covered 207(95.8%)**,
+     **FRESH 208(96.3%)**, **STALE 1**, **MISSING 7(3.2%)**. 원인 5종목
+     (`000990`/`0126Z0`/`267270`/`456040`/`483650`) 전부 metadata JSON
+     `None`인데 실제 `instrument_index_memberships` 테이블엔 KOSPI200/100
+     멤버십 존재 — 다른 모집단 정의를 읽은 것이 원인. `target_count=207`
+     vs `snapshot_count=208`은 `069500`(KODEX 200, regime 벤치마크로
+     항상 강제 추가) 때문으로 오류 아님. **"stale bias 사실상 해소" 핵심
+     결론은 authoritative 수치로도 재현돼 유지됨.** 상세:
+     `docs/10_signal_research_sppv/[DESIGN] regime_conditional_entry_
+     signal_v1.md` §143.
    - **SPPV-3(다음 착수: [1순위] **2026-08-03(월) 08:50 KST freeze 실측** —
-     §142.6/§140.2 기준선과 계층 분포·종목 구성 대조(read-only) +
+     §143(authoritative 기준선: core-eligible 216/FRESH 208/STALE 1/
+     MISSING 7)과 계층 분포·종목 구성 대조(read-only) +
      [1-B순위] **D안 순수 효과 재측정** — S5로 stale bias가 사라진 뒤
      §137.5의 2.13배(상한)를 다시 측정 +
      [1-B순위] `strategy_alignment` 제거의 **게이트 영향 재관측** —

@@ -17949,3 +17949,96 @@ bias가 사실상 완전히 해소됐다** — S5의 효과는 "일부 개선"�
    §137.5의 2.13배 상한을 정확한 순효과로 재산정 가능해짐).
 3. **3순위**: `strategy_alignment` 게이트 영향 재관측(게이트 활성일).
 4. **4순위**: `regime_tailwind` 제거 선행 확인(별도 트랙).
+
+## §143. SPPV-2.155 수치 정정(이력 보존형) — authoritative 코드 경로 재검증(SPPV-2.156, 2026-08-01 17:51 KST)
+
+**정정 사유**: §142(SPPV-2.155)의 core-eligible/coverage/3계층 수치는
+`instruments.metadata.index_memberships` JSON을 읽는 **수기 heuristic
+스크립트**로 계산됐다. 이번 턴은 동일 지표를 `UniverseSelectionService.
+count_core_eligible()` 및 `signal_feature_snapshots.list_latest_by_
+instrument_ids()` — 실제 서비스가 운영에서 쓰는 **authoritative 코드
+경로**로 재검증했다. 두 경로의 결과가 다르며, **authoritative 경로가
+맞다**.
+
+### 143.1 §142 중 유지되는 사실(변경 없음)
+
+| 항목 | 값 |
+|---|---|
+| freeze 생성 시각 | 2026-07-31 **20:10:04 KST** |
+| batch 적재 완료 | 2026-07-31 **20:12:54 KST** |
+| `status` | completed |
+| `fetch_error_count` / `persist_error_count` / `final_missing_count` | 0 / 0 / 0 |
+| snapshot 생성 수 | **208**(변경 없음, 다만 해석은 143.4에서 정정) |
+| stale 핵심 8종목 전부 `2026-07-31 20:00 KST` 갱신 | **유지**(authoritative로도 동일하게 재확인) |
+| freeze `target_count=207` | **정확함**(오류 아님, 143.4에서 이유 설명) |
+
+### 143.2 §142 중 정정되는 수치
+
+| 항목 | §142(오류) | §143(정정, authoritative) |
+|---|---|---|
+| core-eligible 총원 | ~~211~~ | **216** |
+| 07-31 배치로 정확히 갱신된 종목 수(covered) | ~~203~~ | **207**(95.8%) |
+| FRESH(guard 5일 기준) | ~~204~~ | **208**(96.3%) |
+| STALE | 1 (유지) | **1**(0.5%, 우연히 일치) |
+| MISSING | ~~6~~ | **7**(3.2%) |
+
+`covered`(207)와 `FRESH`(208)는 **서로 다른 지표**다 — `covered`는 "07-31
+20:00 KST snapshot을 정확히 보유"이고, `FRESH`는 "guard 기준(5일) 이내면
+전부 포함"이라 `000880`(한화, 07-29 snapshot·3일 경과)처럼 오늘 배치로
+갱신되지 않았어도 FRESH로 잡히는 종목이 있어 1건 차이가 난다.
+
+### 143.3 원인 분해(사실 확인)
+
+`_is_core_seed_instrument()`의 index membership 판정은
+`_index_membership_values()`를 거쳐 **`trading.instrument_index_
+memberships` 관계형 테이블**(`effective_to IS NULL`인 활성 레코드)을
+조회한다(`_prime_membership_cache()`가 이 테이블을 배치 조회). §142의
+heuristic 스크립트는 이 테이블을 쓰지 않고 **`instruments.metadata`
+컬럼의 `index_memberships` JSON 키**를 직접 읽었다 — 이는 애초에
+`_is_core_seed_instrument()`가 참조하지 않는, **다른 모집단 정의**였다.
+
+authoritative(216) 대비 heuristic(211)이 누락한 5종목
+(`000990`/`0126Z0`/`267270`/`456040`/`483650`) 전부 동일한 패턴이었다:
+
+| 종목 | `metadata.index_memberships` | 실제 `instrument_index_memberships` 테이블 |
+|---|---|---|
+| `000990`(DB하이텍) | `None` | `KOSPI200` |
+| `0126Z0`(삼성에피스홀딩스) | `None` | `KOSPI100` |
+| `267270`(HD건설기계) | `None` | `KOSPI200` |
+| `456040`(OCI) | `None` | `KOSPI200` |
+| `483650`(달바글로벌) | `None` | `KOSPI200` |
+
+즉 수동 전사 오류나 배제 규칙(우선주 등) 적용 차이가 아니라, **애초에
+잘못된 데이터 소스(다른 모집단 정의)를 읽은 것**이 원인이다. 이 5종목
+중 4종목(`000990`/`267270`/`456040`/`483650`)은 07-31 배치로 이미 fresh
+snapshot을 받아 FRESH가 204→208로, 나머지 1종목(`0126Z0`)은 snapshot
+자체가 없어 MISSING이 6→7로 늘었다.
+
+### 143.4 `target_count=207` vs `snapshot_count=208` — 정상 동작(오류 아님)
+
+07-31 freeze 종목(207개)과 07-31 20:00 snapshot 종목(208개)을 직접
+대조한 결과, **차이는 정확히 1건 — `069500`(KODEX 200 ETF)**이다.
+`scripts/generate_signal_feature_snapshot_input.py`의
+`_with_regime_benchmark_symbol()`(SPPV-2.72에서 도입)이 `069500`을
+**regime 벤치마크 계산용으로 항상 배치 입력에 강제 추가**하기 때문이다
+— 이 종목은 거래 후보가 아니므로 freeze의 `target_count`에는 포함되지
+않지만, snapshot 생성 대상에는 포함된다. **`target_count`와
+`snapshot_count`는 애초에 같은 분모가 아니며, 1건 차이는 설계된 동작이다.**
+
+(참고: `covered`(207)가 `target_count`(207)와 우연히 같은 숫자로
+나왔으나, 서로 다른 모집단이라 인과관계는 없다 — 미확정/우연의 일치로
+남긴다.)
+
+### 143.5 핵심 결론에 대한 영향(판정)
+
+**"stale bias 사실상 해소" 결론은 유지된다.** authoritative 수치로도
+FRESH 96.3%(208/216), STALE 0.5%(1/216)로 §142의 결론과 방향·크기가
+거의 동일하다 — 오히려 core-eligible이 216으로 늘어난 상태에서도 같은
+결론이 재현된다는 점에서 **결론의 견고성이 강화**됐다. 정정 대상은
+수치 표기 그 자체이지, 판단이 아니다.
+
+### 143.6 다음 우선 작업(변경 없음)
+
+§142.7과 동일 — 2026-08-03(월) 08:50 KST freeze 실측이 1순위다. 이번
+정정은 그 실측의 기준선 수치를 authoritative 값(216/208/1/7)으로
+교체하는 것 외에 계획을 바꾸지 않는다.
