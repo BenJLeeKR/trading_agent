@@ -3599,3 +3599,24 @@ BUY 경로 리팩터링은 단일 대형 변경이 아니라 아래 **5개 단�
 
 즉 다음 단계의 목적은 곧바로 코드를 바꾸는 것이 아니라,
 **리팩터링 단위를 해석 가능한 순서로 확정하는 것**이다.
+
+## 44. R1 판정 완료 — 제거/대체(2026-08-01 KST, read-only)
+
+위 §43(SPPV-2.157/2.158/2.159)에서 `regime_tailwind` 제거와 `ranking_
+score`의 실제 소비 경로(core_risk_off guard/event_overlay shadow)
+검증까지는 이미 닫힌 사실로 전제하고, 이번 턴은 R1을 남은 두 항
+(`entry_score`, `allocation_quality`)만 판단하는 좁혀진 질문으로
+확인했다.
+
+**새로 확인한 사실**: `ranking_score`의 `allocation_quality` 항
+(`0.10*clamp(max_new_capital_pct/10)`)이 `entry_score`가 이미 반영한
+자체 allocation 항과 `max_new_capital_pct>0` 전 구간에서 수치까지
+정확히 일치함을 코드 계산으로 확인했다(read-only, DB/외부 호출 없음).
+즉 `ranking_score`의 두 항 모두 `entry_score` 대비 독립 정보가 없다.
+
+**판정: C(제거/대체).** `core_risk_off guard`/`event_overlay shadow`
+가 `ranking_score` 대신 `entry_score`(재정규화 threshold)를 직접
+참조하도록 바꾸는 것이 다음 방향이며, R2(`entry_score` 내부 구조)
+선행 확인은 불필요하다. 다음 턴은 diff 초안이 아니라 대체 contract
+설계 검토다. 상세: `docs/20_system_analysis/buy_path_variable_gate_
+matrix.md` §13.1.1.

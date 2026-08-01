@@ -10444,10 +10444,13 @@ agent 설계 문서 기준으로도 순서는 다음이 맞다.
      MISSING 7)과 계층 분포·종목 구성 대조(read-only) +
      [1-B순위] **`regime_tailwind` 제거 diff 배포 후 운영 반영 관측**
      (SPPV-2.159 후속) — 실제 ranking_score 분포·core_risk_off guard
-     판정 변화 여부 read-only 확인. **`ranking_score` 가중치
-     재정규화·존치·대체 판단은 `docs/20_system_analysis/buy_path_
-     variable_gate_matrix.md`의 R1 트랙으로 이관돼 더 넓은 BUY 경로
-     관점에서 후속 판단 중**(중복 분석이 아니라 이관된 후속 판단) +
+     판정 변화 여부 read-only 확인. **[2026-08-01 KST 갱신] `ranking_
+     score` 가중치 재정규화·존치·대체 판단은 `docs/20_system_analysis/
+     buy_path_variable_gate_matrix.md` R1 트랙에서 판정 C(제거/대체)로
+     닫혔다** — `allocation_quality` 항이 `entry_score`에 이미 반영된
+     동일 신호(`max_new_capital_pct`)를 완전히 동일한 형태로 재적용함이
+     코드 수준에서 확인돼, `ranking_score`의 두 항 모두 독립 정보가
+     없음이 확정됨. 다음은 대체 contract 설계 검토(§13.1.1) +
      [1-B순위] **D안 순수 효과 재측정** — S5로 stale bias가 사라진 뒤
      §137.5의 2.13배(상한)를 다시 측정 +
      [1-B순위] `strategy_alignment` 제거의 **게이트 영향 재관측** —

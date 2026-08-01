@@ -4297,3 +4297,31 @@
 현재 해석은 "전면 개편"이 아니라 **R1→R2→R3/R4→R5 순차 검토**다.
 즉 다음 착수는 Roadmap 작성이 아니라 R1/R2를 닫기 위한 추가 확인
 검토다.
+
+### R1 판정 완료(2026-08-01 KST, read-only 분석, 코드 변경 없음)
+
+**R1(`ranking_score` 역할 축소/대체 판단) — 판정 C(제거/대체)로 닫힘.**
+
+- 전제(이미 닫힌 사실, 재검증 없이 사용): `docs/10_signal_research_
+  sppv/[DESIGN] regime_conditional_entry_signal_v1.md` §144~146
+  (SPPV-2.157/2.158/2.159)에서 `regime_tailwind` 제거 완료, `ranking_
+  score`의 실제 소비 경로(core_risk_off guard/event_overlay shadow)
+  전수 검증 완료.
+- 새로 확인한 사실: `ranking_score`의 남은 `allocation_quality` 항
+  (`0.10*clamp(max_new_capital_pct/10)`)이, `entry_score`가 이미
+  반영한 자체 allocation 항(`+min(0.10, pct/100)` / `pct<=0`이면
+  `-0.20`)과 **`pct>0` 전 구간에서 수치까지 정확히 일치**함을 코드
+  수준에서 직접 계산해 확인(read-only, DB/외부 호출 없음). 즉
+  `ranking_score`의 두 항(`entry_score`, `allocation_quality`) 모두
+  독립 정보가 없다 — `coverage_score`/`strategy_alignment`/
+  `regime_tailwind`에서 이미 확인·제거한 것과 동일한 이중 계상 패턴.
+- 판정: `ranking_score` **제거/대체**가 맞다(유지·단순 축소가 아님).
+  R2(`entry_score` 내부 구조) 선행 확인 불필요 — R1의 대체 대상은
+  `core_risk_off guard`/`event_overlay shadow` 두 소비 지점이 참조하는
+  스칼라를 `entry_score`(재정규화 threshold)로 바꾸는 것뿐이라
+  `entry_score` 내부는 건드리지 않는다.
+- 다음 턴: **diff 초안이 아니라 대체 contract 설계 검토** — threshold
+  재정규화 방식, `ranking_score` 필드 완전 제거 여부(관찰용 소비자인
+  `trigger_proxy_attribution.py` 영향 확인 포함) 확정.
+- 상세: `docs/20_system_analysis/buy_path_variable_gate_matrix.md`
+  §13.1.1.
