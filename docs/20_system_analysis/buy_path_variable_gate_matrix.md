@@ -264,6 +264,21 @@ AI downgrade, EV gate, submit translation은 별도 축이지만, 이미 상류�
   - guard threshold가 사실상 `entry_score` 2차 처벌인지
 - 우선순위: **1순위**
 
+**선행 확정 사실(이미 닫힘)**: 이 R1은 "새로 발견한 문제"가 아니라,
+아래 사실이 이미 확정된 상태에서 남은 두 항만 판단하는 좁혀진 질문이다.
+
+- `docs/10_signal_research_sppv/[DESIGN] regime_conditional_entry_
+  signal_v1.md` §144~146(SPPV-2.157/2.158/2.159)에서:
+  - `regime_tailwind`(0.03) 항은 이미 제거됨(코드 diff 반영 완료)
+  - `ranking_score`의 실제 소비 경로가 `core_risk_off guard`와
+    `event_overlay shadow` 두 곳뿐임이 전수 검증됨
+  - 위 두 소비 경로 모두 `regime_tailwind` 제거로 실질 영향이 없거나
+    범위 밖(shadow-only)임이 판정됨
+
+따라서 R1의 실제 남은 범위는 `ranking_score`에서 이미 정리된 `regime_
+tailwind`를 다시 다루는 것이 아니라, **남은 두 항(`entry_score`,
+`allocation_quality`)의 존치·재정규화·대체 여부**로 한정된다.
+
 ### 13.2 R2 — `entry_score`의 alpha / risk / sizing 분리
 
 - 범위:
