@@ -121,7 +121,8 @@
   `operations_day_runs.summary_json`에 `missed_pre_market_window`를 기록해
   운영자가 즉시 누락을 식별할 수 있어야 한다.
   - 기본 CSV 경로는 `data/instrument_master/normalized/kis_kospi_kosdaq_master_normalized_for_sync.csv`다.
-  - 기본 원본 CSV 경로는 `data/instrument_master/source/kospi_master.csv`, `data/instrument_master/source/kosdaq_master.csv`다.
+  - 스케줄러 기본 원본 CSV 경로는 `data/instrument_master/source/kospi_master.csv`, `data/instrument_master/source/kosdaq_master.csv`다.
+  - `data/instrument_master/source/kospi_master_instrument.csv`는 `kospi_master.csv` 생성의 상류 운영 원천 업로드 파일로 관리한다.
   - 원본 CSV는 `data/instrument_master/archive/<YYYY-MM-DD>/` 아래로 자동 보관한다.
   - CSV가 없거나 sync command가 실패하면 `done` 처리하지 않고 다음 tick에 재시도한다.
   - 별도 membership seed CSV는
