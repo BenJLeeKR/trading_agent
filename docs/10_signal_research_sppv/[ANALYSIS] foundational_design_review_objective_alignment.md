@@ -3527,3 +3527,28 @@ alignment`는 값이 살아있는 곳(event_overlay)과 그 값을 읽는 코드
 **최종 판정: A(바로 diff 초안 작성 가능).** 상세:
 `docs/10_signal_research_sppv/[DESIGN] regime_conditional_entry_signal_
 v1.md` §144.
+
+## 42. §41 표현 정밀도 보정(이력 보존형) — 판정 A 유지(SPPV-2.158, 2026-08-01 KST)
+
+**[SPPV-2.158에서 정정]** §41(SPPV-2.157)의 결론(판정 A)은 유지하되,
+검증 방법 서술 중 실제 저장 구조와 어긋나는 두 곳을 정정한다.
+
+**정정 1**: `decision_json.deterministic_trigger.metadata`에는
+`regime_tailwind` 키가 **존재하지 않는다**(실측 확인 — metadata 키
+19개 전수 나열, `regime_label`/`risk_tone`은 있으나 `regime_tailwind`
+없음). §41의 검증은 "jsonb에 저장된 값을 직접 조회"한 것이 아니라
+**"저장된 `regime_label`+`risk_tone`으로 `_build_buy_ranking_score()`의
+분기 로직을 재구성해 역산·집계"**한 것이다. 이 구분이 값 자체를
+바꾸지는 않는다.
+
+**정정 2**: "최근 1개월" 창을 `2026-07-01 00:00:00 KST 이상
+2026-08-01 00:00:00 KST 미만`으로 명시 확정했다 — 재확인 결과 core
+n=18,946으로 §41 기록값과 정확히 일치, 수치 변경 없음.
+
+**유지**: 최종 판정 A, `buy_candidate`는 `entry_score` 기준이라
+`ranking_score`와 무관, `market_regime`은 종목별 값,
+`core_risk_off_guard_active=true` 모집단(n=13,312)에서
+`regime_tailwind != 0`이 0건, `event_overlay` 0.56 shadow 경로 경계
+뒤집힘 0건 — 전부 그대로 유지된다. 상세:
+`docs/10_signal_research_sppv/[DESIGN] regime_conditional_entry_signal_
+v1.md` §145.

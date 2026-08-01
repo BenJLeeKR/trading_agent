@@ -2218,6 +2218,22 @@
   `docs/10_signal_research_sppv/[DESIGN] regime_conditional_entry_
   signal_v1.md` §144.
 
+- 2026-08-01 KST(SPPV-2.158, 신규 KIS 호출 0건, 완료 — 코드 미수정,
+  **[SPPV-2.158에서 정정], 이력 보존형, 판정 A 유지**): **SPPV-2.157
+  표현 정밀도 보정.** `regime_tailwind`가 `decision_json.deterministic_
+  trigger.metadata`에 **저장돼 있지 않음**을 실측 확인(metadata 키 19개
+  전수 나열 — `regime_label`/`risk_tone`은 있으나 `regime_tailwind`
+  없음). SPPV-2.157의 검증은 "jsonb에 저장된 값을 직접 조회"가 아니라
+  **"저장된 `regime_label`+`risk_tone`으로 `_build_buy_ranking_score()`의
+  분기 로직을 재구성해 역산·집계"**한 것으로 정정 — 값 자체는 바뀌지
+  않는다. "최근 1개월" 창을 `2026-07-01 00:00:00 KST 이상 2026-08-01
+  00:00:00 KST 미만`으로 명시 확정(재확인 결과 core n=18,946 정확히
+  일치, 수치 변경 없음). **판정 A와 핵심 결론 4가지(entry_score 기준
+  무관/종목별 market_regime/core_risk_off guard 0건 예외/event_overlay
+  0.56 경계 뒤집힘 0건) 전부 유지.** 상세:
+  `docs/10_signal_research_sppv/[DESIGN] regime_conditional_entry_
+  signal_v1.md` §145.
+
 ---
 
 ## 관리 원칙
