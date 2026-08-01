@@ -18326,3 +18326,33 @@ Full pytest / 외부 API 실호출 / 운영 DB write는 수행하지 않았다.
 2. **2순위**: `regime_tailwind` 제거의 운영 반영 관측(이번 diff 배포 후).
 3. **3순위**: `strategy_alignment` 게이트 영향 재관측(게이트 활성일).
 4. **4순위**: D안 순수 효과 재측정.
+
+## §147. BUY 경로 리팩터링 단위 고정 — 코드 변경 전 범위 정렬(SPPV-2.160, 2026-08-01 KST)
+
+이번 턴은 코드 변경 없이, `docs/20_system_analysis/`의 구조 분석을
+canonical 문서와 같은 우선순위 언어로 정렬하는 작업이다.
+
+### 147.1 리팩터링 단위
+
+1. **R1 — `ranking_score` 역할 축소/대체 판단**
+2. **R2 — `entry_score`의 alpha / risk / sizing 분리**
+3. **R3 — `portfolio_allocation` 역할 분리**
+4. **R4 — activity 계열 중복 정리**
+5. **R5 — AI downgrade / EV gate / submit translation 하류 contract 점검**
+
+### 147.2 우선순위 해석
+
+현재는 "BUY 경로 전체 리팩터링"보다, **R1부터 차례로 닫는 staged
+refactor**로 이해하는 것이 정확하다.
+
+- **1순위**: R1
+- **2순위**: R2
+- **3순위**: R3/R4
+- **4순위**: R5
+
+### 147.3 지금 코드 변경을 하지 않는 이유
+
+아직 `ranking_score`와 `entry_score`의 역할 경계가 완전히 고정되지
+않았는데, 이 둘을 동시에 수정하면 이후 관측 결과를 해석하기 어렵다.
+따라서 다음 단계는 구현이 아니라 **R1/R2를 닫기 위한 확인 검토**가
+맞다.

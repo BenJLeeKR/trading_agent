@@ -3575,3 +3575,27 @@ backend-file` **PASS**.
 범위 밖으로 남겨 다음 턴 과제로 넘겼다.** 상세:
 `docs/10_signal_research_sppv/[DESIGN] regime_conditional_entry_signal_
 v1.md` §146.
+
+## 44. BUY 경로 리팩터링 범위 재정의 — staged refactor 단위 고정 (2026-08-01 KST)
+
+`docs/20_system_analysis/buy_path_variable_gate_matrix.md` 분석을 기준으로,
+BUY 경로 리팩터링은 단일 대형 변경이 아니라 아래 **5개 단위**로
+재정의하는 것이 맞다.
+
+1. **R1** — `ranking_score` 역할 축소/대체 판단
+2. **R2** — `entry_score`의 alpha / risk / sizing 분리
+3. **R3** — `portfolio_allocation` 역할 분리
+4. **R4** — activity 계열 중복 정리
+5. **R5** — 하류 AI/EV/submit contract 점검
+
+핵심 판단:
+
+- 지금 가장 먼저 닫아야 하는 것은 **R1**이다.
+- 이유는 현재 `ranking_score`가 독립 순위화 공식이라기보다
+  `entry_score` 재사용 계층에 가까워, 이후 R2~R4의 해석을 모두
+  오염시키기 때문이다.
+- 따라서 즉시 우선순위는 **R1 → R2 → R3/R4 → R5**가 맞고,
+  Roadmap은 그 뒤에 써야 한다.
+
+즉 다음 단계의 목적은 곧바로 코드를 바꾸는 것이 아니라,
+**리팩터링 단위를 해석 가능한 순서로 확정하는 것**이다.

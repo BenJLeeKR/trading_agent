@@ -1,12 +1,12 @@
 # BUY 경로 리팩터링 사전 검토 일정
 
 작성일: 2026-08-01 KST
-상태: 사전 검토 일정 확정 초안
+상태: 사전 검토 일정 확정
 
 ## 1. 목적
 
 이 문서는 `BUY` 경로 대대적 리팩터링에 바로 착수하지 않고,
-`docs/11_system_analysis/buy_path_variable_gate_matrix.md`를 기준으로
+`docs/20_system_analysis/buy_path_variable_gate_matrix.md`를 기준으로
 사전 확인·검토 작업을 어떤 순서와 일정으로 닫을지 정리한다.
 
 이번 문서의 범위는 **Roadmap 이전 단계**다.
@@ -150,3 +150,56 @@ Roadmap은 **1단계와 2단계가 끝난 뒤** 쓰는 것이 맞다.
 
 따라서 지금 시점의 적절한 산출물은 Roadmap이 아니라
 **Roadmap 이전의 확인 검토 일정표**다.
+
+## 8. 리팩터링 단위별 착수 순서
+
+`buy_path_variable_gate_matrix.md`의 R1~R5 단위를 기준으로 하면,
+사전 검토 일정의 실제 작업 순서는 아래처럼 읽는 것이 맞다.
+
+### 8.1 1차 묶음 — R1
+
+- 대상: `ranking_score`
+- 목표:
+  - 독립 공식 존치 여부
+  - `entry_score` 재사용 구조 해소 여부
+  - guard 보조 입력으로의 축소 가능성
+
+이 묶음이 먼저 닫혀야 이후 `entry_score`와 allocation/activity의 역할을
+어디까지 남길지 결정할 수 있다.
+
+### 8.2 2차 묶음 — R2
+
+- 대상: `entry_score`
+- 목표:
+  - alpha 전용화 가능성 검토
+  - risk/sizing/activity/strategy 보정항 이관 후보 분류
+
+R1 없이 R2를 먼저 건드리면 `ranking_score`와 `entry_score`를 동시에
+재해석하게 되어 변경 효과를 분리하기 어렵다.
+
+### 8.3 3차 묶음 — R3 + R4
+
+- 대상:
+  - `portfolio_allocation`
+  - activity 계열
+- 목표:
+  - selection vs sizing vs feasibility 경계 재설정
+  - soft bonus vs hard gate 중복 축소
+
+이 두 축은 성격이 비슷하다. 둘 다 "좋은 종목인가"보다
+"지금 들어갈 수 있는가" 쪽 의미가 더 강하기 때문이다.
+
+### 8.4 4차 묶음 — R5
+
+- 대상:
+  - AI downgrade
+  - EV gate
+  - submit translation
+- 목표:
+  - 상류 리팩터링이 하류 contract를 깨지 않는지 확인
+  - 필요 시 하류 contract 정리 범위를 따로 떼어낸다
+
+### 8.5 현재 착수 판정
+
+지금 바로 Roadmap으로 넘어가기보다, **R1 정의 고정 → R2 경계 확인**까지를
+이번 사전 검토의 최소 완료선으로 보는 것이 적절하다.

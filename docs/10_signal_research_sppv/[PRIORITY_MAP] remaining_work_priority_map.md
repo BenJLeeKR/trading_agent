@@ -10850,7 +10850,7 @@ BUY 주문 0건 문제가 단순 신호 부재가 아니라 downstream 정렬·�
 ## BUY 경로 리팩터링 사전 검토 일정 고정 (2026-08-01 KST)
 
 BUY 경로 대개편은 바로 diff로 들어가지 않고, 먼저
-`docs/11_system_analysis/buy_path_refactor_pre_roadmap_schedule.md` 기준으로
+`docs/20_system_analysis/buy_path_refactor_pre_roadmap_schedule.md` 기준으로
 사전 검토 단계를 수행한다.
 
 현재 우선순위 해석은 아래와 같다.
@@ -10862,3 +10862,24 @@ BUY 경로 대개편은 바로 diff로 들어가지 않고, 먼저
 
 즉, 지금 1순위는 구현이 아니라 **Roadmap을 쓸 수 있을 정도로 범위를
 좁히는 검토 작업**이다.
+
+## BUY 경로 리팩터링 단위 재정렬 (2026-08-01 KST)
+
+`docs/20_system_analysis/buy_path_variable_gate_matrix.md`를 기준으로,
+BUY 경로 리팩터링 단위를 아래처럼 고정한다.
+
+1. **R1 — `ranking_score` 역할 축소/대체 판단**
+2. **R2 — `entry_score`의 alpha / risk / sizing 분리**
+3. **R3 — `portfolio_allocation` 역할 분리**
+4. **R4 — activity 계열 중복 정리**
+5. **R5 — 하류 AI/EV/submit contract 점검**
+
+현재 우선순위 해석:
+
+- **1순위**: R1
+- **2순위**: R2
+- **3순위**: R3/R4
+- **4순위**: R5
+
+즉 "BUY 경로 전체 리팩터링"을 한 묶음으로 보지 않고,
+**R1부터 순차적으로 닫아가는 staged refactor 트랙**으로 전환한다.

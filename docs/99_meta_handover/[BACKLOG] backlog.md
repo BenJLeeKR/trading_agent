@@ -4274,8 +4274,8 @@
 ## BUY 경로 리팩터링 사전 검토 일정 (2026-08-01 KST 추가)
 
 - 기준 문서:
-  - `docs/11_system_analysis/buy_path_variable_gate_matrix.md`
-  - `docs/11_system_analysis/buy_path_refactor_pre_roadmap_schedule.md`
+  - `docs/20_system_analysis/buy_path_variable_gate_matrix.md`
+  - `docs/20_system_analysis/buy_path_refactor_pre_roadmap_schedule.md`
 - 현재 단계:
   - 구현 Roadmap 작성 전 사전 검토 단계
 - 현재 우선 작업:
@@ -4285,3 +4285,15 @@
 
 즉 이 트랙은 지금 당장은 코드 diff보다 **리팩터링 범위를 줄이기 위한
 확인 검토 작업**을 우선한다.
+
+### 리팩터링 단위 분해(2026-08-01 KST 추가)
+
+- **R1**: `ranking_score` 역할 축소/대체 판단
+- **R2**: `entry_score`의 alpha / risk / sizing 분리
+- **R3**: `portfolio_allocation` 역할 분리
+- **R4**: activity 계열 soft/hard 중복 정리
+- **R5**: AI downgrade / EV gate / submit translation 하류 contract 점검
+
+현재 해석은 "전면 개편"이 아니라 **R1→R2→R3/R4→R5 순차 검토**다.
+즉 다음 착수는 Roadmap 작성이 아니라 R1/R2를 닫기 위한 추가 확인
+검토다.
