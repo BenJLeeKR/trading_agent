@@ -1,7 +1,17 @@
 # ranking_score 공식 검증 계획
 
 작성일: 2026-07-28  
-상태: [SPPV-2.152에서 갱신] **S5 배치 반영 준비 상태 확인 + 배치 전 기준선
+상태: [SPPV-2.155에서 갱신] **S5 배치 실측 완료 — stale bias 사실상 해소
+확인**(§6.31, 2026-08-01 17:34 KST). 07-31 20:10 KST 배치: core-eligible
+211종목 중 **203종목(96.2%)** 커버(기존 80→208종목), stale 핵심 8종목
+**전부 FRESH로 전환**, 3계층 분포 FRESH 80→**204(96.7%)**/STALE 66→**1**/
+MISSING 65→**6**(잔여 STALE·MISSING 7건 중 6건이 우선주로 애초 배제
+대상). fetch_error 0건, 소요시간 약 170초(예측치 172.5초와 근접, 검증됨).
+**다음 거래일(2026-08-03 월) 08:50 KST freeze 실측은 read-only만으로 충분**
+— 코드는 이미 반영 완료. 상세: `[DESIGN] regime_conditional_entry_signal_
+v1.md` §142.
+
+[SPPV-2.152] **S5 배치 반영 준비 상태 확인 + 배치 전 기준선
 확정**(§6.30, 2026-07-31 15:31 KST). **요청된 "장후 배치 실측"은 수행 불가**
 — 확인 시각이 배치 예정(20:10 KST)보다 약 4시간 39분 이전이고, 오늘자
 `signal_feature_after_market` freeze 0건·오늘자 snapshot 0건·최신 snapshot이
@@ -1515,6 +1525,36 @@ entry_signal_v1.md` §139.
 
 상세: `docs/10_signal_research_sppv/[DESIGN] regime_conditional_
 entry_signal_v1.md` §140.
+
+### 6.31 SPPV-2.155 — S5 배치 실측(2026-07-31 20:10 KST 배치 결과)
+(신규, 2026-08-01 17:34 KST, 완료 — 코드 미수정)
+
+- [x] **배치 실행 확인**: freeze 생성 20:10:04 KST(`target_count=207`),
+      batch 적재 완료 20:12:54 KST, `status=completed`,
+      `fetch_error_count=0`, `persist_error_count=0`, `final_missing_count=0`.
+      input 생성·적재 두 단계 모두 성공.
+- [x] **coverage 확대 확인**: 기존 80 → **208종목**(2.6배). core-eligible
+      211 중 **203종목(96.2%)** 커버. 잔여 8종목 중 7종목은 우선주(애초
+      배제 대상), 1종목(`000880`)은 3일 경과로 여전히 FRESH.
+- [x] **stale 핵심 8종목 전부 FRESH로 전환** 확인(개별 표는 §142.3).
+- [x] **3계층 재분포**: FRESH 80→204(96.7%), STALE 66→1(0.5%),
+      MISSING 65→6(2.8%, 전부 우선주). **stale bias 사실상 완전 해소로
+      판정**(일부 개선이 아님).
+- [x] **소요시간 검증**: 약 170초, SPPV-2.151 예측치(172.5초)와 근접 —
+      80→208종목 확대 비용 예측이 실측으로 검증됨.
+- [x] **다음 거래일(2026-08-03 월) freeze 준비 판단**: 추가 세팅 불필요,
+      read-only 실측만으로 충분(코드 이미 반영 완료).
+- [ ] **다음 거래일 실제 freeze 구성 확인** — 미수행(다음 턴).
+- [ ] **timeout/budget WARNING 직접 확인** — stdout 로그가 이후 배포로 인한
+      컨테이너 재기동(08-01 06:29 KST)으로 소실돼 미확정. `fetch_error_
+      count=0`이 간접 증거이나 직접 확인은 아니다.
+
+**[PLAN] 상태 요약**: stale snapshot 트랙은 **근본 원인 대응(S5) 운영 효과가
+실측으로 검증**됐다. 남은 것은 다음 거래일 freeze의 실제 구성 확인과 D안
+순수 효과 재측정이다.
+
+상세: `docs/10_signal_research_sppv/[DESIGN] regime_conditional_
+entry_signal_v1.md` §142.
 
 ## 7. 완료 기준
 
