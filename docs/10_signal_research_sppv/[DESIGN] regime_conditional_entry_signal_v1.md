@@ -18042,3 +18042,152 @@ FRESH 96.3%(208/216), STALE 0.5%(1/216)로 §142의 결론과 방향·크기가
 §142.7과 동일 — 2026-08-03(월) 08:50 KST freeze 실측이 1순위다. 이번
 정정은 그 실측의 기준선 수치를 authoritative 값(216/208/1/7)으로
 교체하는 것 외에 계획을 바꾸지 않는다.
+
+## §144. `regime_tailwind` 제거 선행 검증(SPPV-2.157, 2026-08-01 18:27 KST)
+
+**배경**: `regime_tailwind`(가중치 0.03, `_build_buy_ranking_score()`)는
+SPPV-2.147에서 "이번 변경 범위 밖"으로 남겨둔 항이다. 제거에 들어가기
+전에, 실제 BUY 판정 경로에서 완전 무영향인지 threshold 경계에 숨은
+간접 영향이 있는지 선행 검증한다. 이번 턴은 read-only만 사용했고
+코드는 수정하지 않았다.
+
+### 144.1 `regime_tailwind` 계산 로직(코드 사실)
+
+```python
+regime_tailwind = 0.5   # 기본값(market_regime=None 포함)
+if market_regime.regime_label=="bullish_trend" and market_regime.risk_tone=="risk_on":
+    regime_tailwind = 1.0
+elif market_regime.risk_tone == "risk_off":
+    regime_tailwind = 0.0
+ranking_score = 0.55*entry_score + 0.10*allocation_quality + 0.03*regime_tailwind
+```
+
+`market_regime`은 `classify_market_regime(snapshot)`으로 **후보 종목 개별
+signal_feature_snapshot 기반**으로 계산된다 — 전역 시장 상태가 아니라
+종목별 값이다(중요 정정: "market regime"이라는 이름과 달리 종목마다
+다를 수 있다).
+
+### 144.2 `regime_tailwind` 분포 재확인(사실, `decision_json.deterministic_
+trigger.metadata.{risk_tone,regime_label}`에서 직접 재계산)
+
+| 구간 | core | event_overlay | market_overlay |
+|---|---|---|---|
+| 최근 3거래일(07-29~07-31) | 0.0=97.5%, 0.5=2.5% (n=2,923) | 0.0=100.0% (n=1,162) | 데이터 없음 |
+| 최근 1개월(07-01~07-31) | 0.0=99.6%, 0.5=0.4% (n=18,946) | 0.0=100.0% (n=8,149) | 0.0=70.7%, 0.5=29.3% (n=410) |
+| 전체 이력 | 0.0=98.9%, 0.5=1.1% (n=24,755) | 0.0=99.4%, 0.5=0.6% (n=9,468) | 0.0=81.1%, 0.5=17.1%, **1.0=1.8%**(n=2,311) |
+
+**사실**: `regime_tailwind=1.0`(bullish_trend+risk_on)은 core·event_overlay
+에서 **전체 이력 통틀어 단 한 번도 관측되지 않았다**. market_overlay에서만
+전체 이력 42건(1.8%) 존재한다. `0.0`(risk_off)이 거의 모든 구간·소스에서
+압도적 다수다 — 최근으로 올수록 core는 0.0 비중이 더 높아지는 추세
+(97.5%→99.6%→98.9%, 최근 3일이 오히려 전체 이력보다 약간 낮은 것은 표본
+수가 작아서다).
+
+### 144.3 실제 BUY 판정 경로 영향 검증(코드 사실 + 정량 확인)
+
+**핵심 사실**: `buy_candidate`는 `entry_score >= 0.65`로 결정된다
+(`deterministic_trigger_engine.py:275`) — **`ranking_score`가 아니다**.
+`regime_tailwind`는 `ranking_score`에만 들어가므로 `buy_candidate` 판정
+자체에는 **애초에 관여하지 않는다**.
+
+`ranking_score`가 실제로 게이트 역할을 하는 지점은 코드 전체에서
+**정확히 2곳**뿐이다:
+
+1. **`_assess_core_risk_off_buy_guard()`**(`_CORE_RISK_OFF_RANKING_MIN_
+   SCORE=0.28`, `_CORE_RISK_OFF_SHADOW_MIN_SCORE=0.02`, `shadow_floor_
+   relax_ranking_min=0.26`) — `core_risk_off_guard_active=True`일 때만
+   호출된다. `_is_core_risk_off_regime()`은 `risk_tone=="risk_off" AND
+   regime_label=="bearish_trend"`를 요구하는데, 이는 `_build_buy_
+   ranking_score()`에서 `regime_tailwind=0.0`이 되는 바로 그 조건
+   (`risk_tone=="risk_off"`)의 **부분집합**이다. 즉 **이 게이트가 호출되는
+   모집단에서는 `regime_tailwind`가 항상 정확히 0이라는 것이 코드 구조상
+   증명된다** — 우연이 아니라 논리적 필연이다.
+   - **실측 검증(전체 이력, n=13,312)**: `core_risk_off_guard_active=true`
+     인 모든 행에서 `risk_tone='risk_off'` **100%**, 예외 0건. 논리적
+     증명과 정확히 일치.
+   - 따라서 `regime_tailwind` 제거는 `0.28`/`0.02`/`0.26` 세 threshold
+     **어디에도 영향을 줄 수 없다**(제거해도 이 경로의 `ranking_score`
+     값이 수학적으로 동일).
+
+2. **event_overlay shadow 실험**(`adjusted_ranking_score = ranking_score +
+   0.06`, `_EVENT_OVERLAY_SHADOW_MIN_SCORE=0.56`과 비교) — 이 경로는
+   `regime_tailwind`가 0이 아닐 수 있는 유일한 실측 소비 지점이다.
+   - `event_overlay`에서 `risk_tone != 'risk_off'`(0 또는 NULL 포함)인
+     행 **55건**(전체 이력)을 전수 확인한 결과, **전부 `risk_tone=None`
+     (market_regime 자체가 없던 2026-06-19/06-22 시기)이고, 전부
+     `adjusted_ranking_score`가 계산되지 않았다**(shadow 블록이 조기
+     반환, `eligibility_passed=False` 등 선행 조건 미충족으로 추정 —
+     미확정). **0.56 경계 뒤집힘 = 0건**(55건 전수, 계산조차 안 된 것도
+     "영향 없음"으로 집계).
+   - 이 실험 자체가 `"mode": "no_bonus_v1"`이고 `shadow_would_pass`가
+     `eligibility_passed`/`buy_candidate`/실제 주문 생성 어디에도 재반영
+     되지 않는 **순수 관찰용**임도 코드로 확인했다(승격/override 배선
+     없음, core_risk_off의 `core_risk_off_topk_v1` 같은 override 메커니즘
+     이 event_overlay엔 없음).
+
+3. **market_overlay**: `ranking_score`를 소비하는 게이트/실험 코드가
+   **전혀 없다**(`market_overlay_experiment` 같은 블록 자체가 존재하지
+   않음). market_overlay에서 `regime_tailwind`가 상대적으로 "더 살아
+   있다"(전체 이력 17.1%가 0.5, 1.8%가 1.0)는 관측은 맞지만, 그 값을
+   읽는 코드가 없으므로 **완전히 불활성(inert)**이다.
+
+**부가 관찰(인과관계 아님, 참고)**: market_overlay에서 `regime_tailwind
+=1.0`인 42건은 전부 `buy_candidate=true, eligibility_passed=true`이지만
+최종 `decision_type='hold'`로 끝났다. 이는 `entry_score`(0.65 이상)와
+개별 종목의 signal 특성이 우연히 함께 강했던 경우로, `buy_candidate`가
+`entry_score` 기준이라 `regime_tailwind`와 인과관계가 없다 — 같은
+snapshot에서 파생된 두 지표가 상관돼 보이는 것일 뿐이다(추정, 코드
+경로상 인과 없음은 확인된 사실).
+
+**참고(별도 소비자, 실제 판정과 무관)**: `trigger_proxy_attribution.py`
+(장후 배치, after-hours 관찰용 리포트)도 저장된 `ranking_score` 값을
+읽어 자체 shadow threshold(`0.26` 등)로 attribution 통계를 낸다. 이는
+**사후 관찰/귀인 리포트 산출물**이며 실제 BUY 판정에 되먹임되지 않는다
+— `regime_tailwind` 제거 시 이 리포트의 절대 수치가 소폭 이동할 수
+있으나(모집단 `ranking_score`가 최대 0.03 낮아지므로), 그것은 관찰
+지표의 재산정일 뿐 판정 로직 변경이 아니다.
+
+### 144.4 `strategy_alignment`와의 구분(사실)
+
+| 항 | core | event_overlay | market_overlay |
+|---|---|---|---|
+| `strategy_alignment`(SPPV-2.146) | 0(무영향, entry_score와 직접 중복) | **28.93%로 살아 있음**(전체 이력) — 그러나 entry_score 중복이라 제거 근거는 유지 | (미조사) |
+| `regime_tailwind`(이번 턴) | 사실상 0.0 지배(98.9%), 나머지도 게이트 미도달로 무영향 | 0.0 지배(99.4%) + 0.5인 55건도 실험 미계산으로 무영향 | 상대적으로 값은 다양(0.5/1.0 계 18.9%)하나 **소비 코드 자체가 없어 완전 불활성** |
+
+**핵심 차이**: `strategy_alignment`는 event_overlay에서 값이 살아
+있으면서 **동시에 그 값을 읽는 코드도 있어(entry_score 직접 반영)**
+제거 시 실제 경로에 영향이 있었다(그래서 entry_score 쪽은 유지하고
+ranking_score 쪽 이중 계상만 제거했다). `regime_tailwind`는 값이
+살아 있는 쪽(market_overlay)에서는 읽는 코드가 아예 없고, 값을
+읽는 코드가 있는 쪽(core_risk_off guard)에서는 값이 구조적으로 항상
+0이다 — **"값이 살아있는 곳"과 "코드가 읽는 곳"이 정확히 겹치지
+않는다**는 점이 `strategy_alignment`와 결정적으로 다르다.
+
+### 144.5 최종 판정: **A. 바로 diff 초안 작성 가능**
+
+근거:
+1. `buy_candidate`는 `entry_score` 기준이라 애초에 무관(코드 사실).
+2. `ranking_score`를 게이트로 쓰는 유일한 실제 경로(core_risk_off guard,
+   0.28/0.02/0.26)는 `regime_tailwind=0`이 코드 구조상 항상 보장된다
+   (논리적 증명 + n=13,312 전수 실측 100% 일치, 예외 0건).
+3. 값이 0이 아닐 수 있는 유일한 실측 소비 지점(event_overlay shadow,
+   0.56)은 55건 전수 확인 결과 **경계 뒤집힘 0건**이며, 애초에 순수
+   관찰용(승격 배선 없음)이라 실제 판정에 영향이 없다.
+4. market_overlay는 값이 상대적으로 다양하지만 소비 코드 자체가 없다.
+
+**추가 확인이 더 필요한 지점(B로 가지 않아도 되는 이유)**: 없음 — 위
+4가지가 상호 배타적으로 전체 소비 경로를 덮는다(코드 전수 grep으로
+`ranking_score` 참조 파일 3개 전부 확인: `deterministic_trigger_engine.py`,
+`decision_factory.py`(단순 값 복사), `trigger_proxy_attribution.py`
+(관찰용, 실제 판정과 무관)).
+
+### 144.6 다음 우선 작업
+
+1. **1순위**: 2026-08-03(월) 08:50 KST freeze 실측(SPPV-2.155/156 후속,
+   변경 없음).
+2. **2순위**: `regime_tailwind` 제거 diff 작성 — `_build_buy_ranking_score()`
+   에서 `0.03*regime_tailwind` 항 제거, 가중치 재정규화 여부 결정
+   (`0.55+0.10=0.65` 합이 1.0이 아니므로 기존에도 정규화되지 않은 상태 —
+   제거 후 처리 방식은 diff 턴에서 결정).
+3. **3순위**: `strategy_alignment` 게이트 영향 재관측(게이트 활성일).
+4. **4순위**: D안 순수 효과 재측정.
