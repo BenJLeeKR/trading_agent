@@ -3552,3 +3552,26 @@ n=18,946으로 §41 기록값과 정확히 일치, 수치 변경 없음.
 뒤집힘 0건 — 전부 그대로 유지된다. 상세:
 `docs/10_signal_research_sppv/[DESIGN] regime_conditional_entry_signal_
 v1.md` §145.
+
+## 43. `regime_tailwind` 제거 diff 구현(SPPV-2.159, 2026-08-01 KST)
+
+§41/§42에서 판정 A로 닫힌 `regime_tailwind` 제거를 실제 코드로
+구현했다. `src/agent_trading/services/deterministic_trigger_engine.py`
+의 `_build_buy_ranking_score()`에서 `market_regime` 인자와
+`regime_tailwind` 지역 변수·분기, `+0.03*regime_tailwind` 항을
+제거했다. `entry_score`/`strategy_alignment`/`coverage_score`/
+`relative_activity`/`core_risk_off`/`event_overlay` 로직은 전부
+무변경.
+
+기존 테스트 23건 중 2건이 fixture에 옛 tailwind 기여분(`bullish_
+trend+risk_on`→`+0.03`, `neutral`→`+0.015`)을 반영하고 있어 최소
+보정했고, 신규 회귀 테스트 1건을 추가해 함수가 `market_regime` 없이
+`entry_score`+`allocation_quality`만으로 값을 내는지와 옛 시그니처
+호출이 `TypeError`를 내는지 고정했다. `tests/services/test_
+deterministic_trigger_engine.py` **24 passed**, 하네스 `accept
+backend-file` **PASS**.
+
+**운영 반영 관측과 가중치 재정규화(`0.55+0.10=0.65`) 여부는 이번 턴
+범위 밖으로 남겨 다음 턴 과제로 넘겼다.** 상세:
+`docs/10_signal_research_sppv/[DESIGN] regime_conditional_entry_signal_
+v1.md` §146.

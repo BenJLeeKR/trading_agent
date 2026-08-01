@@ -1,7 +1,19 @@
 # ranking_score 공식 검증 계획
 
 작성일: 2026-07-28  
-상태: [SPPV-2.158에서 정정] **§6.33 표현 정밀도 보정 — 판정 A 유지,
+상태: [SPPV-2.159에서 갱신] **`regime_tailwind` 제거 diff 구현 완료**
+(§6.35, 2026-08-01 19:36 KST). `src/agent_trading/services/
+deterministic_trigger_engine.py`의 `_build_buy_ranking_score()`에서
+`market_regime` 인자와 `0.03*regime_tailwind` 항을 제거. `entry_score`/
+`strategy_alignment`/`coverage_score`/`relative_activity` 관련 로직과
+`core_risk_off`/`event_overlay` threshold(0.28/0.02/0.26/0.56)는 무변경.
+테스트 2건 보정(fixture가 옛 tailwind 기여분을 반영하고 있었음) + 신규
+회귀 1건 추가, `tests/services/test_deterministic_trigger_engine.py`
+**24 passed**. 하네스 `accept backend-file` **PASS**. 운영 반영/재정규화
+여부는 다음 턴 과제로 남김. 상세: `[DESIGN] regime_conditional_entry_
+signal_v1.md` §146.
+
+[SPPV-2.158] **§6.33 표현 정밀도 보정 — 판정 A 유지,
 검증 방법 서술만 정정**(§6.34, 2026-08-01 19:15 KST). `decision_json.
 deterministic_trigger.metadata`에는 `regime_tailwind` 키가 존재하지
 않음(실측 확인) — 저장된 것은 `regime_label`/`risk_tone`뿐이며, §6.33의
@@ -1694,6 +1706,36 @@ entry_signal_v1.md` §144.
 
 상세: `docs/10_signal_research_sppv/[DESIGN] regime_conditional_
 entry_signal_v1.md` §145.
+
+### 6.35 SPPV-2.159 — `regime_tailwind` 제거 diff 구현
+(신규, 2026-08-01 19:36 KST, 완료 — 코드 변경 포함, 운영 반영 전)
+
+- [x] **코드 수정**: `_build_buy_ranking_score()`에서 `market_regime`
+      인자, `regime_tailwind` 지역 변수·분기, `+0.03*regime_tailwind`
+      항을 제거. 호출부의 인자 전달도 함께 제거. `entry_score`/
+      `strategy_alignment`/`coverage_score`/`relative_activity`/
+      `core_risk_off`/`event_overlay` 로직은 전부 무변경.
+- [x] **최소 테스트 보정**: 기존 23건 중 2건이 fixture에 옛 tailwind
+      기여분(`bullish_trend+risk_on`→`+0.03`, `neutral`→`+0.015`)을
+      반영하고 있어 threshold/입력값을 최소 보정. 신규 회귀 1건
+      (`test_build_buy_ranking_score_has_no_regime_tailwind_term`)
+      — 함수가 `market_regime` 없이 값을 내는지, 옛 시그니처 호출이
+      `TypeError`를 내는지 고정. **24 passed**.
+- [x] **하네스 검증**: `accept backend-file deterministic_trigger_
+      engine.py` → **PASS**(import graph로 3개 테스트 파일 선정, 3/3
+      통과). 하네스가 제외한 인접 파일(`test_decision_factory.py`,
+      `test_core_risk_off_topk_projection.py`)도 직접 재확인 —
+      11 passed.
+- [ ] **운영 반영 관측** — 미수행(다음 턴). 이번 턴은 diff까지다.
+- [ ] **가중치 재정규화 여부** — 미결정. `0.55+0.10=0.65`(제거 전
+      `0.68`)로 이미 1.0이 아니었던 상태 — 별도 판단 필요.
+
+**[PLAN] 상태 요약**: `regime_tailwind` 제거가 코드로 반영됐다. 남은
+것은 배포 후 운영 반영 관측이며, 이번 턴에서 운영 효과 판정이나 장중
+실측은 하지 않았다.
+
+상세: `docs/10_signal_research_sppv/[DESIGN] regime_conditional_
+entry_signal_v1.md` §146.
 
 ## 7. 완료 기준
 

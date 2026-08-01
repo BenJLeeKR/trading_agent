@@ -18250,3 +18250,79 @@ regime_label}`에서 직접 재계산"이라고 썼으나, 이 표현이 "jsonb�
 
 §144.6과 동일 — 2026-08-03(월) freeze 실측과 `regime_tailwind` 제거
 diff 작성이 다음 순위다. 이번 정정은 그 계획을 바꾸지 않는다.
+
+## §146. `regime_tailwind` 제거 diff 구현(SPPV-2.159, 2026-08-01 19:36 KST)
+
+**전제**: SPPV-2.157(§144)에서 판정 A(바로 diff 초안 작성 가능)로 닫혔고,
+SPPV-2.158(§145)에서 그 결론은 유지된 채 표현 정밀도만 보정됐다. 이번
+턴은 실제 코드 diff 구현 턴이다.
+
+### 146.1 수정한 코드(1개 파일 + 테스트 1개 파일)
+
+**`src/agent_trading/services/deterministic_trigger_engine.py`**:
+
+| 위치 | 제거/유지 | 내용 |
+|---|---|---|
+| `_build_buy_ranking_score()` 시그니처 | **제거** | `market_regime: MarketRegimeAssessment \| None` 인자 삭제(함수 내부에서 regime_tailwind 계산에만 쓰였던 인자) |
+| `_build_buy_ranking_score()` 본문 | **제거** | `regime_tailwind = 0.5` 지역 변수 + if/elif 분기 삭제, `score` 계산식의 `+ 0.03 * regime_tailwind` 항 삭제 |
+| `_build_buy_ranking_score()` 호출부(위 함수 안, 메인 BUY 분기) | **제거** | `market_regime=market_regime` 인자 전달 삭제 |
+| `entry_score` 관련 로직(`_build_entry_score()` 등) | **유지** | 건드리지 않음 |
+| `strategy_alignment`/`coverage_score`/`relative_activity` 관련 기존 주석·로직 | **유지** | 건드리지 않음(주석 위치만 이어서 새 주석 추가) |
+| `_is_core_risk_off_regime()`, `_assess_core_risk_off_buy_guard()`(0.28/0.02/0.26) | **유지** | 무변경 |
+| event_overlay shadow 실험(0.56) | **유지** | 무변경 |
+| `MarketRegimeAssessment` import | **유지** | 파일 내 다른 함수(`_build_exit_ranking_score` 등)에서 여전히 사용 |
+
+호출부의 `market_regime` 변수 자체는 그대로 살아 있다 — 같은 스코프에서
+`_is_core_risk_off_regime(source_type=..., market_regime=market_regime)`
+호출에 계속 쓰이기 때문에, `_build_buy_ranking_score` 인자만 제거해도
+안전하다(§144.3에서 이미 이 두 소비 지점이 서로 독립임을 확인했다).
+
+**`tests/services/test_deterministic_trigger_engine.py`**:
+
+| 테스트 | 조치 |
+|---|---|
+| `test_trigger_engine_builds_buy_candidate_for_bullish_core` | **보정** — `ranking_score > 0.6` → `> 0.57`(fixture가 `bullish_trend+risk_on`이라 옛 `+0.03`이 반영돼 있었음, 그만큼 하향) |
+| `test_trigger_engine_instruments_event_overlay_shadow_lane_metadata` | **보정** — fixture `overall` `0.70`→`0.75`(옛 `+0.015`가 빠지며 `adjusted_ranking_score`가 `0.56` 문턱을 살짝 못 넘게 됐던 것을 복원, 순수 관찰용 메타데이터 테스트라 실제 판정과 무관) |
+| `test_build_buy_ranking_score_has_no_regime_tailwind_term` | **신규** — `_build_buy_ranking_score()`가 `market_regime` 없이 `entry_score`+`allocation_quality`만으로 값을 내는지, 그리고 옛 시그니처로 호출하면 `TypeError`가 나는지(인자 완전 제거 고정) 고정 |
+| 그 외 20개 | **무수정 통과** |
+
+`assess_deterministic_triggers()` 레벨에서 `market_regime`을 바꿔가며
+`ranking_score`를 직접 비교하는 테스트는 작성하지 않았다 — `market_regime`
+이 `entry_score` 쪽에도 별도 영향(risk_off 페널티 등)을 주기 때문에
+그 레벨 비교는 오염된다. 그래서 `_build_buy_ranking_score()` 자체를
+단독으로 고정하는 방식을 택했다.
+
+### 146.2 검증 결과
+
+| 검증 | 결과 |
+|---|---|
+| `tests/services/test_deterministic_trigger_engine.py` | **24 passed**(기존 23건 중 2건 보정 + 신규 1건, 나머지 20건 무수정 통과) |
+| 하네스 `accept backend-file deterministic_trigger_engine.py` | **PASS**(import graph로 3개 테스트 파일 선정, 3/3 통과) |
+| 하네스가 후보에서 제외한 파일 직접 확인(`test_decision_factory.py`, `test_core_risk_off_topk_projection.py`) | **11 passed** |
+
+Full pytest / 외부 API 실호출 / 운영 DB write는 수행하지 않았다.
+
+### 146.3 아직 남겨둔 것(다음 턴 과제)
+
+- **운영 반영 관측** — 이번 턴은 코드 diff까지다. 배포 후 실제 ranking_score
+  분포·core_risk_off guard 판정 변화(원래 무영향이므로 변화 없을 것으로
+  예상되나 미확정)를 다음 턴에서 read-only로 확인해야 한다.
+- **가중치 재정규화 여부 미결정** — `_build_buy_ranking_score()`의 남은
+  두 항 `0.55*entry_score + 0.10*allocation_quality`의 합이 `0.65`로,
+  `regime_tailwind` 제거 전(`0.68`)에도 이미 1.0이 아니었다. 재정규화
+  (예: `0.55`/`0.10`을 비례 확대)는 이번 턴 범위 밖으로 남겨둔다 — 별도
+  판단이 필요하다.
+- **`0.26`/`0.56` 관찰용 threshold 정리** — 이번 턴 범위 밖(사용자 명시
+  제외).
+- **`0.28`/`0.02` 등 core_risk_off threshold 동시 조정** — 이번 턴 범위
+  밖. §144에서 이미 이 항들과 regime_tailwind가 서로 독립임을 확인했으므로
+  이번 제거로 인한 재조정 필요성은 없다(판단, 운영 확인 전이라 최종
+  확정은 아님).
+
+### 146.4 다음 우선 작업
+
+1. **1순위**: 2026-08-03(월) 08:50 KST freeze 실측(SPPV-2.155/156 후속,
+   무관·무변경).
+2. **2순위**: `regime_tailwind` 제거의 운영 반영 관측(이번 diff 배포 후).
+3. **3순위**: `strategy_alignment` 게이트 영향 재관측(게이트 활성일).
+4. **4순위**: D안 순수 효과 재측정.

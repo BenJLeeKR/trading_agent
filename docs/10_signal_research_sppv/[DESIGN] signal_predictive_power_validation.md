@@ -3283,6 +3283,42 @@ entry 설계 검토로 전환**을 확정했다. 별도 문서
   `docs/10_signal_research_sppv/[DESIGN] regime_conditional_entry_
   signal_v1.md` §145.
 
+- 작성자: Codex
+- 수정일자: 2026-08-01 KST (159차, `regime_tailwind` 제거 diff 구현,
+  코드 변경 포함, `.env` 미수정, Full pytest 미실행, 신규 KIS 호출
+  0건, 운영 반영 전)
+- 수정내용: SPPV-2.157/§144에서 판정 A로 닫힌 `regime_tailwind` 제거를
+  실제 코드로 구현했다. `src/agent_trading/services/deterministic_
+  trigger_engine.py`의 `_build_buy_ranking_score()`에서 `market_regime`
+  인자와 `regime_tailwind` 지역 변수·if/elif 분기, `score` 계산식의
+  `+0.03*regime_tailwind` 항을 제거하고 호출부의 인자 전달도 함께
+  제거했다. `entry_score` 쪽 로직, `strategy_alignment`/
+  `coverage_score`/`relative_activity` 관련 기존 변경, `core_risk_off`
+  guard(0.28/0.02/0.26)와 event_overlay shadow(0.56) 로직은 전부
+  건드리지 않았다. 호출부의 `market_regime` 변수 자체는 같은 스코프의
+  `_is_core_risk_off_regime()` 호출에 계속 쓰이므로 안전하게 남겨뒀다.
+  기존 테스트 23건 중 2건이 fixture에 옛 tailwind 기여분(`bullish_
+  trend+risk_on`→`+0.03`, `neutral`→`+0.015`)을 반영하고 있어
+  threshold/입력값을 최소한으로 보정했고(하나는 `ranking_score>0.6`을
+  `>0.57`로, 다른 하나는 순수 관찰용 event_overlay shadow 메타데이터
+  테스트의 `overall`을 `0.70`→`0.75`로 조정), 신규 회귀 테스트 1건
+  (`test_build_buy_ranking_score_has_no_regime_tailwind_term`)을 추가해
+  함수가 `market_regime` 없이 `entry_score`+`allocation_quality`만으로
+  값을 내는지와 옛 시그니처 호출이 `TypeError`를 내는지를 고정했다.
+  `assess_deterministic_triggers()` 레벨에서 `market_regime`을 바꿔
+  `ranking_score`를 직접 비교하는 방식은 `market_regime`이 `entry_
+  score`에도 별도 영향(risk_off 페널티 등)을 줘 확인이 오염되므로
+  피하고, `_build_buy_ranking_score()` 자체를 단독으로 고정하는 방식을
+  택했다. `tests/services/test_deterministic_trigger_engine.py`
+  **24 passed**(20건 무수정 + 2건 보정 + 신규 1건), 하네스 `accept
+  backend-file` **PASS**(import graph로 3개 테스트 파일 선정, 3/3
+  통과), 하네스가 제외한 인접 파일(`test_decision_factory.py`,
+  `test_core_risk_off_topk_projection.py`)도 직접 재확인해 11 passed.
+  **운영 반영 관측과 가중치 재정규화(`0.55+0.10=0.65`, 제거 전에도
+  1.0이 아니었음) 여부는 이번 턴 범위 밖으로 남겨 다음 턴 과제로
+  넘겼다.** 상세: `docs/10_signal_research_sppv/[DESIGN] regime_
+  conditional_entry_signal_v1.md` §146.
+
 ---
 
 ## 진행 체크리스트
@@ -6330,6 +6366,24 @@ canonical),
     로직 변경 없음, 신규 KIS 호출 0건(shadow 재호출은 `kis_
     client=None`). 상세: `docs/10_signal_research_sppv/[DESIGN]
     regime_conditional_entry_signal_v1.md` §94.
+- [x] **SPPV-2.159(신설, 완료 — 코드 변경 포함, 운영 반영 전)**
+  `regime_tailwind` 제거 diff 구현 (2026-08-01 19:36 KST, 작성자: Codex,
+  `.env` 미수정, Full pytest 미실행, 신규 KIS 호출 0건)
+  - `_build_buy_ranking_score()`에서 `market_regime` 인자와
+    `0.03*regime_tailwind` 항 제거(SPPV-2.157/§144 판정 A 반영).
+    `entry_score`/`strategy_alignment`/`coverage_score`/
+    `relative_activity`/`core_risk_off`/`event_overlay` 로직은
+    전부 무변경.
+  - 기존 테스트 2건(fixture가 옛 tailwind 기여분 반영) 최소 보정 +
+    신규 회귀 1건(함수가 `market_regime` 없이 값을 내는지, 옛 시그니처
+    호출이 `TypeError`인지 고정) — `tests/services/test_deterministic_
+    trigger_engine.py` **24 passed**.
+  - 하네스 `accept backend-file` **PASS**(3/3), 인접 파일
+    (`test_decision_factory.py`, `test_core_risk_off_topk_projection.py`)
+    11 passed.
+  - **운영 반영 관측·가중치 재정규화 여부는 다음 턴 과제로 남김.**
+  상세: `docs/10_signal_research_sppv/[DESIGN] regime_conditional_entry_
+  signal_v1.md` §146.
 - [x] **SPPV-2.158([SPPV-2.158에서 정정] 완료 — 코드 미수정, §6.33
   표현 정밀도 보정, 판정 A 유지)** (2026-08-01 19:15 KST, 작성자: Codex,
   `.env` 미수정, Full pytest 미실행, 신규 KIS 호출 0건, 이력 보존형 정정)

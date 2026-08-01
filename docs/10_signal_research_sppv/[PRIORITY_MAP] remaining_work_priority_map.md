@@ -10428,12 +10428,23 @@ agent 설계 문서 기준으로도 순서는 다음이 맞다.
      core n=18,946 정확히 일치, 수치 변경 없음). **판정 A와 핵심 결론
      4가지 전부 유지.** 상세: `docs/10_signal_research_sppv/[DESIGN]
      regime_conditional_entry_signal_v1.md` §145.
+   - **SPPV-2.159(완료, 2026-08-01 19:36 KST, `regime_tailwind` 제거
+     diff 구현, 작성자: Codex, 코드 변경 포함, `.env` 미수정, Full pytest
+     미실행, 신규 KIS 호출 0건, 운영 반영 전)**: `_build_buy_ranking_
+     score()`에서 `market_regime` 인자와 `0.03*regime_tailwind` 항
+     제거. `entry_score`/`strategy_alignment`/`coverage_score`/
+     `relative_activity`/`core_risk_off`/`event_overlay` 로직 전부
+     무변경. 기존 테스트 2건 최소 보정 + 신규 회귀 1건 —
+     `test_deterministic_trigger_engine.py` **24 passed**, 하네스
+     `accept backend-file` **PASS**. **운영 반영 관측·가중치 재정규화
+     여부는 다음 턴 과제.** 상세: `docs/10_signal_research_sppv/[DESIGN]
+     regime_conditional_entry_signal_v1.md` §146.
    - **SPPV-3(다음 착수: [1순위] **2026-08-03(월) 08:50 KST freeze 실측** —
      §143(authoritative 기준선: core-eligible 216/FRESH 208/STALE 1/
      MISSING 7)과 계층 분포·종목 구성 대조(read-only) +
-     [1-B순위] **`regime_tailwind` 제거 diff 초안 작성**(SPPV-2.157/158
-     에서 판정 A 확정 및 유지) — `_build_buy_ranking_score()`에서
-     `0.03*regime_tailwind` 항 제거, 가중치 재정규화 여부 결정 +
+     [1-B순위] **`regime_tailwind` 제거 diff 배포 후 운영 반영 관측**
+     (SPPV-2.159 후속) — 실제 ranking_score 분포·core_risk_off guard
+     판정 변화 여부 read-only 확인, 가중치 재정규화 필요성 판단 +
      [1-B순위] **D안 순수 효과 재측정** — S5로 stale bias가 사라진 뒤
      §137.5의 2.13배(상한)를 다시 측정 +
      [1-B순위] `strategy_alignment` 제거의 **게이트 영향 재관측** —
