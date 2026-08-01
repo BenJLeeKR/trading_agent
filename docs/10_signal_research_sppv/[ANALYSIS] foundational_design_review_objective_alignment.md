@@ -3409,3 +3409,40 @@ regime_conditional_entry_signal_v1.md` §139.
 이번 턴은 그 대조를 위한 기준선 확정까지만 수행했다. 상세:
 `docs/10_signal_research_sppv/[DESIGN] regime_conditional_entry_signal_v1.md`
 §140.
+
+## 39. S5 배치 실측 — stale bias 사실상 완전 해소 확인(SPPV-2.155, 2026-08-01 KST)
+
+07-31 20:10 KST 장후 배치의 실제 결과를 실측했다(확인 시각 08-01 17:34 KST —
+배치 자체는 07-31 밤에 완료돼 있어 read-only 실측에는 지장 없음).
+`docker logs`는 이후 배포로 컨테이너가 재기동되며 소실됐고, DB의
+`signal_feature_batch_runs` 영속 기록(요약 JSON 포함)으로 대체 확인했다.
+
+**배치 실행(사실)**: freeze 생성 20:10:04 KST → 적재 완료 20:12:54 KST,
+`status=completed`, `fetch_error_count=0`, `persist_error_count=0`,
+`final_missing_count=0`. 두 단계 모두 성공, retry는 발동 조건 자체가
+성립하지 않아 미발동(정상).
+
+**coverage(사실)**: 기존 80종목 → **208종목(2.6배)**. core-eligible
+211종목 중 **203종목(96.2%)** 커버. 미커버 8종목 중 7종목이 우선주
+(`005935`=삼성전자우 등, `_apply_exclusions()`의 우선주 배제 규칙으로
+애초 core 후보에서 걸러짐) — 즉 실질적으로 "문제 있는 미커버"는 없다.
+
+**stale 핵심 8종목(사실)**: `021240`/`023530`/`028260`/`032830`/`042700`/
+`196170`/`329180`/`402340` **전부 FRESH로 전환**(경과 1일).
+
+**3계층 재분포(사실)**: FRESH 80→**204(96.7%)**, STALE 66→**1(0.5%)**,
+MISSING 65→**6(2.8%, 전부 우선주)**.
+
+**판정**: S5의 효과는 "일부 개선"이 아니라 **일반주 기준 stale bias의
+사실상 완전한 해소**다. §138에서 지적한 근본 원인(생성 모집단 vs 소비
+모집단 불일치)이 해소됐다는 것을 운영 데이터로 검증했다.
+
+**소요시간(사실+계산)**: 약 170초, SPPV-2.151에서 80종목 기준 66.36초로부터
+예측한 172.5초(2.6배 확대 가정)와 근접 — 예측이 실측으로 검증됐다.
+
+**미확정**: timeout/budget WARNING 직접 확인(로그 소실로 불가), 다음
+거래일(2026-08-03 월) 실제 freeze 구성 확인. 판단(추정 아님, 코드 반영
+사실 기반): D안 정렬·freshness guard가 이미 반영돼 있어 다음 거래일
+freeze는 **추가 세팅 없이 read-only 실측만으로 충분**하다. 상세:
+`docs/10_signal_research_sppv/[DESIGN] regime_conditional_entry_signal_v1.md`
+§142.

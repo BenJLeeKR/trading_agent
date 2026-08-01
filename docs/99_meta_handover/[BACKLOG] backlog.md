@@ -2149,6 +2149,27 @@
   **이슈 완전 종결.** 유일한 후속 과제는 배포 워크플로 순서 문제
   (migrate가 build보다 먼저 실행됨) — 별도 트랙.
 
+- 2026-08-01 KST(SPPV-2.155, 신규 KIS 호출 0건, 완료 — 코드 미수정):
+  **S5 배치 실측 완료 — stale bias 사실상 완전 해소 확인.** 07-31 20:10
+  KST 장후 배치 실측(확인 시각 08-01 17:34 KST로 하루 늦었으나 배치 자체는
+  완료돼 있어 지장 없음, `docker logs`는 이후 배포로 컨테이너 재기동돼
+  소실 — DB `signal_feature_batch_runs` 영속 기록으로 대체 확인). freeze
+  20:10:04 KST(target_count=207) → batch 적재 20:12:54 KST
+  `status=completed`, `fetch_error_count=0`, retry 미발동(정상). coverage
+  기존 80 → **208종목**(2.6배), core-eligible 211 중 **203종목(96.2%)**
+  커버 — 미커버 8종목 중 7건이 우선주(애초 `_apply_exclusions()` 배제
+  대상), 1건은 3일 경과로 여전히 FRESH. stale 핵심 8종목(`021240`/`023530`/
+  `028260`/`032830`/`042700`/`196170`/`329180`/`402340`) **전부 FRESH로
+  전환**. 3계층 재분포: FRESH 80→**204(96.7%)**, STALE 66→**1(0.5%)**,
+  MISSING 65→**6(2.8%, 전부 우선주)** — **stale bias는 일부 개선이 아니라
+  일반주 기준 사실상 완전히 해소**됐다고 판정. 소요시간 약 170초로
+  SPPV-2.151 예측치(172.5초)와 근접, 검증됨. 다음 거래일(2026-08-03 월)
+  08:50 KST freeze는 D안 정렬·freshness guard가 이미 코드 상수로 반영돼
+  있어 **추가 세팅 없이 read-only 실측만으로 충분**. 미확정: timeout/budget
+  WARNING 직접 확인(로그 소실로 불가), 다음 거래일 실제 freeze 구성 확인.
+  상세: `docs/10_signal_research_sppv/[DESIGN] regime_conditional_entry_
+  signal_v1.md` §142.
+
 ---
 
 ## 관리 원칙

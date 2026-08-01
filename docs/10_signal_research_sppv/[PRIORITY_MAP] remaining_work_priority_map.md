@@ -10370,14 +10370,23 @@ agent 설계 문서 기준으로도 순서는 다음이 맞다.
      추가 세팅 없이 read-only만으로 충분. 상세:
      `docs/10_signal_research_sppv/[DESIGN] regime_conditional_entry_
      signal_v1.md` §140.
-   - **SPPV-3(다음 착수: [1순위] **오늘 20:10 KST 배치 직후 실측** — §140.3의
-     6개 항목: freeze `target_count` 80→211 근처 / `signal feature coverage`
-     로그와 shortfall WARNING / stale 핵심 8종목의 `snapshot_at`이
-     2026-07-31 20:00 KST로 갱신 / 3계층 재분포(기준선 FRESH 80 대비) /
-     `fetch_error`·tail retry·KIS 예산·timeout 발생 여부 / input·batch
-     두 단계 모두 `ok=True` +
-     [1-B순위] **다음 거래일 2026-08-03(월) 08:50 KST freeze 실측** —
-     §140.2 기준선과 계층 분포·종목 구성 대조(read-only) +
+   - **SPPV-2.155(완료, 2026-08-01 17:34 KST, S5 배치 실측 — stale bias
+     사실상 완전 해소 확인, 작성자: Codex, 코드 미수정, `.env` 미수정, Full
+     pytest 미실행, 신규 KIS 호출 0건)**: 07-31 20:10 KST 배치 실측(확인
+     시각은 하루 늦었으나 배치 자체는 완료돼 있어 지장 없음, `docker logs`는
+     이후 배포로 소실돼 DB `signal_feature_batch_runs` 영속 기록으로 대체
+     확인). freeze 20:10:04 KST(target_count=207) → batch 적재 20:12:54 KST
+     `status=completed`, `fetch_error_count=0`. coverage 80→**208종목**
+     (core-eligible 211 중 **96.2%**), 미커버 8종목 중 7건 우선주(애초 배제
+     대상). stale 핵심 8종목 **전부 FRESH로 전환**. 3계층 FRESH 80→
+     **204(96.7%)**/STALE 66→**1**/MISSING 65→**6**(잔여 전부 우선주) —
+     **stale bias 사실상 완전 해소**로 판정(일부 개선 아님). 소요시간 약
+     170초(예측치 172.5초와 근접, 검증됨). 다음 거래일(2026-08-03 월)
+     freeze는 추가 세팅 불필요, read-only만으로 충분. 상세:
+     `docs/10_signal_research_sppv/[DESIGN] regime_conditional_entry_
+     signal_v1.md` §142.
+   - **SPPV-3(다음 착수: [1순위] **2026-08-03(월) 08:50 KST freeze 실측** —
+     §142.6/§140.2 기준선과 계층 분포·종목 구성 대조(read-only) +
      [1-B순위] **D안 순수 효과 재측정** — S5로 stale bias가 사라진 뒤
      §137.5의 2.13배(상한)를 다시 측정 +
      [1-B순위] `strategy_alignment` 제거의 **게이트 영향 재관측** —

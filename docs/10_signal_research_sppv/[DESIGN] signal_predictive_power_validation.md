@@ -3155,6 +3155,36 @@ entry 설계 검토로 전환**을 확정했다. 별도 문서
   `docs/10_signal_research_sppv/[DESIGN] regime_conditional_entry_
   signal_v1.md` §140.
 
+- 작성자: Codex
+- 수정일자: 2026-08-01 KST (155차, S5 배치 실측 완료 — stale bias 사실상
+  해소 확인, 코드 미수정, `.env` 미수정, Full pytest 미실행, 신규 KIS 호출
+  0건)
+- 수정내용: 07-31 20:10 KST 장후 배치의 실제 결과를 실측했다(확인 시각은
+  08-01 17:34 KST로 하루 늦었으나 배치 자체는 07-31 밤에 완료돼 있어
+  read-only 실측에는 지장 없음; `docker logs`는 이후 배포로 인한 컨테이너
+  재기동으로 소실돼 DB의 `signal_feature_batch_runs` 영속 기록으로 대체
+  확인함). 배치는 freeze 생성(20:10:04 KST) → 적재 완료(20:12:54 KST)까지
+  두 단계 모두 성공했고 `fetch_error_count=0`으로 부분 실패나 retry 발동이
+  없었다. coverage는 기존 80종목에서 **208종목(2.6배)**으로 확대됐고,
+  core-eligible 211종목 중 **203종목(96.2%)**을 커버했다 — 미커버 8종목 중
+  7종목은 우선주(`_apply_exclusions()`의 우선주 배제 규칙에 의해 애초
+  core 후보에서 걸러지는 종목)였고 나머지 1종목(`000880`)도 3일 경과로
+  guard 기준(5일) 안에서 FRESH로 유효해 실질적으로 "문제 있는 미커버"는
+  없었다. stale 핵심 8종목(`021240`/`023530`/`028260`/`032830`/`042700`/
+  `196170`/`329180`/`402340`)은 **전부 FRESH로 전환**됐다. core-eligible
+  전체 3계층 재분포는 배치 전 FRESH 80/STALE 66/MISSING 65에서 배치 후
+  **FRESH 204(96.7%)/STALE 1(0.5%)/MISSING 6(2.8%)**로 바뀌었고, 남은
+  STALE·MISSING 7건 전부 우선주였다 — 즉 **S5의 효과는 일부 개선이 아니라
+  일반주 기준 stale bias의 사실상 완전한 해소**로 판정했다. 배치 소요시간은
+  약 170초로 SPPV-2.151에서 80종목 기준 66.36초로부터 예측한 172.5초
+  (2.6배 확대 가정)와 근접해 예측이 실측으로 검증됐다. 다음 거래일
+  (2026-08-03 월) 08:50 KST freeze는 D안 정렬과 freshness guard가 이미 코드
+  상수로 반영돼 있어 **추가 세팅 없이 read-only 실측만으로 충분**하다고
+  판단했다. 미확정 사항은 timeout/budget WARNING의 직접 확인(로그 소실로
+  불가, `fetch_error_count=0`이 간접 증거)과 다음 거래일 실제 freeze 구성
+  확인이다. 상세: `docs/10_signal_research_sppv/[DESIGN] regime_conditional_
+  entry_signal_v1.md` §142.
+
 ---
 
 ## 진행 체크리스트
@@ -6202,6 +6232,31 @@ canonical),
     로직 변경 없음, 신규 KIS 호출 0건(shadow 재호출은 `kis_
     client=None`). 상세: `docs/10_signal_research_sppv/[DESIGN]
     regime_conditional_entry_signal_v1.md` §94.
+- [x] **SPPV-2.155(신설, 완료 — 코드 미수정, S5 배치 실측 완료)**
+  07-31 20:10 KST 장후 배치 결과 실측 (2026-08-01 17:34 KST, 작성자: Codex,
+  `.env` 미수정, Full pytest 미실행, 신규 KIS 호출 0건)
+  - 확인 시각(08-01 17:34 KST)이 요청된 "배치 직후"보다 하루 늦었으나
+    배치 자체는 07-31 밤에 이미 완료돼 있어 read-only 실측 정상 수행.
+    `docker logs`는 이후 배포(PR #79/#80)로 컨테이너가 재기동(08-01 06:29
+    KST)돼 소실 — DB `signal_feature_batch_runs` 영속 기록으로 대체 확인.
+  - **배치 실행**: freeze 20:10:04 KST(target_count=207), batch 적재
+    완료 20:12:54 KST, `status=completed`, `fetch_error_count=0`,
+    `persist_error_count=0`. 두 단계 모두 성공, retry 미발동(정상 — 발동
+    조건 자체가 없었음).
+  - **coverage**: 기존 80 → **208종목**(2.6배). core-eligible 211 중
+    **203종목(96.2%)** 커버. 미커버 8종목 중 7종목이 우선주(애초 배제
+    대상), 1종목은 3일 경과로 여전히 FRESH.
+  - **stale 핵심 8종목 전부 FRESH로 전환**(개별 확인 완료).
+  - **3계층 재분포**: FRESH 80→**204(96.7%)**, STALE 66→**1(0.5%)**,
+    MISSING 65→**6(2.8%, 전부 우선주)**. **stale bias 사실상 완전 해소**
+    (일부 개선이 아님)로 판정.
+  - **소요시간**: 약 170초, SPPV-2.151 예측치(172.5초)와 근접 — 검증됨.
+  - **다음 거래일(2026-08-03 월) freeze 준비**: 추가 세팅 불필요, read-only
+    실측만으로 충분.
+  - **미확정**: timeout/budget WARNING 직접 확인(로그 소실로 불가,
+    `fetch_error_count=0`이 간접 증거), 다음 거래일 실제 freeze 구성 확인.
+  상세: `docs/10_signal_research_sppv/[DESIGN] regime_conditional_entry_
+  signal_v1.md` §142.
 - [x] **SPPV-2.152(신설, 완료 — 코드 미수정, **배치 실측 미수행**)**
   S5 배치 반영 준비 상태 점검 + 배치 전 기준선 확정 (2026-07-31 15:31 KST,
   작성자: Codex, `.env` 미수정, Full pytest 미실행, 신규 KIS 호출 0건)
