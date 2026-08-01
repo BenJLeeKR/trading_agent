@@ -30,7 +30,7 @@
 
 ## 현재 canonical 입력 허용 목록
 
-2026-07-30 기준 남은 `data/` tracked 파일 `9`개는 [`canonical_data_contract.md`](../20_harness_engineering/canonical_data_contract.md)의 허용 목록으로 관리한다.
+2026-07-30 기준 남은 `data/` tracked 파일 `9`개는 [`canonical_data_contract.md`](../80_harness_engineering/canonical_data_contract.md)의 허용 목록으로 관리한다.
 
 | 분류 | 파일 수 | 판정 |
 | --- | ---: | --- |
@@ -155,7 +155,7 @@
 - 경로 분포는 `data/instrument_master/source=7`, `data/instrument_master/normalized=1`, `data/signal_feature_snapshot_input.json=1`이다.
 - 허용 목록 작성 전 full path 정확 참조가 `0`개였던 constituent CSV `3`개는 manifest의 `csv_path`와 문서 basename 참조가 각각 `3`개 있어 source package 구성 파일로 유지한다.
 - owner 분류는 `운영 데이터 관리자=5`, `스케줄러 운영자=3`, `Harness 문서 관리자=2`로 기록했다.
-- 허용 목록과 갱신 절차는 [`canonical_data_contract.md`](../20_harness_engineering/canonical_data_contract.md)에 기록했다.
+- 허용 목록과 갱신 절차는 [`canonical_data_contract.md`](../80_harness_engineering/canonical_data_contract.md)에 기록했다.
 
 ### 2026-07-30 — `data/signal_feature_snapshot_input.json` 운영 산출물 재분류
 
