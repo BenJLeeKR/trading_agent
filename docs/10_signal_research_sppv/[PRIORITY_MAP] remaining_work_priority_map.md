@@ -10846,3 +10846,19 @@ BUY 주문 0건 문제가 단순 신호 부재가 아니라 downstream 정렬·�
   를 먼저 닫아야 하기 때문이다.
 - 따라서 이 트랙은 `high_volatility`/`risk_off` 연쇄와 함께
   **deterministic BUY funnel 정합성 복구의 핵심 진단 작업**으로 분류한다.
+
+## BUY 경로 리팩터링 사전 검토 일정 고정 (2026-08-01 KST)
+
+BUY 경로 대개편은 바로 diff로 들어가지 않고, 먼저
+`docs/11_system_analysis/buy_path_refactor_pre_roadmap_schedule.md` 기준으로
+사전 검토 단계를 수행한다.
+
+현재 우선순위 해석은 아래와 같다.
+
+1. 변수/계약 고정 검토
+2. 상류 deterministic 재설계 검토
+3. 하류 연쇄 영향 검토
+4. 그 다음에 Roadmap 작성
+
+즉, 지금 1순위는 구현이 아니라 **Roadmap을 쓸 수 있을 정도로 범위를
+좁히는 검토 작업**이다.
