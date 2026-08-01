@@ -4,8 +4,11 @@ from datetime import datetime, timezone
 from decimal import Decimal
 from uuid import uuid4
 
+import pytest
+
 from agent_trading.domain.entities import PositionSnapshotEntity, SignalFeatureSnapshotEntity
 from agent_trading.services.deterministic_trigger_engine import (
+    _build_buy_ranking_score,
     assess_deterministic_triggers,
 )
 from agent_trading.services.market_regime import MarketRegimeAssessment
@@ -138,7 +141,11 @@ def test_trigger_engine_builds_buy_candidate_for_bullish_core() -> None:
     assert result.ranking_score is not None
     # SPPV-2.138: ranking_score에서 coverage_score 항(0.20*1.0)을 제거해
     # 최댓값이 0.20 낮아짐 — 절대 threshold 기대치만 하향 보정.
-    assert result.ranking_score > 0.6
+    # SPPV-2.159: 이 fixture는 regime_label="bullish_trend"+risk_tone=
+    # "risk_on"이라 옛 regime_tailwind=1.0(가중치 0.03)이 반영돼 있었다.
+    # 항 제거로 ranking_score가 그만큼(0.03) 더 낮아져 threshold 기대치도
+    # 함께 하향 보정한다.
+    assert result.ranking_score > 0.57
     assert "eligibility_feature_coverage_ok" in result.eligibility_reasons
     assert result.candidate_mode == "relative_surge_v1_instrumented"
 
@@ -855,16 +862,17 @@ def test_trigger_engine_instruments_event_overlay_shadow_lane_metadata() -> None
     # SPPV-2.138: ranking_score에서 coverage_score 항(0.20*1.0)이 빠지면서
     # 이 경로 전용 관찰용 절대값 `_EVENT_OVERLAY_SHADOW_MIN_SCORE=0.56`
     # (범위 밖, 이번 턴 변경 대상 아님)의 유효 문턱이 사실상 높아졌다.
-    # 기존 fixture는 새 ranking_score로 shadow_would_pass 기준을 넘지
-    # 못해, 신호 강도(overall/fast/slow)만 최소한으로 상향해 기존 검증
-    # 의도(shadow lane 메타데이터가 정상적으로 채워지는지)를 유지한다 —
-    # 실제 BUY/eligibility 판정과는 무관한 순수 관찰용 메타데이터 변화다
-    # (docs/10_signal_research_sppv/[DESIGN] regime_conditional_entry_
-    # signal_v1.md §126).
+    # SPPV-2.159: regime_tailwind(0.03*regime_tailwind) 항 제거로
+    # ranking_score가 추가로 0.015(neutral 계층 값 0.5 기준) 낮아져
+    # shadow_would_pass 기준을 다시 넘지 못하게 됐다 — 신호 강도(overall)
+    # 만 최소한으로 상향해 기존 검증 의도(shadow lane 메타데이터가 정상적
+    # 으로 채워지는지)를 유지한다. 실제 BUY/eligibility 판정과는 무관한
+    # 순수 관찰용 메타데이터 변화다(docs/10_signal_research_sppv/[DESIGN]
+    # regime_conditional_entry_signal_v1.md §126/§146).
     result = assess_deterministic_triggers(
         source_type="event_overlay",
         signal_feature_snapshot=_make_signal(
-            overall="0.70",
+            overall="0.75",
             fast="0.90",
             slow="0.50",
             average_volume_20d="220000",
@@ -941,6 +949,35 @@ def test_trigger_engine_strategy_alignment_removed_from_ranking_kept_in_entry() 
     assert aligned.ranking_score is not None and not_aligned.ranking_score is not None
     ranking_delta = aligned.ranking_score - not_aligned.ranking_score
     assert round(ranking_delta, 4) == round(0.55 * entry_delta, 4)
+
+
+def test_build_buy_ranking_score_has_no_regime_tailwind_term() -> None:
+    """SPPV-2.159 — `regime_tailwind`(0.03*regime_tailwind) 제거 고정.
+
+    SPPV-2.157/§144 선행 검증(판정 A)에서 확인한 대로, `_build_buy_
+    ranking_score()`는 더 이상 `market_regime`을 받지 않으며
+    `entry_score`와 `allocation_quality`만으로 값이 결정된다 — 제거
+    전이라면 `market_regime`에 따라 최대 0.03의 차이가 났을 것이다.
+    `assess_deterministic_triggers()` 레벨에서 직접 비교하면
+    `market_regime`이 `entry_score`에도 별도 영향(risk_off 페널티 등)을
+    주어 확인이 오염되므로, 이 함수만 단독으로 고정한다.
+    """
+    portfolio_allocation = _make_portfolio(max_new_capital_pct=5.0, current_weight_pct=2.0)
+
+    score = _build_buy_ranking_score(
+        entry_score=0.70,
+        portfolio_allocation=portfolio_allocation,
+    )
+
+    # market_regime 인자가 시그니처에서 완전히 제거됐는지도 함께 고정한다.
+    with pytest.raises(TypeError):
+        _build_buy_ranking_score(  # type: ignore[call-arg]
+            entry_score=0.70,
+            market_regime=_make_regime(regime_label="bullish_trend", risk_tone="risk_on"),
+            portfolio_allocation=portfolio_allocation,
+        )
+
+    assert round(score, 4) == round(0.55 * 0.70 + 0.10 * 0.50, 4)
 
 
 def test_trigger_engine_buy_candidate_path_intact_after_strategy_alignment_removal() -> None:

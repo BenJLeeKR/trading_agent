@@ -218,7 +218,6 @@ def assess_deterministic_triggers(
         )
         ranking_score = _build_buy_ranking_score(
             entry_score=entry_score,
-            market_regime=market_regime,
             portfolio_allocation=portfolio_allocation,
         )
         if core_risk_off_guard_active:
@@ -1091,7 +1090,6 @@ def _assess_exit_eligibility(
 def _build_buy_ranking_score(
     *,
     entry_score: float,
-    market_regime: MarketRegimeAssessment | None,
     portfolio_allocation: PortfolioAllocationAssessment | None,
 ) -> float:
     # relative_activity는 entry_score 내부(relative_activity_bonus)에만 반영한다.
@@ -1114,13 +1112,19 @@ def _build_buy_ranking_score(
     # event_overlay 경로에서는 전체 이력 28.93%로 살아 있고(SPPV-2.146
     # §134.2), 제거 근거는 어디까지나 entry_score와의 직접 중복이다.
     # entry_score 쪽 +0.05는 그대로 유지한다.
-    # regime_tailwind는 이번 변경 범위 밖이다(SPPV-2.147).
-    regime_tailwind = 0.5
-    if market_regime is not None:
-        if market_regime.regime_label == "bullish_trend" and market_regime.risk_tone == "risk_on":
-            regime_tailwind = 1.0
-        elif market_regime.risk_tone == "risk_off":
-            regime_tailwind = 0.0
+    #
+    # regime_tailwind(0.03*regime_tailwind) 항도 여기서 제거했다 —
+    # SPPV-2.157/§144 선행 검증(판정 A)에서 buy_candidate는 entry_score
+    # 기준이라 이 항과 무관하고, ranking_score를 실제 게이트로 쓰는
+    # core_risk_off guard(0.28/0.02/0.26)는 호출 조건이 regime_tailwind=0
+    # 이 되는 조건의 부분집합이라 값이 항상 0이었으며(core_risk_off_guard_
+    # active=true 모집단 n=13,312 전수 확인, 예외 0건), 값이 0이 아닐 수
+    # 있는 유일한 실측 지점(event_overlay shadow, 0.56)도 55건 전수 확인
+    # 결과 경계 뒤집힘 0건이었다(docs/10_signal_research_sppv/[DESIGN]
+    # regime_conditional_entry_signal_v1.md §144/§145). 이 함수의
+    # market_regime 인자는 regime_tailwind 계산에만 쓰였으므로 함께
+    # 제거한다 — core_risk_off_guard_active 판정은 호출부에서 market_regime
+    # 을 별도로 이미 받아 처리하므로 영향 없다.
 
     allocation_quality = 0.0
     if portfolio_allocation is not None:
@@ -1128,11 +1132,7 @@ def _build_buy_ranking_score(
             (portfolio_allocation.max_new_capital_pct or 0.0) / 10.0
         )
 
-    score = (
-        0.55 * entry_score
-        + 0.10 * allocation_quality
-        + 0.03 * regime_tailwind
-    )
+    score = 0.55 * entry_score + 0.10 * allocation_quality
     return _clamp(score)
 
 
