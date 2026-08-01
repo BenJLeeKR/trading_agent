@@ -4268,3 +4268,20 @@
 | 2026-05-10 | **FillEvent broker_fill_id + fill dedup 강화 (Backlog #18)** | [broker_fill_id_dedup.md](plans/broker_fill_id_dedup.md) | `FillEvent.domain`에 `broker_fill_id` 추가. `FillEventRepository.get_by_broker_fill_id()` Protocol/InMemory/Postgres 구현. `OrderSyncService._sync_fills()` two-tier dedup(broker_fill_id 우선 → 4-field composite fallback). KIS REST CCLD_NUM 매핑 + 기존 생성자 버그 수정. 8개 신규 테스트 전부 통과. |
 | 2026-05-10 | **Benchmark Daily Relative Trend** | [benchmark_relative_trend.md](plans/benchmark_relative_trend.md) | `GET /performance-benchmark-history` 신규 엔드포인트. `RelativeBenchmarkPoint`(9 fields) + `_calc_relative_benchmark_points()` pure function + `get_benchmark_daily_history()` service method. 14개 pure + 5개 integration 테스트(29/29 통과). 설계 문서 6개 보정사항 반영(필드 고정/streak 규칙/기준선 선택/보간 금지/drawdown 부호/API 정책). 기존 API 회귀 없음(53/53 inspection API 테스트 통과). |
 | 2026-05-10 | **Performance Metrics 심화 — Sharpe / Sortino / Calmar** | [paper_performance_risk_adjusted_metrics.md](plans/paper_performance_risk_adjusted_metrics.md) | `PerformanceMetrics` dataclass + `PerformanceMetricsView` schema에 3개 field 추가(sharpe_ratio/sortino_ratio/calmar_ratio). `_calc_sharpe_sortino()` pure helper. `get_performance_metrics()` step 5 통합. 비연율화(raw daily) 고정, rf=0. Sortino 음수 수익률 m>=2 조건. Calmar max_drawdown=0 → None. 12개 신규 테스트(pure 6 + service 3 + API 3). 53/53 performance + 56/56 inspection API 통과. |
+
+---
+
+## BUY 경로 리팩터링 사전 검토 일정 (2026-08-01 KST 추가)
+
+- 기준 문서:
+  - `docs/11_system_analysis/buy_path_variable_gate_matrix.md`
+  - `docs/11_system_analysis/buy_path_refactor_pre_roadmap_schedule.md`
+- 현재 단계:
+  - 구현 Roadmap 작성 전 사전 검토 단계
+- 현재 우선 작업:
+  1. 변수/계약 고정 검토
+  2. 상류 deterministic 재설계 검토
+  3. 하류 연쇄 영향 검토
+
+즉 이 트랙은 지금 당장은 코드 diff보다 **리팩터링 범위를 줄이기 위한
+확인 검토 작업**을 우선한다.

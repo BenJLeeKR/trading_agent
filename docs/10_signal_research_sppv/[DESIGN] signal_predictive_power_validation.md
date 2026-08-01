@@ -8702,3 +8702,18 @@ SPPV 본체는 신호 예측력과 국면 조건부 진입 신호의 방향성 �
 이 트랙은 SPPV-3의 직접 착수 이전에 정리해야 할 downstream funnel
 정합성 과제이며, threshold 단순 완화가 아니라 **공식의 역할 정의를
 먼저 다시 고정하는 작업**으로 분류한다.
+
+## 26. BUY 경로 리팩터링 사전 검토 일정 분리 (2026-08-01 KST)
+
+BUY funnel 재설계는 지금부터 바로 구현으로 들어가지 않고,
+`docs/11_system_analysis/buy_path_refactor_pre_roadmap_schedule.md`를
+기준으로 사전 검토 일정을 먼저 수행한다.
+
+핵심은 아래 3가지다.
+
+1. `entry_score`/`ranking_score`/`allocation`/`activity`의 역할 분해
+2. 상류 deterministic 재설계 옵션 비교
+3. 하류 AI/EV/submit 경로와의 연쇄 영향 확인
+
+따라서 이 시점의 적절한 산출물은 구현 Roadmap이 아니라
+**Roadmap 이전의 확인 검토 일정표**다.
