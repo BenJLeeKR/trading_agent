@@ -28,7 +28,7 @@ function PublicRoute({ children }: { children: React.ReactNode }) {
 
 export default function App() {
   return (
-    <BrowserRouter basename="/admin">
+    <BrowserRouter>
       <AuthProvider>
         <Routes>
           {/* Login — no layout; redirect to dashboard if already authenticated */}

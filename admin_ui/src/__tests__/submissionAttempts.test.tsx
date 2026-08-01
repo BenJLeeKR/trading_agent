@@ -2,7 +2,7 @@ import { render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter, Routes, Route } from "react-router-dom";
 import { describe, expect, it, afterEach, vi, beforeEach } from "vitest";
 import SubmissionAttemptsView from "../components/SubmissionAttemptsView";
-import { setStoredToken, clearStoredToken } from "../api/client";
+import { API_BASE_URL, setStoredToken, clearStoredToken } from "../api/client";
 import { mockFetchOnce, mockFetchError } from "./test-utils/mockFetch";
 import {
   mockSubmissionAttempts,
@@ -55,7 +55,7 @@ describe("SubmissionAttemptsView with data", () => {
     });
 
     expect(fetchSpy).toHaveBeenCalledWith(
-      `/orders/${ORDER_ID}/submission-attempts`,
+      `${API_BASE_URL}/orders/${ORDER_ID}/submission-attempts`,
       expect.objectContaining({
         headers: expect.objectContaining({
           Authorization: `Bearer ${VALID_TOKEN}`,

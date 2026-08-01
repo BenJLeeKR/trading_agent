@@ -5,7 +5,7 @@ import { describe, expect, it, afterEach, vi } from "vitest";
 import { LoginForm } from "../components/LoginForm";
 import { ProtectedRoute } from "../components/ProtectedRoute";
 import { AuthProvider, useAuth } from "../context/AuthContext";
-import { setStoredToken, clearStoredToken } from "../api/client";
+import { API_BASE_URL, setStoredToken, clearStoredToken } from "../api/client";
 import { mockFetchOnce, mockFetchError, mockFetchNetworkError } from "./test-utils/mockFetch";
 import { VALID_TOKEN } from "./test-utils/fixtures";
 
@@ -71,7 +71,7 @@ describe("LoginForm valid token", () => {
 
     // Wait for async verification
     await waitFor(() => {
-      expect(fetchSpy).toHaveBeenCalledWith("/orders", {
+      expect(fetchSpy).toHaveBeenCalledWith(`${API_BASE_URL}/orders`, {
         headers: { Authorization: `Bearer ${VALID_TOKEN}` },
       });
     });

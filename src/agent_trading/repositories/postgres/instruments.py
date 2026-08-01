@@ -167,18 +167,32 @@ class PostgresInstrumentRepository:
         return row_to_entity(row, InstrumentEntity)
 
     async def list_active_by_market(
-        self, market_code: str
+        self, market_code: str, *, asset_class: str | None = None
     ) -> Sequence[InstrumentEntity]:
         """List all active instruments for a given market code.
 
         Returns only ``is_active=true`` instruments, ordered by symbol.
+        ``asset_class`` optionally filters at the query level (e.g. to
+        exclude ETF/ETN rows from Core Universe composition).
         """
-        rows = await self._tx.connection.fetch(
-            """
-            SELECT * FROM trading.instruments
-            WHERE market_code = $1 AND is_active = true AND symbol != 'E2ESUM'
-            ORDER BY symbol
-            """,
-            market_code,
-        )
+        if asset_class is not None:
+            rows = await self._tx.connection.fetch(
+                """
+                SELECT * FROM trading.instruments
+                WHERE market_code = $1 AND is_active = true AND symbol != 'E2ESUM'
+                    AND asset_class = $2
+                ORDER BY symbol
+                """,
+                market_code,
+                asset_class,
+            )
+        else:
+            rows = await self._tx.connection.fetch(
+                """
+                SELECT * FROM trading.instruments
+                WHERE market_code = $1 AND is_active = true AND symbol != 'E2ESUM'
+                ORDER BY symbol
+                """,
+                market_code,
+            )
         return [row_to_entity(row, InstrumentEntity) for row in rows]

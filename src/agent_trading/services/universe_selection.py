@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import logging
 import re
+import time
 from datetime import datetime, timezone
 from decimal import Decimal
 from typing import TYPE_CHECKING, Sequence
@@ -851,7 +852,12 @@ class UniverseSelectionService:
 
         items_by_symbol: dict[str, object] = {}
         for market_code in ("KRX", "KOSPI", "KOSDAQ"):
-            instruments = await self._repos.instruments.list_active_by_market(market_code)
+            # asset_class="kr_stock": Core Universe는 국내 개별주식만 대상이다 —
+            # ETF/ETN(오늘 1,145건 대량 적재됨)까지 스캔/판정 대상에 넣으면
+            # 순수하게 낭비되는 작업이라 쿼리 단계에서부터 걸러낸다.
+            instruments = await self._repos.instruments.list_active_by_market(
+                market_code, asset_class="kr_stock"
+            )
             for instrument in instruments:
                 symbol = getattr(instrument, "symbol", "")
                 if not symbol or symbol in items_by_symbol:
@@ -885,33 +891,61 @@ class UniverseSelectionService:
             Ordered list (highest priority first) ready for the decision loop.
         """
         seen: dict[str, SelectedSymbol] = {}
+        step_timings: dict[str, float] = {}
+        step_start = time.perf_counter()
+
+        def _mark(step_name: str) -> None:
+            nonlocal step_start
+            now = time.perf_counter()
+            step_timings[step_name] = now - step_start
+            step_start = now
 
         # Step 1: Core Universe
         await self._add_core_universe(seen)
+        _mark("1_core_universe")
 
         # Step 2: Held Positions (mandatory override)
         await self._add_held_positions(seen, ctx)
+        _mark("2_held_positions")
 
         # Step 3: Reconciliation / open-order overlay (mandatory for order safety)
         await self._add_reconciliation_overlay(seen, ctx)
+        _mark("3_reconciliation_overlay")
 
         # Step 4: Event-Driven Overlay
         await self._add_event_overlay(seen, ctx)
+        _mark("4_event_overlay")
 
         # Step 5: Manual Watchlist Overlay
         await self._add_manual_overlay(seen, ctx)
+        _mark("5_manual_overlay")
 
         # Step 6: Market-Driven Overlay (P2 minimum)
         market_overlay_diagnostics = await self._add_market_overlay(seen, ctx)
+        _mark("6_market_overlay")
 
         # Step 7: Exclusion Rules (Liquidity Filter)
         candidates = await self._apply_exclusions(seen)
+        _mark("7_exclusions")
 
         # Step 8: Priority Sort (ascending priority value = highest first)
         candidates.sort(key=lambda s: s.priority)
 
         # Step 9: Daily Cap
-        return self._apply_cap(candidates, ctx), market_overlay_diagnostics
+        result = self._apply_cap(candidates, ctx), market_overlay_diagnostics
+        _mark("8_sort_and_cap")
+
+        # 운영 대시보드의 "Universe Selection / Market Overlay" 카드가
+        # /instruments/trading-universe/preview 호출 중 다른 API 대비
+        # 20~300배 느린 것이 실측되어(2026-07-13), 어느 단계가 느린지 바로
+        # 확인할 수 있도록 단계별 소요시간을 남긴다(디버그 레벨 — 평상시
+        # 로그량에는 영향 없음).
+        logger.debug(
+            "universe composition step timings (sec): %s (total=%.3f)",
+            {k: round(v, 4) for k, v in step_timings.items()},
+            sum(step_timings.values()),
+        )
+        return result
 
     # ── Step implementations ─────────────────────────────────────────────
 

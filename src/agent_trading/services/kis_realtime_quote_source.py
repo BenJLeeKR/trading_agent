@@ -76,13 +76,14 @@ from agent_trading.services.realtime_quote_source import (
     ConnectionState,
     DailyPriceBar,
     InstrumentInfo,
+    InstrumentInfoLookup,
+    InstrumentInfoResolver,
     QuoteLevel,
     QuoteSnapshot,
     SubscriptionLimitExceededError,
     TradeTick,
     _KST,
     _validate_symbol,
-    default_instrument_info,
 )
 
 logger = logging.getLogger(__name__)
@@ -435,6 +436,7 @@ class KisRealtimeQuoteSource:
         fallback_trigger_after_seconds: float = _FALLBACK_TRIGGER_AFTER_SECONDS,
         fallback_cooldown_seconds: float = _FALLBACK_COOLDOWN_SECONDS,
         health_check_interval_seconds: float = _HEALTH_CHECK_INTERVAL_SECONDS,
+        instrument_info_lookup: InstrumentInfoLookup | None = None,
     ) -> None:
         self._rest_client = rest_client
         self._ws_url = ws_url
@@ -443,6 +445,7 @@ class KisRealtimeQuoteSource:
         self._fallback_trigger_after_seconds = fallback_trigger_after_seconds
         self._fallback_cooldown_seconds = fallback_cooldown_seconds
         self._health_check_interval_seconds = health_check_interval_seconds
+        self._instrument_resolver = InstrumentInfoResolver(instrument_info_lookup)
 
         self._budget = SubscriptionBudget(max_subscriptions=max_registrations)
         self._ws_client: KISWebSocketClient | None = None
@@ -809,7 +812,11 @@ class KisRealtimeQuoteSource:
         return sorted(self._state.keys())
 
     def instrument_info(self, symbol: str) -> InstrumentInfo:
-        return default_instrument_info(symbol)
+        return self._instrument_resolver.get(symbol)
+
+    def set_instrument_info_lookup(self, lookup: InstrumentInfoLookup | None) -> None:
+        """``instruments`` 테이블 조회 콜백을 배선한다(``api/app.py`` lifespan 전용)."""
+        self._instrument_resolver.set_lookup(lookup)
 
     async def subscribe(self, symbol: str) -> None:
         normalized = _validate_symbol(symbol)
@@ -830,6 +837,12 @@ class KisRealtimeQuoteSource:
         # Reserve state before awaiting so a concurrent duplicate subscribe()
         # for the same symbol sees it immediately and short-circuits above.
         self._state[normalized] = _SymbolState()
+
+        # instruments 테이블 조회는 종목당 정확히 1회만 — 매 시세 조회(polling/
+        # WS tick)마다 DB를 두드리지 않도록 subscribe() 시점에 캐시를 채운다(자세한
+        # 내용은 InstrumentInfoResolver 참고). WS 구독 성패와 무관하게 이름/시장
+        # 정보 자체는 유효하므로, 아래 WS 구독 실패 롤백과 별개로 먼저 처리한다.
+        await self._instrument_resolver.warm(normalized)
 
         ok_price = await self._ws_client.subscribe(_TRADE_CHANNEL, normalized, critical=False)
         ok_book = await self._ws_client.subscribe(_ORDERBOOK_CHANNEL, normalized, critical=False)
@@ -872,6 +885,7 @@ class KisRealtimeQuoteSource:
         self._last_notified_signature.pop(normalized, None)
         self._reference_refresh_in_progress.discard(normalized)
         self._last_fallback_at.pop(normalized, None)
+        self._instrument_resolver.evict(normalized)
 
     def get_snapshots(self, symbols: Sequence[str]) -> dict[str, QuoteSnapshot]:
         out: dict[str, QuoteSnapshot] = {}

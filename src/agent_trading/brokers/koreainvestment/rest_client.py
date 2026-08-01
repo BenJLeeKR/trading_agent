@@ -601,10 +601,25 @@ class KISRestClient:
     # Auth: WebSocket approval key
     # ------------------------------------------------------------------
 
-    async def get_approval_key(self) -> str:
+    async def get_approval_key(self, *, force: bool = False) -> str:
         """Obtain (or refresh) a WebSocket approval key from oauth2/Approval.
 
         Returns the current valid approval key.
+
+        Parameters
+        ----------
+        force:
+            Skip the in-memory/file cache and always issue a fresh
+            approval key via the ``oauth2/Approval`` HTTP call (still
+            subject to the 1 rps cooldown below). KIS's WS approval key
+            behaves like a **session ticket**, not a plain bearer token —
+            reusing a previously-issued key to open a brand-new WebSocket
+            connection after an unexpected disconnect has been observed to
+            be rejected by KIS even though the key's own 24h TTL hasn't
+            elapsed yet (2026-07-14, ``KISWebSocketClient`` reconnect loop:
+            "JSON PARSING ERROR" immediately after every resubscribe).
+            ``KISWebSocketClient`` passes ``force=True`` on every reconnect
+            for this reason; ordinary callers should leave this ``False``.
 
         .. note::
            Strict 1 rps enforcement per KIS official notice (2026-04-20):
@@ -615,18 +630,21 @@ class KISRestClient:
            is governed independently.
         """
         async with self._approval_lock:
-            # 1. Double-check cache
-            now_wall = time.time()
-            if self._approval_key is not None and now_wall < self._approval_key_expires_at:
-                return self._approval_key
-
-            # 1b. File cache load
-            if self._approval_key is None and self._approval_cache is not None:
-                cached_key = await self._approval_cache.load()
-                if cached_key is not None:
-                    self._approval_key = cached_key
-                    self._approval_key_expires_at = now_wall + 86400 - 300
+            if not force:
+                # 1. Double-check cache
+                now_wall = time.time()
+                if self._approval_key is not None and now_wall < self._approval_key_expires_at:
                     return self._approval_key
+
+                # 1b. File cache load
+                if self._approval_key is None and self._approval_cache is not None:
+                    cached_key = await self._approval_cache.load()
+                    if cached_key is not None:
+                        self._approval_key = cached_key
+                        self._approval_key_expires_at = now_wall + 86400 - 300
+                        return self._approval_key
+            else:
+                now_wall = time.time()
 
             # 2. Strict 1 rps cooldown
             now_mono = time.monotonic()

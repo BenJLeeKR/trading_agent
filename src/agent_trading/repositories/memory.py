@@ -312,13 +312,16 @@ class InMemoryInstrumentRepository:
         return await self.add(instrument)
 
     async def list_active_by_market(
-        self, market_code: str
+        self, market_code: str, *, asset_class: str | None = None
     ) -> Sequence[InstrumentEntity]:
         """List all active instruments for a given market code."""
         return [
             item
             for item in self._items.values()
-            if item.market_code == market_code and item.is_active and item.symbol != 'E2ESUM'
+            if item.market_code == market_code
+            and item.is_active
+            and item.symbol != 'E2ESUM'
+            and (asset_class is None or item.asset_class == asset_class)
         ]
 
 
