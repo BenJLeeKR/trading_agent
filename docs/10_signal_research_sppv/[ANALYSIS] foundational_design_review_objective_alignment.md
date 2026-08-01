@@ -3446,3 +3446,44 @@ MISSING 65→**6(2.8%, 전부 우선주)**.
 freeze는 **추가 세팅 없이 read-only 실측만으로 충분**하다. 상세:
 `docs/10_signal_research_sppv/[DESIGN] regime_conditional_entry_signal_v1.md`
 §142.
+
+## 40. §39 수치 정정(이력 보존형) — authoritative 코드 경로 재검증(SPPV-2.156, 2026-08-01 KST)
+
+**[SPPV-2.156에서 정정]** §39에 기록한 `core-eligible 211`, `covered 203`,
+`FRESH 204/STALE 1/MISSING 6`은 `instruments.metadata.index_memberships`
+JSON을 읽는 heuristic 스크립트로 산출된 값이며, 실제 서비스가 참조하는
+`trading.instrument_index_memberships` 관계형 테이블 기준과 다르다.
+
+`UniverseSelectionService.count_core_eligible()`와 `signal_feature_
+snapshots.list_latest_by_instrument_ids()`를 read-only 트랜잭션(자동
+롤백)으로 직접 호출한 **authoritative 재계산 결과**:
+
+| 항목 | §39(오류) | 정정(authoritative) |
+|---|---|---|
+| core-eligible 총원 | ~~211~~ | **216** |
+| covered(07-31 배치 정확 갱신) | ~~203~~ | **207**(95.8%) |
+| FRESH(guard 5일) | ~~204~~ | **208**(96.3%) |
+| STALE | 1 | **1**(0.5%, 우연히 동일) |
+| MISSING | ~~6~~ | **7**(3.2%) |
+
+**원인**: authoritative 대비 heuristic이 누락한 5종목(`000990`/`0126Z0`/
+`267270`/`456040`/`483650`) 전부 `metadata.index_memberships=None`인데
+실제 `instrument_index_memberships` 테이블엔 KOSPI200/100 멤버십이 정상
+기록돼 있었다 — 수동 전사 오류나 배제 규칙(우선주 등) 적용 차이가 아니라
+**애초에 다른 모집단 정의(잘못된 데이터 소스)를 읽은 것**이 원인이다.
+이 중 4종목은 07-31 배치로 이미 fresh snapshot을 받았고(FRESH 204→208),
+1종목(`0126Z0`, 삼성에피스홀딩스)은 snapshot이 없어 MISSING이 6→7로
+늘었다.
+
+**`target_count=207` vs `snapshot_count=208`**: 오류가 아니다.
+`069500`(KODEX 200 ETF)이 regime 벤치마크 계산용으로
+`_with_regime_benchmark_symbol()`(SPPV-2.72)에 의해 항상 배치 입력에
+강제 추가되기 때문 — 거래 후보가 아니므로 freeze의 `target_count`엔
+포함되지 않지만 snapshot 생성 대상에는 포함되는, 서로 다른 산출물이다.
+
+**핵심 결론에 대한 영향**: §39의 "stale bias 사실상 해소" 판정은
+**유지된다**. authoritative 수치(FRESH 96.3%, STALE 0.5%)로도 동일한
+방향·크기의 결론이 재현됐다 — 오히려 core-eligible 모집단이 더 넓은
+상태(216)에서도 같은 결론이 나와 판정의 견고성이 강화됐다. 정정 대상은
+수치 표기이지 판단이 아니다. 상세: `docs/10_signal_research_sppv/[DESIGN]
+regime_conditional_entry_signal_v1.md` §143.

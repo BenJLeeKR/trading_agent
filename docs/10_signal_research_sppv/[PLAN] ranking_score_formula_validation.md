@@ -1,7 +1,21 @@
 # ranking_score 공식 검증 계획
 
 작성일: 2026-07-28  
-상태: [SPPV-2.155에서 갱신] **S5 배치 실측 완료 — stale bias 사실상 해소
+상태: [SPPV-2.156에서 정정] **S5 배치 실측치 authoritative 코드 경로로
+재검증 — 핵심 결론 유지, 수치 정정**(§6.32, 2026-08-01 17:51 KST).
+`instruments.metadata.index_memberships` JSON을 읽던 heuristic 대신
+`UniverseSelectionService.count_core_eligible()`/`list_latest_by_
+instrument_ids()`(실제 서비스 경로)로 재계산한 결과: **core-eligible
+211→216, FRESH 204→208(96.3%), MISSING 6→7(3.2%), STALE 1(유지)**.
+원인은 heuristic이 authoritative 소스(`instrument_index_memberships`
+테이블)가 아닌 stale/부재한 `metadata` JSON 필드를 읽은 것 — 5종목
+(`000990`/`0126Z0`/`267270`/`456040`/`483650`) 전부 이 패턴. `target_count
+=207` vs `snapshot_count=208`의 1건 차이는 `069500`(KODEX 200, regime
+벤치마크로 항상 강제 추가)에 의한 **정상 동작**(오류 아님). **"stale
+bias 사실상 해소" 핵심 결론은 authoritative 수치로도 재현되어 유지됨.**
+상세: `[DESIGN] regime_conditional_entry_signal_v1.md` §143.
+
+[SPPV-2.155] **S5 배치 실측 완료 — stale bias 사실상 해소
 확인**(§6.31, 2026-08-01 17:34 KST). 07-31 20:10 KST 배치: core-eligible
 211종목 중 **203종목(96.2%)** 커버(기존 80→208종목), stale 핵심 8종목
 **전부 FRESH로 전환**, 3계층 분포 FRESH 80→**204(96.7%)**/STALE 66→**1**/
@@ -1555,6 +1569,42 @@ entry_signal_v1.md` §140.
 
 상세: `docs/10_signal_research_sppv/[DESIGN] regime_conditional_
 entry_signal_v1.md` §142.
+
+### 6.32 SPPV-2.156 — SPPV-2.155 수치 정정(authoritative 코드 경로 재검증)
+(신규, 2026-08-01 17:51 KST, 완료 — 코드 미수정, **이력 보존형 정정**)
+
+- [x] **정정 대상 확정**: §6.31/§142(SPPV-2.155)의 core-eligible/coverage/
+      3계층 수치가 `instruments.metadata.index_memberships` JSON을 읽는
+      heuristic 스크립트로 산출됐음을 확인 — 실제 서비스가 참조하는
+      `trading.instrument_index_memberships` 관계형 테이블과 다른
+      데이터 소스였다.
+- [x] **authoritative 재계산**: `UniverseSelectionService.
+      count_core_eligible()`와 `signal_feature_snapshots.
+      list_latest_by_instrument_ids()`를 read-only 트랜잭션(자동
+      롤백)으로 직접 호출 — **core-eligible 216**, **FRESH 208(96.3%)**,
+      **STALE 1(0.5%)**, **MISSING 7(3.2%)**.
+- [x] **원인 규명**: authoritative 대비 heuristic이 누락한 5종목
+      (`000990`/`0126Z0`/`267270`/`456040`/`483650`) 전부
+      `metadata.index_memberships=None`인데 실제 테이블엔 KOSPI200/100
+      멤버십이 있는 동일 패턴 — 수동 전사 오류·배제 규칙 차이가 아니라
+      **다른 모집단 정의를 읽은 것**이 원인.
+- [x] **`target_count=207` vs `snapshot_count=208` 설명**: `069500`
+      (KODEX 200 ETF)이 regime 벤치마크로 배치 입력에 항상 강제 추가되기
+      때문(`_with_regime_benchmark_symbol()`, SPPV-2.72) — **오류 아님**,
+      서로 다른 산출물.
+- [x] **핵심 결론 재평가**: "stale bias 사실상 해소"는 authoritative
+      수치로도 재현(FRESH 96.3%, STALE 0.5%) — **유지**. 정정 대상은
+      수치 표기이지 판단이 아니다.
+- [x] **이력 보존형 정정**: 기존 §142/§39/§6.31/[PRIORITY_MAP]/[BACKLOG]
+      문구를 삭제하지 않고 `[SPPV-2.156에서 정정]` 주석과 신규 섹션으로
+      병기했다.
+
+**[PLAN] 상태 요약**: S5 stale 해소 결론은 두 번째(authoritative) 검증을
+거쳐 더 견고해졌다. 남은 것은 2026-08-03(월) freeze 실측이며, 그 기준선
+수치는 이제 216/208/1/7이다.
+
+상세: `docs/10_signal_research_sppv/[DESIGN] regime_conditional_
+entry_signal_v1.md` §143.
 
 ## 7. 완료 기준
 
