@@ -2197,6 +2197,27 @@
   정정 주석을 병기했다. 상세: `docs/10_signal_research_sppv/[DESIGN]
   regime_conditional_entry_signal_v1.md` §143.
 
+- 2026-08-01 KST(SPPV-2.157, 신규 KIS 호출 0건, 완료 — 코드 미수정):
+  **`regime_tailwind` 제거 선행 검증 — 최종 판정 A(바로 diff 초안 작성
+  가능).** `buy_candidate`는 `entry_score>=0.65` 기준이라 `ranking_score`
+  (regime_tailwind가 들어가는 항)와 애초에 무관함을 코드로 확인.
+  `ranking_score`를 실제 게이트로 쓰는 유일한 경로(core_risk_off guard,
+  `0.28`/`0.02`/`0.26`)는 호출 조건(`risk_tone=='risk_off' AND
+  regime_label=='bearish_trend'`)이 `regime_tailwind=0`이 되는 조건의
+  부분집합이라 논리적으로 항상 무영향 — n=13,312 전수 실측으로 예외 0건
+  확인. 값이 0이 아닐 수 있는 유일한 실측 지점(event_overlay shadow,
+  `0.56`)은 `risk_tone!='risk_off'`인 55건(전체 이력) 전수 확인 결과
+  전부 shadow 계산이 조기 반환돼 경계 뒤집힘 0건, 이 실험 자체가 승격
+  배선 없는 순수 관찰용임도 코드로 확인. market_overlay는 값이 다양
+  (전체 이력 0.5=17.1%, 1.0=1.8%)하나 `ranking_score`를 소비하는 코드
+  자체가 없어 완전 불활성. `strategy_alignment`(SPPV-2.146)와 달리
+  "값이 살아있는 곳"과 "코드가 읽는 곳"이 겹치지 않음. `ranking_score`
+  참조 파일 3개(`deterministic_trigger_engine.py`, `decision_factory.py`
+  (단순 복사), `trigger_proxy_attribution.py`(장후 관찰용 attribution
+  리포트, 실제 판정과 무관)) 전수 확인 — 누락 없음. 상세:
+  `docs/10_signal_research_sppv/[DESIGN] regime_conditional_entry_
+  signal_v1.md` §144.
+
 ---
 
 ## 관리 원칙

@@ -3487,3 +3487,43 @@ snapshots.list_latest_by_instrument_ids()`를 read-only 트랜잭션(자동
 상태(216)에서도 같은 결론이 나와 판정의 견고성이 강화됐다. 정정 대상은
 수치 표기이지 판단이 아니다. 상세: `docs/10_signal_research_sppv/[DESIGN]
 regime_conditional_entry_signal_v1.md` §143.
+
+## 41. `regime_tailwind` 제거 선행 검증(SPPV-2.157, 2026-08-01 KST) — 판정 A
+
+`regime_tailwind`(가중치 0.03, `_build_buy_ranking_score()`)는
+SPPV-2.147에서 "변경 범위 밖"으로 남겨둔 항이다. 제거 전 선행 검증을
+read-only로 수행했다.
+
+**핵심 사실**: `buy_candidate`는 `entry_score>=0.65`로 결정되며(코드),
+`ranking_score`(regime_tailwind가 들어가는 항)와 애초에 무관하다.
+
+**`ranking_score`를 실제 게이트로 쓰는 코드는 정확히 2곳**:
+1. `_assess_core_risk_off_buy_guard()`(0.28/0.02/0.26) — 호출 조건
+   (`risk_tone=='risk_off' AND regime_label=='bearish_trend'`)이
+   `regime_tailwind=0`이 되는 조건의 **부분집합**이라 이 경로에서
+   `regime_tailwind`는 코드 구조상 항상 0이다 — n=13,312 전수 실측으로
+   예외 0건 확인(논리적 증명과 실측이 정확히 일치).
+2. event_overlay shadow(0.56) — `regime_tailwind`가 0이 아닐 수 있는
+   유일한 실측 소비 지점. `risk_tone != 'risk_off'`인 55건(전체 이력)을
+   전수 확인한 결과 전부 shadow 계산이 조기 반환돼 `adjusted_ranking_
+   score` 자체가 없었고, 경계 뒤집힘은 **0건**. 이 실험은 승격 배선이
+   없는 순수 관찰용임도 코드로 확인했다.
+
+**market_overlay**: 값은 상대적으로 다양(전체 이력 0.5=17.1%,
+1.0=1.8%)하나 이를 읽는 소비 코드 자체가 없어(`market_overlay_
+experiment` 블록 부재) 완전 불활성이다.
+
+**`strategy_alignment`(SPPV-2.146)와의 결정적 차이**: `strategy_
+alignment`는 값이 살아있는 곳(event_overlay)과 그 값을 읽는 코드
+(entry_score 직접 반영)가 겹쳐 제거 시 실제 영향이 있었다.
+`regime_tailwind`는 값이 살아있는 곳(market_overlay)과 코드가 읽는 곳
+(core_risk_off guard, 항상 0인 곳)이 **겹치지 않는다**.
+
+**전수 소비처 확인**: `ranking_score`를 참조하는 파일 3개
+(`deterministic_trigger_engine.py`, `decision_factory.py`(단순 복사),
+`trigger_proxy_attribution.py`(장후 관찰용 attribution 리포트, 실제
+판정과 무관)) 전부 확인 — 누락 없음.
+
+**최종 판정: A(바로 diff 초안 작성 가능).** 상세:
+`docs/10_signal_research_sppv/[DESIGN] regime_conditional_entry_signal_
+v1.md` §144.

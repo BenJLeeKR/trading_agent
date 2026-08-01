@@ -10402,9 +10402,26 @@ agent 설계 문서 기준으로도 순서는 다음이 맞다.
      결론은 authoritative 수치로도 재현돼 유지됨.** 상세:
      `docs/10_signal_research_sppv/[DESIGN] regime_conditional_entry_
      signal_v1.md` §143.
+   - **SPPV-2.157(완료, 2026-08-01 18:27 KST, `regime_tailwind` 제거 선행
+     검증 — 판정 A, 작성자: Codex, 코드 미수정, `.env` 미수정, Full pytest
+     미실행, 신규 KIS 호출 0건)**: `buy_candidate`는 `entry_score` 기준이라
+     `ranking_score`(regime_tailwind 포함)와 무관. `ranking_score`를 실제
+     게이트로 쓰는 유일한 경로(core_risk_off guard, 0.28/0.02/0.26)는
+     호출 조건이 `regime_tailwind=0`이 되는 조건의 부분집합이라 논리적
+     으로 항상 무영향(n=13,312 전수 실측 100% 일치). 값이 0이 아닐 수
+     있는 유일한 지점(event_overlay shadow, 0.56)은 55건 전수 확인 결과
+     경계 뒤집힘 0건, 순수 관찰용(승격 배선 없음). market_overlay는 값이
+     다양(0.5/1.0 합 18.9%)하나 소비 코드 자체가 없어 완전 불활성.
+     `strategy_alignment`와 달리 "값이 살아있는 곳"과 "코드가 읽는 곳"이
+     겹치지 않음. **최종 판정: A(바로 diff 초안 작성 가능).** 상세:
+     `docs/10_signal_research_sppv/[DESIGN] regime_conditional_entry_
+     signal_v1.md` §144.
    - **SPPV-3(다음 착수: [1순위] **2026-08-03(월) 08:50 KST freeze 실측** —
      §143(authoritative 기준선: core-eligible 216/FRESH 208/STALE 1/
      MISSING 7)과 계층 분포·종목 구성 대조(read-only) +
+     [1-B순위] **`regime_tailwind` 제거 diff 초안 작성**(SPPV-2.157에서
+     판정 A 확정) — `_build_buy_ranking_score()`에서 `0.03*regime_
+     tailwind` 항 제거, 가중치 재정규화 여부 결정 +
      [1-B순위] **D안 순수 효과 재측정** — S5로 stale bias가 사라진 뒤
      §137.5의 2.13배(상한)를 다시 측정 +
      [1-B순위] `strategy_alignment` 제거의 **게이트 영향 재관측** —

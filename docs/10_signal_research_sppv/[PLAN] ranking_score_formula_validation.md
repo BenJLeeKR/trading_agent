@@ -1,7 +1,21 @@
 # ranking_score 공식 검증 계획
 
 작성일: 2026-07-28  
-상태: [SPPV-2.156에서 정정] **S5 배치 실측치 authoritative 코드 경로로
+상태: [SPPV-2.157에서 갱신] **`regime_tailwind` 제거 선행 검증 완료 —
+판정 A(바로 diff 초안 작성 가능)**(§6.33, 2026-08-01 18:27 KST).
+`buy_candidate`는 `entry_score` 기준이라 `regime_tailwind`(→
+`ranking_score`에만 반영)와 애초에 무관. `ranking_score`를 실제 게이트로
+쓰는 유일한 경로(core_risk_off guard, 0.28/0.02/0.26)는
+`regime_tailwind=0`이 코드 구조상 항상 보장됨(`core_risk_off_guard_active`
+요건 ⊆ `regime_tailwind=0`이 되는 조건, n=13,312 전수 실측 100% 일치).
+값이 0이 아닐 수 있는 유일한 실측 지점(event_overlay shadow, 0.56)은
+55건 전수 확인 결과 경계 뒤집힘 0건이며 순수 관찰용(승격 배선 없음).
+market_overlay는 값이 상대적으로 다양(0.5/1.0 합 18.9%)하나 소비 코드
+자체가 없어 완전 불활성. `strategy_alignment`와 달리 "값이 살아있는 곳"과
+"코드가 읽는 곳"이 겹치지 않음. 상세: `[DESIGN] regime_conditional_entry_
+signal_v1.md` §144.
+
+[SPPV-2.156] **S5 배치 실측치 authoritative 코드 경로로
 재검증 — 핵심 결론 유지, 수치 정정**(§6.32, 2026-08-01 17:51 KST).
 `instruments.metadata.index_memberships` JSON을 읽던 heuristic 대신
 `UniverseSelectionService.count_core_eligible()`/`list_latest_by_
@@ -1605,6 +1619,43 @@ entry_signal_v1.md` §142.
 
 상세: `docs/10_signal_research_sppv/[DESIGN] regime_conditional_
 entry_signal_v1.md` §143.
+
+### 6.33 SPPV-2.157 — `regime_tailwind` 제거 선행 검증(판정 A)
+(신규, 2026-08-01 18:27 KST, 완료 — 코드 미수정)
+
+- [x] **분포 재확인**: 최근 3거래일/1개월/전체 이력 × core/event_overlay/
+      market_overlay 분리 집계 완료(§144.2). `regime_tailwind=1.0`은
+      core·event_overlay에서 전체 이력 0건, market_overlay에서만 42건
+      (1.8%).
+- [x] **`buy_candidate` 무관 확인**: `entry_score>=0.65` 기준이라
+      `ranking_score`(regime_tailwind 포함 항)와 애초에 별개 경로.
+- [x] **`0.28`/`0.02`/`0.26`(core_risk_off guard) 영향 없음 — 논리적
+      증명 + 전수 실측**: 게이트 호출 조건(`risk_tone=='risk_off' AND
+      regime_label=='bearish_trend'`)이 `regime_tailwind=0`이 되는 조건의
+      부분집합. n=13,312 전수 확인 결과 예외 0건.
+- [x] **`0.56`(event_overlay shadow) 영향 없음 — 전수 확인**: tailwind≠0인
+      55건 전부 `adjusted_ranking_score` 미계산(shadow 조기 반환), 경계
+      뒤집힘 0건. 이 실험 자체가 승격 배선 없는 순수 관찰용임도 코드로
+      확인.
+- [x] **market_overlay**: 값은 다양하나 `ranking_score`를 소비하는 코드
+      자체가 없음(`market_overlay_experiment` 블록 부재) — 완전 불활성.
+- [x] **`strategy_alignment`와 구분**: "값이 살아있는 곳"(event_overlay
+      쪽 `strategy_alignment`, market_overlay 쪽 `regime_tailwind`)과
+      "코드가 읽는 곳"이 `strategy_alignment`는 겹치지만(entry_score
+      직접 반영) `regime_tailwind`는 겹치지 않음(core_risk_off는 값이
+      항상 0인 곳에서만 읽고, 값이 다양한 market_overlay는 아예 안 읽음).
+- [x] **전수 소비처 확인**: `ranking_score`를 참조하는 파일 3개
+      (`deterministic_trigger_engine.py`, `decision_factory.py`(단순
+      복사), `trigger_proxy_attribution.py`(관찰용 리포트, 실제 판정과
+      무관)) 전부 확인 — 누락 없음.
+- [x] **최종 판정: A(바로 diff 초안 작성 가능)**.
+
+**[PLAN] 상태 요약**: `regime_tailwind` 제거는 선행 검증을 통과했다.
+다음 턴에서 diff 초안을 작성할 수 있다 — 단 `0.55+0.10=0.65`(합 1.0
+미만) 가중치 재정규화 여부는 diff 턴에서 결정해야 한다.
+
+상세: `docs/10_signal_research_sppv/[DESIGN] regime_conditional_
+entry_signal_v1.md` §144.
 
 ## 7. 완료 기준
 
