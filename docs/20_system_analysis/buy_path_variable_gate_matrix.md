@@ -210,6 +210,11 @@ AI downgrade, EV gate, submit translation은 별도 축이지만, 이미 상류�
    feasibility 전용으로 내릴지
 4. `relative_activity`를 bonus로 둘지, hard gate로만 둘지
 
+**[2026-08-01 KST 갱신] §9.2의 1번(`ranking_score` 유지/축소 여부)은
+13.1.1에서 판정 C(제거/대체)로 닫혔다** — "유지할지 축소할지"라는 열린
+질문이 아니라 대체 방향으로 확정됐다. 2~4번은 R2~R4의 별개 질문으로
+남아 있으며 이번 갱신의 범위가 아니다.
+
 ## 10. 다음 분석 우선순위
 
 1. `entry_score` 내부 보정항(`market_regime`, `strategy`, `allocation`,
@@ -279,6 +284,77 @@ AI downgrade, EV gate, submit translation은 별도 축이지만, 이미 상류�
 tailwind`를 다시 다루는 것이 아니라, **남은 두 항(`entry_score`,
 `allocation_quality`)의 존치·재정규화·대체 여부**로 한정된다.
 
+#### 13.1.1 R1 결론(2026-08-01 KST 2차 확인) — **판정 C(제거/대체)**
+
+**새로 확인한 사실**: `allocation_quality`가 `ranking_score`에 더하는
+정보량을 코드 수준에서 직접 계산해 대조했다.
+
+```text
+entry_score의 자체 allocation 항(_build_entry_score):
+  pct > 0 : + min(0.10, pct/100)
+  pct <= 0: - 0.20
+
+ranking_score의 allocation_quality 항(_build_buy_ranking_score):
+  allocation_quality = clamp(pct/10, 0, 1)
+  기여분 = 0.10 * allocation_quality
+```
+
+이 두 식을 `pct ∈ {1,3,5,8,10,15,30,100}`에서 직접 계산해 대조한 결과
+(read-only 코드 확인, DB/외부 호출 없음), **`pct > 0`인 전 구간에서
+`entry_score`의 자체 allocation 항과 `ranking_score`의 `allocation_
+quality` 기여분이 소수점까지 정확히 일치**했다. `pct <= 0`에서는
+`entry_score`가 이미 `-0.20` 페널티를 반영하고 `allocation_quality`는
+`0`이 되어, `ranking_score` 쪽이 추가 정보를 주지 않는다(오히려
+`entry_score`가 이미 신호를 담고 있다).
+
+**결론**: `ranking_score = 0.55*entry_score + 0.10*allocation_quality`의
+**두 항 모두 독립적인 추가 정보가 없다.**
+
+1. `entry_score` 항 — 정의상 `entry_score`의 재사용(0.55배 스케일).
+2. `allocation_quality` 항 — `entry_score`에 이미 담긴 동일한
+   `max_new_capital_pct` 신호를 **완전히 동일한 형태로 한 번 더** 반영
+   (같은 원본 값을 서로 다른 두 채널로 이중 계상).
+
+이는 `coverage_score`(SPPV-2.137)·`strategy_alignment`(SPPV-2.146)·
+`regime_tailwind`(SPPV-2.157/159)에서 이미 확인·제거한 **동일한 이중
+계상 패턴**이며, 제거 전례와 일치한다.
+
+**Q1 답 — 독립 순위화 공식으로 볼 여지**: 없다. 두 항 모두 `entry_score`
+에서 파생되거나 이미 반영된 신호의 재적용이다.
+
+**Q2 답 — `allocation_quality`의 BUY 경로 내 위치**: `ranking`(이
+항 자체), `entry_score`의 자체 allocation 항(중복 원본),
+`allocation_budget_ok`(하드 게이트), `recommended_max_order_value`
+기반 execution feasibility — **최소 4곳에서 같은 `max_new_capital_pct`
+가 재사용**되며, 이 중 `ranking`과 `entry_score` 두 곳은 수치까지
+동일해 순수 중복이다.
+
+**Q3 답 — 유지해야 한다면 어떤 역할인가**: 해당 없음(유지 근거 없음).
+
+**Q4 답 — 제거/대체 이유 중 가장 큰 것**: **"독립 설명력 부재"가 근본
+원인**이고, 그 구체적 기전이 "`entry_score` 2차 처벌"(같은 값을
+0.55배로 다시 문턱질)과 "allocation 중복"(같은 신호를 형태까지 동일하게
+재적용) **둘 다**다 — 어느 하나가 아니라 두 기전이 동시에 성립한다.
+
+**Q5 답 — R2 선행 확인 필요 여부**: **불필요.** R1의 대체 대상은
+`core_risk_off guard`(0.28/0.02/0.26)와 `event_overlay shadow`(0.56)
+**두 곳이 참조하는 스칼라를 `ranking_score`에서 `entry_score`(재정규화된
+threshold)로 바꾸는 것**이며, `entry_score` 내부 구조(R2의 대상)는
+건드리지 않는다. R2는 `entry_score` 자체의 alpha/risk/sizing 내부 분리를
+다루는 별개 질문이라, R1의 diff 설계와 독립적으로 진행할 수 있다.
+
+**최종 판정: C — `ranking_score` 제거/대체가 맞다. 다음 턴은 대체
+contract 설계 검토(diff 초안이 아니라 설계 검토)다.**
+
+대체 방향의 골격만 기록한다(설계 확정은 다음 턴):
+- `core_risk_off guard`(0.28/0.02/0.26)와 `event_overlay shadow`(0.56)
+  두 소비 지점이 `entry_score`를 직접 참조하도록 바꾸고, threshold를
+  `÷0.55` 비율로 재정규화하는 것이 무변화 리팩터링 원칙과 부합하는
+  1차 후보다(코드 diff 전 재검증 필요).
+- `ranking_score` 필드 자체를 완전히 제거할지, 관찰용으로만 남길지는
+  하류 소비자(예: `trigger_proxy_attribution.py`의 관찰용 참조)에 대한
+  영향 확인이 diff 설계 단계에서 필요하다.
+
 ### 13.2 R2 — `entry_score`의 alpha / risk / sizing 분리
 
 - 범위:
@@ -332,10 +408,11 @@ tailwind`를 다시 다루는 것이 아니라, **남은 두 항(`entry_score`,
 
 ### 13.7 현재 권장 착수 순서
 
-1. **R1**: `ranking_score`를 유지할지 축소할지 먼저 결정
+1. **R1**: [2026-08-01 KST 갱신] 판정 완료(C, 13.1.1) — 다음은 대체
+   contract 설계 검토(diff 초안 아님)
 2. **R2**: `entry_score`를 alpha 중심으로 재정렬할지 판단
 3. **R3/R4**: allocation/activity를 점수 밖으로 내릴지 검토
 4. **R5**: 상류 결정 이후 하류 연쇄 영향 확인
 
 즉 현재는 "BUY 경로 전체 리팩터링"이라는 이름보다,
-**R1→R2→R3/R4→R5의 단계적 리팩터링**으로 보는 것이 정확하다.
+**R1(판정 완료)→R2→R3/R4→R5의 단계적 리팩터링**으로 보는 것이 정확하다.
