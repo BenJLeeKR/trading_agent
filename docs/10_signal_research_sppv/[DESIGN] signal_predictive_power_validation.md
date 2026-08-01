@@ -3256,6 +3256,33 @@ entry 설계 검토로 전환**을 확정했다. 별도 문서
   가능)**. 상세: `docs/10_signal_research_sppv/[DESIGN] regime_
   conditional_entry_signal_v1.md` §144.
 
+- 작성자: Codex
+- 수정일자: 2026-08-01 KST (158차, [SPPV-2.158에서 정정] §6.33 표현
+  정밀도 보정 — 판정 A 유지, 코드 미수정, `.env` 미수정, Full pytest
+  미실행, 신규 KIS 호출 0건, 이력 보존형 정정)
+- 수정내용: SPPV-2.157(157차)의 결론(판정 A)은 유지하되 검증 방법을
+  설명하는 표현 중 실제 저장 구조와 어긋나는 두 곳을 바로잡았다.
+  첫째, `decision_json.deterministic_trigger.metadata`에는
+  `regime_tailwind` 키 자체가 **존재하지 않음**을 실측으로 확인했다
+  (최신 행의 metadata 키 19개를 전수 나열한 결과 `regime_label`/
+  `risk_tone`/`source_type` 등은 있으나 `regime_tailwind`는 없다).
+  157차 보고의 "jsonb에서 직접 재계산"이라는 표현이 "저장된 값을
+  그대로 조회했다"로 오독될 수 있어, 실제로는 "저장된 `regime_label`
+  과 `risk_tone`으로 `_build_buy_ranking_score()`의 조건 분기
+  (`bullish_trend`+`risk_on`→1.0, `risk_off`→0.0, 그 외 0.5)를 코드
+  밖에서 재구성해 `regime_tailwind` 값을 역산·집계한 것"이라고
+  정정했다 — 이 구분이 값 자체를 바꾸지는 않는다. 둘째, "최근
+  1개월"이라는 창이 정확히 어떤 시각 경계인지 명시돼 있지 않아
+  `2026-07-01 00:00:00 KST 이상 2026-08-01 00:00:00 KST 미만`으로
+  명시 확정했다 — 이 창으로 재확인한 core 표본 수가 157차 보고의
+  18,946건과 정확히 일치해 수치 자체는 변경되지 않았다. 판정 A와
+  핵심 결론 4가지(`buy_candidate`는 `entry_score` 기준이라 무관,
+  `market_regime`은 종목별 값, `core_risk_off_guard_active=true`
+  모집단에서 `regime_tailwind != 0`이 0건, `event_overlay` 0.56
+  shadow 경로 경계 뒤집힘 0건)는 전부 그대로 유지된다. 상세:
+  `docs/10_signal_research_sppv/[DESIGN] regime_conditional_entry_
+  signal_v1.md` §145.
+
 ---
 
 ## 진행 체크리스트
@@ -6303,6 +6330,23 @@ canonical),
     로직 변경 없음, 신규 KIS 호출 0건(shadow 재호출은 `kis_
     client=None`). 상세: `docs/10_signal_research_sppv/[DESIGN]
     regime_conditional_entry_signal_v1.md` §94.
+- [x] **SPPV-2.158([SPPV-2.158에서 정정] 완료 — 코드 미수정, §6.33
+  표현 정밀도 보정, 판정 A 유지)** (2026-08-01 19:15 KST, 작성자: Codex,
+  `.env` 미수정, Full pytest 미실행, 신규 KIS 호출 0건, 이력 보존형 정정)
+  - `regime_tailwind`는 `decision_json.deterministic_trigger.metadata`에
+    **저장돼 있지 않음**을 실측 확인(metadata 키 19개 전수 나열 —
+    `regime_label`/`risk_tone`은 있으나 `regime_tailwind` 없음).
+  - SPPV-2.157의 검증은 "jsonb에 저장된 값을 직접 조회"가 아니라
+    "저장된 `regime_label`+`risk_tone`으로 `_build_buy_ranking_score()`
+    분기 로직을 재구성해 역산·집계"한 것으로 표현 정정.
+  - "최근 1개월" 창을 `2026-07-01 00:00:00 KST 이상 2026-08-01 00:00:00
+    KST 미만`으로 명시 확정 — 재확인 결과 core n=18,946 정확히 일치,
+    **수치 변경 없음**.
+  - **판정 A와 핵심 결론 4가지(entry_score 기준 무관/종목별
+    market_regime/core_risk_off guard 0건 예외/event_overlay 0.56 경계
+    뒤집힘 0건) 전부 유지.**
+  상세: `docs/10_signal_research_sppv/[DESIGN] regime_conditional_entry_
+  signal_v1.md` §145.
 - [x] **SPPV-2.157(신설, 완료 — 코드 미수정, `regime_tailwind` 제거
   선행 검증, 판정 A)** (2026-08-01 18:27 KST, 작성자: Codex, `.env` 미수정,
   Full pytest 미실행, 신규 KIS 호출 0건)

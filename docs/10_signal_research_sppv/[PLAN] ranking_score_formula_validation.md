@@ -1,7 +1,21 @@
 # ranking_score 공식 검증 계획
 
 작성일: 2026-07-28  
-상태: [SPPV-2.157에서 갱신] **`regime_tailwind` 제거 선행 검증 완료 —
+상태: [SPPV-2.158에서 정정] **§6.33 표현 정밀도 보정 — 판정 A 유지,
+검증 방법 서술만 정정**(§6.34, 2026-08-01 19:15 KST). `decision_json.
+deterministic_trigger.metadata`에는 `regime_tailwind` 키가 존재하지
+않음(실측 확인) — 저장된 것은 `regime_label`/`risk_tone`뿐이며, §6.33의
+분포 집계는 "jsonb에 저장된 값을 직접 조회"가 아니라 **"저장된
+regime_label+risk_tone으로 `_build_buy_ranking_score()`의 분기 로직을
+재구성해 역산·집계"**한 것이다. "최근 1개월" 창은
+`2026-07-01 00:00:00 KST 이상 2026-08-01 00:00:00 KST 미만`으로 명시
+확정(재확인 결과 core n=18,946 정확히 일치, 수치 변경 없음). **판정
+A와 4가지 핵심 결론(entry_score 기준 무관/종목별 market_regime/
+core_risk_off guard 0건 예외/event_overlay 0.56 경계 뒤집힘 0건)은
+모두 유지.** 상세: `[DESIGN] regime_conditional_entry_signal_v1.md`
+§145.
+
+[SPPV-2.157] **`regime_tailwind` 제거 선행 검증 완료 —
 판정 A(바로 diff 초안 작성 가능)**(§6.33, 2026-08-01 18:27 KST).
 `buy_candidate`는 `entry_score` 기준이라 `regime_tailwind`(→
 `ranking_score`에만 반영)와 애초에 무관. `ranking_score`를 실제 게이트로
@@ -1656,6 +1670,30 @@ entry_signal_v1.md` §143.
 
 상세: `docs/10_signal_research_sppv/[DESIGN] regime_conditional_
 entry_signal_v1.md` §144.
+
+### 6.34 SPPV-2.158 — §6.33 표현 정밀도 보정(이력 보존형, 결론 유지)
+(신규, 2026-08-01 19:15 KST, 완료 — 코드 미수정, **문서 표현만 정정**)
+
+- [x] **정정 1(저장 구조)**: `regime_tailwind`는 `decision_json.
+      deterministic_trigger.metadata`에 저장돼 있지 않음을 실측으로
+      확인(metadata 키 19개 전수 나열, `regime_tailwind` 없음). §6.33의
+      "jsonb에서 직접 재계산"이라는 표현이 "저장된 값을 직접 조회"로
+      오독될 수 있어, "저장된 `regime_label`+`risk_tone`으로 코드
+      분기 로직을 재구성해 역산·집계"로 명확화.
+- [x] **정정 2(1개월 창 정의)**: "최근 1개월"을 `2026-07-01 00:00:00 KST
+      이상 2026-08-01 00:00:00 KST 미만`으로 명시. 재확인 결과 core
+      n=18,946으로 §6.33 기록값과 정확히 일치 — **수치 변경 없음**.
+- [x] **유지 확인**: 판정 A, core/event_overlay/market_overlay 분리
+      결론, core_risk_off guard 무영향(n=13,312 예외 0건),
+      event_overlay 0.56 shadow 경계 뒤집힘 0건 — 전부 그대로 유지.
+- [x] **이력 보존형 정정**: §144/§41/§6.33/[PRIORITY_MAP]/[BACKLOG]
+      문구를 삭제하지 않고 정정 주석 병기.
+
+**[PLAN] 상태 요약**: `regime_tailwind` 제거 선행 검증 결론(판정 A)은
+변경 없이 유지된다. 이번 정정은 검증 방법 서술의 정밀도만 높였다.
+
+상세: `docs/10_signal_research_sppv/[DESIGN] regime_conditional_
+entry_signal_v1.md` §145.
 
 ## 7. 완료 기준
 

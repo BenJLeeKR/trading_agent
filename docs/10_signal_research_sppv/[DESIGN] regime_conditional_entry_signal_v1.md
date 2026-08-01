@@ -18191,3 +18191,62 @@ ranking_score 쪽 이중 계상만 제거했다). `regime_tailwind`는 값이
    제거 후 처리 방식은 diff 턴에서 결정).
 3. **3순위**: `strategy_alignment` 게이트 영향 재관측(게이트 활성일).
 4. **4순위**: D안 순수 효과 재측정.
+
+## §145. §144 표현 정밀도 보정(이력 보존형) — 저장 구조·창 정의 명확화(SPPV-2.158, 2026-08-01 19:15 KST)
+
+**정정 사유**: §144(SPPV-2.157)의 결론(판정 A)은 유지되지만, 검증 방법을
+설명하는 표현 중 실제 저장 구조와 어긋나는 부분이 있어 바로잡는다.
+**결론을 다시 여는 턴이 아니라 표현 정밀도만 보정하는 턴이다.**
+
+### 145.1 정정 1 — `regime_tailwind`는 저장돼 있지 않다
+
+§144에서 "`decision_json.deterministic_trigger.metadata.{risk_tone,
+regime_label}`에서 직접 재계산"이라고 썼으나, 이 표현이 "jsonb에 저장된
+`regime_tailwind`를 직접 조회했다"로 읽힐 여지가 있었다. **사실을
+명확히 하면**:
+
+- `decision_json.deterministic_trigger.metadata`에는 `regime_tailwind`
+  **키 자체가 존재하지 않는다**(실측 확인: 최신 행 metadata 키 19개
+  전수 나열 — `regime_label`, `risk_tone`, `source_type` 등은 있으나
+  `regime_tailwind` 없음).
+- 저장돼 있는 것은 `regime_label`과 `risk_tone`뿐이다.
+- 이번 검증은 **"jsonb에 저장된 regime_tailwind를 직접 집계"한 것이
+  아니라, "저장된 `regime_label` + `risk_tone`으로 `_build_buy_ranking_
+  score()`의 분기 로직을 코드 밖에서 재구성해 `regime_tailwind` 값을
+  역산·집계"한 것**이다.
+
+이 구분이 중요한 이유: 재구성 로직 자체가 `_build_buy_ranking_score()`의
+조건문(`regime_label=="bullish_trend" and risk_tone=="risk_on"` →`1.0`,
+`risk_tone=="risk_off"`→`0.0`, 그 외 `0.5`)을 그대로 옮긴 것이므로 값
+자체는 정확하지만, "저장돼 있던 값을 그대로 읽었다"는 인상을 주는
+표현은 부정확하다.
+
+### 145.2 정정 2 — "최근 1개월" 창 정의 명시
+
+§144의 "최근 1개월(07-01~07-31)"이 정확히 어떤 시각 경계인지 명시돼
+있지 않았다. 실측으로 확인한 정확한 창:
+
+**`2026-07-01 00:00:00 KST` 이상 `2026-08-01 00:00:00 KST` 미만**
+(사실상 07-01~07-31 하루 전체를 포함하는 배타적 상한 창). 이 창으로
+재확인한 core 표본 수는 **18,946건**으로 §144에 기록한 값과 정확히
+일치한다(재검증 완료, 수치 변경 없음).
+
+### 145.3 유지되는 결론(변경 없음)
+
+- **최종 판정: A(바로 diff 초안 작성 가능)** — 유지.
+- `buy_candidate`는 `entry_score>=0.65` 기준이며 `ranking_score`와
+  직접 무관 — 유지(코드 사실, 재확인 불필요).
+- `market_regime`은 전역 시장 상태가 아니라 종목별
+  `signal_feature_snapshot` 기반 — 유지.
+- `core_risk_off_guard_active=true` 모집단(n=13,312)에서
+  `regime_tailwind != 0`은 **0건** — 유지.
+- `core`/`event_overlay`/`market_overlay` 분리 결론 — 유지.
+- `event_overlay` 0.56 shadow 경로 경계 뒤집힘 0건 — 유지.
+- §144.2 분포표의 절대값 자체는 정확함이 재확인됐다(§145.1의 "재구성"
+  방식이 값을 바꾸지 않으며, §145.2에서 1개월 창의 core n=18,946이
+  정확히 일치함을 확인).
+
+### 145.4 다음 우선 작업(변경 없음)
+
+§144.6과 동일 — 2026-08-03(월) freeze 실측과 `regime_tailwind` 제거
+diff 작성이 다음 순위다. 이번 정정은 그 계획을 바꾸지 않는다.

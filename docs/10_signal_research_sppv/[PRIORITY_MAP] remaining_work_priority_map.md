@@ -10416,12 +10416,24 @@ agent 설계 문서 기준으로도 순서는 다음이 맞다.
      겹치지 않음. **최종 판정: A(바로 diff 초안 작성 가능).** 상세:
      `docs/10_signal_research_sppv/[DESIGN] regime_conditional_entry_
      signal_v1.md` §144.
+   - **SPPV-2.158([SPPV-2.158에서 정정] 완료, 2026-08-01 19:15 KST,
+     §6.33/§41/§144 표현 정밀도 보정 — 판정 A 유지, 작성자: Codex, 코드
+     미수정, `.env` 미수정, Full pytest 미실행, 신규 KIS 호출 0건, 이력
+     보존형 정정)**: `regime_tailwind`는 `decision_json.deterministic_
+     trigger.metadata`에 저장돼 있지 않음을 실측 확인(metadata 키 19개
+     전수 나열, 키 없음) — SPPV-2.157의 집계는 "jsonb 직접 조회"가 아니라
+     "저장된 `regime_label`+`risk_tone`으로 코드 분기 로직을 재구성해
+     역산·집계"한 것으로 정정. "최근 1개월" 창을 `2026-07-01 00:00:00
+     KST 이상 2026-08-01 00:00:00 KST 미만`으로 명시 확정(재확인 결과
+     core n=18,946 정확히 일치, 수치 변경 없음). **판정 A와 핵심 결론
+     4가지 전부 유지.** 상세: `docs/10_signal_research_sppv/[DESIGN]
+     regime_conditional_entry_signal_v1.md` §145.
    - **SPPV-3(다음 착수: [1순위] **2026-08-03(월) 08:50 KST freeze 실측** —
      §143(authoritative 기준선: core-eligible 216/FRESH 208/STALE 1/
      MISSING 7)과 계층 분포·종목 구성 대조(read-only) +
-     [1-B순위] **`regime_tailwind` 제거 diff 초안 작성**(SPPV-2.157에서
-     판정 A 확정) — `_build_buy_ranking_score()`에서 `0.03*regime_
-     tailwind` 항 제거, 가중치 재정규화 여부 결정 +
+     [1-B순위] **`regime_tailwind` 제거 diff 초안 작성**(SPPV-2.157/158
+     에서 판정 A 확정 및 유지) — `_build_buy_ranking_score()`에서
+     `0.03*regime_tailwind` 항 제거, 가중치 재정규화 여부 결정 +
      [1-B순위] **D안 순수 효과 재측정** — S5로 stale bias가 사라진 뒤
      §137.5의 2.13배(상한)를 다시 측정 +
      [1-B순위] `strategy_alignment` 제거의 **게이트 영향 재관측** —
