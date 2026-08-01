@@ -8706,7 +8706,7 @@ SPPV 본체는 신호 예측력과 국면 조건부 진입 신호의 방향성 �
 ## 26. BUY 경로 리팩터링 사전 검토 일정 분리 (2026-08-01 KST)
 
 BUY funnel 재설계는 지금부터 바로 구현으로 들어가지 않고,
-`docs/11_system_analysis/buy_path_refactor_pre_roadmap_schedule.md`를
+`docs/20_system_analysis/buy_path_refactor_pre_roadmap_schedule.md`를
 기준으로 사전 검토 일정을 먼저 수행한다.
 
 핵심은 아래 3가지다.
@@ -8717,3 +8717,19 @@ BUY funnel 재설계는 지금부터 바로 구현으로 들어가지 않고,
 
 따라서 이 시점의 적절한 산출물은 구현 Roadmap이 아니라
 **Roadmap 이전의 확인 검토 일정표**다.
+
+## 27. BUY 경로 리팩터링 단위 고정 (2026-08-01 KST)
+
+BUY 경로 리팩터링은 단일 대규모 변경이 아니라, 아래 단위로 쪼개어
+다뤄야 한다. 기준 문서는
+`docs/20_system_analysis/buy_path_variable_gate_matrix.md` §13이다.
+
+1. **R1** — `ranking_score` 역할 축소/대체 판단
+2. **R2** — `entry_score`의 alpha / risk / sizing 분리
+3. **R3** — `portfolio_allocation`의 점수/게이트/feasibility 분리
+4. **R4** — activity 계열의 soft bonus / hard gate 중복 정리
+5. **R5** — AI downgrade / EV gate / submit translation 하류 contract 점검
+
+현재 우선순위는 **R1 → R2 → R3/R4 → R5**다. 즉 다음 단계의 핵심은
+threshold 미세조정이 아니라, `ranking_score`와 `entry_score`의 역할
+경계를 먼저 다시 고정하는 것이다.

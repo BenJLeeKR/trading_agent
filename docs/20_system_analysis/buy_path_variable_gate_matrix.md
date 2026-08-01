@@ -1,7 +1,7 @@
 # BUY 경로 변수-게이트 전체 매트릭스
 
 작성일: 2026-08-01 KST
-상태: 분석 초안
+상태: 리팩터링 기준선 확정
 
 ## 1. 목적
 
@@ -238,7 +238,7 @@ AI downgrade, EV gate, submit translation은 별도 축이지만, 이미 상류�
 이 문서는 구조 분석의 기준선이다. 실제 리팩터링은 바로 시작하지 않고,
 먼저 아래 사전 검토 일정 문서를 따라 확인·검토 작업을 진행한다.
 
-- `docs/11_system_analysis/buy_path_refactor_pre_roadmap_schedule.md`
+- `docs/20_system_analysis/buy_path_refactor_pre_roadmap_schedule.md`
 
 즉 현재 순서는 다음과 같다.
 
@@ -246,3 +246,81 @@ AI downgrade, EV gate, submit translation은 별도 축이지만, 이미 상류�
 2. 사전 검토 일정에 따라 변수 역할/계약/상하류 경계를 확인
 3. 그 다음에 Roadmap 작성
 4. 마지막으로 최소 단위 diff 착수
+
+## 13. 리팩터링 단위 초안
+
+코드를 한 번에 갈아엎지 않고, 아래 단위로 쪼개는 것이 해석 가능성과
+회귀 통제 측면에서 가장 안전하다.
+
+### 13.1 R1 — `ranking_score` 역할 축소/대체
+
+- 범위:
+  - `ranking_score`를 독립 선별 공식으로 유지할지
+  - 아니면 `core_risk_off guard` 보조 입력으로 축소할지
+  - 혹은 `entry_score` 재사용을 없애고 별도 우선순위화 계층으로 대체할지
+- 핵심 질문:
+  - 지금 `ranking_score = 0.55 * entry_score + 0.10 * allocation_quality`
+    가 별도 의미를 가지는가
+  - guard threshold가 사실상 `entry_score` 2차 처벌인지
+- 우선순위: **1순위**
+
+### 13.2 R2 — `entry_score`의 alpha / risk / sizing 분리
+
+- 범위:
+  - `entry_score`에서 alpha 외 보정항(`market_regime`, `preferred_strategy`,
+    `allocation`, `relative_activity`)을 유지/이관/제거로 분류
+- 핵심 질문:
+  - `entry_score`가 alpha 대표점수로 남아야 하는지
+  - 아니면 risk/sizing 보정을 밖으로 밀어내야 하는지
+- 우선순위: **2순위**
+
+### 13.3 R3 — `portfolio_allocation`의 역할 분리
+
+- 범위:
+  - `max_new_capital_pct`, `allocation_budget_ok`,
+    `recommended_max_order_value`를
+    점수/하드게이트/실행 feasibility로 분리
+- 핵심 질문:
+  - sizing 정보가 후보 점수에 들어가는 것이 맞는지
+  - execution feasibility 전용으로 내리는 것이 맞는지
+- 우선순위: **3순위**
+
+### 13.4 R4 — activity 계열의 soft/hard 중복 정리
+
+- 범위:
+  - `relative_activity_score`
+  - `volume_surge_ratio`, `turnover_surge_ratio`
+  - `average_volume_20d`, `average_turnover_20d`
+- 핵심 질문:
+  - bonus와 hard gate를 동시에 유지할 이유가 남아 있는지
+  - risk-off guard와 일반 eligibility의 activity 중복을 줄여야 하는지
+- 우선순위: **4순위**
+
+### 13.5 R5 — 하류 contract 정리
+
+- 범위:
+  - `candidate_vs_final`
+  - `expected_value_gate`
+  - `submit translation`
+- 핵심 질문:
+  - 상류에서 제거된 변수 의미가 하류에서 다시 암묵적으로 주입되는지
+  - 상류 리팩터링 뒤 하류 contract를 같이 손봐야 하는지
+- 우선순위: **5순위**
+
+### 13.6 이번 리팩터링 범위 밖
+
+- SELL/exit 공식 재설계
+- 관찰용 shadow 메타데이터 정리
+- LLM 프롬프트 자체 재작성
+- 브로커/KIS 경로 변경
+- threshold 미세조정만을 목적으로 한 단독 변경
+
+### 13.7 현재 권장 착수 순서
+
+1. **R1**: `ranking_score`를 유지할지 축소할지 먼저 결정
+2. **R2**: `entry_score`를 alpha 중심으로 재정렬할지 판단
+3. **R3/R4**: allocation/activity를 점수 밖으로 내릴지 검토
+4. **R5**: 상류 결정 이후 하류 연쇄 영향 확인
+
+즉 현재는 "BUY 경로 전체 리팩터링"이라는 이름보다,
+**R1→R2→R3/R4→R5의 단계적 리팩터링**으로 보는 것이 정확하다.
