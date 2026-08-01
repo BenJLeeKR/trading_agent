@@ -73,7 +73,7 @@ DoD는 완벽한 품질 보증이 아니라 완료 주장에 필요한 증거 �
 - `.env` 값, token, 계좌 정보, API secret을 출력했다.
 - 사용자 승인 없이 full test, 외부 API, DB 쓰기, 마이그레이션, 운영 덤프를 실행했다.
 - 작업 범위 밖 파일을 함께 커밋하거나 PR에 포함했다.
-- `docs/20_harness_engineering/no_bypass_policy.md`의 `Hard Fail`에 해당하는 우회 행동이 남아 있다.
+- `docs/80_harness_engineering/no_bypass_policy.md`의 `Hard Fail`에 해당하는 우회 행동이 남아 있다.
 
 ## 완료 보고 형식
 

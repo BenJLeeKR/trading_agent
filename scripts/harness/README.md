@@ -12,6 +12,8 @@
 - 셸은 `bash`만 사용한다.
 - Python 실행은 `python3`만 사용한다.
 - `.env` 파일은 직접 수정하지 않고, 출력에도 비밀값을 노출하지 않는다.
+- 사용자 보고, 문서, 완료 보고, 하네스 설명 문구에서는 `diff`를 단독 용어로 쓰지 않는다. 기본 용어는 `변경분`, `변경 차이`, `전후 차이`, `수정 내역`이다.
+- `git diff` 같은 명령명이나 patch/diff 포맷 자체를 가리킬 때만 `diff`를 backtick으로 유지하고, 가능하면 같은 문장에 한국어 설명을 붙인다.
 - 기본 timeout은 `HARNESS_SAFE_TIMEOUT_SECONDS`이며 기본값은 `90`초다.
 - 무거운 검증 timeout은 `HARNESS_HEAVY_TIMEOUT_SECONDS`이며 기본값은 `900`초다.
 
@@ -30,7 +32,7 @@ GitHub Actions도 사람과 AI가 쓰는 동일한 하네스를 사용한다. CI
 - 장중에는 자동 배포를 막고 `deploy_skipped_by_market_hours_count=1`을 출력한다.
 - 장중이라도 `activate_required=0`, `sync_only_allowlist_count>0`, `sync_only_blocked_count=0`이면 `sync_source`만 실행하고 `deploy_sync_only_run_count=1`, `deploy_activate_skipped_by_market_hours_count=1`을 출력한다.
 - 장중 수동 재배포는 `allow_market_hours_deploy=true`일 때만 허용하고 `deploy_market_hours_override_count=1`을 출력한다.
-- 장중 source sync와 activate 분리 설계 초안은 `docs/20_harness_engineering/deploy_sync_activation_contract.md`를 따른다.
+- 장중 source sync와 activate 분리 설계 초안은 `docs/80_harness_engineering/deploy_sync_activation_contract.md`를 따른다.
 - 남은 실검증은 장 외 시간 `push main`에서 `activate_runtime=success`가 나오는 자연 경로 `1`건이며, 기대 조합은 `deploy_market_hours_override_count=0`, `Sync source after safe harness=success`, `Activate runtime after source sync=success`다.
 - 거래소 휴장일 캘린더는 아직 연동하지 않았으므로 1차 가드는 평일 시간대 기준이다.
 - 배포 재기동 뒤에는 `nginx-proxy`를 reload해 Docker DNS가 새 frontend 컨테이너 IP를 다시 해석하게 한다.
@@ -277,7 +279,7 @@ Makefile에서는 승인 필요 명령을 `heavy-*` target으로 노출한다. �
 - `new_bypass_candidate_count`: `hard_bypass_count + review_bypass_count`.
 - `database_connection_run`, `external_network_run`, `full_test_run`: 이 검사가 DB 접속, 외부 네트워크, 전체 테스트를 실행하지 않았음을 나타내는 0/1 지표.
 
-세부 정책은 `docs/20_harness_engineering/no_bypass_policy.md`를 따른다. 현재는 `hard_bypass_count > 0`일 때만 실패하고, `review_bypass_count > 0`은 보고와 리뷰 대상으로 남긴다.
+세부 정책은 `docs/80_harness_engineering/no_bypass_policy.md`를 따른다. 현재는 `hard_bypass_count > 0`일 때만 실패하고, `review_bypass_count > 0`은 보고와 리뷰 대상으로 남긴다.
 CI에서는 PR 기준 `origin/<base>`와 비교하고, `main` push 기준에서는 `HEAD^`와 비교한다. 이를 위해 `safe` job의 checkout은 `fetch-depth: 0`을 사용한다.
 
 ### `accept backend-runtime`
@@ -323,7 +325,7 @@ CI에서는 PR 기준 `origin/<base>`와 비교하고, `main` push 기준에서�
 
 ## 보고 기준
 
-- AI가 완료를 주장할 수 있는 최소 조건은 [`docs/20_harness_engineering/definition_of_done.md`](../../docs/20_harness_engineering/definition_of_done.md)를 따른다.
+- AI가 완료를 주장할 수 있는 최소 조건은 [`docs/80_harness_engineering/definition_of_done.md`](../../docs/80_harness_engineering/definition_of_done.md)를 따른다.
 - exit code만 보고하지 않는다.
 - `*_count`, `*_run`, `route_count`, `test_file_count`처럼 출력된 원문 지표를 함께 보고한다.
 - `.env` 값, 토큰, 계좌 정보, API secret은 출력하지 않는다.
