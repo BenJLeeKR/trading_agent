@@ -27,6 +27,7 @@
 | `data/instrument_master/source/kospi100_constituents.csv` | 운영 source CSV | 운영 데이터 관리자 | manifest의 `csv_path`와 함께 갱신 | KOSPI100 membership source package 구성 |
 | `data/instrument_master/source/kospi200_constituents.csv` | 운영 source CSV | 운영 데이터 관리자 | manifest의 `csv_path`와 함께 갱신 | KOSPI200 membership source package 구성 |
 | `data/instrument_master/source/kosdaq150_constituents.csv` | 운영 source CSV | 운영 데이터 관리자 | manifest의 `csv_path`와 함께 갱신 | KOSDAQ150 membership source package 구성 |
+| `data/instrument_master/source/kospi_master_instrument.csv` | 운영 raw source CSV | 스케줄러 운영자 | 승인된 원천 업로드 파일을 반영한 뒤 `kospi_master.csv` 생성 절차 실행 | instrument master sync 상류 원천 입력 |
 | `data/instrument_master/source/kosdaq_master.csv` | 운영 source CSV | 스케줄러 운영자 | KIS master 원천 갱신 후 normalize 단계 실행 | instrument master sync 기본 입력 |
 | `data/instrument_master/normalized/kis_kospi_kosdaq_master_normalized_for_sync.csv` | 운영 normalized 입력 | 스케줄러 운영자 | source CSV 기준으로 normalize 후 sync 단계 실행 | instrument master sync 기본 입력 |
 
@@ -36,10 +37,10 @@
 
 | 항목 | 파일 수 |
 | --- | ---: |
-| `data/` tracked 파일 | 9 |
-| CSV 파일 | 7 |
+| `data/` tracked 파일 | 10 |
+| CSV 파일 | 8 |
 | JSON 파일 | 2 |
-| `data/instrument_master/source/` 파일 | 7 |
+| `data/instrument_master/source/` 파일 | 8 |
 | `data/instrument_master/normalized/` 파일 | 1 |
 | `data/` runtime 산출물 tracked 파일 | 0 |
 
@@ -62,6 +63,8 @@
 
 ### instrument master sync 입력
 
+- `source/kospi_master_instrument.csv`는 승인된 운영 원천 업로드를 보존하는 상류 입력이다.
+- `source/kospi_master.csv`와 `source/kosdaq_master.csv`는 스케줄러가 읽는 기본 source CSV다.
 - `source/kosdaq_master.csv`와 `normalized/kis_kospi_kosdaq_master_normalized_for_sync.csv`는 스케줄러 기본 경로와 연결되어 있다.
 - normalized 파일은 source 파일을 기준으로 재생성 가능한 상태여야 한다.
 - archive 산출물은 Git 추적 대상이 아니며 `data/instrument_master/archive/` 아래에만 남긴다.
