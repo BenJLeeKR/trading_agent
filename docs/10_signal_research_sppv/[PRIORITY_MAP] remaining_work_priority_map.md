@@ -10476,7 +10476,14 @@ agent 설계 문서 기준으로도 순서는 다음이 맞다.
      중 **C안을 권고**한다 — 근사가 아니라 기존 산식을 그대로
      재현하므로 과완화/과차단 위험이 없고, 다음 턴 바로 코드 수정
      초안 작성이 가능하다. 다만 `allocation_quality` 이중 반영 구조
-     자체는 C안으로도 해소되지 않으며 이는 R2에서 다룬다 +
+     자체는 C안으로도 해소되지 않으며 이는 R2에서 다룬다. **[2026-08-02
+     KST 4차 갱신] C안 코드 수정 초안 적용 완료**(`buy_path_variable_
+     gate_matrix.md` §13.1.5) — `_assess_core_risk_off_buy_guard()`가
+     `ranking_score` 대신 `entry_score`+`portfolio_allocation`을 받아
+     authoritative 게이트 점수를 그 자리에서 재계산(`_build_buy_
+     ranking_score()` 재호출)하도록 변경했다. `ranking_score` 공식·
+     shadow 메타데이터·`decision_json` 저장·reporting 경로는 전부
+     무변화. `accept backend-file`·단위 테스트 24건·lint 전부 통과 +
      [1-B순위] **D안 순수 효과 재측정** — S5로 stale bias가 사라진 뒤
      §137.5의 2.13배(상한)를 다시 측정 +
      [1-B순위] `strategy_alignment` 제거의 **게이트 영향 재관측** —

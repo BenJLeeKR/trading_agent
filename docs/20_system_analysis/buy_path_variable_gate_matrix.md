@@ -702,6 +702,85 @@ experiment_metadata`)·`event_overlay` shadow·`decision_json` 저장
 3. `risk_off_exception_eligible` 최종 판정(활동성/전략/신호 조건
    포함)에 대한 실측은 여전히 미확인(§13.1.3과 동일 범위 제한).
 
+### 13.1.5 R1 — C안(보조 조건 병행) 코드 수정 초안 적용(2026-08-02 KST)
+
+**목적**: §13.1.4에서 권고한 C안(보조 조건 병행)을 실제 코드 수정
+초안으로 적용한다. `ranking_score` 공식(`_build_buy_ranking_score`)
+자체는 바꾸지 않았고, authoritative 경로(`_assess_core_risk_off_buy_
+guard`)만 대상으로 최소 범위 수정했다.
+
+**무엇이 어떻게 바뀌었는지**:
+- `_assess_core_risk_off_buy_guard()`의 매개변수를 `ranking_score:
+  float | None`에서 `entry_score: float`, `portfolio_allocation:
+  PortfolioAllocationAssessment | None`로 교체했다.
+- 함수 내부에서 외부에서 전달받은 `ranking_score` 값을 참조하는 대신,
+  `_build_buy_ranking_score(entry_score=entry_score, portfolio_
+  allocation=portfolio_allocation)`을 **그 자리에서 직접 다시 호출**해
+  authoritative 게이트 전용 점수(`core_risk_off_authoritative_score`)를
+  얻고, 이 값을 `_CORE_RISK_OFF_RANKING_MIN_SCORE(0.28)`와 비교한다.
+- `assess_deterministic_triggers()`의 호출부(228번째 줄 부근)도
+  `ranking_score=ranking_score` 인자를 `entry_score=entry_score,
+  portfolio_allocation=portfolio_allocation`로 교체했다.
+
+**이번 안이 단순 선형 치환(A안)과 다른 이유**: A안은 `0.28`이라는
+상수를 `0.55`로 나눠 `entry_score` 단독 threshold로 근사했고, 그
+근사가 `allocation_quality`를 빠뜨려 §13.1.3에서 표본 100% 뒤집힘으로
+이어졌다. 이번 C안은 threshold를 근사하지 않는다 — **"근사"가 아니라
+"보존"**이다. `_build_buy_ranking_score()`를 authoritative 게이트
+호출부에서 동일 입력(`entry_score`, `portfolio_allocation`)으로 다시
+호출하므로, 산출되는 점수는 이전에 threading되던 `ranking_score` 변수
+값과 **수치까지 정확히 동일**하다. 즉 게이트가 참조하는 대상이
+"미리 계산돼 threading된 `ranking_score` 변수"에서 "그 자리에서
+독립적으로 재계산한 동일 공식의 결과"로 바뀌었을 뿐, 계산 결과나
+threshold 판정 경계는 **한 치도 바뀌지 않는다**.
+
+**유지한 것 / 건드리지 않은 것**:
+- `_build_buy_ranking_score()` 공식 자체 — 무변화.
+- `decision_json.deterministic_trigger.ranking_score` 저장 경로 —
+  `assess_deterministic_triggers()`가 계산하는 외부 `ranking_score`
+  변수는 그대로 남아 `DeterministicTriggerAssessment.ranking_score`에
+  저장되고 `decision_factory.py`를 거쳐 `decision_json`에 그대로
+  기록된다.
+- core shadow 메타데이터(`_build_core_risk_off_shadow_experiment_
+  metadata`, `0.02`/`0.26`류 threshold) — 여전히 외부 `ranking_score`
+  변수를 그대로 참조하며 무변화.
+- `event_overlay` shadow 메타데이터(`_build_event_overlay_shadow_
+  experiment_metadata`, `0.56` threshold) — 무변화.
+- `trigger_proxy_attribution.py` 등 reporting 경로 — `ranking_score`
+  필드 계산이 바뀌지 않았으므로 수정 없이 그대로 유지된다.
+- `entry_score` 내부 구조(R2 대상) — 건드리지 않았다.
+
+**실행한 검증과 결과**:
+- `bash scripts/harness/run.sh accept backend-file src/agent_trading/
+  services/deterministic_trigger_engine.py` → PASS
+  (`py_compile_passed=1`, `tests_run_count=3`, `test_failed_count=0`)
+- `bash scripts/harness/run.sh test-file tests/services/test_
+  deterministic_trigger_engine.py` → 24 passed
+- `bash scripts/harness/run.sh test-one "tests/services/test_
+  deterministic_trigger_engine.py::test_trigger_engine_marks_risk_
+  off_exception_eligible_for_strong_core_setup"` → 1 passed
+- `bash scripts/harness/run.sh test-one "tests/services/test_
+  deterministic_trigger_engine.py::test_trigger_engine_core_risk_off_
+  ranking_boundary_shifts_by_coverage_score_weight"` → 1 passed
+- `bash scripts/harness/run.sh test-one "tests/services/test_
+  deterministic_trigger_engine.py::test_trigger_engine_applies_core_
+  risk_off_topk_override_for_selected_candidate"` → 1 passed
+- `bash scripts/harness/run.sh lint-path src/agent_trading/services/
+  deterministic_trigger_engine.py` → All checks passed
+- DB write·KIS 호출·전체 테스트(full pytest)·`.env` 수정은 하지 않았다.
+
+**아직 운영 실측이 남아 있는지**: 이번 수정은 §13.1.4에서 이미 확인한
+대로 **근사가 아니라 기존 산식의 인라인 재현**이므로, 별도의 운영
+데이터 재실측 없이도 authoritative 판정 경계가 그대로 보존됨을
+단위 테스트로 확인했다. 다만 아래는 여전히 미확인이다:
+1. `_assess_core_risk_off_buy_guard` 시그니처 변경이 이 함수를 직접
+   호출하는 다른 상류/하류 코드(현재 확인된 호출부는 1곳뿐)에 영향을
+   주는지 — 이번 턴은 저장소 전수 검색으로 호출부가 1곳뿐임을
+   확인했다.
+2. `risk_off_exception_eligible` 최종 판정(활동성/전략/신호 조건
+   포함)에 대한 운영 데이터 실측은 이번 턴 범위 밖(§13.1.3과 동일
+   범위 제한).
+
 ### 13.2 R2 — `entry_score`의 alpha / risk / sizing 분리
 
 - 범위:
@@ -762,7 +841,12 @@ experiment_metadata`)·`event_overlay` shadow·`decision_json` 저장
    — [2026-08-02 KST 재갱신] 새 threshold 산정안 비교(13.1.4)에서
    **보조 조건 병행(기존 산식 인라인 재현) 안을 권고**한다. 근사가
    없어 과완화/과차단 위험이 없고, 다음 턴 바로 코드 수정 초안 작성
-   가능한 수준으로 좁혀졌다
+   가능한 수준으로 좁혀졌다. **[2026-08-02 KST 4차 갱신] C안 코드
+   수정 초안까지 적용 완료(13.1.5)** — `_assess_core_risk_off_buy_
+   guard()`가 `ranking_score` 대신 `entry_score`+`portfolio_
+   allocation`을 받아 authoritative 게이트 전용 점수를 그 자리에서
+   재계산하도록 바꿨고, 좁은 범위 검증(단위 테스트 24건, lint) 전부
+   통과했다. `ranking_score` 필드·shadow·reporting 경로는 전부 무변화
 2. **R2**: `entry_score`를 alpha 중심으로 재정렬할지 판단
 3. **R3/R4**: allocation/activity를 점수 밖으로 내릴지 검토
 4. **R5**: 상류 결정 이후 하류 연쇄 영향 확인

@@ -4448,3 +4448,47 @@ KST, read-only 분석, 코드 변경 없음)
   문서 5건이며 별도 작업 브랜치에서 커밋·PR로 진행한다.
 - 상세: `docs/20_system_analysis/buy_path_variable_gate_matrix.md`
   §13.1.4.
+
+### C안(보조 조건 병행) 코드 수정 초안 적용(2026-08-02 KST)
+
+- 전제(이미 닫힌 사실, 재검증 없이 사용): R1 판정 C(§13.1.1), 대체
+  contract 설계 비교·C안 권고(§13.1.2), `ranking_score ∈ [0.28, 0.38]`
+  구간 100% 뒤집힘 실측(§13.1.3), threshold 산정안 비교·C안(보조 조건
+  병행) 권고(§13.1.4) — 전부 참조만 하고 다시 검증하지 않는다.
+- 무엇이 바뀌었는지: `src/agent_trading/services/deterministic_
+  trigger_engine.py`의 `_assess_core_risk_off_buy_guard()` 매개변수를
+  `ranking_score: float | None`에서 `entry_score: float`, `portfolio_
+  allocation: PortfolioAllocationAssessment | None`로 교체했다. 함수
+  내부에서 `_build_buy_ranking_score(entry_score=entry_score,
+  portfolio_allocation=portfolio_allocation)`을 그 자리에서 다시
+  호출해 authoritative 게이트 전용 점수를 얻고, 이를 `_CORE_RISK_OFF_
+  RANKING_MIN_SCORE(0.28)`와 비교한다. 호출부(`assess_deterministic_
+  triggers()`, 유일한 호출부)도 함께 인자를 교체했다.
+- **"근사"가 아니라 "보존"인 이유**: 단순 선형 치환(A안, `0.28/0.55`)
+  은 `allocation_quality`를 버리는 근사였다. 이번 수정은 `_build_buy_
+  ranking_score()`를 동일 입력으로 다시 호출할 뿐이라 산출값이
+  기존에 threading되던 `ranking_score`와 **수치까지 정확히 동일**하다
+  — threshold `0.28` 판정 경계는 한 치도 바뀌지 않는다.
+- 유지한 것: `ranking_score` 공식(`_build_buy_ranking_score`) 자체,
+  `decision_json.deterministic_trigger.ranking_score` 저장 경로, core
+  shadow 메타데이터(`0.02`/`0.26`류), `event_overlay` shadow(`0.56`),
+  `trigger_proxy_attribution.py` 등 reporting 경로, `entry_score`
+  내부 구조(R2 대상) — 전부 무변화.
+- 실행한 검증: `bash scripts/harness/run.sh accept backend-file
+  src/agent_trading/services/deterministic_trigger_engine.py` →
+  PASS. `bash scripts/harness/run.sh test-file tests/services/test_
+  deterministic_trigger_engine.py` → 24 passed. core risk-off guard
+  관련 selector 3건(`test-one`) 개별 통과. `bash scripts/harness/
+  run.sh lint-path src/agent_trading/services/deterministic_trigger_
+  engine.py` → All checks passed. DB write·KIS 호출·`.env` 수정·
+  full pytest는 하지 않았다.
+- 아직 운영 실측이 남아 있는지: 이번 수정은 근사가 아니라 기존 산식의
+  인라인 재현이라 별도 운영 데이터 재실측 없이 단위 테스트로 경계
+  보존을 확인했다. 다만 `risk_off_exception_eligible` 최종 판정
+  (활동성/전략/신호 조건 포함)에 대한 운영 실측은 여전히 미확인
+  (§13.1.3과 동일 범위 제한).
+- git 상태: 이번 턴 확인 시점 로컬 `main`(HEAD `0236b632`) =
+  `origin/main`(이격 0, PR #97 머지 반영 완료), 이번 턴 변경분은
+  코드 1건 + 문서 5건이며 별도 작업 브랜치에서 커밋·PR로 진행한다.
+- 상세: `docs/20_system_analysis/buy_path_variable_gate_matrix.md`
+  §13.1.5.

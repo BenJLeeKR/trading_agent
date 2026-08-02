@@ -94,8 +94,15 @@
    — 근사가 없어 과완화/과차단 위험이 없고, 다음 턴 바로 코드 수정
    초안 작성이 가능한 수준으로 좁혀졌다. 다만 `allocation_quality`
    이중 반영 구조 자체는 이 안으로도 완전히 해소되지 않으며, 이는
-   R2에서 다룰 사안으로 남긴다. 이 질문은 2단계를 기다리지 않고 먼저
-   닫혔으며, 남은 2~4번 질문과 R2~R4는 이 일정대로 진행한다(날짜 변경
+   R2에서 다룰 사안으로 남긴다. **[2026-08-02 KST 4차 갱신] C안 코드
+   수정 초안 적용 완료** — `_assess_core_risk_off_buy_guard()`가
+   `ranking_score` 대신 `entry_score`+`portfolio_allocation`을 받아
+   authoritative 게이트 점수를 그 자리에서 재계산하도록 변경했다
+   (`buy_path_variable_gate_matrix.md` §13.1.5). 좁은 범위 검증
+   (`accept backend-file`, 단위 테스트 24건, lint) 전부 통과했고,
+   `ranking_score` 필드·shadow·reporting 경로는 무변화다. 이 질문은
+   2단계를 기다리지 않고 먼저 닫혔으며, 남은 2~4번 질문과 R2~R4는 이
+   일정대로 진행한다(날짜 변경
    없음).
 3. `portfolio_allocation`은 후보 점수에 남아야 하는가
 4. `relative_activity`는 soft bonus로 둘 이유가 남아 있는가
