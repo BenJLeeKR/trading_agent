@@ -422,6 +422,67 @@ def test_trigger_engine_core_risk_off_ranking_boundary_shifts_by_coverage_score_
     assert "eligibility_core_risk_off_ranking_pass" in passed.eligibility_reasons
 
 
+def test_trigger_engine_core_risk_off_authoritative_score_matches_ranking_score_formula() -> None:
+    """§13.1.6 2차 수정 회귀 테스트.
+
+    `_assess_core_risk_off_buy_guard()`는 이제 `_build_buy_ranking_score()`를
+    재호출하지 않고 게이트 안에서 entry_score + allocation 보조 조건을
+    직접 계산한다. 두 계산식이 서로 다른 코드 경로로 분리됐으므로, 이
+    테스트는 `result.ranking_score`(`_build_buy_ranking_score()`가 만든
+    값)와 `_build_buy_ranking_score(entry_score=result.entry_score,
+    portfolio_allocation=...)`를 직접 재계산한 값이 여전히 일치하고,
+    그 값과 authoritative 게이트의 통과/차단 판정(0.28 경계)이 어긋나지
+    않는지 pass/blocked 경계 양쪽에서 고정한다 — 이 두 계산식 중
+    하나만 바뀌고 다른 하나가 그대로면 이 테스트가 실패해야 한다.
+    """
+    portfolio_allocation = _make_portfolio(max_new_capital_pct=2.5, current_weight_pct=0.0)
+    common_kwargs = dict(
+        source_type="core",
+        market_regime=_make_regime(regime_label="bearish_trend", risk_tone="risk_off"),
+        strategy_selection=_make_strategy(preferred_strategy="defensive_low_volatility_rotation"),
+        portfolio_allocation=portfolio_allocation,
+        position_snapshot=None,
+    )
+
+    passed = assess_deterministic_triggers(
+        signal_feature_snapshot=_make_signal(
+            overall="0.34",
+            fast="0.80",
+            slow="0.30",
+            volume_surge_ratio="1.20",
+            turnover_surge_ratio="1.20",
+        ),
+        **common_kwargs,
+    )
+    blocked = assess_deterministic_triggers(
+        signal_feature_snapshot=_make_signal(
+            overall="0.33",
+            fast="0.80",
+            slow="0.30",
+            volume_surge_ratio="1.20",
+            turnover_surge_ratio="1.20",
+        ),
+        **common_kwargs,
+    )
+
+    assert passed is not None and blocked is not None
+    for result, expect_pass in ((passed, True), (blocked, False)):
+        recomputed_ranking_score = _build_buy_ranking_score(
+            entry_score=result.entry_score,
+            portfolio_allocation=portfolio_allocation,
+        )
+        # result.entry_score/ranking_score는 저장 시 각각 4자리로 반올림되므로
+        # (round(entry_score, 4), round(ranking_score, 4)), 반올림 오차를
+        # 감안한 허용치를 둔다.
+        assert result.ranking_score == pytest.approx(recomputed_ranking_score, abs=1e-3)
+        if expect_pass:
+            assert "eligibility_core_risk_off_ranking_pass" in result.eligibility_reasons
+            assert result.ranking_score >= 0.28
+        else:
+            assert "eligibility_core_risk_off_ranking_blocked" in result.eligibility_reasons
+            assert result.ranking_score < 0.28
+
+
 def test_trigger_engine_keeps_risk_off_block_for_weak_core_setup() -> None:
     result = assess_deterministic_triggers(
         source_type="core",

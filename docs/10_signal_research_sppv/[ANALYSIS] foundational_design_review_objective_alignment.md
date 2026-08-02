@@ -3668,3 +3668,13 @@ shadow 메타데이터·`decision_json` 저장·reporting 경로는 전부
 무변화. 좁은 범위 검증(`accept backend-file`, 단위 테스트 24건,
 lint) 전부 통과. 상세: `docs/20_system_analysis/buy_path_variable_
 gate_matrix.md` §13.1.5.
+
+**[2026-08-02 KST 5차 갱신] authoritative 게이트 명시식 2차 수정
+완료(최소 미러링).** `_build_buy_ranking_score()` 재호출 자체를
+제거하고, 게이트 안에서 `entry_score`+`allocation_bonus_like`를
+직접 계산하는 명시식(`authoritative_entry_gate_score`)으로 바꿨다
+— PR #98은 "산식 재계산", 이번 턴은 "명시식 치환"이라는 차이다.
+신규 회귀 테스트로 두 산식의 일치를 고정했다. 로컬 harness 표준
+명령이 실은 별도 production 체크아웃을 테스트한다는 사실을 확인해,
+dev tree를 직접 mount한 임시 컨테이너로 병행 검증(25 passed). 상세:
+`docs/20_system_analysis/buy_path_variable_gate_matrix.md` §13.1.6.

@@ -10483,7 +10483,17 @@ agent 설계 문서 기준으로도 순서는 다음이 맞다.
      authoritative 게이트 점수를 그 자리에서 재계산(`_build_buy_
      ranking_score()` 재호출)하도록 변경했다. `ranking_score` 공식·
      shadow 메타데이터·`decision_json` 저장·reporting 경로는 전부
-     무변화. `accept backend-file`·단위 테스트 24건·lint 전부 통과 +
+     무변화. `accept backend-file`·단위 테스트 24건·lint 전부 통과.
+     **[2026-08-02 KST 5차 갱신] authoritative 게이트 명시식 2차 수정
+     완료**(`buy_path_variable_gate_matrix.md` §13.1.6) — `_build_buy_
+     ranking_score()` 재호출 자체를 제거하고, 게이트 안에서 `entry_
+     score`+`allocation_bonus_like`를 직접 계산하는 명시식으로 바꿨다.
+     신규 회귀 테스트(`test_trigger_engine_core_risk_off_authoritative_
+     score_matches_ranking_score_formula`)로 두 산식의 일치를 고정했다.
+     로컬 harness 표준 명령(`docker exec agent_trading-app-1`)이 실은
+     별도 production 체크아웃(`/workspace/agent_trading`)을 테스트한다는
+     사실을 확인해, dev tree를 직접 mount한 임시 컨테이너로 병행
+     검증(25 passed) +
      [1-B순위] **D안 순수 효과 재측정** — S5로 stale bias가 사라진 뒤
      §137.5의 2.13배(상한)를 다시 측정 +
      [1-B순위] `strategy_alignment` 제거의 **게이트 영향 재관측** —

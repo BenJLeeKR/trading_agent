@@ -4492,3 +4492,60 @@ KST, read-only 분석, 코드 변경 없음)
   코드 1건 + 문서 5건이며 별도 작업 브랜치에서 커밋·PR로 진행한다.
 - 상세: `docs/20_system_analysis/buy_path_variable_gate_matrix.md`
   §13.1.5.
+
+### authoritative 게이트 명시식 2차 수정(2026-08-02 KST)
+
+- 전제(이미 닫힌 사실, 재검증 없이 사용): R1 판정 C(§13.1.1), C안
+  권고(§13.1.2/§13.1.4), C안 코드 수정 초안 적용(§13.1.5, PR #98) —
+  전부 참조만 하고 다시 검증하지 않는다.
+- PR #98 대비 정확한 차이: PR #98은 "기존 `ranking_score` 산식을
+  게이트 내부에서 재계산"한 것(`_build_buy_ranking_score()`를 게이트
+  안에서 재호출)이었고, 이번 턴은 "authoritative 게이트의 명시식
+  치환"이다 — 그 재호출 자체를 제거하고, 동일 산술식(`0.55*entry_
+  score + 0.10*allocation_bonus_like`)을 게이트 함수 안에 지역 변수로
+  직접 풀어 썼다. `_build_buy_ranking_score()` 본문은 전혀 건드리지
+  않았다.
+- 구현: 모듈 상수 3개(`_CORE_RISK_OFF_ENTRY_SCORE_WEIGHT=0.55`,
+  `_CORE_RISK_OFF_ALLOCATION_BONUS_WEIGHT=0.10`, `_CORE_RISK_OFF_
+  ALLOCATION_NORMALIZER_PCT=10.0`)를 추가하고, `_assess_core_risk_off_
+  buy_guard()` 내부에서 `allocation_bonus_like`, `authoritative_entry_
+  gate_score` 지역 변수로 게이트 조건을 직접 계산하도록 바꿨다.
+- 신규 회귀 테스트: `test_trigger_engine_core_risk_off_authoritative_
+  score_matches_ranking_score_formula`를 추가해, `assess_deterministic_
+  triggers()`가 반환하는 `ranking_score`(여전히 `_build_buy_ranking_
+  score()`가 만든 값)와 `entry_score`를 다시 `_build_buy_ranking_
+  score()`에 넣어 재계산한 값이 pass/blocked 경계 양쪽에서 일치함을
+  고정한다(반올림 오차 허용치 `1e-3`) — 두 산식 중 하나만 바뀌면 이
+  테스트가 실패한다.
+- **환경 관련 새로 확인한 사실(중요)**: 이 로컬 서버의 `bash scripts/
+  harness/run.sh accept backend-file`/`test-file`은 `docker exec
+  agent_trading-app-1 ...`을 실행하는데, 그 컨테이너의 `/app`은
+  `/workspace/agent_trading_dev`(작업 경로)가 아니라 `/workspace/
+  agent_trading`(별도 git clone, main 머지 뒤 별도 동기화를 거쳐
+  갱신되는 배포 체크아웃)에 mount돼 있다. 즉 **병합 전에는 이 표준
+  명령들이 이번 턴의 수정 내역을 반영하지 않은 stale 코드를
+  테스트한다.** 이번 턴은 같은 이미지(`agent_trading-app:latest`)로
+  `/workspace/agent_trading_dev`를 직접 mount하는 임시 컨테이너를
+  별도로 띄워 실제 변경분을 검증했다(production 체크아웃은 직접
+  덮어쓰지 않음 — CI/CD 파이프라인 우회 위험 때문에 배제). 이 사실은
+  세션 메모리에도 별도로 기록해 다음 턴에서 재확인 없이 참고할 수
+  있게 했다.
+- 실행한 검증: (dev tree 직접 검증, 임시 컨테이너) pytest 25 passed,
+  py_compile 통과, ruff 통과, core risk-off guard selector 4건 개별
+  통과. (표준 명령, stale 체크아웃 기준) `accept backend-file` PASS
+  (3 tests, 신규 테스트 미포함), `test-file` 24 passed(같은 이유로
+  신규 테스트 미포함). DB write·KIS 호출·`.env` 수정·full pytest는
+  하지 않았다.
+- 아직 운영 실측이 남아 있는지: 산식 자체는 §13.1.5와 동일하게
+  유지되므로 추가 운영 데이터 실측은 필요 없다. 다만 `_CORE_RISK_OFF_
+  ENTRY_SCORE_WEIGHT`/`_CORE_RISK_OFF_ALLOCATION_BONUS_WEIGHT`가
+  `_build_buy_ranking_score()`의 `0.55`/`0.10`과 앞으로도 어긋나지
+  않을지는 회귀 테스트로만 고정돼 있고 단일 지점화(공유 헬퍼 추출)는
+  하지 않았다 — R2 논의 대상으로 남긴다. `risk_off_exception_
+  eligible` 최종 판정 실측도 여전히 미확인(§13.1.3과 동일 범위 제한).
+- git 상태: 이번 턴 확인 시점 로컬 `main`(HEAD `004336ec`) =
+  `origin/main`(이격 0, PR #98 머지 반영 완료), 이번 턴 변경분은
+  코드 2건(구현 파일 + 테스트 파일) + 문서 5건이며 별도 작업 브랜치에서
+  커밋·PR로 진행한다.
+- 상세: `docs/20_system_analysis/buy_path_variable_gate_matrix.md`
+  §13.1.6.
