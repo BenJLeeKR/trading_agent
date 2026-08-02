@@ -781,6 +781,116 @@ threshold 판정 경계는 **한 치도 바뀌지 않는다**.
    포함)에 대한 운영 데이터 실측은 이번 턴 범위 밖(§13.1.3과 동일
    범위 제한).
 
+### 13.1.6 R1 — authoritative 게이트 명시식 2차 수정(2026-08-02 KST)
+
+**목적**: PR #98(§13.1.5)에서 적용한 C안은 `_assess_core_risk_off_buy_
+guard()`가 `ranking_score`를 직접 참조하지 않도록 매개변수를
+`entry_score`+`portfolio_allocation`으로 바꿨지만, 함수 내부에서는
+여전히 `_build_buy_ranking_score()`를 **재호출**해 점수를 얻고 있었다.
+이번 절은 그 재호출까지 제거하고, 게이트가 실제로 보는 조건을 코드
+안에 직접 풀어 쓴다.
+
+**PR #98 상태에서 무엇을 재호출하고 있었는지(먼저 확인한 사실)**:
+`_assess_core_risk_off_buy_guard()`는 `core_risk_off_authoritative_
+score = _build_buy_ranking_score(entry_score=entry_score, portfolio_
+allocation=portfolio_allocation)`를 호출해 `0.55*entry_score + 0.10*
+clamp(max_new_capital_pct/10, 0, 1)`를 그 함수에게 위임하고 있었다 —
+계산 결과는 §13.1.5에서 확인한 대로 기존 `ranking_score`와 수치까지
+동일했지만, "게이트가 무엇을 보는지"는 `_build_buy_ranking_score()`의
+본문을 열어봐야 알 수 있는 상태였다.
+
+**PR #98 대비 이번 턴의 정확한 차이**: PR #98은 "**기존 ranking 산식을
+게이트 내부에서 재계산**"한 것이고, 이번 턴은 "**authoritative 게이트의
+명시식 치환**"이다 — `_build_buy_ranking_score()` 호출 자체를 없애고,
+그 자리에 동일한 산술식(`0.55*entry_score + 0.10*allocation_bonus_
+like`)을 게이트 함수 안에 직접 적어 넣었다. `_build_buy_ranking_
+score()`는 여전히 `ranking_score` 저장/shadow/reporting 경로를 위해
+그대로 남아 있고, 이번 수정은 그 함수를 전혀 건드리지 않았다.
+
+**구현**:
+- 모듈 상수 3개를 새로 추가했다: `_CORE_RISK_OFF_ENTRY_SCORE_WEIGHT
+  = 0.55`, `_CORE_RISK_OFF_ALLOCATION_BONUS_WEIGHT = 0.10`, `_CORE_
+  RISK_OFF_ALLOCATION_NORMALIZER_PCT = 10.0` — `_build_buy_ranking_
+  score()`가 쓰는 것과 같은 값이지만, 그 함수를 고치지 않고 게이트
+  쪽에서만 이름을 붙여 참조한다(두 곳에 상수가 나뉘어 존재하는 트레이드
+  오프는 아래 (2)에서 다룬다).
+- `_assess_core_risk_off_buy_guard()` 내부에서 `allocation_bonus_
+  like`(신규 자본 배정 여유도를 0~1로 정규화한 보조 조건)와
+  `authoritative_entry_gate_score`(`0.28`과 실제로 비교되는 값)를
+  지역 변수로 직접 계산한다. `_build_buy_ranking_score()` 호출은
+  완전히 제거됐다.
+
+**이 치환이 수치상 동일하게 유지되는지 테스트로 고정 가능한지(먼저
+확인한 사실)**: 가능하다고 판단했고, 실제로 신규 회귀 테스트
+`test_trigger_engine_core_risk_off_authoritative_score_matches_
+ranking_score_formula`를 추가해 고정했다 — `assess_deterministic_
+triggers()`가 반환한 `result.ranking_score`(여전히 `_build_buy_
+ranking_score()`가 만든 값)와, `result.entry_score`를 다시
+`_build_buy_ranking_score()`에 넣어 재계산한 값을 pass/blocked 경계
+양쪽에서 비교한다. `entry_score`/`ranking_score`가 저장 시 각각 4자리로
+반올림되므로 완전한 비트 단위 일치는 아니지만(허용 오차 `1e-3`), 두
+계산식이 서로 다른 코드 경로로 분리된 뒤에도 어긋나지 않음을 이
+테스트가 고정한다 — 둘 중 하나만 바뀌면 이 테스트가 실패한다.
+
+**유지한 것 / 건드리지 않은 것**: `_build_buy_ranking_score()` 본문,
+`decision_json.deterministic_trigger.ranking_score` 저장 경로, core
+shadow 메타데이터(`0.02`/`0.26`류), `event_overlay` shadow(`0.56`),
+`trigger_proxy_attribution.py` 등 reporting 경로, `entry_score` 내부
+구조(R2 대상) — 전부 무변화.
+
+**환경 관련 발견(검증 방법에 대한 중요한 사실)**: 이 로컬 서버의
+`bash scripts/harness/run.sh accept backend-file`/`test-file`은
+내부적으로 `docker exec agent_trading-app-1 ...`을 실행하는데, 이
+컨테이너의 `/app`은 `/workspace/agent_trading_dev`(이번 작업 경로)가
+아니라 `/workspace/agent_trading`(별도의 git clone, main 머지 뒤
+별도 동기화 과정을 거쳐 갱신되는 배포 체크아웃)에 bind mount돼 있다.
+즉 **병합 전 이 명령들은 이번 턴의 수정 내역을 반영하지 않은 stale
+코드를 테스트한다.** 이번 턴은 이 사실을 확인한 뒤, 같은 이미지
+(`agent_trading-app:latest`)로 `/workspace/agent_trading_dev`를 직접
+mount하는 임시 컨테이너(`docker run --rm -v /workspace/agent_
+trading_dev:/app -w /app agent_trading-app:latest python3 -m pytest
+...`)를 별도로 띄워 **실제 변경분**을 검증했다 — production 체크아웃
+(`/workspace/agent_trading`)은 직접 덮어쓰지 않았다(CI/CD 파이프라인을
+우회하는 위험한 행동이라 배제). `run.sh`가 요구하는 표준 명령도 그대로
+실행해 기록을 남겼지만, 그 결과는 stale 코드 기준일 수 있음을 함께
+밝힌다.
+
+**실행한 검증과 결과**:
+- (dev tree 직접 검증, 임시 컨테이너) `docker run --rm -v /workspace/
+  agent_trading_dev:/app -w /app agent_trading-app:latest python3 -m
+  pytest tests/services/test_deterministic_trigger_engine.py -v` →
+  **25 passed**(신규 회귀 테스트 포함)
+- (dev tree 직접 검증) `... python3 -m py_compile src/agent_trading/
+  services/deterministic_trigger_engine.py` → 통과(exit 0)
+- (dev tree 직접 검증) `... python3 -m ruff check src/agent_trading/
+  services/deterministic_trigger_engine.py` → All checks passed
+- (dev tree 직접 검증) core risk-off guard 관련 selector 4건을 같은
+  임시 컨테이너로 개별 실행 → 4 passed
+- (표준 명령, stale 체크아웃 기준) `bash scripts/harness/run.sh
+  accept backend-file src/agent_trading/services/deterministic_
+  trigger_engine.py` → PASS(3 tests, `/workspace/agent_trading`
+  기준이라 이번 턴 신규 테스트는 미포함)
+- (표준 명령, stale 체크아웃 기준) `bash scripts/harness/run.sh
+  test-file tests/services/test_deterministic_trigger_engine.py` →
+  24 passed(같은 이유로 신규 테스트 미포함)
+- DB write·KIS 호출·전체 테스트(full pytest)·`.env` 수정은 하지
+  않았다.
+
+**아직 운영 실측이 남아 있는지**: 이번 수정도 근사가 아니라 §13.1.5와
+동일한 산식을 그대로 유지하므로, 추가 운영 데이터 실측은 필요 없다.
+다만 아래는 여전히 미확인이다:
+1. `_CORE_RISK_OFF_ENTRY_SCORE_WEIGHT`/`_CORE_RISK_OFF_ALLOCATION_
+   BONUS_WEIGHT`가 `_build_buy_ranking_score()`의 `0.55`/`0.10`과
+   앞으로도 어긋나지 않을지는 신규 회귀 테스트로만 고정돼 있다 —
+   상수를 완전히 단일 지점화(공유 헬퍼로 추출)하지는 않았으며, 이는
+   R2 논의(§13.2)에서 다룰 여지로 남긴다.
+2. `risk_off_exception_eligible` 최종 판정(활동성/전략/신호 조건
+   포함)에 대한 운영 데이터 실측은 여전히 미확인(§13.1.3과 동일 범위
+   제한).
+3. 이 로컬 서버의 `/workspace/agent_trading` 동기화 시점/방식(어떤
+   프로세스가 언제 갱신하는지)은 이번 턴에서 조사하지 않았다 —
+   병합 후 harness 표준 명령을 다시 실행해 재확인이 필요하다.
+
 ### 13.2 R2 — `entry_score`의 alpha / risk / sizing 분리
 
 - 범위:
@@ -846,7 +956,14 @@ threshold 판정 경계는 **한 치도 바뀌지 않는다**.
    guard()`가 `ranking_score` 대신 `entry_score`+`portfolio_
    allocation`을 받아 authoritative 게이트 전용 점수를 그 자리에서
    재계산하도록 바꿨고, 좁은 범위 검증(단위 테스트 24건, lint) 전부
-   통과했다. `ranking_score` 필드·shadow·reporting 경로는 전부 무변화
+   통과했다. `ranking_score` 필드·shadow·reporting 경로는 전부 무변화.
+   **[2026-08-02 KST 5차 갱신] authoritative 게이트 명시식 2차 수정
+   완료(13.1.6)** — `_build_buy_ranking_score()` 재호출을 제거하고,
+   게이트 안에서 `entry_score`+`allocation_bonus_like`를 직접 계산하는
+   명시식으로 바꿨다. 신규 회귀 테스트로 두 산식의 일치를 고정했고,
+   dev tree를 직접 mount한 임시 컨테이너에서 25 passed 확인(로컬
+   harness 표준 명령은 별도 production 체크아웃을 테스트하므로 병행
+   실행)
 2. **R2**: `entry_score`를 alpha 중심으로 재정렬할지 판단
 3. **R3/R4**: allocation/activity를 점수 밖으로 내릴지 검토
 4. **R5**: 상류 결정 이후 하류 연쇄 영향 확인

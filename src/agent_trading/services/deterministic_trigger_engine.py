@@ -11,6 +11,12 @@ from agent_trading.services.strategy_selection import StrategySelectionAssessmen
 _CORE_RISK_OFF_RANKING_MODE = "hard_block_v1"
 _CORE_RISK_OFF_SHADOW_MODE = "shadow_topk_exception_v2"
 _CORE_RISK_OFF_RANKING_MIN_SCORE = 0.28
+# authoritative 게이트 명시식(§13.1.6) 전용 가중치 — _build_buy_ranking_score()의
+# 0.55*entry_score + 0.10*allocation_quality와 같은 값이지만, 이 함수를
+# 재호출하지 않고 게이트 안에서 직접 표현하기 위해 별도로 이름을 붙였다.
+_CORE_RISK_OFF_ENTRY_SCORE_WEIGHT = 0.55
+_CORE_RISK_OFF_ALLOCATION_BONUS_WEIGHT = 0.10
+_CORE_RISK_OFF_ALLOCATION_NORMALIZER_PCT = 10.0
 _CORE_RISK_OFF_SHADOW_MIN_SCORE = 0.02
 _CORE_RISK_OFF_SHADOW_TOP_K_CAP = 2
 _CORE_RISK_OFF_SHADOW_ACTIVITY_MIN = 1.10
@@ -611,16 +617,25 @@ def _assess_core_risk_off_buy_guard(
         if apply_topk_override_selected
         else 1.20
     )
-    # C안(§13.1.4): authoritative 게이트는 더 이상 외부에서 전달받은
-    # ranking_score를 참조하지 않고, entry_score + allocation 보조 조건을
-    # 그 자리에서 직접 재현한다. _build_buy_ranking_score()와 완전히 같은
-    # 산식을 그대로 호출하므로 임계값 0.28 대비 판정은 수치상 무변화다
-    # (근사 재정규화가 아니라 동일 계산의 인라인 재현).
-    core_risk_off_authoritative_score = _build_buy_ranking_score(
-        entry_score=entry_score,
-        portfolio_allocation=portfolio_allocation,
+    # 게이트 명시식(§13.1.6): ranking_score도, ranking_score를 만드는
+    # _build_buy_ranking_score()도 재호출하지 않는다 — entry_score와
+    # allocation 보조 조건을 게이트 안에서 직접 표현한다.
+    # allocation_bonus_like는 신규 자본 배정 여유도(max_new_capital_pct)를
+    # 0~1로 정규화한 보조 조건이고, authoritative_entry_gate_score가
+    # 실제로 0.28과 비교되는 값이다. 두 함수가 이제 서로 호출하지 않으므로
+    # 값이 어긋나지 않는지는 회귀 테스트로 고정한다(test_trigger_engine_
+    # core_risk_off_authoritative_score_matches_ranking_score_formula).
+    allocation_bonus_like = 0.0
+    if portfolio_allocation is not None:
+        allocation_bonus_like = _clamp(
+            (portfolio_allocation.max_new_capital_pct or 0.0)
+            / _CORE_RISK_OFF_ALLOCATION_NORMALIZER_PCT
+        )
+    authoritative_entry_gate_score = _clamp(
+        _CORE_RISK_OFF_ENTRY_SCORE_WEIGHT * entry_score
+        + _CORE_RISK_OFF_ALLOCATION_BONUS_WEIGHT * allocation_bonus_like
     )
-    if core_risk_off_authoritative_score < _CORE_RISK_OFF_RANKING_MIN_SCORE:
+    if authoritative_entry_gate_score < _CORE_RISK_OFF_RANKING_MIN_SCORE:
         if not apply_topk_override_selected:
             reasons.append("eligibility_core_risk_off_ranking_blocked")
             return False, tuple(reasons)

@@ -100,9 +100,15 @@
    authoritative 게이트 점수를 그 자리에서 재계산하도록 변경했다
    (`buy_path_variable_gate_matrix.md` §13.1.5). 좁은 범위 검증
    (`accept backend-file`, 단위 테스트 24건, lint) 전부 통과했고,
-   `ranking_score` 필드·shadow·reporting 경로는 무변화다. 이 질문은
-   2단계를 기다리지 않고 먼저 닫혔으며, 남은 2~4번 질문과 R2~R4는 이
-   일정대로 진행한다(날짜 변경
+   `ranking_score` 필드·shadow·reporting 경로는 무변화다. **[2026-08-02
+   KST 5차 갱신] authoritative 게이트 명시식 2차 수정 완료**
+   (`buy_path_variable_gate_matrix.md` §13.1.6) — `_build_buy_ranking_
+   score()` 재호출을 제거하고 게이트 안에서 `entry_score`+`allocation_
+   bonus_like`를 직접 계산하도록 바꿨다. 신규 회귀 테스트로 두 산식의
+   일치를 고정했고, dev tree를 직접 mount한 임시 컨테이너에서 25
+   passed 확인(로컬 harness 표준 명령은 별도 production 체크아웃을
+   테스트하므로 병행 실행). 이 질문은 2단계를 기다리지 않고 먼저
+   닫혔으며, 남은 2~4번 질문과 R2~R4는 이 일정대로 진행한다(날짜 변경
    없음).
 3. `portfolio_allocation`은 후보 점수에 남아야 하는가
 4. `relative_activity`는 soft bonus로 둘 이유가 남아 있는가
