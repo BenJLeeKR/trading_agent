@@ -3699,3 +3699,12 @@ like`(§13.1.6)와 동일 신호를 중복 반영하는 **최우선 제거 후�
 — 수치 변화가 없어 다음 턴 바로 코드 수정 초안 작성이 가능하다.
 상세: `docs/20_system_analysis/buy_path_variable_gate_matrix.md`
 §13.2.1.
+
+**[2026-08-02 KST, 최소 미러링] R2 1차 단위 적용 완료.** `_build_
+entry_score()`의 allocation 블록을 `entry_score_allocation_
+adjustment` 지역 변수로 분리했다 — 조건·임계값·순서가 그대로라
+수치·`buy_candidate_threshold(0.65)`·`ranking_score`·shadow·
+reporting·authoritative 게이트 전부 무변화다. dev tree 직접 mount
+검증에서 25 passed 확인. 제거/이관 여부 판단은 운영 실측 후 다음
+턴으로 넘긴다. 상세: `docs/20_system_analysis/buy_path_variable_
+gate_matrix.md` §13.2.2.

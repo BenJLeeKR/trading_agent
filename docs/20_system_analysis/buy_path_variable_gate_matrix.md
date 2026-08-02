@@ -1072,6 +1072,81 @@ score()` 안의 `if portfolio_allocation.max_new_capital_pct > 0: ...`
 3. activity 항목과 R4(§13.4) 트랙의 구체적 병합 순서는 이번 턴에서
    정하지 않았다.
 
+#### 13.2.2 R2 1차 단위 적용 — allocation 보정항 지역 변수 분리(2026-08-02 KST)
+
+**목적**: §13.2.1에서 권고한 다음 1순위 리팩터링 단위(allocation 보정항
+분리)를 실제 코드 수정으로 적용한다. 이번 절은 **분리**만 하며,
+제거·이관 여부 판단은 다음 턴으로 넘긴다.
+
+**무엇을 어떻게 분리했는지**: `_build_entry_score()` 안의 allocation
+블록(`if portfolio_allocation is not None: if pct>0: score += min(0.10,
+pct/100.0) ... else: score -= 0.20`)을 이름 있는 지역 변수 `entry_
+score_allocation_adjustment`로 분리했다. `portfolio_allocation`이
+`None`이면 `0.0`, `pct>0`이면 `min(0.10, pct/100.0)`, 아니면 `-0.20`을
+그대로 대입하고, 마지막에 `score += entry_score_allocation_adjustment`
+한 줄로 합산한다. `reason_codes` append 조건과 순서는 그대로 유지했다.
+코드 근처에 짧은 한국어 주석 1개를 추가해, 이 값이 authoritative
+게이트의 `allocation_bonus_like`(§13.1.6)와 같은 `max_new_capital_pct`
+원신호를 다른 가중치로 반영하고 있음을 명시했다.
+
+**왜 "제거"가 아니라 "분리"인가**: 이번 수정은 계산되는 **값**을 한
+치도 바꾸지 않는다 — 조건문 순서, 임계값(`0.10`, `100.0`, `-0.20`),
+분기 구조가 전부 그대로이며, 단지 `score +=`로 즉시 누적되던 값을
+먼저 이름 붙은 변수에 담았다가 같은 자리에서 합산하도록 바꿨을
+뿐이다. §13.2.1에서 판정한 "중복 제거 최우선 후보"라는 분류는
+그대로 유효하지만, **제거 여부(entry_score에서 아예 빼는 것)나
+이관 여부(하드 게이트 전용으로 옮기는 것)는 이번 턴에서 결정하지
+않았다** — 그 결정에는 §13.2.1의 미확인 사항 1번(운영 데이터 실측)이
+선행돼야 하므로, 이번 턴은 다음 판단을 더 쉽게 하기 위한 **가독성/
+분석 가능성 확보 단계**로 범위를 한정한다.
+
+**무변화임을 보장하는 근거**:
+1. `portfolio_allocation is None`이면 `entry_score_allocation_
+   adjustment = 0.0`이고 `score += 0.0`은 기존에 이 블록 전체를
+   건너뛰던 것과 결과가 같다.
+2. `pct > 0`이면 `entry_score_allocation_adjustment = min(0.10,
+   pct/100.0)`으로 기존 `score += min(0.10, pct/100.0)`과 값이 같고,
+   `pct <= 0`이면 `-0.20`으로 기존 `score -= 0.20`과 값이 같다.
+3. `reason_codes.append(...)` 두 줄은 위치·조건이 전혀 바뀌지 않았다.
+4. 따라서 `entry_score` 최종값, `buy_candidate_threshold(0.65)` 판정,
+   `_build_buy_ranking_score()`·authoritative 게이트(§13.1.6)·shadow·
+   reporting 경로는 전부 무변화다 — 이 함수의 반환값에만 의존하는
+   모든 하류 로직이 그대로다.
+
+**실행한 검증과 결과**:
+- (dev tree 직접 mount 임시 컨테이너 — 이유는 이전 턴에서 이미 문서화,
+  재논의하지 않음) `python3 -m pytest tests/services/test_
+  deterministic_trigger_engine.py -v` → **25 passed**(기존 회귀
+  테스트 전부 무변화로 통과, 신규 테스트 추가 없음 — 순수 리팩터링이라
+  기존 테스트만으로 충분히 고정된다고 판단)
+- (dev tree 직접 mount) `python3 -m py_compile src/agent_trading/
+  services/deterministic_trigger_engine.py` → 통과(exit 0)
+- (dev tree 직접 mount) `python3 -m ruff check src/agent_trading/
+  services/deterministic_trigger_engine.py` → All checks passed
+- (dev tree 직접 mount) allocation 관련 selector 2건(`test_trigger_
+  engine_instruments_buy_eligibility_failure_without_allocation_
+  budget`, `test_trigger_engine_builds_buy_candidate_for_bullish_
+  core`) 개별 실행 → 2 passed
+- (표준 명령) `bash scripts/harness/run.sh accept backend-file
+  src/agent_trading/services/deterministic_trigger_engine.py` → PASS
+  (`tests_run_count=3`, `test_failed_count=0`)
+- (표준 명령) `bash scripts/harness/run.sh test-file tests/services/
+  test_deterministic_trigger_engine.py` → `workspace_role=dev` 경로가
+  host `python3`로 분기해 `No module named pytest`로 실패(이전 턴에
+  기록한 환경 사유, 재논의하지 않음) — dev tree 직접 mount 결과(25
+  passed)로 대체 검증했다
+- (표준 명령) `bash scripts/harness/run.sh accept docs` → PASS
+- DB write·KIS 호출·전체 테스트(full pytest)·`.env` 수정은 하지
+  않았다.
+
+**다음 단계(제거/이관 판단, 1개)**: `entry_score_allocation_
+adjustment`가 `buy_candidate_threshold(0.65)` 판정에 실제로 얼마나
+기여했는지(예: 이 항 덕분에만 0.65를 넘긴 표본 규모)를 운영 데이터로
+실측한 뒤, §13.2.1에서 이미 확인한 authoritative 게이트와의 중복을
+근거로 **제거(entry_score에서 완전히 빼기)할지, 하드 게이트 전용으로
+이관할지**를 결정한다 — R1(§13.1.3)에서 썼던 것과 같은 패턴(코드
+변경 전 read-only 실측)을 따른다.
+
 ### 13.3 R3 — `portfolio_allocation`의 역할 분리
 
 - 범위:
@@ -1142,7 +1217,12 @@ score()` 안의 `if portfolio_allocation.max_new_capital_pct > 0: ...`
    allocation은 **중복 제거 최우선 후보**로 판정했다. 다음 1순위 코드
    수정 단위로 "`entry_score`의 allocation 보정항을 지역 변수로
    명시적으로 분리하는 무변화 리팩터링"을 권고한다 — 다음 턴 바로
-   코드 수정 초안 작성 가능한 수준
+   코드 수정 초안 작성 가능한 수준. **[2026-08-02 KST 재갱신] R2 1차
+   단위 적용 완료(13.2.2)** — `_build_entry_score()`의 allocation
+   블록을 `entry_score_allocation_adjustment` 지역 변수로 분리했다
+   (수치·threshold·shadow·reporting 전부 무변화). dev tree 직접 mount
+   임시 컨테이너에서 25 passed 확인. 제거/이관 여부 판단은 운영 실측
+   후 다음 턴으로 넘긴다
 3. **R3/R4**: allocation/activity를 점수 밖으로 내릴지 검토
 4. **R5**: 상류 결정 이후 하류 연쇄 영향 확인
 
