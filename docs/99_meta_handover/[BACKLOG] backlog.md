@@ -4600,3 +4600,44 @@ KST, read-only 분석, 코드 변경 없음)
   수정하며 코드 변경은 없다.
 - 상세: `docs/20_system_analysis/buy_path_variable_gate_matrix.md`
   §13.1.6 "검증 환경 설명 재확인/정정".
+
+### R2(`entry_score` 내부 alpha/risk/sizing 분리) 착수 준비 완료
+(2026-08-02 KST, read-only 분석, 코드 변경 없음)
+
+- 전제: R1은 정리된 것으로 두고(§13.1.1~§13.1.6), 다음 리팩터링
+  단위를 R2로 좁힌다. `entry_score` 쪽 `+0.05`(전략 정합) 보정항
+  유지 결정(§13.1.1)은 재론하지 않는다.
+- 새로 확인한 사실 1(전수 분해): `_build_entry_score()`를 6개
+  계열로 분해했다 — alpha(`overall`/`fast`/`slow` 또는 `r3b_alpha_
+  percentile`), regime/risk(`market_regime.regime_label`/`risk_
+  tone`), allocation(`max_new_capital_pct`), strategy(`preferred_
+  strategy`), source-type(라우팅 보정), activity(`volume_surge_
+  ratio`/`turnover_surge_ratio` 파생 `relative_activity_bonus`).
+- 새로 확인한 사실 2(BUY 경로 재사용 매핑): 각 계열의 근거 필드가
+  eligibility·core risk-off guard·execution feasibility·AI 컨텍스트에
+  다시 쓰이는지 전수 확인했다. allocation(`max_new_capital_pct`)이
+  가장 좁고 확실한 중복이다 — authoritative 게이트의 `allocation_
+  bonus_like`(§13.1.6)와 **동일 신호를 서로 다른 가중치(0.55배 간접
+  + 1.0배 직접)로 중복 반영**하고 있음이 수식으로 증명된다. regime/
+  risk는 eligibility·guard·AI 컨텍스트 3곳에 걸쳐 있어 중복 폭이
+  가장 넓지만 영향 범위 분석은 더 크다.
+- 4분류 판정: alpha=유지, regime/risk=점수 밖 이관 검토, allocation=
+  중복 제거 최우선 후보, strategy=유지(R1에서 이미 확정, 재론 안 함),
+  source-type=유지, activity=점수 밖 이관 검토(§13.4 R4와 연계).
+- 핵심 질문 답: `entry_score`를 alpha 전용으로 전면 재정의할 필요는
+  없다 — 항목별 선택적 이관이 맞고, 순수 risk/sizing 이관 후보는
+  regime/risk·allocation 2개뿐이다.
+- 다음 1순위 리팩터링 단위: `entry_score`의 allocation 보정항(±)을
+  지역 변수/헬퍼로 명시적으로 분리하는 **무변화(behavior-unchanged)
+  리팩터링**. 수치 변화가 없어 `buy_candidate_threshold(0.65)`
+  재검증이 필요 없고, 대상이 한 함수·한 블록(약 7줄)으로 좁으며,
+  다음 단계(실제 제거/이관 판단을 위한 운영 실측) 착수 조건을
+  선행 충족한다. 다음 턴 바로 코드 수정 초안 작성 가능.
+- 미확인 사항: allocation 보정항이 `buy_candidate_threshold` 판정에
+  실제로 기여한 규모(운영 데이터 실측), regime/risk 이관 시 구체적
+  대상 위치, activity와 R4 트랙의 병합 순서 — 전부 이번 턴 범위 밖.
+- git 상태: 이번 턴 확인 시점 로컬 `main`(HEAD `8c5d05b2`) =
+  `origin/main`(이격 0, PR #100 머지 반영 완료), 이번 턴은 문서 5건만
+  수정하며 코드 변경은 없다.
+- 상세: `docs/20_system_analysis/buy_path_variable_gate_matrix.md`
+  §13.2.1.

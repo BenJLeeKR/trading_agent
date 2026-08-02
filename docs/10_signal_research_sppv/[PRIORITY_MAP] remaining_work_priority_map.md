@@ -10498,7 +10498,18 @@ agent 설계 문서 기준으로도 순서는 다음이 맞다.
      "병합 전"이라는 시점 조건임을 분명히 하는 정정 반영. 머지·동기화
      후 원본 `run.sh`로 재확인하니 표준 명령도 25 passed로 정상 반영됨
      (`buy_path_variable_gate_matrix.md` §13.1.6 "검증 환경 설명
-     재확인/정정"). 코드/테스트 결론에는 영향 없음 +
+     재확인/정정"). 코드/테스트 결론에는 영향 없음. **[2026-08-02 KST
+     R2 착수 준비 완료]** R1은 정리된 것으로 두고 R2(`entry_score`
+     내부 alpha/risk/sizing 분리) 착수 준비를 마쳤다(`buy_path_
+     variable_gate_matrix.md` §13.2.1). `entry_score` 내부 6개
+     항목을 전수 분해해 BUY 경로 재사용을 매핑한 결과, alpha·strategy
+     (R1에서 이미 유지 확정)·source-type은 유지, regime/risk·activity
+     는 점수 밖 이관 검토, allocation은 **중복 제거 최우선 후보**로
+     판정했다 — authoritative 게이트의 `allocation_bonus_like`(§13.1.6)
+     와 동일 신호를 두 가중치로 중복 반영하고 있음이 수식으로 이미
+     증명돼 있기 때문이다. 다음 1순위 코드 수정 단위로 "`entry_score`
+     의 allocation 보정항을 지역 변수로 명시적으로 분리하는 무변화
+     리팩터링"을 권고한다(다음 턴 바로 코드 수정 초안 가능) +
      [1-B순위] **D안 순수 효과 재측정** — S5로 stale bias가 사라진 뒤
      §137.5의 2.13배(상한)를 다시 측정 +
      [1-B순위] `strategy_alignment` 제거의 **게이트 영향 재관측** —
