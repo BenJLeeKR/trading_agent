@@ -109,7 +109,14 @@
    gate 기준값·shadow 기준값·reporting 값은 전혀 바꾸지 않았고(동작
    무변화), dev tree 직접 mount 검증에서 25 passed를 확인했다. 다음
    턴은 이 helper를 대상으로 제거 vs 하드 게이트 전용 이관을
-   결정한다.
+   결정한다. **[2026-08-02 KST 5차 갱신] entry_score에서 자본 보너스
+   점수 제거 적용 완료**(`buy_path_variable_gate_matrix.md` §13.2.5)
+   — `_build_entry_score_allocation_adjustment()` 호출·helper를 함께
+   제거했다. authoritative 게이트(§13.1.6)의 `allocation_bonus_like`
+   코드는 무변화이나, `entry_score`가 게이트의 입력이라 관련 fixture
+   5건의 경계값을 최소 범위로 재실측·보정했다(게이트 threshold `0.28`
+   자체는 무변화). dev tree 직접 mount 검증 25 passed. 운영 데이터로
+   재실측하는 것은 다음 턴 과제로 남긴다.
 2. `ranking_score`는 유지 가치가 있는가 — **[2026-08-01 KST 갱신]
    판정 C(제거/대체)로 닫힘.** `buy_path_variable_gate_matrix.md`
    §13.1.1 참고. **[2026-08-02 KST 갱신]** 대체 contract 설계 비교
@@ -280,6 +287,13 @@ allocation_adjustment()` helper로 추출해 entry_score 본체와 함수
 경계로 나눴다. 동작 무변화(threshold·gate·shadow·reporting 전부
 그대로)이며, 다음 턴은 이 helper를 대상으로 제거 vs 하드 게이트
 전용 이관을 결정한다.
+
+**[2026-08-02 KST 5차 갱신] entry_score에서 자본 보너스 점수 제거
+적용 완료**(`buy_path_variable_gate_matrix.md` §13.2.5) — 위 helper
+호출과 helper 자체를 entry_score 경로에서 제거했다. authoritative
+게이트 쪽 로직은 유지했으나, entry_score가 게이트 입력이라 관련
+fixture 5건의 경계값을 최소 범위로 재실측·보정했다(게이트 코드/
+threshold는 무변화).
 
 ### 8.3 3차 묶음 — R3 + R4
 

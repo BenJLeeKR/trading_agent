@@ -1196,31 +1196,6 @@ def _build_exit_ranking_score(
     return _clamp(score)
 
 
-def _build_entry_score_allocation_adjustment(
-    *,
-    portfolio_allocation: PortfolioAllocationAssessment | None,
-    reason_codes: list[str],
-) -> float:
-    """`entry_score`의 자본 보너스/패널티 항만 단독 계산한다.
-
-    `entry_score` 본체(alpha 대표 점수)와 구분되는 별도 의미 단위다.
-    `max_new_capital_pct>0`이면 `min(0.10, pct/100.0)`, 아니면
-    `-0.20`을 반환하며, authoritative 게이트의 `allocation_bonus_
-    like`(§13.1.6)와 같은 원신호를 다른 가중치로 반영한다. 이 값이
-    `buy_candidate_threshold(0.65)` 판정에 기여한 규모는 §13.2.3에서
-    실측했다(판정 A: 제거해도 영향 미미) — 제거·이관 여부는 아직
-    결정하지 않았고, 이 helper는 그 결정을 쉽게 하기 위한 구조
-    분리(§13.2.4)일 뿐 수치는 바뀌지 않는다.
-    """
-    if portfolio_allocation is None:
-        return 0.0
-    if portfolio_allocation.max_new_capital_pct > 0:
-        reason_codes.append("trigger_allocation_budget_available")
-        return min(0.10, portfolio_allocation.max_new_capital_pct / 100.0)
-    reason_codes.append("trigger_allocation_budget_blocked")
-    return -0.20
-
-
 def _build_entry_score(
     *,
     overall: float | None,
@@ -1262,16 +1237,12 @@ def _build_entry_score(
             score -= 0.15
             reason_codes.append("trigger_risk_off_penalty")
 
-    # entry_score_allocation_adjustment: entry_score 본체(alpha 대표
-    # 점수)와 구분되는 자본 보너스/패널티 항이다. 계산 근거를 helper
-    # 하나로 모아 두면(§13.2.4), 다음 턴에 제거할지 authoritative
-    # 게이트 전용으로 이관할지(§13.2.3 실측, 판정 A) 판단할 때 이
-    # 함수 하나만 보면 된다 — 수치는 그대로다(§13.2.1/§13.2.2).
-    entry_score_allocation_adjustment = _build_entry_score_allocation_adjustment(
-        portfolio_allocation=portfolio_allocation,
-        reason_codes=reason_codes,
-    )
-    score += entry_score_allocation_adjustment
+    # entry_score의 자본 보너스/패널티 항(구 entry_score_allocation_
+    # adjustment)은 §13.2.5에서 제거했다 — §13.2.3 실측(C 집합=0건,
+    # 판정 A)에 따라 이 항이 buy_candidate_threshold(0.65) 판정에
+    # 기여한 사례가 없었다. authoritative 게이트(§13.1.6)는 자체
+    # allocation_bonus_like를 별도로 계산해 그대로 유지하며, 이 함수의
+    # 제거와 무관하다.
 
     if strategy_selection is not None and strategy_selection.preferred_strategy in {
         "swing_momentum",

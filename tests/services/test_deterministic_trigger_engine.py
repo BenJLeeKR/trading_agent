@@ -145,7 +145,11 @@ def test_trigger_engine_builds_buy_candidate_for_bullish_core() -> None:
     # "risk_on"이라 옛 regime_tailwind=1.0(가중치 0.03)이 반영돼 있었다.
     # 항 제거로 ranking_score가 그만큼(0.03) 더 낮아져 threshold 기대치도
     # 함께 하향 보정한다.
-    assert result.ranking_score > 0.57
+    # §13.2.5: entry_score에서 자본 보너스/패널티 항을 제거해 entry_score가
+    # 낮아지면서(이 fixture는 max_new_capital_pct=5.0, Δ=0.05) ranking_score
+    # 도 0.55*0.05=0.0275만큼 더 낮아졌다 — 절대 threshold 기대치만 하향
+    # 보정한다(buy_candidate는 여전히 True로 무변화).
+    assert result.ranking_score > 0.53
     assert "eligibility_feature_coverage_ok" in result.eligibility_reasons
     assert result.candidate_mode == "relative_surge_v1_instrumented"
 
@@ -340,10 +344,15 @@ def test_trigger_engine_marks_risk_off_exception_eligible_for_strong_core_setup(
     # 0.10*relative_activity 항이 제거돼, 기존 fixture(turnover=1.60)는
     # _CORE_RISK_OFF_RANKING_MIN_SCORE=0.48 문턱을 더 이상 넘지 못한다.
     # "강한 core setup" 의도를 유지하기 위해 turnover_surge_ratio만 상향.
+    # §13.2.5: entry_score에서 자본 보너스/패널티 항을 제거해 entry_score가
+    # 낮아지면서(0.4725→0.4475) authoritative 게이트 점수(0.55*entry_score
+    # +0.10*allocation_bonus_like)가 0.28 문턱 아래로 내려갔다. "강한 core
+    # setup" 의도를 유지하기 위해 overall만 상향 보정한다(경계값만 조정,
+    # 게이트 코드/threshold 자체는 무변화).
     result = assess_deterministic_triggers(
         source_type="core",
         signal_feature_snapshot=_make_signal(
-            overall="0.28",
+            overall="0.45",
             fast="0.58",
             slow="0.02",
             average_volume_20d="250000",
@@ -383,6 +392,12 @@ def test_trigger_engine_core_risk_off_ranking_boundary_shifts_by_coverage_score_
     바뀌지 않아야 한다 — 이 값이 하나만 달라도(overall 0.33→0.34) 통과/
     차단이 뒤집히는 좁은 경계를 확인해 "완화가 아니라 무변화 리팩터링"
     임을 코드로 증명한다.
+
+    §13.2.5: entry_score에서 자본 보너스/패널티 항을 제거해 entry_score가
+    일률적으로 낮아지면서(이 fixture는 max_new_capital_pct=2.5로 고정,
+    Δ=0.025) authoritative 게이트 점수도 함께 낮아져 경계가 이동했다.
+    좁은 경계 자체를 다시 실측해 blocked/passed 값을 재조정했다(overall
+    0.33/0.34 → 0.44/0.45) — 게이트 코드/threshold(0.28)는 무변화다.
     """
     common_kwargs = dict(
         source_type="core",
@@ -394,7 +409,7 @@ def test_trigger_engine_core_risk_off_ranking_boundary_shifts_by_coverage_score_
 
     blocked = assess_deterministic_triggers(
         signal_feature_snapshot=_make_signal(
-            overall="0.33",
+            overall="0.44",
             fast="0.80",
             slow="0.30",
             volume_surge_ratio="1.20",
@@ -404,7 +419,7 @@ def test_trigger_engine_core_risk_off_ranking_boundary_shifts_by_coverage_score_
     )
     passed = assess_deterministic_triggers(
         signal_feature_snapshot=_make_signal(
-            overall="0.34",
+            overall="0.45",
             fast="0.80",
             slow="0.30",
             volume_surge_ratio="1.20",
@@ -434,6 +449,10 @@ def test_trigger_engine_core_risk_off_authoritative_score_matches_ranking_score_
     그 값과 authoritative 게이트의 통과/차단 판정(0.28 경계)이 어긋나지
     않는지 pass/blocked 경계 양쪽에서 고정한다 — 이 두 계산식 중
     하나만 바뀌고 다른 하나가 그대로면 이 테스트가 실패해야 한다.
+
+    §13.2.5: entry_score에서 자본 보너스/패널티 항을 제거해 경계가
+    이동했으므로(overall 0.33/0.34 → 0.44/0.45, 위 boundary 테스트와
+    동일한 재실측 근거), fixture를 함께 갱신했다.
     """
     portfolio_allocation = _make_portfolio(max_new_capital_pct=2.5, current_weight_pct=0.0)
     common_kwargs = dict(
@@ -446,7 +465,7 @@ def test_trigger_engine_core_risk_off_authoritative_score_matches_ranking_score_
 
     passed = assess_deterministic_triggers(
         signal_feature_snapshot=_make_signal(
-            overall="0.34",
+            overall="0.45",
             fast="0.80",
             slow="0.30",
             volume_surge_ratio="1.20",
@@ -456,7 +475,7 @@ def test_trigger_engine_core_risk_off_authoritative_score_matches_ranking_score_
     )
     blocked = assess_deterministic_triggers(
         signal_feature_snapshot=_make_signal(
-            overall="0.33",
+            overall="0.44",
             fast="0.80",
             slow="0.30",
             volume_surge_ratio="1.20",
@@ -615,10 +634,16 @@ def test_trigger_engine_marks_core_risk_off_shadow_floor_moderate_relax() -> Non
     # moderate_relax로 수렴하는 것으로 갱신한다 — 실제 BUY/eligibility
     # 판정과는 무관한 순수 관찰용 메타데이터 변화다(docs/10_signal_
     # research_sppv/[DESIGN] regime_conditional_entry_signal_v1.md §126).
+    # §13.2.5: entry_score에서 자본 보너스/패널티 항을 제거해 entry_score/
+    # ranking_score가 다시 낮아지면서(이 fixture는 max_new_capital_pct=2.5
+    # 고정, Δ=0.025) `ranking_score>=0.26` 관찰용 절대값을 더 이상 넘지
+    # 못했다. overall만 소폭 상향(-0.05→0.00)해 moderate_relax 분기 의도를
+    # 유지한다 — 실제 BUY/eligibility 판정과는 무관한 순수 관찰용 메타데이터
+    # 재조정이다.
     result = assess_deterministic_triggers(
         source_type="core",
         signal_feature_snapshot=_make_signal(
-            overall="-0.05",
+            overall="0.00",
             fast="1.00",
             slow="-0.20",
             average_volume_20d="250000",
@@ -930,10 +955,16 @@ def test_trigger_engine_instruments_event_overlay_shadow_lane_metadata() -> None
     # 으로 채워지는지)를 유지한다. 실제 BUY/eligibility 판정과는 무관한
     # 순수 관찰용 메타데이터 변화다(docs/10_signal_research_sppv/[DESIGN]
     # regime_conditional_entry_signal_v1.md §126/§146).
+    # §13.2.5: entry_score에서 자본 보너스/패널티 항을 제거해 entry_score/
+    # ranking_score가 다시 낮아지면서(이 fixture는 max_new_capital_pct=2.5
+    # 고정, Δ=0.025) `_EVENT_OVERLAY_SHADOW_MIN_SCORE=0.56` 기준을 다시
+    # 넘지 못했다. overall만 추가로 상향(0.75→0.90)해 기존 검증 의도(shadow
+    # lane 메타데이터가 정상적으로 채워지는지)를 유지한다 — 실제 BUY/
+    # eligibility 판정과는 무관한 순수 관찰용 메타데이터 재조정이다.
     result = assess_deterministic_triggers(
         source_type="event_overlay",
         signal_feature_snapshot=_make_signal(
-            overall="0.75",
+            overall="0.90",
             fast="0.90",
             slow="0.50",
             average_volume_20d="220000",

@@ -4764,3 +4764,44 @@ read-only, 코드 변경 없음)
   코드 1건 + 문서 5건이며 별도 작업 브랜치에서 커밋·PR로 진행한다.
 - 상세: `docs/20_system_analysis/buy_path_variable_gate_matrix.md`
   §13.2.4.
+
+### entry_score에서 자본 보너스 점수 제거 적용(2026-08-02 KST, 코드
+수정, DB write/KIS 호출 없음)
+
+- 전제(이미 닫힌 사실, 재검증 없이 사용): R2 4분류(§13.2.1), 지역
+  변수 분리(§13.2.2), 기여도 실측·판정 A(§13.2.3), helper 구조 분리
+  (§13.2.4) — 전부 참조만 하고 다시 열지 않는다.
+- 무엇을 제거했는지: `_build_entry_score()`에서 `_build_entry_score_
+  allocation_adjustment()` 호출과 그 합산을 제거하고, 더 이상 쓰이지
+  않는 helper 함수 자체도 삭제했다. authoritative 게이트
+  (`_assess_core_risk_off_buy_guard()`, §13.1.6)의 `allocation_
+  bonus_like` 코드는 완전히 무변화로 유지했다 — 이 helper를 호출한
+  적이 없는 독립 코드였기 때문이다.
+- 새로 확인한 사실(중요): 게이트 **코드**는 그대로지만, 게이트의
+  판정식이 `entry_score`를 입력으로 받으므로 `entry_score`가
+  낮아지면(또는 `max_new_capital_pct<=0`이면 높아지면) 게이트 점수도
+  자연스럽게 이동한다. 이 때문에 authoritative 경계에 걸려 있던
+  기존 테스트 2건과 §13.1.6 회귀 테스트 1건, 관찰용 shadow 테스트
+  2건, 총 5건의 fixture 경계값을 재실측해 최소 범위로 보정했다
+  (threshold `0.28`/`0.26`/`0.56` 자체는 무변화, `overall` 입력값만
+  조정).
+- 검증(dev tree 직접 mount, 이전 턴 문서화 사유로 재논의 않음):
+  pytest 25 passed(경계값 보정 후), py_compile·ruff 통과. (표준 명령)
+  `accept backend-file` PASS(3 tests, 별도 production 체크아웃
+  기준이라 이번 턴 변경 미반영). full pytest·KIS 호출·DB write·
+  `.env` 수정은 하지 않았다.
+- 기대 가능한 직접 영향: `max_new_capital_pct>0`이면 `entry_score`가
+  `min(0.10,pct/100.0)`만큼 낮아지고, `pct<=0`이면 `0.20`만큼 높아
+  진다. §13.2.3 실측(C=0건) 기준으로는 `buy_candidate_threshold
+  (0.65)` 영향이 없을 것으로 예상되나 제거 이후 재실측은 하지 않았다.
+- 아직 미확인인 운영 영향: 제거 이후 운영 데이터로 `entry_score`
+  분포·`buy_candidate` 재확인, authoritative 게이트 판정 이동폭의
+  실제 표본 재집계, `max_new_capital_pct<=0` population 영향 — 전부
+  다음 턴 과제.
+- git 상태: 이번 턴은 §13.2.4(PR #104, 브랜치 `buy-path-r2-
+  allocation-adjustment-helper-split`)가 아직 머지되지 않은 상태에서
+  같은 브랜치 위에 이어서 커밋했다 — main에 아직 없는 helper를
+  제거해야 하므로 새 브랜치로 분리할 수 없었다. PR #104가 이번 턴
+  변경분까지 포함해 갱신된다.
+- 상세: `docs/20_system_analysis/buy_path_variable_gate_matrix.md`
+  §13.2.5.
