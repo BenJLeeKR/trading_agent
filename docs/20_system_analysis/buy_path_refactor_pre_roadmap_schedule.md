@@ -80,7 +80,12 @@
 1. `entry_score`에서 제거해야 할 비-alpha 보정항이 무엇인가
 2. `ranking_score`는 유지 가치가 있는가 — **[2026-08-01 KST 갱신]
    판정 C(제거/대체)로 닫힘.** `buy_path_variable_gate_matrix.md`
-   §13.1.1 참고. 이 질문은 2단계를 기다리지 않고 먼저 닫혔으며, 남은
+   §13.1.1 참고. **[2026-08-02 KST 갱신]** 대체 contract 설계 비교
+   (A/B/C안, §13.1.2)까지 마쳤고 **C안(authoritative만 교체 + 관찰용
+   잔존)을 권고**한다. diff 착수 전 `ranking_score ∈ [0.28, 0.38]`
+   구간(허들이 `allocation_quality` 덕분에만 넘긴 사례) 규모를
+   read-only로 실측하는 1차례가 추가로 필요하다(이번 턴 범위 밖,
+   미수행). 이 질문은 2단계를 기다리지 않고 먼저 닫혔으며, 남은
    2~4번 질문과 R2~R4는 이 일정대로 진행한다(날짜 변경 없음).
 3. `portfolio_allocation`은 후보 점수에 남아야 하는가
 4. `relative_activity`는 soft bonus로 둘 이유가 남아 있는가

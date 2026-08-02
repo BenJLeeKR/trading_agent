@@ -3620,3 +3620,16 @@ score`의 실제 소비 경로(core_risk_off guard/event_overlay shadow)
 선행 확인은 불필요하다. 다음 턴은 diff 초안이 아니라 대체 contract
 설계 검토다. 상세: `docs/20_system_analysis/buy_path_variable_gate_
 matrix.md` §13.1.1.
+
+**[2026-08-02 KST 갱신] 대체 contract 설계 비교 완료.** 실제 게이트
+(authoritative)는 `0.28` 하나뿐이고 `0.02`/`0.26`류·`0.56`은
+shadow(관찰용), `trigger_proxy_attribution.py`는 DB write 없는 순수
+reporting임을 재확인했다. `ranking_score - 0.55*entry_score = 0.10*
+allocation_quality`이며 `pct<=0`이면 차이 0(완전 보존), `pct>0`이면
+0~0.10 편차 — `coverage_score`(상수) 제거 때와 달리 `allocation_
+quality`는 변수라 단순 재정규화로는 경계가 완전히 보존되지 않는다.
+A(직접 대체)/B(경량 유지)/C(authoritative만 교체) 3안 중 **C안을
+권고**한다(guard/shadow/하위 호환 무변화, diff 난이도 최저).
+"바로 diff 착수 가능"은 부분적으로만 참이며, `ranking_score ∈ [0.28,
+0.38]` 구간 실측이 diff 전에 한 차례 더 필요하다(미수행). 상세:
+`docs/20_system_analysis/buy_path_variable_gate_matrix.md` §13.1.2.

@@ -10448,9 +10448,16 @@ agent 설계 문서 기준으로도 순서는 다음이 맞다.
      score` 가중치 재정규화·존치·대체 판단은 `docs/20_system_analysis/
      buy_path_variable_gate_matrix.md` R1 트랙에서 판정 C(제거/대체)로
      닫혔다** — `allocation_quality` 항이 `entry_score`에 이미 반영된
-     동일 신호(`max_new_capital_pct`)를 완전히 동일한 형태로 재적용함이
-     코드 수준에서 확인돼, `ranking_score`의 두 항 모두 독립 정보가
-     없음이 확정됨. 다음은 대체 contract 설계 검토(§13.1.1) +
+     동일 원신호(`max_new_capital_pct`)를 중복 반영함이 코드 수준에서
+     확인돼, `ranking_score`의 두 항 모두 독립 정보가 없음이 확정됨.
+     **[2026-08-02 KST 갱신] 대체 contract 설계 비교(A/B/C안) 완료**
+     (§13.1.2) — authoritative 게이트는 `_CORE_RISK_OFF_RANKING_MIN_
+     SCORE=0.28` 하나뿐이고 `0.02`/`0.26`류·`0.56`은 shadow(관찰용),
+     `trigger_proxy_attribution.py`는 DB write 없는 순수 reporting임을
+     재확인. **C안(authoritative만 entry_score로 교체 + 관찰용
+     `ranking_score` 계산은 그대로 잔존) 권고**. diff 착수 전
+     `ranking_score ∈ [0.28, 0.38]`(허들이 `allocation_quality` 덕분에
+     만 넘긴 구간) 규모 read-only 실측 1회가 선행 필요(미수행) +
      [1-B순위] **D안 순수 효과 재측정** — S5로 stale bias가 사라진 뒤
      §137.5의 2.13배(상한)를 다시 측정 +
      [1-B순위] `strategy_alignment` 제거의 **게이트 영향 재관측** —

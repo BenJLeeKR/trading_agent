@@ -4325,3 +4325,40 @@
   `trigger_proxy_attribution.py` 영향 확인 포함) 확정.
 - 상세: `docs/20_system_analysis/buy_path_variable_gate_matrix.md`
   §13.1.1.
+
+### R1 대체 contract 설계 비교 완료(2026-08-02 KST, read-only 분석,
+코드 변경 없음)
+
+- 전제(이미 닫힌 사실, 재검증 없이 사용): §144~146(SPPV-2.157~2.159)의
+  `regime_tailwind` 제거, R1 판정 C(위 §13.1.1) — 재검증하지 않음.
+- **[표현 보정]** 이전 §13.1.1의 "완전히 동일한 형태로 재적용"은
+  `pct>0` 구간에 한정된 사실이라 과했다 — 이번부터 **"동일 원신호
+  (`max_new_capital_pct`)의 중복 반영"**으로 표현한다.
+- 새로 확인한 사실 1(소비처 재분류): `ranking_score`의 실제 게이트
+  (authoritative)는 **`_CORE_RISK_OFF_RANKING_MIN_SCORE=0.28` 단
+  하나**뿐이다. `0.02`(`_CORE_RISK_OFF_SHADOW_MIN_SCORE`)와 `0.26`류
+  (v2/v3/v5 포함)는 `_build_core_risk_off_shadow_experiment_
+  metadata()` 안의 **shadow(관찰용)**이고, `0.56`(event_overlay)도
+  기존 판정대로 shadow다. `trigger_proxy_attribution.py`는 DB
+  write·`repos` 사용이 없는 **순수 reporting**(장후 별도 스크립트,
+  JSON 리포트만 생성)임을 코드로 재확인했다.
+- 새로 확인한 사실 2(수학적 보존 범위): `ranking_score - 0.55*
+  entry_score = 0.10*allocation_quality`이며, `pct<=0`이면 이 차이가
+  **정확히 0**(완전 보존), `pct>0`이면 **0~0.10 사이의 한쪽 방향
+  편차**다. `coverage_score`(상수 1.0) 제거 때와 달리 `allocation_
+  quality`는 변수라, `threshold÷0.55` 같은 단순 재정규화는 **근사치일
+  뿐 경계를 완전히 보존하지 못한다**.
+- 대체안 비교(A: `entry_score` 직접 대체/필드 제거, B: 경량 별도
+  score 유지, C: authoritative만 교체+관찰용 잔존) — **C안 권고**.
+  BUY 판정 영향 범위·재정규화 필요성은 3안 동일(대상이 `0.28` 게이트
+  1곳뿐)이지만, guard/shadow/metadata 영향과 하위 호환에서 C안만
+  완전 무변화이고 diff 난이도도 가장 낮다.
+- "바로 diff 착수 가능한가" 판정: **부분적으로 가능, 전제 조건
+  있음** — 코드 변경 범위는 좁혀졌으나, `ranking_score ∈ [0.28, 0.38]`
+  (허들이 `allocation_quality` 덕분에만 넘긴 구간) 규모를 운영
+  데이터에서 read-only로 실측하는 1차례가 diff 전에 필요하다(이번
+  턴은 DB 조회 범위 밖이라 미수행).
+- git 상태: 이번 턴 확인 시점 로컬 `main` = `origin/main`(이격 없음,
+  이전 이격은 이미 별도 브랜치 폐기/정리로 해소됨).
+- 상세: `docs/20_system_analysis/buy_path_variable_gate_matrix.md`
+  §13.1.2.
