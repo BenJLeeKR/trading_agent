@@ -1,7 +1,7 @@
 # BUY 경로 리팩터링 사전 검토 일정
 
 작성일: 2026-08-01 KST
-상태: 사전 검토 일정 확정
+상태: 체크리스트 운영 중
 
 ## 1. 목적
 
@@ -34,7 +34,7 @@
 5. AI downgrade / EV gate / submit translation과 상류 deterministic 변수의
    중복 주입 여부 점검
 
-## 4. 권장 일정
+## 4. 권장 일정 체크리스트
 
 **일정 성격에 대한 전제**: 아래 날짜는 고정 캘린더가 아니라, 선행 검증
 단계를 해석 가능한 크기로 쪼개기 위한 **예시적 권장 순서**다. 특히
@@ -47,27 +47,38 @@
 
 기간: **2026-08-02(일) ~ 2026-08-03(월) KST**
 
+현재 상태: **진행 중**
+
 목적:
 
 - 변수별 "본래 역할"을 한 줄로 고정
 - 현재 코드에서 같은 변수가 몇 단계에 들어가는지 재확인
 - 리팩터링 대상/비대상 경계를 확정
 
-완료 조건:
+체크리스트:
 
-1. `entry_score`, `ranking_score`, `market_regime`, `portfolio_allocation`,
-   `relative_activity`, `preferred_strategy`에 대해
-   - alpha
-   - risk
-   - sizing
-   - execution feasibility
-   중 어느 역할인지 1차 분류가 끝날 것
-2. "정당한 중복"과 "과잉 중복"을 분리한 표가 있을 것
-3. 이번 리팩터링에서 건드리지 않을 축이 명시될 것
+- [x] `entry_score` 역할 1차 분류 완료
+- [x] `ranking_score` 역할 1차 분류 완료
+- [x] `market_regime` 역할 1차 분류 완료
+- [ ] `portfolio_allocation` 역할 1차 분류 완료
+- [ ] `relative_activity` 역할 1차 분류 완료
+- [x] `preferred_strategy` 역할 1차 분류 완료
+- [x] "정당한 중복"과 "과잉 중복"을 분리한 표 작성
+- [x] 이번 리팩터링에서 당장 건드리지 않을 축 명시
+
+판정 메모:
+
+- `entry_score`/`ranking_score`/`market_regime`/`preferred_strategy`는
+  `buy_path_variable_gate_matrix.md`의 R1~R2 분석으로 역할 경계가 상당 부분
+  닫혔다.
+- `portfolio_allocation`과 `relative_activity`는 각각 R3/R4 트랙에서 별도로
+  더 닫아야 하므로 1단계 전체 완료로 보기는 이르다.
 
 ### 4.2 2단계 — 상류 deterministic 재설계 검토
 
 기간: **2026-08-04(화) ~ 2026-08-06(목) KST**
+
+현재 상태: **진행 중**
 
 목적:
 
@@ -75,9 +86,9 @@
   나눌 수 있는지 검토
 - `ranking_score`를 독립 공식으로 남길지, 축소할지, 대체할지 결정 준비
 
-핵심 질문:
+핵심 질문 체크리스트:
 
-1. `entry_score`에서 제거해야 할 비-alpha 보정항이 무엇인가 —
+- [x] `entry_score`에서 제거해야 할 비-alpha 보정항이 무엇인가 —
    **[2026-08-02 KST 갱신]** R1을 정리된 것으로 두고 R2 착수 준비를
    마쳤다(`buy_path_variable_gate_matrix.md` §13.2.1). `entry_score`
    내부 6개 항목(alpha/regime·risk/allocation/strategy/source-type/
@@ -117,7 +128,7 @@
    5건의 경계값을 최소 범위로 재실측·보정했다(게이트 threshold `0.28`
    자체는 무변화). dev tree 직접 mount 검증 25 passed. 운영 데이터로
    재실측하는 것은 다음 턴 과제로 남긴다.
-2. `ranking_score`는 유지 가치가 있는가 — **[2026-08-01 KST 갱신]
+- [x] `ranking_score`는 유지 가치가 있는가 — **[2026-08-01 KST 갱신]
    판정 C(제거/대체)로 닫힘.** `buy_path_variable_gate_matrix.md`
    §13.1.1 참고. **[2026-08-02 KST 갱신]** 대체 contract 설계 비교
    (A/B/C안, §13.1.2)까지 마쳤고 **C안(authoritative만 교체 + 관찰용
@@ -154,18 +165,26 @@
    상세: `buy_path_variable_gate_matrix.md` §13.1.6 "검증 환경 설명
    재확인/정정". 이 질문은 2단계를 기다리지 않고 먼저 닫혔으며, 남은
    2~4번 질문과 R2~R4는 이 일정대로 진행한다(날짜 변경 없음).
-3. `portfolio_allocation`은 후보 점수에 남아야 하는가
-4. `relative_activity`는 soft bonus로 둘 이유가 남아 있는가
+- [ ] `portfolio_allocation`은 후보 점수에 남아야 하는가
+- [ ] `relative_activity`는 soft bonus로 둘 이유가 남아 있는가
 
-완료 조건:
+완료 조건 체크리스트:
 
-1. 최소 2개 이상의 재설계 옵션이 비교될 것
-2. 옵션별 blast radius가 정리될 것
-3. 어떤 옵션이 1차 diff 후보인지 좁혀질 것
+- [x] 최소 2개 이상의 재설계 옵션 비교 완료
+- [x] 옵션별 영향 범위 정리 완료
+- [ ] 어떤 옵션이 1차 수정 후보인지 전체 상류 축 기준으로 최종 축소
+
+판정 메모:
+
+- R1은 사실상 종료됐다.
+- R2는 allocation 제거까지 진행됐지만 운영 실측이 남아 있다.
+- R3/R4가 아직 열려 있으므로 2단계 전체 완료로 닫지 않는다.
 
 ### 4.3 3단계 — 하류 연쇄 영향 검토
 
 기간: **2026-08-07(금) ~ 2026-08-08(토) KST**
+
+현재 상태: **미착수**
 
 목적:
 
@@ -174,27 +193,32 @@
 - 상류를 바꿨을 때 하류가 그대로 병목인지, 아니면 새 충돌이 생기는지
   판단
 
-완료 조건:
+체크리스트:
 
-1. candidate_vs_final, EV gate, submit translation 각각에 대해
-   상류 변수 재사용 여부가 정리될 것
-2. "상류 먼저"로 충분한지, 하류 동시 개편이 필요한지 결정될 것
-3. 리팩터링 범위가 상류 한정인지, 상류+하류 병행인지 정리될 것
+- [ ] `candidate_vs_final`의 상류 변수 재사용 여부 정리
+- [ ] EV gate의 상류 변수 재사용 여부 정리
+- [ ] submit translation의 상류 변수 재사용 여부 정리
+- [ ] "상류 먼저"로 충분한지 판정
+- [ ] 하류 동시 개편 필요 여부 판정
+- [ ] 리팩터링 범위를 상류 한정/상류+하류 병행으로 확정
 
 ### 4.4 4단계 — Roadmap 작성 전 착수 판정
 
 기간: **2026-08-09(일) KST**
+
+현재 상태: **미착수**
 
 목적:
 
 - 앞선 3단계 검토를 바탕으로 실제 리팩터링 Roadmap 작성 가능 상태인지
   판정
 
-완료 조건:
+체크리스트:
 
-1. 1차 구현 범위가 1~2개 diff 단위로 축소될 것
-2. 관측 포인트와 무변화 회귀 포인트가 정리될 것
-3. Roadmap 문서로 넘길 입력이 준비될 것
+- [ ] 1차 구현 범위를 1~2개 수정 단위로 축소
+- [ ] 관측 포인트 정리
+- [ ] 무변화 회귀 포인트 정리
+- [ ] Roadmap 문서 입력 준비 완료
 
 ## 5. 왜 이 일정이 적절한가
 
@@ -208,16 +232,20 @@
 즉 이 일정은 구현 지연이 아니라 **리팩터링 단위를 해석 가능한 크기로
 쪼개기 위한 일정**이다.
 
-## 6. 현재 기준 즉시 시작할 작업
+## 6. 현재 기준 체크리스트
 
-지금 바로 시작할 수 있는 것은 아래 3개다.
+즉시 시작 후보:
 
-1. `entry_score` 내부 보정항 전수 표 작성
-2. `portfolio_allocation` 관련 값이 BUY 경로에서 몇 번 재사용되는지 전수 표 작성
-3. candidate_vs_final / EV gate / submit translation이 상류 변수와 어디서 다시
-   만나는지 경로도 작성
+- [x] `entry_score` 내부 보정항 전수 표 작성
+- [ ] `portfolio_allocation` 관련 값이 BUY 경로에서 몇 번 재사용되는지 전수 표 작성
+- [ ] `candidate_vs_final` / EV gate / submit translation이 상류 변수와 어디서 다시
+  만나는지 경로도 작성
 
-이 3개가 닫히면 2단계 재설계 검토로 넘어갈 수 있다.
+현재 해석:
+
+- 첫 번째 항목은 R2에서 이미 닫혔다.
+- 두 번째 항목은 R3의 실질 시작점이다.
+- 세 번째 항목은 R5의 실질 시작점이다.
 
 ## 7. Roadmap 작성 시점
 
@@ -233,7 +261,7 @@ Roadmap은 **1단계와 2단계가 끝난 뒤** 쓰는 것이 맞다.
 따라서 지금 시점의 적절한 산출물은 Roadmap이 아니라
 **Roadmap 이전의 확인 검토 일정표**다.
 
-## 8. 리팩터링 단위별 착수 순서
+## 8. 리팩터링 단위별 착수 순서 체크리스트
 
 `buy_path_variable_gate_matrix.md`의 R1~R5 단위를 기준으로 하면,
 사전 검토 일정의 실제 작업 순서는 아래처럼 읽는 것이 맞다.
@@ -246,8 +274,15 @@ Roadmap은 **1단계와 2단계가 끝난 뒤** 쓰는 것이 맞다.
   - `entry_score` 재사용 구조 해소 여부
   - guard 보조 입력으로의 축소 가능성
 
-이 묶음이 먼저 닫혀야 이후 `entry_score`와 allocation/activity의 역할을
-어디까지 남길지 결정할 수 있다.
+체크리스트:
+
+- [x] 독립 공식 존치 여부 판단 완료
+- [x] `entry_score` 재사용 구조 해소 방향 결정 완료
+- [x] guard 보조 입력 축소 가능성 검토 완료
+
+판정:
+
+- R1은 **완료**로 본다.
 
 ### 8.2 2차 묶음 — R2
 
@@ -256,8 +291,19 @@ Roadmap은 **1단계와 2단계가 끝난 뒤** 쓰는 것이 맞다.
   - alpha 전용화 가능성 검토
   - risk/sizing/activity/strategy 보정항 이관 후보 분류
 
-R1 없이 R2를 먼저 건드리면 `ranking_score`와 `entry_score`를 동시에
-재해석하게 되어 변경 효과를 분리하기 어렵다.
+체크리스트:
+
+- [x] alpha/risk/sizing/activity/strategy 항목 분해 완료
+- [x] allocation 보정항 구조 분리 완료
+- [x] allocation 보정항 기여도 실측 완료
+- [x] allocation 보정항 제거 적용 완료
+- [ ] 제거 후 운영 데이터 재실측 완료
+- [ ] authoritative 게이트 판정 이동폭 운영 재집계 완료
+
+판정:
+
+- R2는 **진행 중**으로 본다.
+- 구현은 앞서갔지만 운영 실측과 후속 해석이 남아 있다.
 
 **[2026-08-02 KST 갱신, R1 정리 후 착수 준비 완료]** `entry_score`
 내부 6개 항목 전수 분해와 BUY 경로 재사용 매핑을 마쳤다(`buy_path_
@@ -307,6 +353,13 @@ threshold는 무변화).
 이 두 축은 성격이 비슷하다. 둘 다 "좋은 종목인가"보다
 "지금 들어갈 수 있는가" 쪽 의미가 더 강하기 때문이다.
 
+체크리스트:
+
+- [ ] R3 `portfolio_allocation` 역할 분리 검토 시작
+- [ ] R4 activity 계열 soft/hard 중복 정리 시작
+- [ ] selection vs sizing vs feasibility 경계 재설정
+- [ ] soft bonus vs hard gate 중복 축소안 비교
+
 ### 8.4 4차 묶음 — R5
 
 - 대상:
@@ -317,7 +370,20 @@ threshold는 무변화).
   - 상류 리팩터링이 하류 contract를 깨지 않는지 확인
   - 필요 시 하류 contract 정리 범위를 따로 떼어낸다
 
+체크리스트:
+
+- [ ] AI downgrade 경로 점검
+- [ ] EV gate 경로 점검
+- [ ] submit translation 경로 점검
+- [ ] 하류 contract 독립 정리 필요 여부 판정
+
 ### 8.5 현재 착수 판정
 
 지금 바로 Roadmap으로 넘어가기보다, **R1 정의 고정 → R2 경계 확인**까지를
 이번 사전 검토의 최소 완료선으로 보는 것이 적절하다.
+
+현재 체크:
+
+- [x] R1 정의 고정
+- [ ] R2 경계 확인(운영 재실측 포함)
+- [ ] Roadmap 작성 착수
