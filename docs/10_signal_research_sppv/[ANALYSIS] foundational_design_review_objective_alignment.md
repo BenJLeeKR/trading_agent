@@ -3686,3 +3686,16 @@ dev tree를 직접 mount한 임시 컨테이너로 병행 검증(25 passed). 상
 25 passed로 정상 반영됨을 확인. PR #99의 코드 결론에는 영향 없음.
 상세: `docs/20_system_analysis/buy_path_variable_gate_matrix.md`
 §13.1.6 "검증 환경 설명 재확인/정정".
+
+**[2026-08-02 KST, 최소 미러링] R2(`entry_score` 내부 alpha/risk/
+sizing 분리) 착수 준비 완료.** `_build_entry_score()`를 6개 계열
+(alpha/regime·risk/allocation/strategy/source-type/activity)로
+전수 분해하고 BUY 경로 재사용을 매핑했다 — alpha·strategy(R1에서
+이미 유지 확정)·source-type은 유지, regime/risk·activity는 점수 밖
+이관 검토, allocation은 authoritative 게이트의 `allocation_bonus_
+like`(§13.1.6)와 동일 신호를 중복 반영하는 **최우선 제거 후보**로
+판정했다. 다음 1순위 코드 수정 단위로 "`entry_score`의 allocation
+보정항을 지역 변수로 명시적으로 분리하는 무변화 리팩터링"을 권고한다
+— 수치 변화가 없어 다음 턴 바로 코드 수정 초안 작성이 가능하다.
+상세: `docs/20_system_analysis/buy_path_variable_gate_matrix.md`
+§13.2.1.

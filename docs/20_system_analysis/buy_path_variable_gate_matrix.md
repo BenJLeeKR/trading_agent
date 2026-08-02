@@ -964,6 +964,114 @@ workspace-role 인식 로직이 **미커밋 상태로 이미 작업 중**임을
   - 아니면 risk/sizing 보정을 밖으로 밀어내야 하는지
 - 우선순위: **2순위**
 
+#### 13.2.1 `entry_score` 내부 항목 전수 분해(2026-08-02 KST, read-only 분석)
+
+**목적**: R1(§13.1.1~§13.1.6)을 정리된 것으로 두고, 다음 리팩터링 단위를
+R2(`entry_score` 내부 alpha/risk/sizing 분리)로 좁힌다. 이번 절은
+`_build_entry_score()`를 전수 분해하고 BUY 경로 다른 지점과의 중복
+여부를 매핑하는 read-only 분석이며, 코드는 변경하지 않았다.
+
+**전제(이미 닫힌 사실, 재검증하지 않음)**: R1 판정 C(§13.1.1), C안
+설계·실측(§13.1.2~§13.1.4), C안 코드 적용 2단계(§13.1.5~§13.1.6),
+그 안에서 확정된 "`entry_score` 쪽 `+0.05`(전략 정합) 보정항은 그대로
+유지한다"는 결정(§13.1.1 인용, `_build_buy_ranking_score()` 주석) —
+전부 참조만 하고 다시 열지 않는다.
+
+**(1) `entry_score` 내부 항목 분해표**
+
+`_build_entry_score()`(`deterministic_trigger_engine.py`)를 코드
+순서대로 분해하면 아래 6개 항목으로 나뉜다.
+
+| 순번 | 계열 | 조건/가중치 | 근거 필드 |
+|---|---|---|---|
+| 1 | alpha | 기본: `0.45*overall + 0.20*fast + 0.15*slow`. `r3b_alpha_enabled`일 때만 `0.80*r3b_alpha_percentile`로 교체(SPPV-2.65) | `overall_score`/`fast_score`/`slow_score` 또는 `r3b_alpha_percentile` |
+| 2 | regime/risk | `bullish_trend` `+0.10`, `risk_on` `+0.05`, `risk_off` `-0.15` | `market_regime.regime_label`/`risk_tone` |
+| 3 | allocation | `max_new_capital_pct>0`이면 `+min(0.10, pct/100)`, 아니면 `-0.20` | `portfolio_allocation.max_new_capital_pct` |
+| 4 | strategy | `preferred_strategy ∈ {swing_momentum, event_continuation}`이면 `+0.05` | `strategy_selection.preferred_strategy` |
+| 5 | source-type(context/routing) | `market_overlay` `+0.05`, `held_position` `-0.35` | `source_type` |
+| 6 | activity | `relative_activity_bonus>0`이면 `+min(0.10, bonus*0.10)` | `signal_feature_snapshot.volume_surge_ratio`/`turnover_surge_ratio` 파생(`_build_relative_activity_score`) |
+
+**(2) BUY 경로 중복/충돌 매핑표**
+
+각 항목의 근거 필드가 BUY 경로의 다른 지점에서도 다시 쓰이는지
+전수 확인했다.
+
+| 계열 | eligibility(`_assess_buy_eligibility`) | core risk-off guard(§13.1.6 명시식) | execution feasibility(eligibility 내 참여율 블록) | candidate_vs_final / 하류(AI 컨텍스트·EV gate) |
+|---|---|---|---|---|
+| alpha(`overall`/`slow`) | 하드 floor(`overall<-0.10`, `slow<-0.15`) | 하드 floor(`overall<0.0`, `slow<-0.05`, 별도 임계값) | 미사용 | `candidate_confidence`(=entry/exit/watch 중 최댓값)로 간접 노출, EV gate 미사용 |
+| regime/risk | risk_off+bearish_trend 하드 게이트(`risk_off_exception_eligible` 분기) | `_is_core_risk_off_regime()`가 동일 필드로 활성 여부 판정 | 미사용 | `prompt_context_projection.py`에 `regime_label`/`risk_tone` 원문 주입 |
+| allocation(`max_new_capital_pct`) | `allocation_budget_ok` 하드 게이트(`pct>0`) | `allocation_bonus_like`로 명시적 재사용(§13.1.6) | `recommended_max_order_value` 기반 참여율 계산(같은 `portfolio_allocation` 객체의 다른 필드) | `prompt_context_projection.py`에 `max_new_capital_pct` 원문 주입 |
+| strategy(`preferred_strategy`) | 미직접 사용(하드 게이트 없음) | 허용 전략 집합(`defensive_low_volatility_rotation`/`mean_reversion_bounce`/`event_continuation`) — `entry_score` 쪽 집합과 `event_continuation`만 중첩 | 미사용 | `prompt_context_projection.py`에 `preferred_strategy` 원문 주입 |
+| source-type | `held_position`/`reconciliation_overlay` 하드 차단 | `normalized_source_type == "core"` 조건으로 활성 여부 결정 | 미사용 | 미직접 사용(상류 라우팅 전용) |
+| activity(`volume_surge_ratio`/`turnover_surge_ratio`) | 하드 게이트(`max(...)<1.10`) | 하드 게이트(`required_activity_min`, 기본 `1.20`/override 시 `1.10`) | 미사용(참여율은 `average_volume_20d`/`average_turnover_20d` 기준, activity와 다른 필드) | 미직접 사용 |
+
+**(3) 항목별 4분류 판정**
+
+| 계열 | 판정 | 근거 |
+|---|---|---|
+| alpha | **유지** | `entry_score`의 존재 이유 자체다. `overall`/`slow`가 eligibility·guard의 하드 floor에도 쓰이지만, 이는 "soft 가중 반영(alpha)"과 "hard floor(최소 신호 기준)"이라는 서로 다른 역할이라 R1 문서의 기존 관점(§5)과 정합적인 **정당한 역할 분리**로 본다. |
+| regime/risk | **점수 밖 이관 검토** | `market_regime`은 이미 eligibility의 risk_off/bearish 하드 게이트, `core_risk_off_guard_active` 판정, AI 컨텍스트까지 3곳에 독립적으로 반영되고 있다. `entry_score` 내부의 soft 보너스/패널티(`±0.05~0.15`)는 이 3곳이 이미 다루는 것과 같은 신호(regime label/risk tone)를 **네 번째로** 반영하는 것이라 중복 폭이 가장 넓다. |
+| allocation | **중복 제거 후보(최우선)** | §13.1.6에서 이미 확인했듯, `entry_score`의 allocation 보너스(`min(0.10, pct/100)`, `pct∈(0,10]`)는 authoritative 게이트의 `allocation_bonus_like`(`0.10*clamp(pct/10,0,1)`)와 **동일 신호를 두 가중치(0.55배 간접 + 1.0배 직접)로 중복 반영**한다 — 이는 근사가 아니라 수식으로 증명 가능한 중복이라 4분류 중 가장 확실한 후보다. |
+| strategy | **유지(R1에서 이미 확정, 재론 안 함)** | `_build_buy_ranking_score()` 주석에 "entry_score 쪽 `+0.05`는 그대로 유지한다"고 이미 명시돼 있다(SPPV-2.146/§134.1). 이번 턴은 이 결정을 재검토하지 않는다. |
+| source-type | **유지** | 점수 보정이라기보다 BUY/EXIT 경로 자체를 가르는 라우팅 신호라 다른 항목들과 성격이 다르다. eligibility의 하드 차단과 겹치지만, 이는 "진입 자체가 불가능한 source_type을 거르는 것"과 "그 안에서 점수를 미세 조정하는 것"이라는 별개 역할이다. |
+| activity | **점수 밖 이관 검토(§13.4 R4 논의와 연계)** | `volume_surge_ratio`/`turnover_surge_ratio`가 eligibility·guard 양쪽의 하드 게이트로 이미 쓰이는데, `entry_score`의 soft 보너스는 그 위에 세 번째로 같은 신호에 보상을 얹는 구조다. 이 축은 이미 §13.4(R4, "bonus와 hard gate를 동시에 유지할 이유가 남아 있는지")에 정의된 우선순위 트랙과 겹치므로, R2 단독이 아니라 R4와 함께 다뤄야 한다. |
+
+**(4) 이번 턴의 핵심 질문에 대한 답**
+
+*"`entry_score`가 진짜 alpha 대표 점수로 남아야 하는가, 아니면
+risk/sizing/execution 성격 항목을 밖으로 밀어내야 하는가?"*
+
+**답: 전면 재정의는 필요 없고, 항목별 선택적 이관이 맞다.** 6개
+항목 중 순수하게 "risk/sizing 성격이라 밖으로 밀어내야 할 후보"는
+regime/risk와 allocation 2개뿐이다. alpha·strategy·source-type은
+유지가 맞고(각각 alpha 본연, R1에서 이미 확정, 라우팅 전용), activity는
+R2 단독 판단이 아니라 R4와 연계해서 봐야 한다. 즉 `entry_score`를
+"alpha 전용으로 완전히 재정의"하는 것은 이번 실측 기준으로는
+과도하며, **allocation 항목 하나만 먼저 손보는 것이 실제 중복 제거
+효과 대비 리스크가 가장 작다.**
+
+**(5) 다음 1순위 리팩터링 단위 권고**
+
+**권고: `entry_score` 내부 allocation 보정항(±)을 별도 지역 변수/
+헬퍼로 명시적으로 분리하는 무변화(behavior-unchanged) 리팩터링부터
+착수한다.** 실제 수치를 바꾸는 제거·이관이 아니라, `_build_entry_
+score()` 안의 `if portfolio_allocation.max_new_capital_pct > 0: ...`
+블록을 이름 붙은 지역 변수(예: `entry_score_allocation_adjustment`)로
+풀어 쓰고, 그 값이 authoritative 게이트의 `allocation_bonus_like`
+(§13.1.6)와 같은 신호를 다른 가중치로 반영하고 있음을 코드 주석으로
+명시하는 수준이다.
+
+**왜 이 단위가 가장 작은 안전 단위인가**:
+1. **수치 변화가 없다** — 지역 변수로 이름만 붙이는 것이라
+   `buy_candidate_threshold(0.65)` 판정에 영향을 주지 않는다. R1에서
+   `ranking_score` 대체가 실패했던 이유(§13.1.3, 단순 threshold
+   재정규화가 표본 100%를 뒤집음)와 달리, 이번 단위는 threshold
+   재산정이 아예 필요 없다.
+2. **범위가 한 함수, 한 블록으로 좁다** — `_build_entry_score()`의
+   allocation 블록(약 7줄) 하나만 대상이며, 호출부·시그니처 변경이
+   없다.
+3. **다음 단계(실제 제거/이관 여부 판단)의 선행 조건을 충족한다** —
+   이 블록을 먼저 이름 붙여 분리해 두면, 다음 턴에 "이 항목이
+   `buy_candidate_threshold`를 실제로 얼마나 넘기는 데 기여했는지"를
+   운영 데이터로 실측할 때(§13.1.3과 같은 패턴) 대상 코드가 이미
+   명확히 식별돼 있어 실측·제거 판단이 더 빨라진다.
+4. **regime/risk 항목보다 먼저 다뤄야 한다** — regime/risk는 3곳
+   (eligibility, guard, AI 컨텍스트)에 걸쳐 있어 영향 범위 분석이
+   더 크고, allocation은 이미 §13.1.6에서 수식으로 증명된 중복이라
+   분석이 끝나 있다. 작은 것부터 닫는 R1의 진행 방식(`buy_path_
+   refactor_pre_roadmap_schedule.md` §2 "개별 threshold 조정보다
+   변수 역할 분리를 먼저 닫는다")과 일치한다.
+
+**미확인 사항**:
+1. `entry_score`의 allocation 보정항이 `buy_candidate_threshold(0.65)`
+   판정에 실제로 얼마나 기여했는지(운영 데이터 실측)는 이번 턴에서
+   확인하지 않았다 — 다음 코드 수정 단위 착수 전 필요할 수 있다.
+2. regime/risk 항목을 점수 밖으로 이관할 경우의 구체적 대상 위치
+   (하드 게이트 강화 vs AI 컨텍스트 전용화)는 이번 턴에서 설계하지
+   않았다.
+3. activity 항목과 R4(§13.4) 트랙의 구체적 병합 순서는 이번 턴에서
+   정하지 않았다.
+
 ### 13.3 R3 — `portfolio_allocation`의 역할 분리
 
 - 범위:
@@ -1027,7 +1135,14 @@ workspace-role 인식 로직이 **미커밋 상태로 이미 작업 중**임을
    dev tree를 직접 mount한 임시 컨테이너에서 25 passed 확인(로컬
    harness 표준 명령은 별도 production 체크아웃을 테스트하므로 병행
    실행)
-2. **R2**: `entry_score`를 alpha 중심으로 재정렬할지 판단
+2. **R2**: [2026-08-02 KST 갱신, 착수 준비] `entry_score` 내부 6개
+   항목(alpha/regime·risk/allocation/strategy/source-type/activity)을
+   전수 분해하고 BUY 경로 재사용을 매핑 완료(13.2.1). alpha·strategy·
+   source-type은 유지, regime/risk·activity는 점수 밖 이관 검토,
+   allocation은 **중복 제거 최우선 후보**로 판정했다. 다음 1순위 코드
+   수정 단위로 "`entry_score`의 allocation 보정항을 지역 변수로
+   명시적으로 분리하는 무변화 리팩터링"을 권고한다 — 다음 턴 바로
+   코드 수정 초안 작성 가능한 수준
 3. **R3/R4**: allocation/activity를 점수 밖으로 내릴지 검토
 4. **R5**: 상류 결정 이후 하류 연쇄 영향 확인
 

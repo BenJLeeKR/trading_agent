@@ -77,7 +77,17 @@
 
 핵심 질문:
 
-1. `entry_score`에서 제거해야 할 비-alpha 보정항이 무엇인가
+1. `entry_score`에서 제거해야 할 비-alpha 보정항이 무엇인가 —
+   **[2026-08-02 KST 갱신]** R1을 정리된 것으로 두고 R2 착수 준비를
+   마쳤다(`buy_path_variable_gate_matrix.md` §13.2.1). `entry_score`
+   내부 6개 항목(alpha/regime·risk/allocation/strategy/source-type/
+   activity)을 전수 분해해 BUY 경로 재사용을 매핑한 결과, alpha·
+   strategy(R1에서 이미 유지로 확정)·source-type은 **유지**, regime/
+   risk·activity는 **점수 밖 이관 검토**, allocation은 **중복 제거
+   최우선 후보**로 판정했다. 다음 1순위 코드 수정 단위로 "`entry_
+   score`의 allocation 보정항을 지역 변수로 명시적으로 분리하는
+   무변화 리팩터링"을 권고하며, 다음 턴 바로 코드 수정 초안 작성이
+   가능한 수준이다.
 2. `ranking_score`는 유지 가치가 있는가 — **[2026-08-01 KST 갱신]
    판정 C(제거/대체)로 닫힘.** `buy_path_variable_gate_matrix.md`
    §13.1.1 참고. **[2026-08-02 KST 갱신]** 대체 contract 설계 비교
@@ -219,6 +229,16 @@ Roadmap은 **1단계와 2단계가 끝난 뒤** 쓰는 것이 맞다.
 
 R1 없이 R2를 먼저 건드리면 `ranking_score`와 `entry_score`를 동시에
 재해석하게 되어 변경 효과를 분리하기 어렵다.
+
+**[2026-08-02 KST 갱신, R1 정리 후 착수 준비 완료]** `entry_score`
+내부 6개 항목 전수 분해와 BUY 경로 재사용 매핑을 마쳤다(`buy_path_
+variable_gate_matrix.md` §13.2.1). alpha·strategy·source-type은
+유지, regime/risk·activity는 점수 밖 이관 검토, allocation은 중복
+제거 최우선 후보로 판정했다 — `entry_score`를 alpha 전용으로 전면
+재정의할 필요는 없고, 항목별 선택적 이관이 맞다는 결론이다. 다음
+1순위 코드 수정 단위는 "`entry_score`의 allocation 보정항을 지역
+변수로 명시적으로 분리하는 무변화 리팩터링"이며, 다음 턴 바로 코드
+수정 초안 작성이 가능하다.
 
 ### 8.3 3차 묶음 — R3 + R4
 
