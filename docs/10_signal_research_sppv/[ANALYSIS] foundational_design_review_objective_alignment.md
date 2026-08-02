@@ -3633,3 +3633,15 @@ A(직접 대체)/B(경량 유지)/C(authoritative만 교체) 3안 중 **C안을
 "바로 diff 착수 가능"은 부분적으로만 참이며, `ranking_score ∈ [0.28,
 0.38]` 구간 실측이 diff 전에 한 차례 더 필요하다(미수행). 상세:
 `docs/20_system_analysis/buy_path_variable_gate_matrix.md` §13.1.2.
+
+**[2026-08-02 KST 재갱신] 착수 전 마지막 read-only 실측 완료(최소
+미러링).** `core_risk_off_guard_active=true`이면서 `ranking_score ∈
+[0.28, 0.38]`인 표본은 최근 3거래일 191건/4종목, 최근 1개월
+2,385건/13종목, 전체 이력 2,455건/13종목이었고, 이 구간의 `max_new_
+capital_pct`는 전부 `2.5`(`allocation_quality` 상수 `0.25`)였다.
+대체 threshold 후보 `0.28/0.55≈0.5091`을 적용하면 `entry_score`
+최댓값이 `0.2123`뿐이라 **세 집계 창 모두 표본 100%가 뒤집힌다** —
+단순 재정규화는 근사 오차가 아니라 전량 뒤집힘 수준이라 이 상태로는
+C안 diff에 착수할 수 없고, threshold 재산정 방법을 먼저 정해야 한다.
+상세: `docs/20_system_analysis/buy_path_variable_gate_matrix.md`
+§13.1.3.
