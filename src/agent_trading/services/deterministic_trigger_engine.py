@@ -228,7 +228,8 @@ def assess_deterministic_triggers(
                 signal_feature_snapshot=signal_feature_snapshot,
                 overall=overall,
                 slow=slow,
-                ranking_score=ranking_score,
+                entry_score=entry_score,
+                portfolio_allocation=portfolio_allocation,
                 strategy_selection=strategy_selection,
                 apply_topk_override_selected=bool(
                     core_risk_off_topk_override.get("selected")
@@ -599,7 +600,8 @@ def _assess_core_risk_off_buy_guard(
     signal_feature_snapshot: SignalFeatureSnapshotEntity | None,
     overall: float | None,
     slow: float | None,
-    ranking_score: float | None,
+    entry_score: float,
+    portfolio_allocation: PortfolioAllocationAssessment | None,
     strategy_selection: StrategySelectionAssessment | None,
     apply_topk_override_selected: bool = False,
 ) -> tuple[bool, tuple[str, ...]]:
@@ -609,7 +611,16 @@ def _assess_core_risk_off_buy_guard(
         if apply_topk_override_selected
         else 1.20
     )
-    if ranking_score is None or ranking_score < _CORE_RISK_OFF_RANKING_MIN_SCORE:
+    # C안(§13.1.4): authoritative 게이트는 더 이상 외부에서 전달받은
+    # ranking_score를 참조하지 않고, entry_score + allocation 보조 조건을
+    # 그 자리에서 직접 재현한다. _build_buy_ranking_score()와 완전히 같은
+    # 산식을 그대로 호출하므로 임계값 0.28 대비 판정은 수치상 무변화다
+    # (근사 재정규화가 아니라 동일 계산의 인라인 재현).
+    core_risk_off_authoritative_score = _build_buy_ranking_score(
+        entry_score=entry_score,
+        portfolio_allocation=portfolio_allocation,
+    )
+    if core_risk_off_authoritative_score < _CORE_RISK_OFF_RANKING_MIN_SCORE:
         if not apply_topk_override_selected:
             reasons.append("eligibility_core_risk_off_ranking_blocked")
             return False, tuple(reasons)

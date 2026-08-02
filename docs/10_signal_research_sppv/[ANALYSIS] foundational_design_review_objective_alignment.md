@@ -3657,3 +3657,14 @@ C안 diff에 착수할 수 없고, threshold 재산정 방법을 먼저 정해�
 않으며(필드/이름만 authoritative 경로에서 제거), 이는 R2에서 다룬다.
 상세: `docs/20_system_analysis/buy_path_variable_gate_matrix.md`
 §13.1.4.
+
+**[2026-08-02 KST 4차 갱신] C안 코드 수정 초안 적용 완료(최소
+미러링).** `_assess_core_risk_off_buy_guard()`가 `ranking_score`
+대신 `entry_score`+`portfolio_allocation`을 받아 `_build_buy_
+ranking_score()`를 그 자리에서 재호출하는 방식으로 authoritative
+게이트 점수를 얻도록 바꿨다 — 근사가 아니라 동일 산식의 인라인
+재현이라 threshold `0.28` 경계는 무변화다. `ranking_score` 공식·
+shadow 메타데이터·`decision_json` 저장·reporting 경로는 전부
+무변화. 좁은 범위 검증(`accept backend-file`, 단위 테스트 24건,
+lint) 전부 통과. 상세: `docs/20_system_analysis/buy_path_variable_
+gate_matrix.md` §13.1.5.
