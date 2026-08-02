@@ -4641,3 +4641,49 @@ KST, read-only 분석, 코드 변경 없음)
   수정하며 코드 변경은 없다.
 - 상세: `docs/20_system_analysis/buy_path_variable_gate_matrix.md`
   §13.2.1.
+
+### R2 1차 단위 적용 — allocation 보정항 지역 변수 분리(2026-08-02
+KST, 코드 수정, DB write/KIS 호출 없음)
+
+- 전제(이미 닫힌 사실, 재검증 없이 사용): R1 정리(§13.1.1~§13.1.6),
+  R2 착수 준비·4분류 판정(§13.2.1, allocation=중복 제거 최우선 후보)
+  — 전부 참조만 하고 다시 열지 않는다.
+- 무엇을 어떻게 분리했는지: `src/agent_trading/services/deterministic_
+  trigger_engine.py`의 `_build_entry_score()` 안에 있던 allocation
+  블록(`max_new_capital_pct>0`이면 `+min(0.10, pct/100.0)`, 아니면
+  `-0.20`)을 이름 있는 지역 변수 `entry_score_allocation_adjustment`
+  로 분리했다. `portfolio_allocation`이 `None`이면 `0.0`으로 두고
+  마지막에 `score += entry_score_allocation_adjustment` 한 줄로
+  합산한다. `reason_codes` append 조건·순서는 그대로다. 짧은 한국어
+  주석 1개를 추가해 이 값이 authoritative 게이트의 `allocation_
+  bonus_like`(§13.1.6)와 같은 원신호를 다른 가중치로 반영하고 있음을
+  명시했다.
+- 왜 "제거"가 아니라 "분리"인가: 조건문·임계값·분기 구조가 전부
+  그대로이며 계산되는 값을 한 치도 바꾸지 않았다. §13.2.1의 4분류
+  ("중복 제거 최우선 후보")는 유효하지만, 제거·이관 여부는 이번
+  턴에서 결정하지 않았다 — 운영 데이터 실측이 선행돼야 하는 별도
+  판단이라 다음 턴으로 넘긴다.
+- 무변화임을 보장하는 근거: (1) `None`이면 `0.0`을 더하는 것과 블록을
+  건너뛰는 것이 결과적으로 같다. (2) `pct>0`/`pct<=0` 분기값이 기존
+  코드와 수치까지 동일하다. (3) `reason_codes` 두 줄의 위치·조건이
+  바뀌지 않았다. (4) 따라서 `entry_score` 최종값·`buy_candidate_
+  threshold(0.65)`·`ranking_score`·shadow·reporting·authoritative
+  게이트 전부 무변화다.
+- 실행한 검증: (dev tree 직접 mount, 이전 턴에 문서화한 사유로 재논의
+  하지 않음) pytest 25 passed, py_compile 통과, ruff 통과, allocation
+  관련 selector 2건 개별 통과. (표준 명령) `accept backend-file` PASS
+  (3 tests), `accept docs` PASS. (표준 명령) `test-file`은
+  `workspace_role=dev`가 host `python3`로 분기해 `No module named
+  pytest`로 실패(이전 턴 기록한 환경 사유, 재논의 안 함) — dev tree
+  직접 mount 결과로 대체 검증했다. DB write·KIS 호출·full pytest·
+  `.env` 수정은 하지 않았다.
+- 다음 단계(제거/이관 판단, 1개): `entry_score_allocation_
+  adjustment`가 `buy_candidate_threshold(0.65)` 판정에 실제로 얼마나
+  기여했는지 운영 데이터로 실측한 뒤, authoritative 게이트와의 중복을
+  근거로 제거할지 하드 게이트 전용으로 이관할지 결정한다(R1 §13.1.3
+  패턴 재사용).
+- git 상태: 이번 턴 확인 시점 로컬 `main`(HEAD `f6139bcb`) =
+  `origin/main`(이격 0, PR #101 머지 반영 완료), 이번 턴 변경분은
+  코드 1건 + 문서 5건이며 별도 작업 브랜치에서 커밋·PR로 진행한다.
+- 상세: `docs/20_system_analysis/buy_path_variable_gate_matrix.md`
+  §13.2.2.

@@ -10509,7 +10509,14 @@ agent 설계 문서 기준으로도 순서는 다음이 맞다.
      와 동일 신호를 두 가중치로 중복 반영하고 있음이 수식으로 이미
      증명돼 있기 때문이다. 다음 1순위 코드 수정 단위로 "`entry_score`
      의 allocation 보정항을 지역 변수로 명시적으로 분리하는 무변화
-     리팩터링"을 권고한다(다음 턴 바로 코드 수정 초안 가능) +
+     리팩터링"을 권고한다(다음 턴 바로 코드 수정 초안 가능). **[2026-
+     08-02 KST 재갱신] R2 1차 단위 적용 완료**(`buy_path_variable_
+     gate_matrix.md` §13.2.2) — `_build_entry_score()`의 allocation
+     블록을 `entry_score_allocation_adjustment` 지역 변수로 분리했다.
+     수치·`buy_candidate_threshold(0.65)`·`ranking_score`·shadow·
+     reporting·authoritative 게이트 전부 무변화이며, dev tree 직접
+     mount 검증에서 25 passed 확인. 제거/이관 여부 판단은 운영 실측
+     후 다음 턴으로 넘긴다 +
      [1-B순위] **D안 순수 효과 재측정** — S5로 stale bias가 사라진 뒤
      §137.5의 2.13배(상한)를 다시 측정 +
      [1-B순위] `strategy_alignment` 제거의 **게이트 영향 재관측** —

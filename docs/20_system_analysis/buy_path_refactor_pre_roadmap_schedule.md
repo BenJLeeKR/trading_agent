@@ -87,7 +87,13 @@
    최우선 후보**로 판정했다. 다음 1순위 코드 수정 단위로 "`entry_
    score`의 allocation 보정항을 지역 변수로 명시적으로 분리하는
    무변화 리팩터링"을 권고하며, 다음 턴 바로 코드 수정 초안 작성이
-   가능한 수준이다.
+   가능한 수준이다. **[2026-08-02 KST 재갱신] R2 1차 단위 적용 완료**
+   (`buy_path_variable_gate_matrix.md` §13.2.2) — `_build_entry_
+   score()`의 allocation 블록을 `entry_score_allocation_adjustment`
+   지역 변수로 분리했다. 수치·`buy_candidate_threshold(0.65)`·
+   `ranking_score`·shadow·reporting·authoritative 게이트 전부
+   무변화이며, dev tree를 직접 mount한 검증에서 25 passed를 확인했다.
+   제거/이관 여부 판단은 운영 데이터 실측 후 다음 턴으로 넘긴다.
 2. `ranking_score`는 유지 가치가 있는가 — **[2026-08-01 KST 갱신]
    판정 C(제거/대체)로 닫힘.** `buy_path_variable_gate_matrix.md`
    §13.1.1 참고. **[2026-08-02 KST 갱신]** 대체 contract 설계 비교
@@ -239,6 +245,12 @@ variable_gate_matrix.md` §13.2.1). alpha·strategy·source-type은
 1순위 코드 수정 단위는 "`entry_score`의 allocation 보정항을 지역
 변수로 명시적으로 분리하는 무변화 리팩터링"이며, 다음 턴 바로 코드
 수정 초안 작성이 가능하다.
+
+**[2026-08-02 KST 재갱신] R2 1차 단위 적용 완료**(`buy_path_variable_
+gate_matrix.md` §13.2.2) — 위 1순위 단위를 실제로 적용해 `entry_
+score_allocation_adjustment` 지역 변수로 분리했다. 무변화 리팩터링
+이라 수치·threshold·shadow·reporting 전부 그대로이며, 제거/이관
+여부 판단(2단계 나머지 목표)은 운영 실측 후 다음 턴으로 넘긴다.
 
 ### 8.3 3차 묶음 — R3 + R4
 
