@@ -315,6 +315,14 @@ quality` 기여분이 소수점까지 정확히 일치**했다. `pct <= 0`에서
    `max_new_capital_pct` 신호를 **완전히 동일한 형태로 한 번 더** 반영
    (같은 원본 값을 서로 다른 두 채널로 이중 계상).
 
+**[2026-08-02 KST 표현 보정]** 위 2번의 "완전히 동일한 형태로 재적용"은
+표현이 다소 강하다. 이번 턴 재확인 결과, `pct > 0` 구간에서는 두 항이
+수치까지 일치하지만 `pct <= 0` 구간에서는 그렇지 않다(§13.1.2 참고).
+따라서 이후로는 **"동일 원신호(`max_new_capital_pct`)의 중복 반영"**
+으로 표현한다 — 전 구간에서 완전히 동일하다는 뜻이 아니라, 같은
+원신호가 두 채널(엔트리 자체 항 + ranking의 allocation_quality 항)에
+중복 반영된다는 뜻이다.
+
 이는 `coverage_score`(SPPV-2.137)·`strategy_alignment`(SPPV-2.146)·
 `regime_tailwind`(SPPV-2.157/159)에서 이미 확인·제거한 **동일한 이중
 계상 패턴**이며, 제거 전례와 일치한다.
@@ -337,23 +345,137 @@ quality` 기여분이 소수점까지 정확히 일치**했다. `pct <= 0`에서
 재적용) **둘 다**다 — 어느 하나가 아니라 두 기전이 동시에 성립한다.
 
 **Q5 답 — R2 선행 확인 필요 여부**: **불필요.** R1의 대체 대상은
-`core_risk_off guard`(0.28/0.02/0.26)와 `event_overlay shadow`(0.56)
-**두 곳이 참조하는 스칼라를 `ranking_score`에서 `entry_score`(재정규화된
-threshold)로 바꾸는 것**이며, `entry_score` 내부 구조(R2의 대상)는
-건드리지 않는다. R2는 `entry_score` 자체의 alpha/risk/sizing 내부 분리를
-다루는 별개 질문이라, R1의 diff 설계와 독립적으로 진행할 수 있다.
+`core_risk_off guard`/`event_overlay shadow` 소비 지점이 참조하는
+스칼라를 `ranking_score`에서 `entry_score`(재정규화된 threshold)로
+바꾸는 것이며, `entry_score` 내부 구조(R2의 대상)는 건드리지 않는다.
+R2는 `entry_score` 자체의 alpha/risk/sizing 내부 분리를 다루는 별개
+질문이라, R1의 diff 설계와 독립적으로 진행할 수 있다. **[2026-08-02
+KST 정정] "0.28/0.02/0.26"을 모두 같은 성격의 게이트처럼 썼으나, 이는
+부정확하다 — §13.1.2에서 이 셋의 authoritative/shadow 구분을 다시
+확정했다.**
 
 **최종 판정: C — `ranking_score` 제거/대체가 맞다. 다음 턴은 대체
 contract 설계 검토(diff 초안이 아니라 설계 검토)다.**
 
-대체 방향의 골격만 기록한다(설계 확정은 다음 턴):
-- `core_risk_off guard`(0.28/0.02/0.26)와 `event_overlay shadow`(0.56)
-  두 소비 지점이 `entry_score`를 직접 참조하도록 바꾸고, threshold를
-  `÷0.55` 비율로 재정규화하는 것이 무변화 리팩터링 원칙과 부합하는
-  1차 후보다(코드 diff 전 재검증 필요).
-- `ranking_score` 필드 자체를 완전히 제거할지, 관찰용으로만 남길지는
-  하류 소비자(예: `trigger_proxy_attribution.py`의 관찰용 참조)에 대한
-  영향 확인이 diff 설계 단계에서 필요하다.
+대체 방향의 골격만 기록한다(설계 확정은 다음 턴): [2026-08-02 KST
+갱신] 아래 골격은 §13.1.2의 상세 설계 비교로 대체됐다.
+
+### 13.1.2 R1 대체 contract 설계 비교(2026-08-02 KST, read-only 설계 검토)
+
+**목적**: R1(판정 C)을 실제 diff로 착수 가능한 수준까지 좁힌다. 이번
+절은 설계안 비교까지만 하며, 코드는 변경하지 않는다.
+
+**전제(이미 닫힌 사실, 재검증하지 않음)**: `regime_tailwind` 제거
+(SPPV-2.157/2.158/2.159), `strategy_alignment`/`coverage_score` 제거
+(SPPV-2.146/2.137), R1 판정 C(§13.1.1) — 전부 참조만 하고 다시
+검증하지 않는다.
+
+#### (1) `ranking_score` 소비처 재확정 — authoritative / shadow / reporting
+
+**새로 확인한 사실**: 지난 턴(§13.1.1)에서 "실제 게이트는
+`core_risk_off guard`(0.28/0.02/0.26)와 `event_overlay shadow`(0.56)
+두 곳"이라고 뭉뚱그려 썼는데, 이번 턴에 `_assess_core_risk_off_buy_
+guard()`와 `_build_core_risk_off_shadow_experiment_metadata()`를 다시
+읽어 **그 안에서도 authoritative와 shadow가 섞여 있음**을 확인했다.
+
+| 소비처 | 함수 | threshold | 성격 | 실제 BUY 판정에 영향 |
+|---|---|---|---|---|
+| core risk-off 진짜 게이트 | `_assess_core_risk_off_buy_guard()` | `_CORE_RISK_OFF_RANKING_MIN_SCORE = 0.28` | **authoritative** | **예** — `risk_off_exception_eligible`을 결정, `_assess_buy_eligibility()`가 이 값으로 실제 eligibility를 가른다 |
+| core risk-off shadow 관찰 | `_build_core_risk_off_shadow_experiment_metadata()` | `_CORE_RISK_OFF_SHADOW_MIN_SCORE = 0.02`, 그리고 `_classify_core_risk_off_shadow_floor_bucket()` 내부의 `0.26`(및 v2/v3/v5 변형) | **shadow(관찰용)** | 아니오 — `shadow_topk_candidate`/`shadow_floor_bucket` 등은 `decision_json`에만 기록되고, `risk_off_exception_eligible`은 외부에서 주입되는 `core_risk_off_topk_v1` override(운영자가 별도로 넣는 값)로만 갈린다. 이 shadow 계산 자체가 그 override 값을 만들어내지 않는다 |
+| event_overlay shadow 관찰 | `_build_event_overlay_shadow_metadata()` | `_EVENT_OVERLAY_SHADOW_MIN_SCORE = 0.56` | **shadow(관찰용)** | 아니오 — `mode="no_bonus_v1"`, `shadow_would_pass`가 어디에도 승격되지 않음(기존 SPPV-2.157 결론 유지, 재검증 안 함) |
+| 저장/직렬화 | `decision_factory.py:352-353` | 없음 | **plumbing(저장 경로)** | 게이트가 아니라 `decision_json.deterministic_trigger.ranking_score` 필드에 값을 옮겨 담는 지점 |
+| 장후 attribution 리포트 | `trigger_proxy_attribution.py`(다수 지점, 자체 threshold `BUY_MIN_RANKING_SCORE`/`WATCH_MIN_RANKING_SCORE`/`0.26` 등 보유) | 독립적인 자체 threshold | **reporting(외부 관찰)** | 아니오 — `scripts/analyze_trigger_proxy_attribution.py`를 통해 실행되며 **DB write·`repos` 사용 없이 JSON 리포트 파일만 생성**함을 이번 턴에 확인. 이미 결정된 `trade_decisions`를 사후 집계하는 도구라 판정에 되먹임되지 않는다 |
+
+**정정**: §13.1.1에서 "0.28/0.02/0.26"을 한 묶음처럼 썼던 것은 부정확
+했다 — **authoritative는 `0.28` 하나뿐이고, `0.02`/`0.26`(및 v2/v3/v5)
+은 shadow(관찰용)다.** `0.56`(event_overlay)은 기존 판정대로 shadow.
+
+#### (2) `entry_score` 직접 대체의 수학적 보존 가능성
+
+**새로 확인한 사실**: `ranking_score`와 `0.55*entry_score`의 차이를
+전 구간에서 계산했다.
+
+```text
+ranking_score - 0.55*entry_score = 0.10 * allocation_quality(pct)
+
+pct <= 0 : allocation_quality = 0        → 차이 = 0 (완전 보존)
+pct >  0 : allocation_quality ∈ (0, 1]   → 차이 ∈ (0, 0.10] (편차 발생)
+```
+
+즉 `max_new_capital_pct <= 0`인 경우(신규 자본 배정이 없거나 예산 초과)
+`ranking_score`는 `0.55*entry_score`와 **완전히 동일**하다. 편차가
+생기는 것은 `pct > 0`일 때뿐이며, 그 편차는 **항상 0 이상 0.10 이하**로
+한쪽 방향(ranking_score가 항상 더 높거나 같음)으로만 발생한다.
+
+**이전 제거 사례와의 차이(중요)**: `coverage_score`(SPPV-2.137) 제거
+때는 게이트를 통과한 모집단에서 그 값이 항상 `1.0`인 **상수**였기 때문에
+threshold에서 정확히 같은 상수를 빼는 것으로 경계가 수학적으로 완전히
+보존됐다. 이번 `allocation_quality`는 **상수가 아니라 `pct`에 따라
+0~0.10 사이를 움직이는 변수**다. 따라서 `threshold ÷ 0.55` 같은 단순
+재정규화는 **근사치일 뿐 경계를 완전히 보존하지 못한다** — `ranking_
+score`가 `[0.28, 0.38]` 구간에 있으면서 그 이유가 순전히 `allocation_
+quality` 덕분이었던 후보는, `entry_score` 단독 기준으로 재정규화한
+threshold를 적용하면 판정이 바뀔 수 있다(운영 데이터 기반 실측이
+diff 이전에 필요하다는 뜻이며, 이번 턴은 그 실측을 하지 않았다).
+
+#### (3) 대체안 비교(A/B/C)
+
+| 축 | A안: `entry_score` 직접 대체(필드 제거) | B안: 경량 별도 score 유지 | C안: authoritative만 교체 + 관찰용 잔존 |
+|---|---|---|---|
+| 정의 | `ranking_score` 계산·필드 자체를 없애고, 모든 소비처가 `entry_score`를 직접 참조 | `ranking_score` 필드는 유지, 공식만 경량화(예: `allocation_quality` 항 삭제, `0.55*entry_score`만 남김) | `ranking_score` 계산·공식은 **그대로 유지**하고, `0.28` 게이트만 `entry_score`(재정규화 threshold)를 참조하도록 교체 |
+| 실제 BUY 판정 영향 범위 | `0.28` 게이트 1곳(유일한 authoritative) | `0.28` 게이트 1곳 | `0.28` 게이트 1곳(동일) |
+| threshold 재정규화 필요 | 예, 필수(위 (2)의 근사치 한계 있음) | 예, 필수(공식이 바뀌므로) | 예, 필수(대상은 여전히 1곳뿐) |
+| guard/shadow/metadata 영향 | shadow 메타데이터(`0.02`/`0.26`류, `0.56`)가 `ranking_score`를 참조하므로 **함께 재설계 필요** — 영향이 shadow까지 번짐 | 필드명이 그대로라 shadow 코드는 수정 불필요하나, **계산된 값 자체가 바뀌어 shadow threshold의 의미도 함께 이동**(재검증 필요) | **없음** — `ranking_score` 계산이 그대로라 shadow/이벤트 오버레이 쪽은 100% 무변화 |
+| 하위 호환(reporting) | `trigger_proxy_attribution.py`가 참조하는 `decision_json.ranking_score` 필드가 사라져 **스크립트 수정 필요**(판정과 무관, 리포트 품질 문제) | 필드는 유지되나 값의 스케일이 바뀌어 **리포트 수치가 이동**(스크립트 수정은 불필요, 해석만 달라짐) | **완전 보존** — 계산이 그대로라 리포트 스크립트·수치 모두 무변화 |
+| diff 난이도 | 높음(authoritative + shadow + reporting 다수 파일) | 중간(함수 1개 + 연쇄된 threshold 재조정, 소비자 코드는 안 건드림) | **가장 낮음**(함수 1개, 게이트 참조 대상 교체 + threshold 1개 재조정) |
+| R1 결론(§13.1.1, "두 항 모두 독립 정보 없음")과의 정합성 | 정합적(무의미해진 필드를 완전히 걷어냄) | **낮음** — 독립 정보가 없다고 결론 낸 개념을 별도 필드로 계속 유지하는 것이라 결론과 다소 배치 | 정합적(개념은 남기되 그 개념이 실제 판정에 영향을 주는 지점만 정리) |
+
+#### (4) 관찰용 소비자(`trigger_proxy_attribution.py` 등) 분리 판단
+
+- **실제 판정에 영향 없음**: 위 (1)에서 확인. DB write·`repos` 사용이
+  없고, 장후 별도 스크립트(`analyze_trigger_proxy_attribution.py`)로
+  실행돼 JSON 리포트만 생성한다. `trade_decisions`/`order_requests`에
+  되먹임되는 경로가 없다.
+- **필드 제거 시 문제 성격**: A안을 택할 경우 이 스크립트가 참조하는
+  `row.get("ranking_score")`가 `None`이 되어 리포트 값이 누락된다 —
+  이는 **보고 품질 저하 문제**이지 BUY 판정 오류가 아니다.
+- **계약 유지가 꼭 필요한가**: 이번 턴 기준으로는 **강제할 필요는
+  없다**(판정에 영향이 없으므로) — 다만 이 스크립트가 SPPV 연구
+  분석(예: SPPV-2.149의 D안 사후 검증, `trigger_proxy_attribution_
+  *.json` 파일 기반 리포트)에 쓰이고 있어, 완전히 끊으면 **연구 연속성
+  비용**이 발생한다. 이 비용은 diff 설계 단계에서 "필드를 유지한 채
+  값만 재정의"(B/C안) 대비 "필드를 없애고 스크립트를 별도로 손보기"
+  (A안) 사이의 트레이드오프로 반영해야 한다.
+
+#### (5) 결론 — 1순위 권고안
+
+**C안(authoritative만 교체 + 관찰용 잔존)을 권고한다.**
+
+근거:
+1. **BUY 판정 영향 범위, threshold 재정규화 필요성은 A/B/C 모두
+   동일**(대상이 `0.28` 게이트 1곳뿐이므로) — 이 축은 안 선택에
+   차별점이 안 된다.
+2. **guard/shadow/metadata 영향과 하위 호환에서 C안만 완전 무변화**다
+   — shadow 메타데이터·`event_overlay` shadow·`trigger_proxy_
+   attribution.py` 전부 코드 수정이 필요 없다.
+3. **diff 난이도가 가장 낮다** — 변경 범위가 `_assess_core_risk_off_
+   buy_guard()` 호출부에서 참조하는 스칼라 하나와 그에 딸린 threshold
+   재조정으로 한정된다.
+4. R1의 결론("두 항 모두 독립 정보 없음")과 **정합적**이다 —
+   `ranking_score`라는 개념 자체를 없애지는 않되(B안처럼 억지로
+   유지하지도 않되), 그 개념이 실제 판정에 영향을 주는 유일한 지점만
+   정리한다.
+
+**"다음 턴에서 바로 diff 초안 가능한가" 판정**: **부분적으로 가능,
+전제 조건 있음.** 코드 변경 범위(1개 함수, 1개 게이트 참조 교체)는
+바로 diff 착수가 가능한 수준으로 좁혀졌다. 다만 (2)에서 확인한 대로
+`entry_score` 재정규화 threshold가 **단순 상수 차감으로 완전히
+보존되지 않는 근사치**이므로, diff 전에 **운영 데이터에서 `pct>0`이면서
+`ranking_score ∈ [0.28, 0.38]` 구간에 걸린 실제 사례가 얼마나 있는지
+read-only 실측**이 한 차례 더 필요하다(이번 턴에서는 수행하지 않음 —
+DB 조회는 이번 턴 범위 밖이었다). 그 실측 결과 해당 구간의 사례가
+0건이거나 무시할 수준이면 다음 턴에 바로 diff 초안으로 갈 수 있고,
+유의미한 규모면 threshold 재산정 방법을 먼저 정해야 한다.
 
 ### 13.2 R2 — `entry_score`의 alpha / risk / sizing 분리
 
