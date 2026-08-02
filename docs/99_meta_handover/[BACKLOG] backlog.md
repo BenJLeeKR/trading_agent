@@ -4403,3 +4403,48 @@
   없음(작업 트리 변경 상태로만 존재).
 - 상세: `docs/20_system_analysis/buy_path_variable_gate_matrix.md`
   §13.1.3.
+
+### `entry_score` 기반 새 threshold 산정 방식 설계 검토 완료(2026-08-02
+KST, read-only 분석, 코드 변경 없음)
+
+- 전제(이미 닫힌 사실, 재검증 없이 사용): R1 판정 C(§13.1.1), 대체
+  contract 설계 비교·C안 권고(§13.1.2), `ranking_score ∈ [0.28, 0.38]`
+  구간 100% 뒤집힘 실측(§13.1.3) — 전부 참조만 하고 다시 검증하지
+  않는다.
+- 새로 확인한 사실: `_build_entry_score()`의 자체 allocation 보정항
+  (`pct>0`이면 `min(0.10, pct/100)`, `pct<=0`이면 `-0.20`)이
+  `ranking_score`의 `0.10*allocation_quality`와 `0<pct<=10` 구간에서
+  **수치까지 정확히 동일**함을 코드 계산으로 확인했다(둘 다 `pct=10`
+  에서 `0.10`으로 캡) — R1의 "두 항 모두 독립 정보 없음" 결론을 수치
+  수준에서 재확인하는 사실이다.
+- threshold 산정안 3개 비교(A: 단순 선형 치환 `0.28/0.55≈0.5091`,
+  B: 실측 상수 보정 `(0.28-0.10*0.25)/0.55≈0.4636`, C: 보조 조건
+  병행 — `0.55*entry_score + 0.10*allocation_quality >= 0.28`을
+  authoritative 호출부에서 인라인으로 그대로 재현):
+  - A안: §13.1.3에서 이미 100% 뒤집힘으로 기각.
+  - B안: `aq_typical=0.25`가 실측 모집단 밖에서도 상수인지 미확인이라
+    후속 재검증 부담이 남는다.
+  - **C안: 근사가 아니라 기존 산식을 그대로 재현하므로 과완화/과차단
+    위험이 원천적으로 없다.**
+- 판정: **C안(보조 조건 병행)을 권고**한다 — 다음 턴 바로 코드 수정
+  초안 작성이 가능한 수준. 다만 C안도 `entry_score`와 `allocation_
+  quality`의 이중 반영 **구조** 자체는 해소하지 못하며(필드/이름만
+  authoritative 경로에서 제거), 이 구조적 잔여 문제는 R2(`entry_score`
+  내부 보정항 분리)에서 다룬다.
+- `ranking_score` 완전 제거 vs authoritative 한정 제거: §13.1.2에서
+  이미 C안(authoritative만 교체, 관찰용 계산은 그대로 잔존)으로 닫힌
+  판단을 재확인만 했고, 이번 턴에 다시 열지 않았다.
+- `trigger_proxy_attribution.py` 등 관찰용 소비자: A/B/C안 어느 쪽을
+  택해도 `ranking_score` 필드 계산 자체가 바뀌지 않아 수정 없이 유지
+  가능함을 확인했다. 별도 후속 정리 트랙 분리 여부는 diff 착수
+  시점에 정한다(강제 아님).
+- 미확인 사항: `aq_typical=0.25`가 더 넓은 범위에서도 상수인지(B안
+  검증 필요), C안 채택 시 `_assess_core_risk_off_buy_guard` 함수
+  시그니처 변경이 호출부/단위 테스트에 미치는 영향 범위,
+  `risk_off_exception_eligible` 최종 판정 실측 — 전부 이번 턴 범위
+  밖.
+- git 상태: 이번 턴 확인 시점 로컬 `main`(HEAD `21caea35`) =
+  `origin/main`(이격 0, PR #96 머지 반영 완료), 이번 턴 변경분은
+  문서 5건이며 별도 작업 브랜치에서 커밋·PR로 진행한다.
+- 상세: `docs/20_system_analysis/buy_path_variable_gate_matrix.md`
+  §13.1.4.

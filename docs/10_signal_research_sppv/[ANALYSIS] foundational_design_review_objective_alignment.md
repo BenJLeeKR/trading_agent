@@ -3645,3 +3645,15 @@ capital_pct`는 전부 `2.5`(`allocation_quality` 상수 `0.25`)였다.
 C안 diff에 착수할 수 없고, threshold 재산정 방법을 먼저 정해야 한다.
 상세: `docs/20_system_analysis/buy_path_variable_gate_matrix.md`
 §13.1.3.
+
+**[2026-08-02 KST 3차 갱신] 새 threshold 산정안 설계 검토 완료(최소
+미러링).** `_build_entry_score()`의 자체 allocation 보정항이
+`ranking_score`의 `0.10*allocation_quality`와 `0<pct<=10` 구간에서
+수치까지 동일함을 확인해 R1 결론을 수치 수준에서 재확인했다. A(단순
+선형 치환, 기각)/B(실측 상수 보정, 재검증 부담)/C(보조 조건 병행 —
+기존 산식 인라인 재현) 중 **C안을 권고**한다 — 근사가 없어 과완화/
+과차단 위험이 없고, 다음 턴 바로 코드 수정 초안 작성이 가능하다.
+다만 `allocation_quality` 이중 반영 **구조**는 C안으로도 해소되지
+않으며(필드/이름만 authoritative 경로에서 제거), 이는 R2에서 다룬다.
+상세: `docs/20_system_analysis/buy_path_variable_gate_matrix.md`
+§13.1.4.
