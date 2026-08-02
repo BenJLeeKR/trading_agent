@@ -4362,3 +4362,44 @@
   이전 이격은 이미 별도 브랜치 폐기/정리로 해소됨).
 - 상세: `docs/20_system_analysis/buy_path_variable_gate_matrix.md`
   §13.1.2.
+
+### R1 착수 전 마지막 실측 완료(2026-08-02 KST, read-only 분석,
+코드 변경 없음)
+
+- 전제(이미 닫힌 사실, 재검증 없이 사용): R1 판정 C(§13.1.1),
+  대체 contract 설계 비교·C안 권고(§13.1.2, 위 항목), `regime_
+  tailwind`/`strategy_alignment`/`coverage_score` 제거(SPPV-2.133/
+  2.138/2.147/2.159) — 개별 타당성은 재검토하지 않는다.
+- 조회 방법: `trading_db`(PostgreSQL) 컨테이너에 read-only `SELECT`로
+  직접 접속해 `trading.trade_decisions.decision_json`에서 필요
+  필드만 추출했다. DB write·KIS 호출·코드 수정·전체 테스트는 하지
+  않았다.
+- 새로 확인한 사실 1(모집단 규모): `core_risk_off_guard_active=true`
+  이면서 `ranking_score ∈ [0.28, 0.38]`이고 `entry_score`·
+  `portfolio_allocation.max_new_capital_pct`가 모두 존재하는 표본은
+  최근 3거래일(07-29~07-31, KST) 191건/4종목(07-31에는 0건),
+  최근 1개월(07-02~07-31) 2,385건/13종목, 전체 이력(실측 범위
+  2026-06-29~2026-07-30) 2,455건/13종목이었다.
+- 새로 확인한 사실 2(`allocation_quality` 축퇴): 이 구간 전체에서
+  `max_new_capital_pct`는 예외 없이 `2.5`(`allocation_quality=0.25`
+  상수)였다 — 분포라 부를 퍼짐이 없다.
+- 새로 확인한 사실 3(뒤집힘 규모): 대체 threshold 후보
+  `0.28/0.55≈0.5091`을 적용하면 이 모집단의 `entry_score` 최댓값이
+  `0.2123`에 그쳐 **3거래일/1개월/전체 이력 모두 표본의 100%가
+  뒤집힌다**(0건 통과). 즉 §13.1.2에서 예고한 "단순 재정규화는
+  근사치일 뿐 경계를 완전히 보존하지 못한다"는 우려가 근사 오차가
+  아니라 전량 뒤집힘 수준으로 확인됐다.
+- 판정: C안(authoritative만 `entry_score`로 교체 + 관찰용
+  `ranking_score` 잔존)의 구조적 우위는 그대로 유지되나,
+  **`threshold ÷ 0.55` 단순 재정규화 그대로는 diff에 착수할 수
+  없다.** threshold 재산정 방법(분포 기반 재보정 등)을 별도로 정한
+  뒤에 diff를 착수한다.
+- 미확인 사항: 이 표본의 `ranking_score`가 어느 제거 diff 조합을
+  반영한 값인지 정확한 매핑, `risk_off_exception_eligible` 최종
+  판정(활동성/전략/신호 조건 포함), 재산정 threshold의 구체적 방법
+  — 전부 이번 턴 범위 밖.
+- git 상태: 이번 턴 확인 시점 로컬 `main`(HEAD `802a3add`) =
+  `origin/main`(이격 0), 이번 턴 변경분은 문서 4건이며 아직 커밋·PR
+  없음(작업 트리 변경 상태로만 존재).
+- 상세: `docs/20_system_analysis/buy_path_variable_gate_matrix.md`
+  §13.1.3.

@@ -10455,9 +10455,18 @@ agent 설계 문서 기준으로도 순서는 다음이 맞다.
      SCORE=0.28` 하나뿐이고 `0.02`/`0.26`류·`0.56`은 shadow(관찰용),
      `trigger_proxy_attribution.py`는 DB write 없는 순수 reporting임을
      재확인. **C안(authoritative만 entry_score로 교체 + 관찰용
-     `ranking_score` 계산은 그대로 잔존) 권고**. diff 착수 전
-     `ranking_score ∈ [0.28, 0.38]`(허들이 `allocation_quality` 덕분에
-     만 넘긴 구간) 규모 read-only 실측 1회가 선행 필요(미수행) +
+     `ranking_score` 계산은 그대로 잔존) 권고**. **[2026-08-02 KST
+     재갱신] diff 착수 전 마지막 read-only 실측 완료**
+     (`buy_path_variable_gate_matrix.md` §13.1.3) —
+     `core_risk_off_guard_active=true`이면서 `ranking_score ∈
+     [0.28, 0.38]`인 표본은 전체 이력 2,455건/13종목(최근 3거래일
+     191건/4종목, 최근 1개월 2,385건/13종목)이었고, 이 구간에서
+     `max_new_capital_pct`는 전부 `2.5`(즉 `allocation_quality`가
+     상수 `0.25`)였다. 대체 threshold 후보 `0.28/0.55≈0.5091`을
+     적용하면 이 모집단의 `entry_score` 최댓값이 `0.2123`에 그쳐
+     **3거래일/1개월/전체 이력 모두 100% 뒤집힌다** — 단순 재정규화는
+     쓸 수 없고, C안 diff는 threshold 재산정 방법을 먼저 정한 뒤에
+     착수한다 +
      [1-B순위] **D안 순수 효과 재측정** — S5로 stale bias가 사라진 뒤
      §137.5의 2.13배(상한)를 다시 측정 +
      [1-B순위] `strategy_alignment` 제거의 **게이트 영향 재관측** —
