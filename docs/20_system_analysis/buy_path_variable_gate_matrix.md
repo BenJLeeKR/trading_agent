@@ -891,6 +891,69 @@ trading_dev:/app -w /app agent_trading-app:latest python3 -m pytest
    프로세스가 언제 갱신하는지)은 이번 턴에서 조사하지 않았다 —
    병합 후 harness 표준 명령을 다시 실행해 재확인이 필요하다.
 
+#### 검증 환경 설명 재확인/정정(2026-08-02 KST, PR #99 머지 후, read-only)
+
+PR #99 완료 보고에 적은 위 환경 설명을 Codex의 지적을 계기로 다시
+검증했다. **결론: 핵심 사실은 그대로 유지되지만, 표현 하나는 낮춰서
+정정한다("병합 전"이라는 시점 조건을 더 분명히 함).**
+
+**다시 확인해 그대로 유지되는 사실**:
+1. `agent_trading-app-1` 컨테이너 mount 구조는 변함없다 —
+   `docker inspect`로 `/app/src`, `/app/tests`, `/app/scripts`,
+   `/app/pyproject.toml`이 전부 `/workspace/agent_trading_dev`가 아닌
+   `/workspace/agent_trading`(별도 git clone)에서 bind mount됨을
+   재확인했다.
+2. PR #99 머지 시점 이전, 즉 코드가 아직 로컬 브랜치에만 있던 시점에
+   `test-file`/`accept backend-file`이 신규 회귀 테스트를 반영하지
+   못했던 것은 **정확한 관찰이었다** — 그 시점 `/workspace/agent_
+   trading`의 git HEAD는 PR #98 머지 커밋(`004336ec`)에 머물러 있어
+   PR #99의 수정 내역이 존재할 수 없었다.
+3. `accept backend-file`의 `tests_run_count=3`과 `test-file`의
+   `25 passed`는 **같은 것을 세는 지표가 아니다** — `accept backend-
+   file`은 import-graph로 고른 **후보 파일 3개**(`test_deterministic_
+   trigger_engine.py`, `test_run_decision_loop.py`, `test_agents.py`)
+   각각에 대해 pytest를 1회씩 실행한 횟수(파일 단위)이고, `test-file`
+   의 `25 passed`는 지정한 **파일 1개 안의 개별 테스트 함수 수**다.
+   두 수치를 나란히 "3건 대 24건"처럼 비교한 것은 단위가 다른 값을
+   비교한 것이라 오해의 소지가 있었다 — 이 부분은 표현을 낮춰
+   정정한다.
+
+**다시 확인해 낮춰서 정정하는 표현**: "병합 전 이 명령들은 이번 턴의
+수정 내역을 반영하지 않은 stale 코드를 테스트한다"는 문장은, PR #99가
+머지된 지금 같은 명령을 다시 실행해 보니 **머지 및 production 체크아웃
+동기화가 끝나는 즉시 정확히 해소되는 시점 제약**임이 확인됐다. 실제로
+이번 턴 PR #99 머지(HEAD `490a6ce1`) 직후 `/workspace/agent_trading`의
+git HEAD도 `490a6ce1`로 이미 동기화돼 있었고, 이 상태에서 (Codex가
+`scripts/harness/run.sh`에 작업 중인 미커밋 workspace-role 패치를
+`git stash`로 잠시 걷어내고) 원래 커밋된 `run.sh`로 `test-file
+tests/services/test_deterministic_trigger_engine.py`를 다시 실행하니
+**정확히 25 passed**로 신규 회귀 테스트까지 정상 반영됨을 확인했다
+(검증 뒤 `git stash pop`으로 Codex의 미커밋 변경을 원상 복구했다 —
+이번 턴은 코드 수정 금지이므로 그 변경을 이어서 고치거나 되돌리지
+않았다). 즉 "stale 코드를 테스트한다"는 표현은 **영구적 결함이 아니라
+병합 전 한정 현상**으로 톤을 낮춰야 정확하다.
+
+**Codex의 지적이 실제로 유효했는가에 대한 판정**: 부분적으로 유효
+하다 — 핵심 메커니즘(별도 production 체크아웃을 mount)은 틀리지
+않았지만, "병합 전"이라는 시점 조건과 "3건 대 24건"이라는 단위가 다른
+수치 비교는 정밀도를 낮춰 다시 표현해야 했다. PR #99의 코드/테스트
+결론(§13.1.6 본문의 authoritative 게이트 명시식 치환, 회귀 테스트,
+25 passed) 자체에는 **영향이 없다** — 이 결론은 이미 dev tree를 직접
+mount한 임시 컨테이너 실측과, 이번 재검증(원본 `run.sh`로 병합 후
+25 passed 재확인)으로 이중 확인됐다.
+
+**새로 확인한 사실(이번 재검증에서 처음 확인)**: `scripts/harness/
+run.sh`에 `BASE_WORKSPACE_ROOT`/`DEV_WORKSPACE_ROOT`를 구분하는
+workspace-role 인식 로직이 **미커밋 상태로 이미 작업 중**임을
+발견했다(작성자 미상, 정황상 Codex로 추정). 이 로컬 패치는 `dev`
+작업 경로에서는 `agent_trading-app-1`(production 컨테이너) 대신 host
+`python3`를 쓰도록 분기하지만, 아직 host에 `pytest`가 설치돼 있지
+않아 `dev` 경로에서 그대로 실행하면 `No module named pytest`로 실패
+하는 **미완성 상태**다. 이 패치가 정확히 이번 절이 지적한 문제
+(dev 작업 경로와 harness 검증 대상 불일치)를 겨냥하고 있다는 점은
+이번 턴의 환경 설명이 근거 없는 우려가 아니었음을 뒷받침한다. 이번
+턴은 이 패치를 완성하거나 커밋하지 않았다(코드 수정 금지 범위 밖).
+
 ### 13.2 R2 — `entry_score`의 alpha / risk / sizing 분리
 
 - 범위:

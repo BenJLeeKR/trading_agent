@@ -4549,3 +4549,54 @@ KST, read-only 분석, 코드 변경 없음)
   커밋·PR로 진행한다.
 - 상세: `docs/20_system_analysis/buy_path_variable_gate_matrix.md`
   §13.1.6.
+
+### PR #99 검증 환경 설명 재확인/정정(2026-08-02 KST, read-only, 코드
+변경 없음)
+
+- 배경: PR #99 완료 보고에 "로컬 harness 표준 명령이 별도 production
+  체크아웃(`/workspace/agent_trading`)을 mount해 병합 전 신규 수정
+  내역을 반영하지 못한다"고 적었는데, Codex가 이 설명을 지적해 이번
+  턴에 다시 검증했다.
+- 다시 확인해 그대로 유지되는 사실: `agent_trading-app-1` 컨테이너의
+  `/app/src`·`/app/tests`·`/app/scripts`·`/app/pyproject.toml`은
+  여전히 `/workspace/agent_trading_dev`가 아니라 `/workspace/agent_
+  trading`(별도 git clone)에서 bind mount된다(`docker inspect`로
+  재확인). PR #99 머지 이전 시점에 `test-file`/`accept backend-file`
+  이 신규 회귀 테스트를 반영하지 못했던 것은 그 시점 `/workspace/
+  agent_trading`의 git HEAD가 PR #98 머지 커밋(`004336ec`)에 머물러
+  있었기 때문으로, 정확한 관찰이었다.
+- 정정한 표현: "병합 전"이라는 시점 조건을 더 분명히 했다 — PR #99가
+  머지된 지금(`/workspace/agent_trading` HEAD도 `490a6ce1`로 이미
+  동기화 완료) Codex가 작업 중이던 `scripts/harness/run.sh`의 미커밋
+  workspace-role 패치를 `git stash`로 잠시 걷어내고 원본(커밋된)
+  `run.sh`로 `test-file tests/services/test_deterministic_trigger_
+  engine.py`를 다시 실행하니 **정확히 25 passed**로 신규 테스트까지
+  정상 반영됨을 확인했다(검증 뒤 `git stash pop`으로 Codex의 미커밋
+  변경을 원상 복구, 이어서 고치거나 되돌리지 않았다). 즉 "stale 코드를
+  테스트한다"는 표현은 영구적 결함이 아니라 **병합 전에만 발생하는
+  시점 제약**으로 톤을 낮춰 정정한다.
+- 추가로 정정한 표현: `accept backend-file`의 `tests_run_count=3`과
+  `test-file`의 `24건/25건`을 나란히 비교한 것은 **단위가 다른 값의
+  비교**였다 — 전자는 import-graph로 고른 후보 **파일 3개**에 대해
+  pytest를 1회씩 실행한 횟수이고, 후자는 지정한 파일 1개 안의 **개별
+  테스트 함수 수**다.
+- 새로 확인한 사실: `scripts/harness/run.sh`에 `BASE_WORKSPACE_ROOT`/
+  `DEV_WORKSPACE_ROOT`를 구분하는 workspace-role 인식 로직이 미커밋
+  상태로 이미 작업 중임을 발견했다(작성자 미상, 정황상 Codex). `dev`
+  경로에서는 production 컨테이너 대신 host `python3`로 분기하지만,
+  host에 `pytest`가 없어 현재는 실행이 실패하는 미완성 상태다. 이
+  패치가 이번 절이 지적한 문제를 정확히 겨냥하고 있다는 점은 이번
+  환경 설명이 근거 없는 우려가 아니었음을 뒷받침한다. 이번 턴은 이
+  패치를 완성·커밋하지 않았다.
+- PR #99의 코드 결론에 대한 영향: **없음** — authoritative 게이트
+  명시식 치환, 회귀 테스트, `ranking_score`/shadow/reporting 무변화
+  결론은 dev tree 직접 mount 임시 컨테이너 실측과 이번 재검증(원본
+  `run.sh`로 병합 후 25 passed 재확인) 이중으로 확인됐다.
+- 판정: B(일부 표현만 낮춰 정정 필요) — 핵심 메커니즘은 맞았으나
+  "병합 전"이라는 시점 조건과 단위가 다른 수치 비교는 정밀도를 낮춰
+  다시 표현해야 했다.
+- git 상태: 이번 턴 확인 시점 로컬 `main`(HEAD `490a6ce1`) =
+  `origin/main`(이격 0, PR #99 머지 반영 완료), 이번 턴은 문서 5건만
+  수정하며 코드 변경은 없다.
+- 상세: `docs/20_system_analysis/buy_path_variable_gate_matrix.md`
+  §13.1.6 "검증 환경 설명 재확인/정정".

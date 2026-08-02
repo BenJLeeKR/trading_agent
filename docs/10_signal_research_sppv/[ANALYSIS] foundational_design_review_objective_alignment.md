@@ -3678,3 +3678,11 @@ gate_matrix.md` §13.1.5.
 명령이 실은 별도 production 체크아웃을 테스트한다는 사실을 확인해,
 dev tree를 직접 mount한 임시 컨테이너로 병행 검증(25 passed). 상세:
 `docs/20_system_analysis/buy_path_variable_gate_matrix.md` §13.1.6.
+
+**[2026-08-02 KST 재검증, 최소 미러링] 위 환경 설명을 Codex 지적으로
+재검증** — 별도 production 체크아웃 mount라는 핵심 메커니즘은 유지,
+"병합 전"이라는 시점 조건과 `3건 vs 24/25건`이 단위가 다른 수치였다는
+점을 정정했다. 머지·동기화 후 원본 `run.sh`로 재확인하니 표준 명령도
+25 passed로 정상 반영됨을 확인. PR #99의 코드 결론에는 영향 없음.
+상세: `docs/20_system_analysis/buy_path_variable_gate_matrix.md`
+§13.1.6 "검증 환경 설명 재확인/정정".
