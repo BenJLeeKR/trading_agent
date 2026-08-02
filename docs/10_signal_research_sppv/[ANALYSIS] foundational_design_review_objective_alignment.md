@@ -3716,3 +3716,16 @@ allocation_adjustment` 덕분에만 `buy_candidate_threshold(0.65)`를
 `decision_type=approve`까지 간 유일한 표본도 무관했다. **판정
 A(제거해도 영향 미미)**를 권고한다. 상세: `docs/20_system_analysis/
 buy_path_variable_gate_matrix.md` §13.2.3.
+
+**[2026-08-02 KST, 최소 미러링] 자본 보너스 점수 구조 분리 완료.**
+인라인 블록을 `_build_entry_score_allocation_adjustment()` helper로
+추출해 entry_score 본체와 함수 경계로 나눴다 — threshold·gate·
+shadow·reporting 전부 그대로인 동작 무변화 리팩터링이다. 상세:
+`docs/20_system_analysis/buy_path_variable_gate_matrix.md` §13.2.4.
+
+**[2026-08-02 KST, 최소 미러링] entry_score에서 자본 보너스 점수
+제거 적용 완료.** `_build_entry_score_allocation_adjustment()` 호출·
+helper를 제거했다. authoritative 게이트(§13.1.6)의 코드는 무변화지만
+`entry_score`가 게이트 입력이라 관련 fixture 5건의 경계값을 최소
+범위로 재실측·보정했다(게이트 threshold는 무변화). 상세: `docs/
+20_system_analysis/buy_path_variable_gate_matrix.md` §13.2.5.

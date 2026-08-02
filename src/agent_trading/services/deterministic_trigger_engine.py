@@ -1237,21 +1237,12 @@ def _build_entry_score(
             score -= 0.15
             reason_codes.append("trigger_risk_off_penalty")
 
-    # entry_score_allocation_adjustment: authoritative 게이트의
-    # allocation_bonus_like(§13.1.6)와 같은 max_new_capital_pct 원신호를
-    # 이 함수 안에서 별도 가중치로 반영한다 — 제거가 아니라 R2 논의를
-    # 위해 값만 지역 변수로 분리한 것이며 수치는 그대로다(§13.2.1).
-    entry_score_allocation_adjustment = 0.0
-    if portfolio_allocation is not None:
-        if portfolio_allocation.max_new_capital_pct > 0:
-            entry_score_allocation_adjustment = min(
-                0.10, portfolio_allocation.max_new_capital_pct / 100.0
-            )
-            reason_codes.append("trigger_allocation_budget_available")
-        else:
-            entry_score_allocation_adjustment = -0.20
-            reason_codes.append("trigger_allocation_budget_blocked")
-    score += entry_score_allocation_adjustment
+    # entry_score의 자본 보너스/패널티 항(구 entry_score_allocation_
+    # adjustment)은 §13.2.5에서 제거했다 — §13.2.3 실측(C 집합=0건,
+    # 판정 A)에 따라 이 항이 buy_candidate_threshold(0.65) 판정에
+    # 기여한 사례가 없었다. authoritative 게이트(§13.1.6)는 자체
+    # allocation_bonus_like를 별도로 계산해 그대로 유지하며, 이 함수의
+    # 제거와 무관하다.
 
     if strategy_selection is not None and strategy_selection.preferred_strategy in {
         "swing_momentum",
