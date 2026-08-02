@@ -94,6 +94,15 @@
    `ranking_score`·shadow·reporting·authoritative 게이트 전부
    무변화이며, dev tree를 직접 mount한 검증에서 25 passed를 확인했다.
    제거/이관 여부 판단은 운영 데이터 실측 후 다음 턴으로 넘긴다.
+   **[2026-08-02 KST 3차 갱신] 기여도 실측 완료**(`buy_path_variable_
+   gate_matrix.md` §13.2.3) — `entry_score_allocation_adjustment`
+   덕분에만 `buy_candidate_threshold(0.65)`를 넘긴 표본(C 집합)은
+   최근 3거래일/1개월/전체 이력 모두 **0건**이었다. 가장 여유가
+   좁았던 표본조차 보정항 없이 `0.65`를 넘겼고(최소 margin
+   `0.0038`), `decision_type=approve`까지 간 유일한 표본도 보정항과
+   무관하게 여유가 컸다. **판정 A(제거해도 영향 미미)**를 권고하며,
+   제거 vs 하드 게이트 전용 이관의 구체적 코드 설계는 다음 턴 과제로
+   남긴다.
 2. `ranking_score`는 유지 가치가 있는가 — **[2026-08-01 KST 갱신]
    판정 C(제거/대체)로 닫힘.** `buy_path_variable_gate_matrix.md`
    §13.1.1 참고. **[2026-08-02 KST 갱신]** 대체 contract 설계 비교
@@ -251,6 +260,12 @@ gate_matrix.md` §13.2.2) — 위 1순위 단위를 실제로 적용해 `entry_
 score_allocation_adjustment` 지역 변수로 분리했다. 무변화 리팩터링
 이라 수치·threshold·shadow·reporting 전부 그대로이며, 제거/이관
 여부 판단(2단계 나머지 목표)은 운영 실측 후 다음 턴으로 넘긴다.
+
+**[2026-08-02 KST 3차 갱신] 기여도 실측 완료**(`buy_path_variable_
+gate_matrix.md` §13.2.3) — `entry_score_allocation_adjustment` 덕분에만
+`0.65`를 넘긴 표본(C 집합)이 최근 3거래일/1개월/전체 이력 모두 0건임을
+확인했다. **판정 A(제거해도 영향 미미)**를 권고하며, 제거 vs 하드
+게이트 전용 이관의 구체적 설계는 다음 턴 과제로 남긴다.
 
 ### 8.3 3차 묶음 — R3 + R4
 

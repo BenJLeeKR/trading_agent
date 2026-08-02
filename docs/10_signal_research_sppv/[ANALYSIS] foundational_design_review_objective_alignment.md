@@ -3708,3 +3708,11 @@ reporting·authoritative 게이트 전부 무변화다. dev tree 직접 mount
 검증에서 25 passed 확인. 제거/이관 여부 판단은 운영 실측 후 다음
 턴으로 넘긴다. 상세: `docs/20_system_analysis/buy_path_variable_
 gate_matrix.md` §13.2.2.
+
+**[2026-08-02 KST, 최소 미러링] 기여도 실측 완료.** `entry_score_
+allocation_adjustment` 덕분에만 `buy_candidate_threshold(0.65)`를
+넘긴 표본(C 집합)은 최근 3거래일/1개월/전체 이력 모두 **0건**이었다
+— 가장 타이트한 표본(margin `0.0038`)조차 보정항 없이 통과했고,
+`decision_type=approve`까지 간 유일한 표본도 무관했다. **판정
+A(제거해도 영향 미미)**를 권고한다. 상세: `docs/20_system_analysis/
+buy_path_variable_gate_matrix.md` §13.2.3.

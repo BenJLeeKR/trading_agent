@@ -1147,6 +1147,120 @@ adjustment`가 `buy_candidate_threshold(0.65)` 판정에 실제로 얼마나
 이관할지**를 결정한다 — R1(§13.1.3)에서 썼던 것과 같은 패턴(코드
 변경 전 read-only 실측)을 따른다.
 
+#### 13.2.3 R2 — `entry_score_allocation_adjustment` 기여도 실측(2026-08-02 KST, read-only)
+
+**목적**: §13.2.2에서 분리한 `entry_score_allocation_adjustment`가
+`buy_candidate_threshold(0.65)` 판정에 실제로 얼마나 기여했는지
+운영 데이터로 실측해, 다음 코드 수정 단위(제거 vs 하드 게이트 전용
+이관)를 판단할 근거를 만든다. 이번 턴은 read-only 실측이며 코드는
+변경하지 않았다.
+
+**조회 방법**: `trading_db`(PostgreSQL) 컨테이너에 read-only
+`SELECT`로 직접 접속해 `trading.trade_decisions.decision_json`에서
+`deterministic_trigger.entry_score`, `portfolio_allocation.max_new_
+capital_pct`, `buy_candidate`, `eligibility_passed`,
+`candidate_vs_final.final_intent`, `source_type`, `decision_type`,
+`metadata.regime_label`/`risk_tone`를 추출했다. `entry_score_
+allocation_adjustment`는 §13.2.2에서 이미 확인한 그대로 `pct>0`이면
+`min(0.10, pct/100.0)`, 아니면 `-0.20`으로 SQL에서 재현했다(코드와
+동일 계산, 근사 아님). `side='buy'` 필터만 적용했고, DB write·KIS
+호출·코드 수정은 하지 않았다.
+
+**집합 정의**: A = `entry_score >= 0.65`. B = `entry_score - entry_
+score_allocation_adjustment < 0.65`(보정항 제거 시 문턱 미달). C =
+A ∩ B(보정항 덕분에만 0.65를 넘긴 표본).
+
+**새로 확인한 사실 1(집계 창별 비교표, Set A 기준)**:
+
+| 집계 창 | 전체 표본(A) | distinct symbol | `buy_candidate=true` | `decision_type=approve` |
+|---|---|---|---|---|
+| 최근 3거래일(07-29~07-31) | 198 | 3 | 0 | 0 |
+| 최근 1개월(07-02~07-31) | 633 | 5 | 126 | 24 |
+| 전체 이력(06-20~07-31) | 675 | 6 | 168 | 24 |
+
+**새로 확인한 사실 2(C 집합 규모, 핵심 결과)**: **세 집계 창 모두
+C = 0건이다.** `entry_score_allocation_adjustment` 덕분에만
+`buy_candidate_threshold(0.65)`를 넘긴 표본은 최근 3거래일/1개월/
+전체 이력 어디에도 없었다.
+
+**왜 0인지(구조적 이유, 새로 확인한 사실)**: 관측된 `max_new_capital_
+pct` 값이 `{2.5, 3.0, 4.0}` 3개뿐이라 `entry_score_allocation_
+adjustment`는 `{0.025, 0.03, 0.04}` 중 하나로 매우 좁게 고정돼
+있었다. Set A 안에서 보정항을 뺀 값(`entry_score_without_
+allocation`)의 `0.65` 대비 여유(margin)를 계산하면 최솟값이
+`0.0038`(즉 `entry_score=0.6788`, `adj=0.025`인 표본), 최댓값
+`0.1584`, 평균 `0.0850`이었다 — **가장 타이트한 표본조차 보정항
+없이도 근소하게(0.0038) `0.65`를 넘겼다.**
+
+**반대쪽 확인(요청 5번, "여유 있게 넘는 표본" 규모)**: Set A 675건
+전부(100%)가 보정항 없이도 `0.65`를 넘긴다(= C가 0이므로 A 전체가
+그 반대편이다). 여유가 `0.05` 미만으로 상대적으로 좁은 표본은 148건
+(약 21.9%)이었으나, 이들도 전부 `0.65` 이상을 유지했다.
+
+**decision_type/order_request 도달(추가 확인)**: `entry_score>=0.65`
+인 675건 중 `decision_type='approve'`까지 간 것은 distinct (symbol,
+거래일) 기준 단 1건 — `000810`, `2026-07-20`, `entry_score=0.7856`,
+`adj=0.03`, `entry_score_without_allocation=0.7556`(보정항 없이도
+`0.65`를 크게 상회). `order_requests` 테이블과 `trade_decision_id`/
+`decision_context_id` 양쪽으로 조인해 확인한 결과, Set A 675건 전체
+중 실제 `order_requests`에 도달한 건수는 **0건**이었다(이 population
+자체가 하류에서 주문 제출까지 가지 못했다는 사실이며, 그 원인은
+이번 턴 조사 범위 밖).
+
+**"근접 사례" 상위 10건**(distinct `symbol`+거래일, `entry_score -
+adjustment` 오름차순 — C 집합이 0건이라 대신 여유가 가장 좁았던
+사례를 추출):
+
+| symbol | 거래일(KST) | entry_score | entry_score_allocation_adjustment | entry_score_without_allocation | source_type | buy_candidate | final_intent | decision_type |
+|---|---|---|---|---|---|---|---|---|
+| 000720 | 2026-07-31 | 0.6788 | 0.025 | 0.6538 | event_overlay | false | no_action | hold |
+| 000990 | 2026-07-30 | 0.6909 | 0.025 | 0.6659 | core | false | no_action | hold |
+| 000660 | 2026-07-29 | 0.7491 | 0.03 | 0.7191 | event_overlay | false | watch | watch |
+| 000660 | 2026-07-29 | 0.7491 | 0.03 | 0.7191 | event_overlay | false | no_action | hold |
+| 001450 | 2026-07-24 | 0.7800 | 0.03 | 0.7500 | core | false | watch | watch |
+| 001450 | 2026-07-24 | 0.7800 | 0.03 | 0.7500 | core | false | no_action | hold |
+| 000810 | 2026-07-23 | 0.7800 | 0.03 | 0.7500 | core | false | no_action | hold |
+| 000810 | 2026-07-23 | 0.7800 | 0.03 | 0.7500 | core | false | watch | watch |
+| 001450 | 2026-07-22 | 0.7800 | 0.03 | 0.7500 | core | false | watch | watch |
+| 001450 | 2026-07-22 | 0.7800 | 0.03 | 0.7500 | core | false | no_action | hold |
+
+이 10건 전부 `entry_score_without_allocation`이 여전히 `0.65`를
+넘고, `buy_candidate`는 어차피 `eligibility_passed=false`(507/675,
+활동성·유동성 등 다른 하드 게이트) 때문에 `false`다 — 즉 이 표본들의
+최종 판정은 애초에 allocation 보정항과 무관했다.
+
+**분포(참고용, Set A 기준)**: `source_type`은 `core` 509 / `event_
+overlay` 124 / `market_overlay` 42, `regime_label`은 `bullish_trend`
+477 / `bearish_trend` 148 / `range_bound` 50, `risk_tone`은 `risk_
+off` 633 / `risk_on` 42, `max_new_capital_pct`는 `3.0` 485 / `2.5`
+148 / `4.0` 42로 나뉜다. `eligibility_passed` 분포는 `buy_candidate`
+와 정확히 같다(675건 중 168건만 `true` — `buy_candidate`는
+`eligibility_passed`가 선행 조건이라 항상 같은 부분집합이다).
+
+**1순위 판정: A. 제거해도 영향 미미.**
+
+근거:
+1. **C 집합이 최근 3거래일/1개월/전체 이력 전부 0건**이다 — 근사가
+   아니라 관측 가능한 전체 이력을 전수 조회한 결과다.
+2. 가장 타이트한 표본(margin `0.0038`)조차 보정항 없이 `0.65`를
+   넘겨, "우연히 아슬아슬하게 살아남은" 경계 사례조차 없다.
+3. 유일하게 `decision_type=approve`까지 간 표본(`000810`,
+   `2026-07-20`)도 보정항 없이 `margin 0.1056`(`0.7556-0.65`)으로
+   여유가 크다.
+4. `order_requests` 도달 건수 자체가 Set A 전체에서 0건이라, 이
+   보정항이 실제 주문 제출 결과에 영향을 준 적도 없다.
+
+**이번 턴 미확인 사항**:
+1. `entry_score>=0.65`인 population 전체가 왜 `order_requests`에
+   한 건도 도달하지 못했는지(하류 EV gate/AI downgrade 원인 추정,
+   실제 규명은 이번 턴 범위 밖).
+2. 이 실측은 `max_new_capital_pct`가 `{2.5, 3.0, 4.0}` 3개 값만
+   관측된 기간에 한정된다 — 다른 값(예: 더 큰 자본 배정 여유)이
+   나오는 국면에서도 C가 계속 0인지는 별도 실측이 필요하다.
+3. 제거 vs 하드 게이트 전용 이관, 둘 중 어느 쪽으로 갈지에 대한
+   구체적 코드 설계는 이번 턴에서 하지 않았다 — 다음 턴 과제로
+   남긴다.
+
 ### 13.3 R3 — `portfolio_allocation`의 역할 분리
 
 - 범위:
@@ -1222,7 +1336,12 @@ adjustment`가 `buy_candidate_threshold(0.65)` 판정에 실제로 얼마나
    블록을 `entry_score_allocation_adjustment` 지역 변수로 분리했다
    (수치·threshold·shadow·reporting 전부 무변화). dev tree 직접 mount
    임시 컨테이너에서 25 passed 확인. 제거/이관 여부 판단은 운영 실측
-   후 다음 턴으로 넘긴다
+   후 다음 턴으로 넘긴다. **[2026-08-02 KST 3차 갱신] 기여도 실측
+   완료(13.2.3)** — `entry_score_allocation_adjustment` 덕분에만
+   `buy_candidate_threshold(0.65)`를 넘긴 표본(C 집합)은 최근
+   3거래일/1개월/전체 이력 모두 **0건**이었다. **판정 A(제거해도
+   영향 미미)**를 권고하며, 다음 코드 수정 단위(제거 vs 하드 게이트
+   전용 이관)는 다음 턴 과제로 남긴다
 3. **R3/R4**: allocation/activity를 점수 밖으로 내릴지 검토
 4. **R5**: 상류 결정 이후 하류 연쇄 영향 확인
 

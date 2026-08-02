@@ -4687,3 +4687,51 @@ KST, 코드 수정, DB write/KIS 호출 없음)
   코드 1건 + 문서 5건이며 별도 작업 브랜치에서 커밋·PR로 진행한다.
 - 상세: `docs/20_system_analysis/buy_path_variable_gate_matrix.md`
   §13.2.2.
+
+### `entry_score_allocation_adjustment` 기여도 실측(2026-08-02 KST,
+read-only, 코드 변경 없음)
+
+- 전제(이미 닫힌 사실, 재검증 없이 사용): R1 정리(§13.1.1~§13.1.6),
+  R2 착수 준비·allocation=중복 제거 최우선 후보 판정(§13.2.1), R2
+  1차 단위 적용(§13.2.2, `entry_score_allocation_adjustment` 분리)
+  — 전부 참조만 하고 다시 열지 않는다.
+- 조회 방법: `trading_db`에 read-only `SELECT`로 직접 접속해
+  `decision_json`에서 `entry_score`, `max_new_capital_pct`,
+  `buy_candidate`, `eligibility_passed`, `final_intent`,
+  `source_type`, `decision_type`, `regime_label`/`risk_tone`을
+  추출했다. `entry_score_allocation_adjustment`는 코드와 동일한
+  계산(`pct>0`이면 `min(0.10,pct/100.0)`, 아니면 `-0.20`)을 SQL로
+  재현했다(근사 아님). DB write·KIS 호출·코드 수정은 하지 않았다.
+- 집합 정의: A=`entry_score>=0.65`, B=`entry_score-adjustment<0.65`,
+  C=A∩B(보정항 덕분에만 통과).
+- 새로 확인한 사실 1(집계): Set A는 최근 3거래일 198건/3종목, 최근
+  1개월 633건/5종목, 전체 이력 675건/6종목이었다.
+- 새로 확인한 사실 2(핵심 결과): **C 집합은 세 집계 창 모두 0건**
+  이다. 관측된 `max_new_capital_pct`가 `{2.5, 3.0, 4.0}` 3개뿐이라
+  `adjustment`도 `{0.025, 0.03, 0.04}`로 좁게 고정돼 있었고, Set A
+  안에서 가장 타이트한 표본(`entry_score=0.6788`, `adj=0.025`)조차
+  보정항 없이 `entry_score_without_allocation=0.6538`로 `0.65`를
+  넘겼다(margin `0.0038`).
+- 새로 확인한 사실 3(반대쪽): Set A 675건 전부(100%)가 보정항 없이도
+  `0.65`를 넘긴다. margin `0.05` 미만인 표본은 148건(약 21.9%)이나,
+  이들도 전부 유지된다.
+- 새로 확인한 사실 4(하류 도달): `decision_type=approve`까지 간
+  distinct (symbol, 거래일)은 단 1건(`000810`, `2026-07-20`,
+  `entry_score=0.7856`, `adj=0.03`, `entry_score_without_
+  allocation=0.7556`)뿐이며, 여기서도 보정항 없이 여유가 크다.
+  `order_requests` 테이블에 `trade_decision_id`/`decision_context_id`
+  양쪽으로 조인한 결과, Set A 675건 전체 중 실제 주문 제출까지 간
+  건수는 0건이었다.
+- 판정: **A(제거해도 영향 미미)**. C 집합이 전 구간 0건이고, 가장
+  타이트한 표본조차 여유를 유지하며, 유일하게 `approve`까지 간
+  표본도 보정항과 무관했다.
+- 미확인 사항: `entry_score>=0.65` population이 왜 `order_requests`
+  에 한 건도 도달하지 못했는지(하류 EV gate/AI downgrade 원인 추정,
+  규명은 범위 밖), `max_new_capital_pct`가 관측 범위 밖 값을 가지는
+  국면에서도 C가 계속 0인지, 제거 vs 하드 게이트 전용 이관의 구체적
+  코드 설계 — 전부 이번 턴 범위 밖.
+- git 상태: 이번 턴 확인 시점 로컬 `main`(HEAD `f84a382f`) =
+  `origin/main`(이격 0, PR #102 머지 반영 완료), 이번 턴은 문서 5건만
+  수정하며 코드 변경은 없다.
+- 상세: `docs/20_system_analysis/buy_path_variable_gate_matrix.md`
+  §13.2.3.
