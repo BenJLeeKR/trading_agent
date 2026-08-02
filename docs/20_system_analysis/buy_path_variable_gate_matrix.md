@@ -1261,6 +1261,78 @@ off` 633 / `risk_on` 42, `max_new_capital_pct`는 `3.0` 485 / `2.5`
    구체적 코드 설계는 이번 턴에서 하지 않았다 — 다음 턴 과제로
    남긴다.
 
+#### 13.2.4 R2 — 자본 보너스 점수 구조 분리(2026-08-02 KST, 동작 무변화 리팩터링)
+
+**목적**: §13.2.3에서 실측한 판정 A(제거해도 영향 미미)를 근거로,
+다음 턴에 "제거할지 authoritative 게이트 전용으로 이관할지"를 더
+쉽게 판단할 수 있도록 `entry_score_allocation_adjustment`(자본
+보너스/패널티 점수)의 계산 구조를 정리한다. 이번 턴은 **제거까지
+가지 않고, 명시적 분리 + 소비 지점 정리 준비**까지만 진행했다 —
+threshold·gate 기준값·shadow 기준값·reporting 값은 전혀 바꾸지
+않았다.
+
+**무엇을 어떤 구조로 분리했는지**: `_build_entry_score()` 안에 인라인
+돼 있던 자본 보너스/패널티 블록을 `_build_entry_score_allocation_
+adjustment()`라는 독립 helper 함수로 옮겼다. 이 helper는
+`portfolio_allocation`과 (reason_codes append용) `reason_codes`만
+받아, `max_new_capital_pct>0`이면 `min(0.10, pct/100.0)`, 아니면
+`-0.20`을 반환한다(`None`이면 `0.0`). `_build_entry_score()`는 이제
+`entry_score_allocation_adjustment = _build_entry_score_allocation_
+adjustment(...)`를 호출해 받은 값을 `score`에 더하기만 한다 — **본체
+(alpha 대표 점수 + regime/strategy/source-type/activity 보정)와
+자본 보너스 점수가 코드상에서 함수 경계로 명확히 나뉜다.**
+
+**왜 동작 무변화인가**:
+1. helper의 반환값은 이전 인라인 블록이 계산하던 값과 **글자 그대로
+   같은 산술식**이다(`min(0.10, pct/100.0)` / `-0.20` / `0.0`) —
+   상수·분기 조건·순서를 하나도 바꾸지 않았다.
+2. `reason_codes.append(...)` 두 호출은 helper 내부로 옮겨졌을 뿐,
+   호출 시점(즉 `_build_entry_score()`에서 이 블록이 실행되던 바로
+   그 위치)은 그대로라 `reason_codes` 리스트의 최종 순서가 바뀌지
+   않는다.
+3. `_build_entry_score()`의 반환값(`entry_score`), `_build_buy_
+   ranking_score()`, authoritative 게이트(§13.1.6의 `entry_score`+
+   `allocation_bonus_like` 명시식), core shadow(`0.02`/`0.26`류),
+   `event_overlay` shadow(`0.56`), `decision_json` 저장 구조는 전부
+   건드리지 않았다 — helper는 순수 함수 추출이라 호출부 시그니처도
+   바뀌지 않는다.
+
+**authoritative 경로에서 이 값이 현재 어디서 소비되는지(§13.2.1
+매핑 재확인, 재론 없이 인용)**: `entry_score_allocation_adjustment`
+는 `_build_entry_score()`가 만드는 `entry_score`에 반영된 뒤,
+(1) `buy_candidate_threshold(0.65)` 판정, (2) `_build_buy_ranking_
+score()`를 거쳐 저장되는 `ranking_score`, (3) authoritative 게이트
+(`_assess_core_risk_off_buy_guard()`의 `entry_score`+`allocation_
+bonus_like` 명시식, §13.1.6)에서 각각 다시 쓰인다. 이 세 소비 지점은
+§13.2.1/§13.2.3에서 이미 매핑·실측한 그대로이며 이번 턴에 바뀐 것은
+없다 — helper 추출은 "계산 근거를 한 곳에서 읽히게" 만드는 구조
+정리일 뿐, 소비 지점 자체를 옮기거나 줄이지 않았다.
+
+**실행한 검증과 결과**(변경 파일 기준 좁은 범위, dev tree 직접
+mount — 이유는 이전 턴에 이미 문서화, 재논의하지 않음):
+- `python3 -m pytest tests/services/test_deterministic_trigger_
+  engine.py -v` → **25 passed**(기존 회귀 테스트 전부 무변화로 통과,
+  신규 테스트 추가 없음 — 순수 함수 추출이라 기존 테스트만으로
+  충분히 고정된다고 판단)
+- `python3 -m py_compile src/agent_trading/services/deterministic_
+  trigger_engine.py` → 통과(exit 0)
+- `python3 -m ruff check src/agent_trading/services/deterministic_
+  trigger_engine.py` → All checks passed
+- (표준 명령, 별도 production 체크아웃 기준이라 이번 턴 변경 미반영
+  — 이전 턴에 이미 문서화한 사유, 재논의하지 않음) `bash scripts/
+  harness/run.sh accept backend-file src/agent_trading/services/
+  deterministic_trigger_engine.py` → PASS(`tests_run_count=3`,
+  `test_failed_count=0`)
+- full pytest·KIS 호출·DB write·`.env` 수정은 하지 않았다.
+
+**다음 단계(제거 vs 하드 게이트 이관 판단, 1개)**: §13.2.3에서
+판정 A(제거해도 영향 미미)를 실측으로 확인했으므로, 다음 코드 수정
+단위는 `_build_entry_score_allocation_adjustment()`의 결과를 **entry_
+score에서 완전히 제거할지**, 아니면 **authoritative 게이트 쪽으로
+이관해 entry_score와는 별개의 하드 게이트 조건으로만 남길지**를
+결정하는 것이다. 이 helper 분리는 그 결정을 코드 레벨에서 실행하기
+위한 준비 단계이며, 실제 제거/이관은 이번 턴 범위 밖이다.
+
 ### 13.3 R3 — `portfolio_allocation`의 역할 분리
 
 - 범위:
@@ -1341,7 +1413,12 @@ off` 633 / `risk_on` 42, `max_new_capital_pct`는 `3.0` 485 / `2.5`
    `buy_candidate_threshold(0.65)`를 넘긴 표본(C 집합)은 최근
    3거래일/1개월/전체 이력 모두 **0건**이었다. **판정 A(제거해도
    영향 미미)**를 권고하며, 다음 코드 수정 단위(제거 vs 하드 게이트
-   전용 이관)는 다음 턴 과제로 남긴다
+   전용 이관)는 다음 턴 과제로 남긴다. **[2026-08-02 KST 4차 갱신]
+   자본 보너스 점수 구조 분리 완료(13.2.4)** — 인라인 블록을
+   `_build_entry_score_allocation_adjustment()` helper로 추출해
+   entry_score 본체와 함수 경계로 명확히 나눴다(동작 무변화, dev
+   tree 직접 mount 검증 25 passed). 다음 턴은 이 helper를 대상으로
+   제거 vs 하드 게이트 전용 이관을 결정한다
 3. **R3/R4**: allocation/activity를 점수 밖으로 내릴지 검토
 4. **R5**: 상류 결정 이후 하류 연쇄 영향 확인
 

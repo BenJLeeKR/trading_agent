@@ -10526,7 +10526,13 @@ agent 설계 문서 기준으로도 순서는 다음이 맞다.
      (`margin 0.1056`). `order_requests` 도달 건수도 `entry_score>=
      0.65` population 전체에서 0건이었다. **판정 A(제거해도 영향
      미미)**를 권고하며, 제거 vs 하드 게이트 전용 이관의 구체적
-     코드 설계는 다음 턴 과제로 남긴다 +
+     코드 설계는 다음 턴 과제로 남긴다. **[2026-08-02 KST 4차 갱신]
+     자본 보너스 점수 구조 분리 완료**(`buy_path_variable_gate_
+     matrix.md` §13.2.4) — 인라인 블록을 `_build_entry_score_
+     allocation_adjustment()` helper로 추출해 entry_score 본체와
+     함수 경계로 나눴다. 동작 무변화(threshold·gate·shadow·reporting
+     전부 그대로), dev tree 직접 mount 검증 25 passed 확인. 다음 턴은
+     이 helper를 대상으로 제거 vs 하드 게이트 전용 이관을 결정한다 +
      [1-B순위] **D안 순수 효과 재측정** — S5로 stale bias가 사라진 뒤
      §137.5의 2.13배(상한)를 다시 측정 +
      [1-B순위] `strategy_alignment` 제거의 **게이트 영향 재관측** —

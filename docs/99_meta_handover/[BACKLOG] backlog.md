@@ -4735,3 +4735,32 @@ read-only, 코드 변경 없음)
   수정하며 코드 변경은 없다.
 - 상세: `docs/20_system_analysis/buy_path_variable_gate_matrix.md`
   §13.2.3.
+
+### 자본 보너스 점수 구조 분리(2026-08-02 KST, 동작 무변화 코드
+수정, DB write/KIS 호출 없음)
+
+- 전제(이미 닫힌 사실, 재검증 없이 사용): R2 착수 준비·4분류
+  (§13.2.1), R2 1차 단위 지역 변수 분리(§13.2.2), 기여도 실측·판정
+  A(§13.2.3) — 전부 참조만 하고 다시 열지 않는다.
+- 무엇을 분리했는지: `_build_entry_score()` 안의 자본 보너스/패널티
+  인라인 블록을 `_build_entry_score_allocation_adjustment()` helper
+  함수로 추출했다. `portfolio_allocation`/`reason_codes`만 받아
+  `min(0.10, pct/100.0)`/`-0.20`/`0.0`을 반환하며, 산술식·상수·순서를
+  전혀 바꾸지 않았다(동작 무변화).
+- authoritative 경로 소비 지점(§13.2.1/§13.2.3 재확인, 재론 없음):
+  `buy_candidate_threshold(0.65)`, `_build_buy_ranking_score()`가
+  만드는 `ranking_score`, authoritative 게이트(§13.1.6)의 `entry_
+  score`+`allocation_bonus_like` 명시식 — 3곳 모두 무변화.
+- 실행한 검증(dev tree 직접 mount, 이전 턴 문서화 사유로 재논의
+  않음): pytest 25 passed, py_compile 통과, ruff 통과. (표준 명령)
+  `accept backend-file` PASS(3 tests, 별도 production 체크아웃
+  기준이라 이번 턴 변경 미반영). full pytest·KIS 호출·DB write·
+  `.env` 수정은 하지 않았다.
+- 다음 단계: `_build_entry_score_allocation_adjustment()`를 대상으로
+  제거(entry_score에서 완전히 빼기) vs authoritative 게이트 전용
+  이관을 결정한다.
+- git 상태: 이번 턴 확인 시점 로컬 `main`(HEAD `2481b1e5`) =
+  `origin/main`(이격 0, PR #103 머지 반영 완료), 이번 턴 변경분은
+  코드 1건 + 문서 5건이며 별도 작업 브랜치에서 커밋·PR로 진행한다.
+- 상세: `docs/20_system_analysis/buy_path_variable_gate_matrix.md`
+  §13.2.4.
