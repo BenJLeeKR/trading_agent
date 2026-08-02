@@ -10516,7 +10516,17 @@ agent 설계 문서 기준으로도 순서는 다음이 맞다.
      수치·`buy_candidate_threshold(0.65)`·`ranking_score`·shadow·
      reporting·authoritative 게이트 전부 무변화이며, dev tree 직접
      mount 검증에서 25 passed 확인. 제거/이관 여부 판단은 운영 실측
-     후 다음 턴으로 넘긴다 +
+     후 다음 턴으로 넘긴다. **[2026-08-02 KST 3차 갱신] 기여도 실측
+     완료**(`buy_path_variable_gate_matrix.md` §13.2.3) — `entry_
+     score_allocation_adjustment` 덕분에만 `buy_candidate_
+     threshold(0.65)`를 넘긴 표본(C 집합)은 최근 3거래일/1개월/전체
+     이력 모두 **0건**이었다. 가장 여유가 좁았던 표본(margin
+     `0.0038`)조차 보정항 없이 `0.65`를 넘겼고, `decision_type=
+     approve`까지 간 유일한 표본도 보정항과 무관하게 여유가 컸다
+     (`margin 0.1056`). `order_requests` 도달 건수도 `entry_score>=
+     0.65` population 전체에서 0건이었다. **판정 A(제거해도 영향
+     미미)**를 권고하며, 제거 vs 하드 게이트 전용 이관의 구체적
+     코드 설계는 다음 턴 과제로 남긴다 +
      [1-B순위] **D안 순수 효과 재측정** — S5로 stale bias가 사라진 뒤
      §137.5의 2.13배(상한)를 다시 측정 +
      [1-B순위] `strategy_alignment` 제거의 **게이트 영향 재관측** —
