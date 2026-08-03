@@ -9,6 +9,7 @@ import pytest
 from agent_trading.domain.entities import PositionSnapshotEntity, SignalFeatureSnapshotEntity
 from agent_trading.services.deterministic_trigger_engine import (
     _build_buy_ranking_score,
+    _is_bearish_trend_risk_off_regime,
     assess_deterministic_triggers,
 )
 from agent_trading.services.market_regime import MarketRegimeAssessment
@@ -510,6 +511,23 @@ def test_trigger_engine_core_risk_off_authoritative_score_matches_ranking_score_
         else:
             assert "eligibility_core_risk_off_ranking_blocked" in result.eligibility_reasons
             assert result.ranking_score < 0.28
+
+
+def test_is_bearish_trend_risk_off_regime_single_authority() -> None:
+    """risk_off 하드 게이트 레짐 조건의 단일 정의를 직접 고정한다.
+
+    _is_core_risk_off_regime()과 _assess_buy_eligibility() 양쪽이 각자
+    인라인으로 복제하던 조건을 이 헬퍼 하나로 모았다 — 두 곳 모두 이
+    함수를 그대로 소비하므로, 조건 자체는 이 테스트 하나로 고정된다.
+    """
+    bearish_risk_off = _make_regime(regime_label="bearish_trend", risk_tone="risk_off")
+    bullish_risk_off = _make_regime(regime_label="bullish_trend", risk_tone="risk_off")
+    bearish_risk_on = _make_regime(regime_label="bearish_trend", risk_tone="risk_on")
+
+    assert _is_bearish_trend_risk_off_regime(bearish_risk_off) is True
+    assert _is_bearish_trend_risk_off_regime(bullish_risk_off) is False
+    assert _is_bearish_trend_risk_off_regime(bearish_risk_on) is False
+    assert _is_bearish_trend_risk_off_regime(None) is False
 
 
 def test_trigger_engine_keeps_risk_off_block_for_weak_core_setup() -> None:

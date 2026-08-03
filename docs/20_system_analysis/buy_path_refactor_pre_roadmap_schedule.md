@@ -178,6 +178,14 @@
    `order_requests`는 이번 창(4 cycle)에 0건이라 효과 확인은 다음
    턴 이후 과제로 남긴다. `sync_source`가 컨테이너 재기동보다 먼저
    끝나 그 시점부터 새 코드가 이미 적용됐다는 사실도 새로 확인했다.
+   **[2026-08-03 KST 12차 갱신, R2 상태: 하드 게이트 단일 권위화 B안
+   설계·적용 완료]** `buy_path_variable_gate_matrix.md` §13.2.12 —
+   soft penalty/hard gate/authoritative gate 3자 분리를 전수 확인하고
+   B안(soft penalty 유지, hard gate만 단일 권위화)을 적용했다.
+   `_is_bearish_trend_risk_off_regime()` 헬퍼로 레짐 조건을 단일화하고
+   `_assess_buy_eligibility()`의 4-leaf 분기를 2-leaf로 정리했다(계수·
+   threshold·reason_code 값 무변화, 테스트 26건 fixture 변경 없이
+   통과). C안(soft penalty 제거)은 범위 밖으로 유지한다.
 - [x] `ranking_score`는 유지 가치가 있는가 — **[2026-08-01 KST 갱신]
    판정 C(제거/대체)로 닫힘.** `buy_path_variable_gate_matrix.md`
    §13.1.1 참고. **[2026-08-02 KST 갱신]** 대체 contract 설계 비교

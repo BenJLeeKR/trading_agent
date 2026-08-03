@@ -10605,7 +10605,18 @@ agent 설계 문서 기준으로도 순서는 다음이 맞다.
      이력 63건 재현)를 닫았다. `list_latest_by_account()` 계약·
      cash/run-level stale 정책·held_position sell bypass는 전부
      무변화. 회귀 테스트 2건 신규 추가, 기존 stale 테스트 3건은
-     보정 없이 통과. 운영 재기동 이후 실측은 다음 턴 과제로 남긴다 +
+     보정 없이 통과. 운영 재기동 이후 실측은 다음 턴 과제로 남긴다.
+     **[2026-08-03 KST 15차 갱신] `risk_off` 하드 게이트 단일 권위화
+     B안 설계·적용 완료**(`buy_path_variable_gate_matrix.md` §13.2.12)
+     — soft penalty/hard gate/authoritative gate 3자 분리를 전수
+     확인하고, C안(soft penalty 제거)은 `bullish_trend+risk_off`
+     population(하드 게이트 미발동, 이력 다수)에 안전망 없는 완화가
+     번져 기각, **B안(soft penalty 유지, hard gate만 단일 권위화)**을
+     권고·적용했다. `_is_bearish_trend_risk_off_regime()` 헬퍼로 레짐
+     조건을 단일화하고 `_assess_buy_eligibility()`의 4-leaf 분기를
+     `risk_off_exception_eligible` 하나로 판단하는 2-leaf 분기로
+     정리했다 — 계수·threshold·reason_code 값 전부 무변화, 테스트
+     26건 fixture 변경 없이 통과해 판정 무변화를 확인했다 +
      [1-B순위] **D안 순수 효과 재측정** — S5로 stale bias가 사라진 뒤
      §137.5의 2.13배(상한)를 다시 측정 +
      [1-B순위] `strategy_alignment` 제거의 **게이트 영향 재관측** —

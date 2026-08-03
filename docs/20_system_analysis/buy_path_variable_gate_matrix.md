@@ -2211,6 +2211,62 @@ authoritative 게이트 쪽 경로(`ranking_score = 0.55*entry_score +
 3. 이번 실측은 오늘(2026-08-03 KST) 장중 4개 cycle(40건)에 한정된다
    — 장 마감 후 또는 여러 거래일 누적 기준 재집계는 다음 턴 과제다.
 
+#### 13.2.12 R2 — `risk_off` 하드 게이트 단일 권위화 B안 설계·적용(2026-08-03 KST)
+
+**설계 비교(read-only, 코드 변경 없는 턴에서 진행)**: `risk_off`가
+BUY 경로에서 soft penalty(`entry_score -0.05`)/hard gate(`_assess_
+buy_eligibility()`의 `bearish_trend+risk_off` 인라인 조건)/authoritative
+exception gate(`_assess_core_risk_off_buy_guard()`) 3곳에 걸쳐 있음을
+전수 확인하고, A안(현행 유지)/B안(soft penalty 유지, hard gate만 단일
+권위화)/C안(soft penalty 제거)을 비교했다. C안은 `bullish_trend+
+risk_off`처럼 하드 게이트가 전혀 발동하지 않는(이력 다수) population
+에 안전망 없이 완화가 번지는 위험이 커 §13.2.8과 같은 논리로 기각
+했고, **B안(가장 보수적, 판정 무변화)**을 권고했다. `expected_value_
+gate.py`(risk_off_exception_eligible 소비), AI-context, downstream
+reporting은 범위 밖으로 유지했다. `decision_orchestrator.py`의 pre-AI
+short circuit(risk_off_exception_eligible과 eligibility_risk_off_
+block을 재확인하는 코드)에서 R3의 `allocation_budget_ok`와 유사한
+무해한 재확인 후보를 하나 더 발견했으나, 이번 설계와 독립적인 소규모
+정리 후보로만 기록하고 건드리지 않았다.
+
+**B안 구현 적용**: `source_type` 분기를 `_assess_buy_eligibility()`
+바깥 wrapper 성격으로 유지하기로 확정했다(authoritative 게이트인
+`_assess_core_risk_off_buy_guard()`에 흡수하면 그 함수가 몰라도 되는
+eligibility 전용 reason-code 컨벤션·source_type 구분까지 알아야 해서
+결합도가 늘어나므로, 흡수보다 보수적). 구체적으로:
+1. `market_regime.risk_tone=="risk_off" and regime_label=="bearish_
+   trend"` 조건을 `_is_bearish_trend_risk_off_regime()` 헬퍼 하나로
+   추출해, `_is_core_risk_off_regime()`과 `_assess_buy_eligibility()`
+   양쪽이 각자 인라인으로 복제하던 것을 이 하나로 통일했다.
+2. `_assess_buy_eligibility()` 내부의 `if source_type=="core": if/else
+   ... elif/else ...`(4-leaf 분기, pass/block 판단이 core/비-core에서
+   각각 따로 쓰여 있었음)를 `if risk_off_exception_eligible: ... else:
+   ...`(2-leaf 분기, source_type은 reason_code 구성에만 관여)로
+   정리했다 — pass/block을 결정하는 권위가 `risk_off_exception_
+   eligible`(authoritative 게이트가 계산) 하나로 좁혀졌다.
+3. `entry_score`의 `risk_off -0.05`, `_assess_core_risk_off_buy_
+   guard()`의 내부 계수·threshold(`0.28`), reason_code 값·순서는
+   전혀 건드리지 않았다.
+
+**판정 결과 무변화인 근거**: 4개 (source_type, risk_off_exception_
+eligible) 조합을 전수 대조한 결과 새 코드와 기존 코드의 분기 결과가
+byte 단위로 동일함을 코드 추적으로 확인했고, 기존 테스트 25건이
+fixture 변경 없이 그대로 통과했다(신규 헬퍼 직접 검증용 1건만 추가,
+총 26건). `expected_value_gate.py`/`test_core_risk_off_topk_
+projection.py` 관련 테스트 7건도 무변화로 통과했다.
+
+**검증**: `bash scripts/harness/run.sh accept backend-file src/
+agent_trading/services/deterministic_trigger_engine.py` PASS.
+dev tree 직접 mount 임시 컨테이너에서 `test_deterministic_trigger_
+engine.py` 26 passed, `test_expected_value_gate.py`+`test_core_
+risk_off_topk_projection.py` 7 passed, `ruff check` 통과. 전체
+테스트는 수행하지 않았다.
+
+**범위 밖**: C안(soft penalty 제거), `decision_orchestrator.py`의
+pre-AI short circuit 재확인 코드 정리, 운영 실측(구조 정리라 판정
+결과가 바뀌지 않으므로 이번 턴은 불필요로 판단 — 필요 시 다음 턴에
+재확인).
+
 ### 13.3 R3 — `portfolio_allocation`의 역할 분리
 
 - 범위:
@@ -2526,7 +2582,15 @@ ok"]` 기록에 계속 쓰이므로 그대로 유지했다.
    requests`는 이번 창(4 cycle)에 전부 0건이라 효과 확인은 아직
    이르다. 소스 동기화(`sync_source`)가 컨테이너 재기동보다 먼저
    끝나 그 시점부터 이미 새 코드가 적용됐다는 것도 이번에 새로
-   확인했다
+   확인했다. **[2026-08-03 KST 12차 갱신] 하드 게이트 단일 권위화
+   B안 설계·적용 완료(13.2.12)** — soft penalty/hard gate/
+   authoritative gate 3자 분리를 전수 확인하고 B안(soft penalty
+   유지, hard gate만 단일 권위화)을 권고·적용했다. `_is_bearish_
+   trend_risk_off_regime()` 헬퍼로 레짐 조건을 단일화하고,
+   `_assess_buy_eligibility()`의 4-leaf 분기를 `risk_off_exception_
+   eligible` 하나로 판단하는 2-leaf 분기로 정리했다(계수·threshold·
+   reason_code 값 전부 무변화, 테스트 26건 fixture 변경 없이 통과).
+   C안(soft penalty 제거)은 이번 턴에서도 범위 밖으로 유지했다
 3. **R3**: [2026-08-03 KST 갱신] `portfolio_allocation` BUY 경로
    전수 매핑·역할 분리 판정 완료(13.3.1) — 대체로 **정당한 역할
    분리**로 판정했다. `max_new_capital_pct`의 score 중복(guard vs
