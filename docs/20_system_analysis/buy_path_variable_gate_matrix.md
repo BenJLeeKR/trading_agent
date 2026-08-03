@@ -2577,6 +2577,66 @@ authoritative gate의 activity 하드 플로어를 제거해도 일반 BUY 경�
 null 처리 비대칭은 구현 시 명시적으로 다뤄야 할 설계 포인트로
 남긴다.
 
+#### 13.4.3 R4 — authoritative gate 내부 구조적 dead branch 정리 적용(2026-08-03 KST, 동작 무변화)
+
+**(1) B안(activity 하드 플로어 전체 제거) 실행 중 재확인한 사실**:
+착수 전 기존 테스트를 재확인한 결과, `test_trigger_engine_topk_
+override_does_not_bypass_low_relative_activity`가 `max(volume_
+surge_ratio, turnover_surge_ratio)<required_activity_min` 수치
+비교 분기를 의도적으로 exercise하고 있음을 확인했다 — topk override가
+선택돼도 활동성이 낮으면(1.06<1.10) `risk_off_exception_eligible`이
+여전히 `False`가 돼야 함을 검증하는 테스트다. 이 분기를 통째로
+제거하면(B안 원안대로) 이 시나리오에서 `risk_off_exception_eligible`
+값이 `False→True`로 바뀐다 — `eligibility_passed`는 일반 eligibility의
+`eligibility_low_relative_activity`(1.10)가 별도로 잡아 결과적으로
+동일하게 `False`가 되지만, `risk_off_exception_eligible` 자체는
+metadata/decision_json/`expected_value_gate.py` 소비 여부와 무관하게
+값이 바뀌므로 **엄밀히는 "완화"에 해당**한다. 이 수치 비교 분기는
+"관측 범위 내 dead"였을 뿐 "구조적으로 dead"는 아니었으므로, 원안대로
+제거하지 않았다.
+
+**(2) 대신 발견한 진짜 구조적 dead branch**: `if signal_feature_
+snapshot is None: activity_blocked; return` 분기는 다르다. 이 함수의
+유일한 호출부(`_build_deterministic_trigger_assessment()`, 141-149행)
+에서 `overall`/`slow`는 `signal_feature_snapshot`이 `None`일 때만
+`None`이 되도록 항상 함께 파생된다. 이 함수 안에서 이 지점(활동성
+체크)에 도달하려면 이미 앞의 signal 체크(`overall is None or
+overall<0.0` / `slow is None or slow<-0.05`)를 통과해야 하므로,
+`overall`/`slow`가 not-None임이 이미 확정돼 있고 — 따라서
+`signal_feature_snapshot`도 이 지점에서 항상 not-None임이 **수학적으로
+보장**된다. 이 널 체크는 관측 데이터상으로만이 아니라 **코드 흐름상
+절대 참이 될 수 없는 조건**이라, 유일하게 완전히 안전한 제거 대상
+이었다.
+
+**(3) 적용한 정리**: `_assess_core_risk_off_buy_guard()`에서
+`if signal_feature_snapshot is None: activity_blocked; return` 3줄만
+제거했다. `max(...)<required_activity_min` 수치 비교, `required_
+activity_min`(topk override 시 1.10, 아니면 1.20) 계산, `ranking_
+blocked`/`signal_blocked` 판정 경로, threshold 값 전부 무변화다.
+
+**(4) null 처리 비대칭(명시적으로 남김)**: 제거한 것은 "snapshot
+객체 자체의 None 여부"에 대한 방어였을 뿐, "개별 surge ratio 값이
+None일 때 0.0으로 취급해 사실상 차단 쪽으로 해석"하는 처리(`or
+0.0` fallback)는 그대로 남아 있다. 일반 eligibility의 `eligibility_
+low_relative_activity`는 두 ratio 중 하나라도 결측이면 게이트 자체를
+건너뛰는(통과) permissive 처리라, authoritative gate와의 null 처리
+방식 비대칭은 이번 턴에도 해소되지 않았다 — 코드 주석(위 (2))과 이
+문서에 명시적으로 남기고, 완화하지 않았다.
+
+**(5) 검증**: `bash scripts/harness/run.sh accept backend-file
+src/agent_trading/services/deterministic_trigger_engine.py` PASS.
+dev tree 직접 mount 임시 컨테이너에서 `test_deterministic_trigger_
+engine.py` 26 passed(기존 fixture 변경 없음, topk override 활동성
+테스트 포함 전부 통과), `test_core_risk_off_topk_projection.py`+
+`test_expected_value_gate.py` 7 passed, `ruff check` 통과.
+
+**(6) 범위 밖으로 남긴 것**: `max(...)<required_activity_min` 수치
+비교 자체의 제거(B안 원안, "완화"에 해당해 보류), null 처리 비대칭
+해소, `decision_orchestrator.py`의 `eligibility_core_risk_off_
+activity_blocked` reason 참조(이제 authoritative gate에서는 이
+reason이 나올 확률이 이론상 더 낮아졌을 뿐 여전히 발생 가능해 그대로
+둠).
+
 ### 13.5 R5 — 하류 contract 정리
 
 - 범위:
@@ -2736,7 +2796,15 @@ null 처리 비대칭은 구현 시 명시적으로 다뤄야 할 설계 포인�
    증명되지는 않아 **"관측 범위 내 dead"**로 판정을 좁혔다. 다음
    턴은 **바로 코드 초안 착수 가능**하다 — 단 eligibility/
    authoritative 게이트의 null 처리 방식 비대칭(결측 시 통과 vs
-   차단)은 구현 시 명시적으로 다뤄야 한다
+   차단)은 구현 시 명시적으로 다뤄야 한다. **[2026-08-03 KST 갱신]
+   구조적 dead branch 정리 적용 완료(13.4.3)** — B안(activity 하드
+   플로어 전체 제거) 착수 중, `max(...)<required_activity_min` 수치
+   비교는 기존 테스트가 실제로 exercise하는 "관측 범위 내 dead"일
+   뿐이라 제거하지 않았다. 대신 `if signal_feature_snapshot is None:
+   activity_blocked` 분기가 signal 체크(overall/slow 파생 관계)로
+   인해 **구조적으로 100% 도달 불가능**함을 확인해 이 부분만
+   제거했다(동작 무변화, 테스트 26건 fixture 변경 없이 통과). null
+   처리 비대칭은 해소하지 않고 코드 주석·문서로 명시만 했다
 5. **R5**: 상류 결정 이후 하류 연쇄 영향 확인
 
 즉 현재는 "BUY 경로 전체 리팩터링"이라는 이름보다,
