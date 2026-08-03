@@ -666,9 +666,20 @@ def _assess_core_risk_off_buy_guard(
         reasons.append("eligibility_core_risk_off_signal_blocked")
         return False, tuple(reasons)
     reasons.append("eligibility_core_risk_off_signal_pass")
-    if signal_feature_snapshot is None:
-        reasons.append("eligibility_core_risk_off_activity_blocked")
-        return False, tuple(reasons)
+    # §13.4.2 실측(구조적 dead branch 정리): 이 지점에 도달했다는 것은
+    # 이미 overall/slow가 둘 다 not-None임을 뜻하고(위 signal 체크
+    # 통과), 이 함수의 유일한 호출부(_build_deterministic_trigger_
+    # assessment())에서 overall/slow는 signal_feature_snapshot이
+    # None일 때만 None이 되도록 함께 파생된다 — 즉 signal_feature_
+    # snapshot은 여기서 항상 not-None임이 구조적으로 보장된다.
+    # 과거의 `if signal_feature_snapshot is None: activity_blocked`
+    # 방어 분기는 이 지점에서 절대 참이 될 수 없는 조건이라 제거했다
+    # (관측 데이터상으로만 dead인 게 아니라 코드 흐름상 도달 불가능).
+    # 아래 surge ratio 결측 시 0.0으로 취급하는 처리는 그대로 둔다 —
+    # 일반 eligibility의 `eligibility_low_relative_activity`(결측 시
+    # 게이트 자체를 건너뛰는 permissive 처리)와 null 처리 방식이
+    # 다르다는 비대칭은 여전히 남아 있으며, 이번 턴은 그 비대칭을
+    # 없애지 않고 명시적으로만 기록한다.
     volume_surge_ratio = _float_or_none(signal_feature_snapshot.volume_surge_ratio)
     turnover_surge_ratio = _float_or_none(signal_feature_snapshot.turnover_surge_ratio)
     if max(volume_surge_ratio or 0.0, turnover_surge_ratio or 0.0) < required_activity_min:
