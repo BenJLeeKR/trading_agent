@@ -5048,3 +5048,44 @@ KST, read-only, 코드 변경 없음)
   반영 완료). 이번 턴은 문서 5건만 수정하며 코드 변경은 없다.
 - 상세: `docs/20_system_analysis/buy_path_variable_gate_matrix.md`
   §13.2.11.
+
+### R3(`portfolio_allocation` 역할 분리) 판정 완료(2026-08-03 KST,
+read-only 분석, 코드 변경 없음)
+
+- 전제(이미 닫힌 사실, 재검증 없이 사용): R1 정리(§13.1.1~§13.1.6),
+  R2 allocation·regime/risk 트랙(§13.2.1~§13.2.11) — 전부 참조만
+  하고 다시 열지 않는다. R4(activity)/R5(하류 contract)는 경계만
+  표시하고 본론으로 확장하지 않았다.
+- 새로 확인한 사실 1(전수 매핑): `max_new_capital_pct`는
+  `allocation_budget_ok` 하드 게이트(이진, eligibility 내부 + `buy_
+  candidate` 최종식 양쪽에서 참조), authoritative core-risk-off
+  guard의 `allocation_bonus_like`(연속), `_build_buy_ranking_
+  score()`의 `allocation_quality`(연속, 관찰용 잔존) 3곳에 반영된다.
+  `recommended_max_order_value`는 eligibility 참여율 하드 게이트
+  2건(회전율 기준/일평균거래량 기준)에, 객체 존재 여부만 `coverage_
+  score`의 completeness 체크에 쓰인다. AI 컨텍스트·`decision_json`
+  저장은 객체 전체를 원문으로 노출하는 reporting 역할이다. EV
+  gate·submit translation은 이 신호를 직접 참조하지 않음을 코드
+  전수 검색으로 확인했다.
+- 새로 확인한 사실 2(중복 판정): authoritative guard의 `allocation_
+  bonus_like`와 `ranking_score`의 `allocation_quality`는 수식이
+  완전히 동일하지만, 이는 §13.1.2/§13.1.5의 C안 결정에 따라
+  **의도적으로 남긴 중복**이라 재론하지 않았다. `recommended_max_
+  order_value`의 참여율 하드 게이트 2건은 회전율 vs 물량이라는
+  서로 다른 시장충격 관점이라 **정당한 분리**로 판정했다. 유일하게
+  확인된 과잉 중복 후보는 `allocation_budget_ok`를 eligibility
+  내부와 `buy_candidate` 최종식에서 두 번 확인하는 **코드 레벨
+  재확인**(판정 결과에는 영향 없음)뿐이다.
+- 판정: `portfolio_allocation`의 현재 역할 분포는 **대체로 정당한
+  역할 분리**다.
+- 다음 코드 수정 단위: **A(무변화 구조 분리, 작고 선택적)** — 유일한
+  정리 후보(`allocation_budget_ok` 코드 레벨 재확인)는 read-only
+  실측이 필요 없는 순수 가독성 정리이며 우선순위는 낮다.
+- 미확인 사항: `assess_portfolio_allocation()`(값 생성 로직 자체)의
+  내부 구현은 이번 절 범위 밖, PostgreSQL read-only 실측은 신규
+  후보가 없어 수행하지 않았다.
+- git 상태: 이번 턴 확인 시점 로컬 `main`(HEAD `492bff73`) =
+  `origin/main`(이격 0, PR #114 머지 및 사용자 승인 장중 배포 반영
+  완료). 이번 턴은 문서 5건만 수정하며 코드 변경은 없다.
+- 상세: `docs/20_system_analysis/buy_path_variable_gate_matrix.md`
+  §13.3.1.

@@ -3781,3 +3781,14 @@ variable_gate_matrix.md` §13.2.10.
 다음 턴 이후 과제. `sync_source`가 컨테이너 재기동보다 먼저 끝나
 그 시점부터 새 코드가 이미 적용됐다는 사실도 새로 확인했다. 상세:
 `docs/20_system_analysis/buy_path_variable_gate_matrix.md` §13.2.11.
+
+**[2026-08-03 KST, 최소 미러링] R3(`portfolio_allocation` 역할
+분리) 판정 완료(read-only).** BUY 경로 전수 매핑 결과 대체로
+**정당한 역할 분리**로 판정했다 — `max_new_capital_pct`의 score
+중복(authoritative guard vs `ranking_score`)은 R1에서 이미 의도적
+으로 결정된 사안, `recommended_max_order_value`의 참여율 하드 게이트
+2건은 서로 다른 시장충격 관점이라 정당한 분리. 유일한 정리 후보는
+`allocation_budget_ok`의 코드 레벨 재확인(판정 결과 무영향)뿐이다.
+다음 코드 수정 단위는 **A(무변화 구조 분리, 작고 선택적)**로 좁혔다.
+상세: `docs/20_system_analysis/buy_path_variable_gate_matrix.md`
+§13.3.1.

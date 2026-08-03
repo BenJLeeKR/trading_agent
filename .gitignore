@@ -46,6 +46,7 @@ node_modules/
 postgres_data/
 
 # --- Runtime write paths ---
+docker-compose.yml.bak
 logs/
 tmp/
 data/runtime/

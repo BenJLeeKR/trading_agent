@@ -228,7 +228,9 @@
 
 - R1은 사실상 종료됐다.
 - R2는 allocation 제거까지 진행됐지만 운영 실측이 남아 있다.
-- R3/R4가 아직 열려 있으므로 2단계 전체 완료로 닫지 않는다.
+- R3는 **[2026-08-03 KST 갱신]** 역할 분리 판정까지 닫혔다(대체로
+  정당한 분리, 선택적 정리 후보 1건만 남음). R4가 아직 열려 있으므로
+  2단계 전체 완료로 닫지 않는다.
 
 ### 4.3 3단계 — 하류 연쇄 영향 검토
 
@@ -287,14 +289,16 @@
 즉시 시작 후보:
 
 - [x] `entry_score` 내부 보정항 전수 표 작성
-- [ ] `portfolio_allocation` 관련 값이 BUY 경로에서 몇 번 재사용되는지 전수 표 작성
+- [x] `portfolio_allocation` 관련 값이 BUY 경로에서 몇 번 재사용되는지 전수 표 작성 — **[2026-08-03 KST 갱신]** `buy_path_variable_gate_matrix.md` §13.3.1로 완료
 - [ ] `candidate_vs_final` / EV gate / submit translation이 상류 변수와 어디서 다시
   만나는지 경로도 작성
 
 현재 해석:
 
 - 첫 번째 항목은 R2에서 이미 닫혔다.
-- 두 번째 항목은 R3의 실질 시작점이다.
+- 두 번째 항목(R3)은 §13.3.1로 닫혔다 — 대체로 정당한 역할 분리로
+  판정됐고, 유일한 정리 후보(`allocation_budget_ok` 코드 레벨 재확인)
+  는 우선순위가 낮은 선택적 항목이다.
 - 세 번째 항목은 R5의 실질 시작점이다.
 
 ## 7. Roadmap 작성 시점
@@ -405,10 +409,21 @@ threshold는 무변화).
 
 체크리스트:
 
-- [ ] R3 `portfolio_allocation` 역할 분리 검토 시작
+- [x] R3 `portfolio_allocation` 역할 분리 검토 시작 — **[2026-08-03
+  KST 갱신]** 완료. `buy_path_variable_gate_matrix.md` §13.3.1 —
+  `portfolio_allocation` BUY 경로 전수 매핑 결과 대체로 **정당한
+  역할 분리**로 판정했다. `max_new_capital_pct`의 score 중복(guard
+  vs `ranking_score`)은 R1에서 이미 의도적으로 결정된 사안이라
+  재론하지 않았고, `recommended_max_order_value`의 참여율 하드
+  게이트 2건(회전율/거래량)은 서로 다른 시장충격 관점이라 정당한
+  분리로 판정했다. 유일한 정리 후보는 `allocation_budget_ok`의
+  코드 레벨 재확인(판정 결과 무영향)뿐이다. 다음 코드 수정 단위는
+  **A(무변화 구조 분리, 작고 선택적)**로 좁혔다.
 - [ ] R4 activity 계열 soft/hard 중복 정리 시작
-- [ ] selection vs sizing vs feasibility 경계 재설정
-- [ ] soft bonus vs hard gate 중복 축소안 비교
+- [ ] selection vs sizing vs feasibility 경계 재설정 — R3 쪽은
+  §13.3.1에서 "sizing은 risk의 하위 개념으로 흡수됨"으로 정리됐다.
+  R4 쪽은 아직 미착수.
+- [ ] soft bonus vs hard gate 중복 축소안 비교(R4 대상)
 
 ### 8.4 4차 묶음 — R5
 

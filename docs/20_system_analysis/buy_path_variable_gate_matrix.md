@@ -2222,6 +2222,135 @@ authoritative 게이트 쪽 경로(`ranking_score = 0.55*entry_score +
   - execution feasibility 전용으로 내리는 것이 맞는지
 - 우선순위: **3순위**
 
+#### 13.3.1 `portfolio_allocation` BUY 경로 전수 매핑 및 역할 분리 판정(2026-08-03 KST, read-only 분석)
+
+**목적**: R2(§13.2.1~§13.2.11)를 일단 정리된 것으로 두고, `portfolio_
+allocation`이 BUY 경로의 점수/하드 게이트/실행 가능성/하류 컨텍스트에
+각각 어떤 역할로 들어가 있는지 전수 매핑하고, 정당한 역할 분리인지
+과잉 중복인지 판정한다. 이번 턴은 코드 수정 없이 read-only 분석만
+진행했다.
+
+**전제(이미 닫힌 사실, 재검증하지 않음)**: R1 정리(§13.1.1~§13.1.6),
+R2 allocation 트랙(§13.2.1~§13.2.5, `entry_score`에서는 allocation
+항이 이미 제거됨), R2 regime/risk 트랙(§13.2.6~§13.2.11) — 전부
+참조만 하고 다시 열지 않는다. R4(activity)와 R5(하류 contract)는
+이번 절에서 경계만 표시하고 본론으로 확장하지 않는다(아래 (6) 참고).
+
+**(1) `portfolio_allocation` 필드/소비처 전수표**
+
+| 필드 | 소비 위치 | 역할 | 비고 |
+|---|---|---|---|
+| `max_new_capital_pct`(1) | `allocation_budget_ok = max_new_capital_pct > 0`(197~200행) | **risk/하드 게이트**(이진) | `_assess_buy_eligibility()` 하드 차단(474행)과 `buy_candidate` 최종식(283행) 양쪽에서 참조 |
+| `max_new_capital_pct`(2) | authoritative core-risk-off guard의 `allocation_bonus_like`(628~633행, §13.1.6) | **risk/score**(연속값, `0~1` 정규화) | `_CORE_RISK_OFF_ALLOCATION_BONUS_WEIGHT=0.10` 가중치로 `authoritative_entry_gate_score`에 반영 |
+| `max_new_capital_pct`(3) | `_build_buy_ranking_score()`의 `allocation_quality`(1155~1161행) | **risk/score**(관찰용, §13.1.5 C안으로 잔존) | (2)와 **수식·가중치가 완전히 동일**(§13.1.6에서 이미 확인) — R1에서 "관찰용으로 의도적으로 남긴 중복"으로 이미 판정 |
+| `recommended_max_order_value`(1) | eligibility 참여율 하드 게이트 1(560~570행, 회전율 대비 `>5%` 차단) | **execution feasibility/하드 게이트** | `estimated_average_turnover` 대비 |
+| `recommended_max_order_value`(2) | eligibility 참여율 하드 게이트 2(572~583행, 일평균거래량 대비 `>3%` 차단) | **execution feasibility/하드 게이트** | `avg_daily_volume`·`liquidity_reference_price` 대비, (1)과 다른 관점(회전율 vs 물량) |
+| `portfolio_allocation`(객체 존재 여부만) | `_build_feature_coverage_score()`(444행) | **completeness(원본 5분류 밖의 별도 역할)** | 값이 아니라 "객체가 있는지"만 확인 — `coverage_score`를 통해 간접적으로 하드 게이트(`<0.50` 차단)에 연결 |
+| `recommended_max_order_value`, `max_new_capital_pct` 등 전 필드 | AI 프롬프트 컨텍스트(`prompt_context_projection.py` 210~271행) | **reporting/context** | `target_weight_pct`/`current_weight_pct`/`allocation_bias`/`available_allocation_cash`/`max_single_position_pct`/`remaining_concentration_pct`/`remaining_gross_budget_pct`까지 포함해 객체 전체를 원문 그대로 노출 |
+| 전 필드 | `decision_json.portfolio_allocation`(`decision_factory.py` 251~305행) | **reporting/저장** | 판정에 되먹임되지 않는 순수 저장 경로 |
+| `current_weight_pct`, `max_single_position_pct` | `_build_exit_ranking_score()`/`_build_exit_score()`의 `concentration_pressure` | **SELL/EXIT 경로** | BUY 경로 범위 밖(문서 §2 scope 그대로 유지, 재론 안 함) |
+| — | `expected_value_gate.py` | **무관** | 코드 전수 검색 결과 참조 0건 |
+| — | `translation.py`(submit translation) | **무관(간접적)** | `intent.request.quantity`만 참조 — `portfolio_allocation` 필드를 직접 읽어 주문 수량을 계산하지 않음. AI가 컨텍스트로 참고해 결정한 수량이 이미 `request.quantity`에 반영돼 있을 뿐 |
+
+**(2) 역할 분류 요약(alpha/risk/sizing/execution feasibility/reporting-context)**
+
+- **alpha**: 해당 없음 — `entry_score`에서 allocation 항은 §13.2.5에서
+  이미 제거됐고, 남은 소비처 중 alpha(순수 신호 대표값) 역할을 하는
+  곳은 없다.
+- **risk(하드 게이트 + score)**: `allocation_budget_ok`(이진),
+  authoritative guard의 `allocation_bonus_like`(연속), `ranking_
+  score`의 `allocation_quality`(연속, 관찰용 잔존) — `max_new_
+  capital_pct` 하나의 원신호가 이 3곳에 반영된다.
+- **sizing(=risk의 하위 개념으로 흡수됨)**: `max_new_capital_pct`
+  자체가 "신규 자본을 얼마나 배정할 수 있는가"라는 sizing 정보이며,
+  위 risk 역할과 사실상 같은 축이다 — 별도로 분리된 "순수 sizing
+  전용" 소비처는 없다.
+- **execution feasibility**: `recommended_max_order_value` 기반
+  참여율 하드 게이트 2건(회전율 기준, 일평균거래량 기준) — sizing
+  정보와는 다른 필드(주문 규모 자체가 아니라 "그 규모가 시장에서
+  집행 가능한가")를 본다.
+- **reporting/context**: AI 프롬프트 컨텍스트, `decision_json`
+  저장 — 객체 전체가 원문으로 노출되며 판정에 되먹임되지 않는다.
+- **completeness(추가로 확인된 다섯 번째 역할)**: `coverage_score`
+  계산의 존재 여부 체크 — 5분류에 정확히 들어맞지 않는 별도 역할로,
+  값이 아니라 "정보가 채워져 있는가"만 본다.
+
+**(3) 같은 원신호의 score/gate/feasibility 중복 반영 여부**
+
+`max_new_capital_pct`는 **하드 게이트(이진) 1곳 + score(연속) 2곳**
+에 반영된다. score 2곳(authoritative guard의 `allocation_bonus_
+like`, `ranking_score`의 `allocation_quality`)은 §13.1.6에서 이미
+확인한 대로 **수식이 완전히 동일**하다 — 다만 이는 §13.1.2/§13.1.5의
+C안 결정(authoritative만 명시식으로 교체하고 관찰용 `ranking_score`
+계산은 그대로 잔존)에 따라 **의도적으로 남긴 중복**이며, 이번 R3
+분석에서 새로 발견한 문제가 아니다. R1 결정을 재검토하지 않는다.
+
+`recommended_max_order_value`는 하드 게이트 2곳에 쓰이지만, 두
+게이트는 **서로 다른 관점**(회전율 대비 비중 vs 일평균거래량 대비
+비중)이라 같은 신호의 단순 반복이 아니라 서로 다른 시장충격
+리스크를 보는 것으로 판단했다 — 아래 (4)에서 "정당한 분리"로
+분류한다.
+
+**(4) 정당한 역할 분리 vs 과잉 중복 판정**
+
+| 항목 | 판정 | 근거 |
+|---|---|---|
+| `allocation_budget_ok`(하드 게이트, 이진) | **유지** | "신규 자본이 아예 없는가"라는 필요조건 체크로, 아래 score 역할과 성격이 다르다(이진 vs 연속) |
+| authoritative guard `allocation_bonus_like` vs `ranking_score`의 `allocation_quality` | **의도된 중복(재론 안 함)** | §13.1.2/§13.1.5에서 이미 C안으로 확정된 "관찰용 잔존" 구조 — 새 문제 아님 |
+| `recommended_max_order_value` 참여율 하드 게이트 2건(회전율/거래량) | **정당한 분리** | 같은 필드를 쓰지만 서로 다른 시장충격 리스크(회전율 집중도 vs 물량 집중도)를 각각 체크 — 중복이 아니라 두 렌즈 |
+| `allocation_budget_ok`의 **코드 레벨** 재확인(474행 eligibility 내부 vs 283행 `buy_candidate` 최종식) | **과잉 중복 후보(작음)** | `eligibility_passed`가 이미 `allocation_budget_ok` 하드 차단을 통과한 결과이므로, 283행에서 `and allocation_budget_ok`를 다시 보는 것은 **판정 결과에 영향 없는 코드 레벨 재확인**이다 — §13.2.6에서 확인한 `_is_core_risk_off_regime()`/`_assess_buy_eligibility()`의 조건식 중복 재계산과 같은 성격 |
+| `coverage_score`의 객체 존재 여부 체크 | **유지** | 다른 6개 체크(신호/국면/전략)와 같은 패턴의 completeness 체크이며, 이 하나만 떼어낼 이유가 없다 |
+| AI 컨텍스트/`decision_json` 저장 | **유지** | reporting 역할은 판정에 되먹임되지 않아 정당한 분리 |
+
+**결론: `portfolio_allocation`의 현재 역할 분포는 대체로 정당한
+역할 분리다.** 유일하게 확인된 "과잉 중복 후보"는 `allocation_
+budget_ok`를 `_assess_buy_eligibility()` 내부와 `buy_candidate`
+최종식에서 두 번 확인하는 **코드 레벨 재확인**(판정 결과에는 영향
+없음, R2에서 이미 닫힌 `_is_core_risk_off_regime`/`_assess_buy_
+eligibility` 중복 재계산과 같은 종류)뿐이다. `max_new_capital_pct`의
+score 중복(authoritative guard vs `ranking_score`)은 이미 R1에서
+의도적으로 결정된 사안이라 재론하지 않는다.
+
+**(5) 다음 코드 수정 단위 — A/B/C 중 어디까지 좁힐 수 있는가**
+
+**A. 무변화 구조 분리(작고 선택적)**로 좁힌다. 근거:
+1. R2(allocation, risk_off)와 달리 이번 R3 분석에서는 "제거해도
+   되는지" 실측이 필요한 새로운 중복 신호를 찾지 못했다 —
+   `recommended_max_order_value`의 두 참여율 게이트는 정당한 분리로
+   판정됐고, `max_new_capital_pct`의 score 중복은 이미 R1에서 닫힌
+   사안이다.
+2. 유일한 정리 후보(`allocation_budget_ok` 코드 레벨 재확인)는
+   판정 결과에 영향이 전혀 없는 **순수 가독성 정리**라, read-only
+   실측(B)이 필요 없다 — `eligibility_passed`가 이미 `allocation_
+   budget_ok`를 내포한다는 것은 코드 구조 자체로 증명 가능하다.
+3. 다만 이 항목은 우선순위가 낮고 선택적이다 — R3 트랙의 핵심
+   질문(sizing이 후보 점수에 들어가는 것이 맞는지)에 대한 답은
+   이미 "그렇다, 단 의도된 것"으로 R1에서 닫혔으므로, 이 작은 정리
+   외에는 R3에서 바로 착수할 코드 수정 단위가 없다.
+
+**(6) R4/R5 경계(본론으로 확장하지 않음, §13.4/§13.5 그대로 유지)**:
+- R4(activity, `relative_activity_score`/`volume_surge_ratio`/
+  `turnover_surge_ratio`)는 이번 절에서 다루지 않았다 — `recommended_
+  max_order_value` 참여율 게이트가 `average_volume_20d`/`average_
+  turnover_20d`(activity 계열과 인접한 필드)를 함께 참조하지만, 이
+  필드들 자체의 soft/hard 중복 정리는 R4의 범위다.
+- R5(하류 contract, `candidate_vs_final`/EV gate/submit translation)
+  도 이번 절에서 다루지 않았다 — (1)에서 확인한 대로 EV gate·submit
+  translation 모두 `portfolio_allocation`을 직접 참조하지 않는다는
+  사실만 이번 절의 경계 확인용으로 기록한다.
+
+**(7) 코드 수정 없이 확인한 범위 / 아직 미확인 사항**:
+1. 코드 read-only 확인: `deterministic_trigger_engine.py` 전수
+   grep, `prompt_context_projection.py`, `decision_factory.py`,
+   `expected_value_gate.py`, `translation.py`, `decision_
+   orchestrator.py`에서 `portfolio_allocation` 참조 전수 확인.
+2. PostgreSQL read-only 조회는 이번 절에서 수행하지 않았다 — 이번
+   턴은 코드 구조 매핑과 정성 판정만으로 결론이 좁혀져 실측이 필요
+   없었다(§13.2 트랙과 달리 "얼마나 자주 영향을 주는지"를 물을
+   신규 후보가 없었음).
+3. `assess_portfolio_allocation()`(값 생성 로직 자체)의 내부 구현은
+   이번 절의 범위 밖이다 — BUY 경로 소비처 매핑에 집중했다.
+
 ### 13.4 R4 — activity 계열의 soft/hard 중복 정리
 
 - 범위:
@@ -2351,8 +2480,17 @@ authoritative 게이트 쪽 경로(`ranking_score = 0.55*entry_score +
    이르다. 소스 동기화(`sync_source`)가 컨테이너 재기동보다 먼저
    끝나 그 시점부터 이미 새 코드가 적용됐다는 것도 이번에 새로
    확인했다
-3. **R3/R4**: allocation/activity를 점수 밖으로 내릴지 검토
-4. **R5**: 상류 결정 이후 하류 연쇄 영향 확인
+3. **R3**: [2026-08-03 KST 갱신] `portfolio_allocation` BUY 경로
+   전수 매핑·역할 분리 판정 완료(13.3.1) — 대체로 **정당한 역할
+   분리**로 판정했다. `max_new_capital_pct`의 score 중복(guard vs
+   `ranking_score`)은 R1에서 이미 의도적으로 결정된 사안이라 재론
+   하지 않았고, `recommended_max_order_value`의 참여율 하드 게이트
+   2건은 서로 다른 시장충격 관점이라 정당한 분리로 판정했다. 유일한
+   정리 후보는 `allocation_budget_ok`의 코드 레벨 재확인(판정 결과
+   무영향)뿐이다. 다음 코드 수정 단위는 **A(무변화 구조 분리, 작고
+   선택적)**로 좁혔다
+4. **R4**: activity를 점수 밖으로 내릴지 검토
+5. **R5**: 상류 결정 이후 하류 연쇄 영향 확인
 
 즉 현재는 "BUY 경로 전체 리팩터링"이라는 이름보다,
 **R1(판정 완료)→R2→R3/R4→R5의 단계적 리팩터링**으로 보는 것이 정확하다.

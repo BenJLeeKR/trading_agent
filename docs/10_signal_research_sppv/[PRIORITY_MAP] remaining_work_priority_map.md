@@ -10579,7 +10579,17 @@ agent 설계 문서 기준으로도 순서는 다음이 맞다.
      +0.10`/`ranking_score +0.055` 이동을 확인했고, `073240` 종목의
      `buy_candidate` 뒤집힘도 관측했다. **판정 B(초기 방향성 확인)**
      — `approve`/`order_requests`는 0건이라 효과 확인은 다음 턴
-     이후 과제 +
+     이후 과제. **[2026-08-03 KST 12차 갱신] R3(`portfolio_
+     allocation` 역할 분리) 판정 완료**(`buy_path_variable_gate_
+     matrix.md` §13.3.1, read-only) — BUY 경로 전수 매핑 결과 대체로
+     **정당한 역할 분리**로 판정했다. `max_new_capital_pct`의 score
+     중복(authoritative guard vs `ranking_score`)은 R1에서 이미
+     의도적으로 결정된 사안이라 재론하지 않았고, `recommended_max_
+     order_value`의 참여율 하드 게이트 2건(회전율/거래량 관점)은
+     서로 다른 시장충격 리스크를 보는 정당한 분리로 판정했다. 유일한
+     정리 후보는 `allocation_budget_ok`의 코드 레벨 재확인(판정
+     결과 무영향)뿐이다. 다음 코드 수정 단위는 **A(무변화 구조 분리,
+     작고 선택적)**로 좁혔다 +
      [1-B순위] **D안 순수 효과 재측정** — S5로 stale bias가 사라진 뒤
      §137.5의 2.13배(상한)를 다시 측정 +
      [1-B순위] `strategy_alignment` 제거의 **게이트 영향 재관측** —
