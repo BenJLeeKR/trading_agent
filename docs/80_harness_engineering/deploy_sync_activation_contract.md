@@ -47,7 +47,7 @@ sync 이후 실제 런타임에 변경을 반영하는 단계다.
 
 - `changes` job이 `activate_required`를 출력한다.
 - `changes` job이 `sync_only_candidate_count`, `sync_only_allowlist_count`, `sync_only_blocked_count`를 출력한다.
-- 장중 sync-only 허용 후보 `7`개 파일 allowlist와 runtime-affecting 경로 denylist를 workflow 정적 규칙으로 선언했다.
+- 장중 sync-only 허용 대상으로 `docs/` 전체와 `7`개 read-only `scripts/` allowlist, runtime-affecting 경로 denylist를 workflow 정적 규칙으로 선언했다.
 - `accept ci`가 위 출력과 정적 규칙 존재 여부를 검사한다.
 
 아직 남아 있는 범위는 다음과 같다.
@@ -61,7 +61,7 @@ sync 이후 실제 런타임에 변경을 반영하는 단계다.
 이번 2차 작업에서는 workflow를 실제로 `sync_source` / `activate_runtime` `2`개 job으로 분리했다.
 
 - `sync_source`는 장 종료 후 일반 배포에서 실행된다.
-- 장중에도 `activate_required=0`, `sync_only_allowlist_count>0`, `sync_only_blocked_count=0`이면 `sync_source`만 실행할 수 있다.
+- 장중에도 `activate_required=0`, `sync_only_allowlist_count>0`, `sync_only_blocked_count=0`이면 `sync_source`만 실행할 수 있다. 이 경로에는 `docs/` 변경과 제한된 read-only `scripts/` 변경이 포함된다.
 - `activate_runtime`은 `sync_source` 성공 이후, `allow_deploy=1`일 때만 실행된다.
 - `activate_runtime`은 `push main`에서는 `activate_required=1`일 때만 실행하고, 수동 `workflow_dispatch + deploy_main=true`는 항상 activate를 허용한다.
 - 실행 지표 `deploy_sync_run_count`, `deploy_sync_only_run_count`, `deploy_activate_run_count`, `deploy_activate_skipped_by_market_hours_count`를 추가했다.
@@ -156,13 +156,14 @@ GitHub Actions 실제 run으로 다음 `2`개 결과를 확인했다.
 
 ### A. 장중 sync-only 기본 허용 후보
 
-이 그룹은 read-only 분석/진단 성격이 명확하고, 파일명 기준으로도 런타임 활성화와 거리가 있다.
+이 그룹은 read-only 문서 또는 분석/진단 성격이 명확하고, 런타임 활성화와 거리가 있다.
 
-- count=`7`
-- 기준 prefix=`analyze_`, `check_`, `diagnose_`, `observe_`
+- count=`docs/` 전체 + `7`
+- 기준=`docs/**` 전체, `analyze_`, `check_`, `diagnose_`, `observe_`
 
 허용 후보 목록:
 
+- `docs/**`
 - `scripts/analyze_trigger_proxy_attribution.py`
 - `scripts/check_index_membership_staleness.py`
 - `scripts/check_t3_db_status.py`
@@ -173,6 +174,8 @@ GitHub Actions 실제 run으로 다음 `2`개 결과를 확인했다.
 
 정책:
 
+- `docs/`는 서버 기준 문서 작업트리 동기화가 필요한 경우를 위해 sync-only 기본 허용 대상으로 둔다.
+- 단, `docs/` 변경만으로 runtime activate를 허용하지 않는다.
 - 장중 sync-only allowlist 1차 후보로 둘 수 있다.
 - 다만 실제 실행 허용과 동일시하지 않는다. 배포 허용과 운영 실행 허용은 별도 정책이다.
 
@@ -223,7 +226,7 @@ GitHub Actions 실제 run으로 다음 `2`개 결과를 확인했다.
 
 ## 권장 allowlist 형태
 
-장중 sync-only 허용은 디렉터리 단위가 아니라 파일 allowlist로 유지한다.
+장중 sync-only 허용은 원칙적으로 파일 allowlist로 유지하되, `docs/`는 runtime activate와 분리된 문서 작업트리 동기화 목적에 한해 디렉터리 예외로 허용한다.
 
 1차 권장 allowlist:
 
@@ -257,7 +260,7 @@ GitHub Actions 실제 run으로 다음 `2`개 결과를 확인했다.
 개념:
 
 - `activate_required=1`: runtime-affecting 경로 변경이 하나라도 있음
-- `sync_only_allowlist_count>0`: 장중 sync-only 허용 후보 파일 변경이 있음
+- `sync_only_allowlist_count>0`: 장중 sync-only 허용 후보 파일 변경이 있음 (`docs/` 또는 제한된 read-only `scripts/`)
 - `sync_only_blocked_count>0`: `scripts/` 변경이지만 allowlist 밖이라 장중 sync-only로 허용하면 안 됨
 
 ### 2. runtime-affecting 경로 denylist

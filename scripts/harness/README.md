@@ -24,7 +24,8 @@ GitHub Actions도 사람과 AI가 쓰는 동일한 하네스를 사용한다. CI
 - 기본 PR/push gate는 `.github/workflows/harness.yml`의 `safe` job이다.
 - `safe` job은 `check quick`, `accept db-structure`, `accept architecture`, `accept style`, `accept no-bypass`, `type-check backend`, `type-check frontend`, `security scan`을 실행한다.
 - 운영 배포는 `.github/workflows/harness.yml`의 `sync_source`, `activate_runtime` job으로 분리돼 있고 둘 다 `needs: safe` 성공 뒤에만 실행한다.
-- 문서만 변경된 `main` push는 `changes` job에서 `deploy_required=0`으로 판정해 운영 재기동을 실행하지 않는다.
+- 문서만 변경된 `main` push는 `changes` job에서 `deploy_required=0`, `activate_required=0`으로 판정해 운영 재기동을 실행하지 않는다.
+- 문서만 변경된 `main` push는 `docs/` 경로가 sync-only 허용 대상으로 잡히면 `sync_source`만 실행하고 `activate_runtime`은 실행하지 않는다.
 - `changes` job은 `activate_required`, `sync_only_candidate_count`, `sync_only_allowlist_count`, `sync_only_blocked_count`를 함께 출력해 장중 sync-only 후보와 runtime 영향 변경을 구분한다.
 - 수동 재배포는 `workflow_dispatch`의 `deploy_main=true` 입력으로만 연다.
 - 수동 재배포는 과거 workflow run을 재개하지 않고, 실행 시점의 최신 `origin/main` SHA를 다시 fetch한 뒤 그 SHA를 배포한다.
@@ -200,7 +201,7 @@ Makefile에서는 승인 필요 명령을 `heavy-*` target으로 노출한다. �
 - `deploy_sync_only_candidate_count_output_count`: `changes` job이 `sync_only_candidate_count` 출력을 선언하고 기록하는 workflow 수.
 - `deploy_sync_only_allowlist_count_output_count`: `changes` job이 `sync_only_allowlist_count` 출력을 선언하고 기록하는 workflow 수.
 - `deploy_sync_only_blocked_count_output_count`: `changes` job이 `sync_only_blocked_count` 출력을 선언하고 기록하는 workflow 수.
-- `deploy_sync_only_allowlist_defined_count`: 장중 sync-only 허용 `scripts/` allowlist가 workflow에 정의된 수.
+- `deploy_sync_only_allowlist_defined_count`: 장중 sync-only 허용 `docs/` 및 제한된 `scripts/` allowlist가 workflow에 정의된 수.
 - `deploy_runtime_affecting_path_rule_count`: runtime-affecting 경로 denylist 규칙이 workflow에 정의된 수.
 - `ci_contract_failed_count`: `workflow_dispatch` 수동 재배포 입력, 최신 `origin/main` SHA 고정, heavy 수동 실행 조건, version pin, Node 20 대상 액션 잔존 같은 CI 계약 실패 수.
 - `runtime_tracked_file_count`: Git이 추적 중인 `logs/`, `tmp/`, `data/` 파일 수. 현재는 정리 진행을 위한 정보 지표이며, 합의된 허용 목록 정리 후 실패 지표로 전환한다.

@@ -98,12 +98,12 @@ jobs:
 
           changed_files="$(git diff --name-only "$base_ref" HEAD || true)"
           changed_file_count="$(printf '%s\n' "$changed_files" | sed '/^$/d' | wc -l | tr -d ' ')"
-          sync_only_allowlist_pattern='^(scripts/(analyze_trigger_proxy_attribution\.py|check_index_membership_staleness\.py|check_t3_db_status\.py|diagnose_activity_filter_half_period_divergence\.py|diagnose_blocked_reason_distribution\.py|diagnose_market_overlay_shadow\.py|observe_seeded_news_comparison\.py))$'
+          sync_only_allowlist_pattern='^(docs/.+|scripts/(analyze_trigger_proxy_attribution\.py|check_index_membership_staleness\.py|check_t3_db_status\.py|diagnose_activity_filter_half_period_divergence\.py|diagnose_blocked_reason_distribution\.py|diagnose_market_overlay_shadow\.py|observe_seeded_news_comparison\.py))$'
           runtime_affecting_pattern='^(\.github/workflows/|\.python-version|\.postgres-version|Dockerfile|docker-compose\.yml|pyproject\.toml|requirements(\.lock|\.txt)?|db/|src/|admin_ui/(Dockerfile|nginx\.frontend\.conf|package(-lock)?\.json|tsconfig[^/]*\.json|vite\.config\.[^/]+|src/|public/))'
           sync_only_candidates="$(
             printf '%s\n' "$changed_files" |
               sed '/^$/d' |
-              grep -E '^scripts/[^/]+\.(py|sh)$' || true
+              grep -E '^(docs/.+|scripts/[^/]+\.(py|sh))$' || true
           )"
           sync_only_allowlist_files="$(
             printf '%s\n' "$sync_only_candidates" |
