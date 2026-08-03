@@ -397,14 +397,14 @@ jobs:
 
             cd /workspace/agent_trading
 
-            docker compose run --rm migrate
+            bash scripts/harness/docker_compose_env.sh run --rm migrate
             echo "deploy_migration_run=1"
 
-            docker compose up -d --build --remove-orphans
+            bash scripts/harness/docker_compose_env.sh up -d --build --remove-orphans
             echo "deploy_restart_run=1"
 
             docker exec nginx-proxy nginx -s reload
             echo "deploy_proxy_reload_run=1"
             echo "deploy_activate_run_count=1"
 
-            docker compose ps
+            bash scripts/harness/docker_compose_env.sh ps

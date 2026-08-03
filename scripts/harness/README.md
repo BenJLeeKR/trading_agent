@@ -88,6 +88,8 @@ GitHub Actions도 사람과 AI가 쓰는 동일한 하네스를 사용한다. CI
 
 `check quick`은 커밋 전 기본 스냅샷용 계층 묶음이다. 현재 범위는 `accept docs`, `accept ci`, `accept no-bypass`, `accept env`, `accept backend-runtime`, `accept frontend`, `lint-path src/agent_trading`, `git diff --check`이며 전체 테스트, 전체 빌드, DB 연결, 외부 네트워크 호출을 실행하지 않는다.
 
+Docker/배포 표준 명령은 `bash scripts/harness/docker_compose_env.sh ...`를 사용하며, 이 래퍼가 `/etc/agent_trading/*.env`를 우선 로드한다.
+
 현재 2026-07-29 기준 계측은 다음과 같다.
 
 - `quick_step_count=8`
@@ -216,6 +218,11 @@ Makefile에서는 승인 필요 명령을 `heavy-*` target으로 노출한다. �
 - `static_pin_failed_count`: Dockerfile, pyproject, npm 설정 같은 정적 pin 검증 실패 수.
 - `lockfile_failed_count`: Python 또는 Admin UI lockfile 재현성 실패 수.
 - `tracked_env_file_count`: git 추적 대상에 포함된 `.env` 파일 수.
+- `runtime_external_env_required_missing_count`: `/etc/agent_trading` 아래 필수 env 파일(`runtime.env`, `ai.env`, `kis.env`) 누락 수.
+- `runtime_external_env_unreadable_count`: 외부 env 디렉터리 또는 파일을 현재 실행 계정이 읽지 못하는 경로 수.
+- `runtime_external_env_loaded_file_count`: 외부 env에서 실제로 읽은 파일 수.
+- `runtime_external_env_required_key_missing_count`: 외부 env에서 필수 런타임 키(`DATABASE_*`, `INSPECTION_API_TOKEN`)가 빠진 수.
+- `runtime_external_env_dir_status`: `ci-skip`, `missing`, `ready`, `unreadable` 중 하나로 외부 env 디렉터리 상태를 출력한다.
 - `env_values`: 항상 `redacted`로 출력돼야 한다.
 
 ### `accept backend-file`
