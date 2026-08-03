@@ -183,59 +183,59 @@ run-api-inmemory-dev:
 #     → API_RUNTIME_MODE, INSPECTION_API_TOKEN, INSPECTION_API_ROLE 환경변수 적용
 #     → API_RUNTIME_MODE=postgres 시 PostgreSQL 연결 필요
 #     → INSPECTION_API_TOKEN 미설정 시 startup fail (safe default)
-#     → 사전에 DATABASE_* 환경변수 export 또는 .env 로드 필요
+#     → 사전에 DATABASE_* 환경변수 export 또는 외부 env(`/etc/agent_trading/*.env`) 로드 필요
 #
 # 사용 예:
-#   set -a; source .env; set +a; make run-api-postgres
+#   source scripts/harness/load_external_env.sh && make run-api-postgres
 #   INSPECTION_API_TOKEN은 사용자가 직접 export한다. 값은 출력하지 않는다.
 run-api-postgres:
-	bash scripts/harness/run.sh run api-postgres
+	bash -lc 'source scripts/harness/load_external_env.sh && bash scripts/harness/run.sh run api-postgres'
 
 # =============================================================================
 # Docker Development (requires Docker + docker compose)
 # =============================================================================
 
 docker-up:
-	docker compose up -d
+	bash scripts/harness/docker_compose_env.sh up -d
 
 docker-down:
-	docker compose down
+	bash scripts/harness/docker_compose_env.sh down
 
 docker-build:
-	docker compose build
+	bash scripts/harness/docker_compose_env.sh build
 
 # 표준 migration 실행 경로(`docker compose run --rm migrate`, docker-compose.yml의
 # one-shot `migrate` service)의 convenience alias다 — 별도 실행 경로가 아니다.
 docker-migrate:
-	docker compose run --rm migrate
+	bash scripts/harness/docker_compose_env.sh run --rm migrate
 
 docker-test:
 	$(MAKE) heavy-docker-test
 
 docker-shell:
-	docker compose exec app /bin/bash
+	bash scripts/harness/docker_compose_env.sh exec app /bin/bash
 
 # Start only the DB + API services (no dev shell)
 # Usage: make docker-up-api
 docker-up-api:
-	docker compose up -d db api
+	bash scripts/harness/docker_compose_env.sh up -d db api
 
 # Tail the API server logs
 docker-logs-api:
-	docker compose logs -f api
+	bash scripts/harness/docker_compose_env.sh logs -f api
 
 # Restart the API server container
 docker-restart-api:
-	docker compose restart api
+	bash scripts/harness/docker_compose_env.sh restart api
 
 # Start the snapshot sync scheduler container
 docker-up-snapshot-sync:
-	docker compose up -d snapshot-sync
+	bash scripts/harness/docker_compose_env.sh up -d snapshot-sync
 
 # Tail the snapshot sync scheduler logs
 docker-logs-snapshot-sync:
-	docker compose logs -f snapshot-sync
+	bash scripts/harness/docker_compose_env.sh logs -f snapshot-sync
 
 # Restart the snapshot sync scheduler container
 docker-restart-snapshot-sync:
-	docker compose restart snapshot-sync
+	bash scripts/harness/docker_compose_env.sh restart snapshot-sync

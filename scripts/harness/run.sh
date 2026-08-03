@@ -349,6 +349,7 @@ ungated_deploy_workflows = [
 deploy_missing_migration_workflows = [
     path for path, text in deploy_workflows
     if "docker compose run --rm migrate" not in text
+    and "bash scripts/harness/docker_compose_env.sh run --rm migrate" not in text
 ]
 deploy_missing_proxy_reload_workflows = [
     path for path, text in deploy_workflows
@@ -581,7 +582,10 @@ contract_checks = [
     ("workflow_deploy_change_detector_defines_sync_only_allowlist", deploy_sync_only_allowlist_defined_count == 1),
     ("workflow_deploy_change_detector_defines_runtime_affecting_rules", deploy_runtime_affecting_path_rule_count == 1),
     ("workflow_deploy_emits_sync_activate_metrics", deploy_sync_only_run_metric_count == 1 and deploy_activate_run_metric_count == 1 and deploy_activate_skipped_by_market_hours_metric_count == 1),
-    ("workflow_deploy_runs_migration_before_restart", contains(workflow, "docker compose run --rm migrate", "docker compose up -d --build --remove-orphans")),
+    ("workflow_deploy_runs_migration_before_restart", (
+        contains(workflow, "docker compose run --rm migrate", "docker compose up -d --build --remove-orphans")
+        or contains(workflow, "bash scripts/harness/docker_compose_env.sh run --rm migrate", "bash scripts/harness/docker_compose_env.sh up -d --build --remove-orphans")
+    )),
     ("workflow_deploy_reloads_proxy_after_restart", contains(workflow, "docker exec nginx-proxy nginx -s reload", "deploy_proxy_reload_run=1")),
     ("readme_declares_ci_harness", contains(readme, "CI 검증 기준", ".github/workflows/harness.yml", "bash scripts/harness/run.sh", "Require Harness on main", "Safe harness contracts")),
     ("harness_readme_declares_ci_harness", contains(harness_readme, "CI 공동 사용 원칙", "safe", "workflow_dispatch", "deploy_main", "allow_market_hours_deploy", "09:00-15:30 KST", "HARNESS_ALLOW_HEAVY=1", "Require Harness on main", "Safe harness contracts")),
@@ -1743,13 +1747,73 @@ if code == 0 and output:
 
 env_example_keys = parse_env_keys(root / ".env.example")
 env_file = root / ".env"
+env_reference_keys = set()
 if env_file.exists():
     env_keys = parse_env_keys(env_file)
-    advisory_missing_env_example_keys = sorted(env_example_keys - env_keys)
+    env_reference_keys.update(env_keys)
     env_file_status = "present-redacted"
 else:
-    advisory_missing_env_example_keys = sorted(env_example_keys)
     env_file_status = "missing"
+
+external_env_dir = Path(os.environ.get("AGENT_TRADING_ENV_DIR", "/etc/agent_trading"))
+required_external_env_files = [
+    name for name in os.environ.get("AGENT_TRADING_REQUIRED_ENV_FILES", "runtime.env:ai.env:kis.env").split(":")
+    if name
+]
+optional_external_env_files = [
+    name for name in os.environ.get("AGENT_TRADING_OPTIONAL_ENV_FILES", "local.override.env").split(":")
+    if name
+]
+external_env_check_required = os.environ.get("HARNESS_CI") != "1" and external_env_dir.exists()
+external_env_dir_readable = False
+external_env_required_missing = []
+external_env_unreadable = []
+external_env_loaded_files = []
+external_env_keys = set()
+
+if external_env_check_required:
+    external_env_dir_readable = os.access(external_env_dir, os.R_OK | os.X_OK)
+    if external_env_dir_readable:
+        for name in required_external_env_files:
+            path = external_env_dir / name
+            if not path.exists():
+                external_env_required_missing.append(str(path))
+                continue
+            if not os.access(path, os.R_OK):
+                external_env_unreadable.append(str(path))
+                continue
+            external_env_loaded_files.append(str(path))
+            external_env_keys.update(parse_env_keys(path))
+        for name in optional_external_env_files:
+            path = external_env_dir / name
+            if not path.exists():
+                continue
+            if not os.access(path, os.R_OK):
+                external_env_unreadable.append(str(path))
+                continue
+            external_env_loaded_files.append(str(path))
+            external_env_keys.update(parse_env_keys(path))
+    else:
+        external_env_unreadable.append(str(external_env_dir))
+
+required_external_env_keys = {
+    "DATABASE_HOST",
+    "DATABASE_PORT",
+    "DATABASE_NAME",
+    "DATABASE_USER",
+    "DATABASE_PASSWORD",
+    "INSPECTION_API_TOKEN",
+}
+external_env_required_key_missing = (
+    sorted(required_external_env_keys - external_env_keys)
+    if external_env_check_required and external_env_dir_readable
+    else []
+)
+if external_env_check_required and external_env_dir_readable:
+    env_reference_keys.update(external_env_keys)
+if env_file_status == "missing" and external_env_loaded_files:
+    env_file_status = "external-only"
+advisory_missing_env_example_keys = sorted(env_example_keys - env_reference_keys)
 
 metrics = {
     "required_file_missing_count": len(missing_files),
@@ -1759,6 +1823,10 @@ metrics = {
     "env_example_key_count": len(env_example_keys),
     "advisory_env_example_key_missing_count": len(advisory_missing_env_example_keys),
     "tracked_env_file_count": tracked_env_count,
+    "runtime_external_env_required_missing_count": len(external_env_required_missing),
+    "runtime_external_env_unreadable_count": len(external_env_unreadable),
+    "runtime_external_env_loaded_file_count": len(external_env_loaded_files),
+    "runtime_external_env_required_key_missing_count": len(external_env_required_key_missing),
 }
 
 passed = (
@@ -1767,6 +1835,9 @@ passed = (
     and metrics["static_pin_failed_count"] == 0
     and metrics["lockfile_failed_count"] == 0
     and metrics["tracked_env_file_count"] == 0
+    and metrics["runtime_external_env_required_missing_count"] == 0
+    and metrics["runtime_external_env_unreadable_count"] == 0
+    and metrics["runtime_external_env_required_key_missing_count"] == 0
 )
 
 print(f"ACCEPT env: {'PASS' if passed else 'FAIL'}")
@@ -1775,6 +1846,14 @@ for key, value in metrics.items():
 for name in ("python", "node", "npm", "postgres"):
     print(f"- {name}={runtime_versions.get(name, '<missing>')} source={runtime_sources.get(name, '<unknown>')}")
 print(f"- env_file={env_file_status}")
+if os.environ.get("HARNESS_CI") == "1":
+    print("- runtime_external_env_dir_status=ci-skip")
+elif not external_env_dir.exists():
+    print(f"- runtime_external_env_dir_status=missing path={external_env_dir}")
+elif external_env_dir_readable:
+    print(f"- runtime_external_env_dir_status=ready path={external_env_dir}")
+else:
+    print(f"- runtime_external_env_dir_status=unreadable path={external_env_dir}")
 print("- env_values=redacted")
 
 if missing_files:
@@ -1800,6 +1879,21 @@ if failed_lock_checks:
 if advisory_missing_env_example_keys:
     print("ADVISORY env_example_keys_missing_from_env:")
     for key in advisory_missing_env_example_keys:
+        print(f"- {key}")
+
+if external_env_required_missing:
+    print("DETAIL runtime_external_env_required_missing_files:")
+    for path in external_env_required_missing:
+        print(f"- {path}")
+
+if external_env_unreadable:
+    print("DETAIL runtime_external_env_unreadable_paths:")
+    for path in external_env_unreadable:
+        print(f"- {path}")
+
+if external_env_required_key_missing:
+    print("DETAIL runtime_external_env_required_key_missing:")
+    for key in external_env_required_key_missing:
         print(f"- {key}")
 
 raise SystemExit(0 if passed else 1)

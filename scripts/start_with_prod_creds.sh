@@ -11,6 +11,9 @@
 # (settings.py _resolve_kis_live_app_key()에서 KIS_LIVE_INFO_APP_KEY 읽음)
 set -euo pipefail
 
+# shellcheck disable=SC1091
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/harness/load_external_env.sh"
+
 # ---- Validation ----
 MISSING=""
 if [ -z "${KIS_LIVE_INFO_APP_KEY:-}" ] || [ -z "${KIS_LIVE_INFO_APP_SECRET:-}" ]; then
@@ -23,9 +26,9 @@ if [ -n "$MISSING" ]; then
   echo "[WARN] Missing credentials:$MISSING — related features disabled" >&2
 fi
 
-echo "[start_with_prod_creds] KIS_LIVE_INFO_APP_KEY=${KIS_LIVE_INFO_APP_KEY:0:8}... (masked)"
-echo "[start_with_prod_creds] KIS_LIVE_INFO_APP_SECRET=**** (masked)"
-echo "[start_with_prod_creds] NAVER_CLIENT_ID=${NAVER_CLIENT_ID:0:6}... (masked)"
-echo "[start_with_prod_creds] NAVER_CLIENT_SECRET=**** (masked)"
+echo "[start_with_prod_creds] KIS_LIVE_INFO_APP_KEY=$( [[ -n ${KIS_LIVE_INFO_APP_KEY:-} ]] && echo configured || echo missing )"
+echo "[start_with_prod_creds] KIS_LIVE_INFO_APP_SECRET=$( [[ -n ${KIS_LIVE_INFO_APP_SECRET:-} ]] && echo configured || echo missing )"
+echo "[start_with_prod_creds] NAVER_CLIENT_ID=$( [[ -n ${NAVER_CLIENT_ID:-} ]] && echo configured || echo missing )"
+echo "[start_with_prod_creds] NAVER_CLIENT_SECRET=$( [[ -n ${NAVER_CLIENT_SECRET:-} ]] && echo configured || echo missing )"
 
-exec docker compose up "$@"
+exec bash "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/harness/docker_compose_env.sh" up "$@"

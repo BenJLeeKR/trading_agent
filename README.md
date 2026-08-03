@@ -43,7 +43,7 @@ cp .env.example .env
 Docker 사용:
 
 ```bash
-docker compose up -d db
+bash scripts/harness/docker_compose_env.sh up -d db
 ```
 
 ### 4. 마이그레이션 실행
@@ -81,7 +81,7 @@ HARNESS_ALLOW_HEAVY=1 make heavy-full-test
 ### 1. 빌드
 
 ```bash
-docker compose build
+bash scripts/harness/docker_compose_env.sh build
 ```
 
 ### 2. 마이그레이션 (api보다 먼저 실행)
@@ -91,11 +91,11 @@ docker compose build
 종료됩니다:
 
 ```bash
-docker compose run --rm migrate
+bash scripts/harness/docker_compose_env.sh run --rm migrate
 ```
 
 `make docker-migrate`는 위 명령의 convenience alias입니다(내부적으로 동일한
-`docker compose run --rm migrate`를 호출합니다) — 별도의 실행 경로가 아닙니다:
+`bash scripts/harness/docker_compose_env.sh run --rm migrate`를 호출합니다) — 별도의 실행 경로가 아닙니다:
 
 ```bash
 make docker-migrate
@@ -106,11 +106,11 @@ make docker-migrate
 ### 3. 서비스 기동
 
 ```bash
-docker compose up -d
-# 또는 api만: docker compose up -d api
+bash scripts/harness/docker_compose_env.sh up -d
+# 또는 api만: bash scripts/harness/docker_compose_env.sh up -d api
 ```
 
-`migrate` 서비스는 `profiles: [migrate]`로 분리돼 있어 `docker compose up -d`
+`migrate` 서비스는 `profiles: [migrate]`로 분리돼 있어 `bash scripts/harness/docker_compose_env.sh up -d`
 대상에 포함되지 않습니다 — 매번 재기동할 때마다 migration이 재실행되는 일은
 없습니다.
 
@@ -181,7 +181,7 @@ make run-api-postgres
 ### Docker Compose (권장)
 
 ```bash
-docker compose up -d db api
+bash scripts/harness/docker_compose_env.sh up -d db api
 ```
 
 `docker-compose.yml`은 이미 올바른 방식(`create_app_from_env --factory`)을 사용하고 있습니다.
@@ -263,11 +263,11 @@ docker compose up -d db api
 | `make test` | `make heavy-full-test`의 호환 alias |
 | `make lint` | ruff 정적 분석 |
 | `make run-api-inmemory` | `bash scripts/harness/run.sh run api-inmemory`의 alias |
-| `make run-api-postgres` | `bash scripts/harness/run.sh run api-postgres`의 alias, `DATABASE_*`와 `INSPECTION_API_TOKEN` export 필요 |
+| `make run-api-postgres` | 외부 env 로드 후 `bash scripts/harness/run.sh run api-postgres` 실행 |
 | `make docker-up` | Docker 서비스 시작 |
 | `make docker-down` | Docker 서비스 종료 |
 | `make docker-build` | Docker 이미지 빌드 |
-| `make docker-migrate` | 마이그레이션 실행 — `docker compose run --rm migrate`의 alias (표준 경로는 `docker compose run --rm migrate` 자체) |
+| `make docker-migrate` | 마이그레이션 실행 — `bash scripts/harness/docker_compose_env.sh run --rm migrate`의 alias |
 | `make docker-test` | `make heavy-docker-test`의 호환 alias |
 | `make docker-shell` | Docker 컨테이너 셸 접속 |
 
@@ -292,6 +292,7 @@ L4/L5 계층의 전체 테스트, smoke, Admin UI 전체 빌드/테스트는 기
 - Admin UI 의존성 설치는 `package-lock.json` 기반 `npm ci`를 사용한다.
 - PostgreSQL 서버 버전은 [`.postgres-version`](./.postgres-version) 기준으로 확인한다.
 - 환경 기준 검증은 `make accept-env` 또는 `bash scripts/harness/run.sh accept env`를 사용한다. `make env-check`와 `bash scripts/harness/run.sh env-check`는 호환 alias다.
+- 운영 비밀값은 저장소 `.env`가 아니라 `/etc/agent_trading/*.env`에 저장하고, Docker/배포 표준 경로는 `bash scripts/harness/docker_compose_env.sh ...`가 이를 읽는다.
 
 ## Agent Role Boundaries
 

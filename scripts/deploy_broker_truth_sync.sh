@@ -37,6 +37,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 cd "$PROJECT_ROOT"
+COMPOSE_WRAPPER="$PROJECT_ROOT/scripts/harness/docker_compose_env.sh"
 
 echo "=== Step 1: Verify working tree ==="
 if ! git rev-parse --is-inside-work-tree &>/dev/null; then
@@ -56,12 +57,12 @@ echo ""
 echo "=== Step 2: Docker compose build (no cache) ==="
 # Build app and ops-scheduler images from the same Dockerfile.
 # docker-compose build --no-cache uses the same tag for both services.
-docker compose build --no-cache app ops-scheduler 2>&1 | tail -20
+bash "$COMPOSE_WRAPPER" build --no-cache app ops-scheduler 2>&1 | tail -20
 
 echo ""
 echo "=== Step 3: Docker compose restart ==="
 # --force-recreate ensures new containers even if image tag hasn't changed.
-docker compose up -d --force-recreate app ops-scheduler
+bash "$COMPOSE_WRAPPER" up -d --force-recreate app ops-scheduler
 
 echo ""
 echo "=== Step 4: Health check (30s wait, up to 60s) ==="
@@ -85,11 +86,11 @@ fi
 echo ""
 echo "=== Step 5: Component status ==="
 echo "--- app containers ---"
-docker compose ps app ops-scheduler
+bash "$COMPOSE_WRAPPER" ps app ops-scheduler
 
 echo ""
 echo "--- recent app logs (last 20 lines) ---"
-docker compose logs --tail=20 app 2>/dev/null || true
+bash "$COMPOSE_WRAPPER" logs --tail=20 app 2>/dev/null || true
 
 echo ""
 echo "=== Step 6: Inspection API smoke test ==="
