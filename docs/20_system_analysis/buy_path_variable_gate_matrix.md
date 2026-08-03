@@ -2546,3 +2546,58 @@ ok"]` 기록에 계속 쓰이므로 그대로 유지했다.
 
 즉 현재는 "BUY 경로 전체 리팩터링"이라는 이름보다,
 **R1(판정 완료)→R2→R3/R4→R5의 단계적 리팩터링**으로 보는 것이 정확하다.
+
+## 14. execution path 별건 — `stale_snapshot_guard` zero-position false-stale 수정
+
+R1~R5(위 §13)는 `deterministic_trigger_engine.py`의 BUY 경로 점수/게이트
+리팩터링 트랙이고, 이 절은 그와 무관한 **별도 인시던트**(`execution_
+service.py`의 KIS 제출 직전 게이트) 수정을 기록한다.
+
+**(1) 인시던트 요약(2026-08-03 KST)**: `001450`의 `order_request`가
+`validated` 상태에서 멈춰 KIS 제출 전 `stale_snapshot_guard`에 매번
+차단됐다. read-only 조사 결과 원인은 계좌가 전량 매도로 quantity=0이
+된 이후, `position_snapshots.list_latest_by_account()`가 그 quantity=0
+행을 계속 "최신 행"으로 반환해 `_check_account_snapshot_freshness()`의
+"zero-position account policy"(목록이 비어 있으면 cash만 fresh해도
+통과)가 실제로는 발동하지 못한 것으로 확정됐다. 전체 이력 기준
+`stale_snapshot_guard` 차단 134건 중 76건이 `is_position_stale=true`,
+그중 63건이 이 zero-qty-latest 패턴이었다(오늘 4건은 cash도 fresh한
+순수 격리 사례로 가설을 확정).
+
+**(2) 설계 비교**: A안(함수 내부에서 `quantity>0` 필터 후 freshness
+계산) / B안(전용 repository 계약 추가) / C안(`list_latest_by_account()`
+의미 자체 변경) / D안(계좌별 "최종 확인 시각" 하트비트 신설)을 비교한
+결과, `list_latest_by_account()` 호출부 15곳 중 14곳이 quantity=0 행을
+정확히 필요로 함(PnL 계산, UI 표시, zero-out dedup 등)을 확인해 C안을
+기각했고, 이번 문제의 소비처가 `execution_service.py` 1곳뿐이라 리포
+지토리 계약 확장(B)도 시기상조로 판단, **A안(가장 보수적이면서
+근본 해결)**을 권고했다.
+
+**(3) 코드 적용 완료**: `_check_account_snapshot_freshness()` 내부에서
+`list_latest_by_account()` 결과를 `quantity is not None and quantity >
+0`인 행만으로 좁힌 뒤(`quantity is None`도 보수적으로 미보유 취급)
+`max(snapshot_at)`·staleness를 계산하도록 수정했다. `list_latest_by_
+account()` 자체의 반환 계약·저장 로직은 무변화이며, `is_cash_stale`
+판정, run-level fallback(`health.is_stale`), `held_position` sell
+bypass 등 다른 stale 정책도 전부 무변화다.
+
+**(4) 검증**: `bash scripts/harness/run.sh accept backend-file
+src/agent_trading/services/execution_service.py` — 선택된 3개 테스트
+파일 중 2개(`test_decision_orchestrator.py`, `test_decision_replay.py`)
+에서 총 8건이 실패했으나, 수정 전 `main`에서 `git stash`로 동일하게
+재현되는 **선재·무관 실패**임을 확인했다(우리 수정과 무관). 신규
+회귀 테스트 2건(`test_account_snapshot_freshness_ignores_stale_zero_
+quantity_position`, `test_account_snapshot_freshness_still_blocks_
+real_stale_position`)을 `test_decision_orchestrator.py`에 추가해
+`ExecutionService._check_account_snapshot_freshness()`를 직접
+호출하는 좁은 단위 테스트로 검증했다 — 수정 전 코드로는 첫 번째
+테스트가 실패하고(회귀 재현 확인), 수정 후에는 둘 다 통과한다.
+`test_decision_submit_pipeline.py`의 기존 stale 관련 테스트 3건은
+fixture 변경 없이 그대로 통과했다(신규 케이스만 추가, 기존 케이스는
+보정 불필요로 판단).
+
+**(5) 범위 밖**: `cash_stale`/run-level stale/`held_position` sell
+bypass 등 다른 stale 정책, B/C/D안, 5-6월의 "cash도 함께 stale"이던
+72건 구간의 별도 원인 규명, `memory.py`의 `list_latest_by_account()`
+가 `DISTINCT ON` 의미를 지키지 않는 것으로 보이는 별건 불일치, 운영
+재기동 이후 실측(이번 턴은 코드 적용까지만, 실측은 다음 턴 과제).

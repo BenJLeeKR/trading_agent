@@ -3591,6 +3591,116 @@ class TestBuildSizingInputs:
         assert has_duplicate is False
         assert duplicate_order_id is None
 
+    @pytest.mark.asyncio
+    async def test_account_snapshot_freshness_ignores_stale_zero_quantity_position(
+        self,
+    ) -> None:
+        """전량 매도로 quantity=0이 된 오래된 position snapshot만 남아있고
+        cash snapshot은 fresh한 경우, position은 stale로 보면 안 된다
+        (zero-position account policy가 실제로 발동해야 한다).
+        """
+        repos = build_in_memory_repositories()
+        now = datetime.now(timezone.utc)
+        account_id = uuid4()
+        instrument_id = uuid4()
+        await repos.accounts.add(
+            AccountEntity(
+                account_id=account_id,
+                client_id=uuid4(),
+                broker_account_id=uuid4(),
+                environment=Environment.PAPER,
+                account_alias="test",
+                account_masked="****",
+                status="active",
+            )
+        )
+        await repos.cash_balance_snapshots.add(
+            CashBalanceSnapshotEntity(
+                cash_balance_snapshot_id=uuid4(),
+                account_id=account_id,
+                currency="KRW",
+                available_cash=Decimal("1000000"),
+                settled_cash=Decimal("1000000"),
+                unsettled_cash=None,
+                source_of_truth="broker",
+                snapshot_at=now,
+            )
+        )
+        await repos.position_snapshots.add(
+            PositionSnapshotEntity(
+                position_snapshot_id=uuid4(),
+                account_id=account_id,
+                instrument_id=instrument_id,
+                quantity=Decimal("0"),
+                average_price=Decimal("50000"),
+                market_price=Decimal("50000"),
+                unrealized_pnl=Decimal("0"),
+                source_of_truth="broker",
+                snapshot_at=now - timedelta(seconds=1000),
+            )
+        )
+        service = ExecutionService(repos, stale_threshold_seconds=900)
+
+        freshness = await service._check_account_snapshot_freshness(account_id)
+
+        assert freshness.is_cash_stale is False
+        assert freshness.is_position_stale is False
+        assert freshness.is_stale is False
+
+    @pytest.mark.asyncio
+    async def test_account_snapshot_freshness_still_blocks_real_stale_position(
+        self,
+    ) -> None:
+        """quantity>0인 실제 보유 포지션의 snapshot이 오래된 경우는 여전히
+        stale로 차단돼야 한다(zero-position 우회와 무관한 회귀 확인)."""
+        repos = build_in_memory_repositories()
+        now = datetime.now(timezone.utc)
+        account_id = uuid4()
+        instrument_id = uuid4()
+        await repos.accounts.add(
+            AccountEntity(
+                account_id=account_id,
+                client_id=uuid4(),
+                broker_account_id=uuid4(),
+                environment=Environment.PAPER,
+                account_alias="test",
+                account_masked="****",
+                status="active",
+            )
+        )
+        await repos.cash_balance_snapshots.add(
+            CashBalanceSnapshotEntity(
+                cash_balance_snapshot_id=uuid4(),
+                account_id=account_id,
+                currency="KRW",
+                available_cash=Decimal("1000000"),
+                settled_cash=Decimal("1000000"),
+                unsettled_cash=None,
+                source_of_truth="broker",
+                snapshot_at=now,
+            )
+        )
+        await repos.position_snapshots.add(
+            PositionSnapshotEntity(
+                position_snapshot_id=uuid4(),
+                account_id=account_id,
+                instrument_id=instrument_id,
+                quantity=Decimal("10"),
+                average_price=Decimal("50000"),
+                market_price=Decimal("50000"),
+                unrealized_pnl=Decimal("0"),
+                source_of_truth="broker",
+                snapshot_at=now - timedelta(seconds=1000),
+            )
+        )
+        service = ExecutionService(repos, stale_threshold_seconds=900)
+
+        freshness = await service._check_account_snapshot_freshness(account_id)
+
+        assert freshness.is_cash_stale is False
+        assert freshness.is_position_stale is True
+        assert freshness.is_stale is True
+
 
 # ---------------------------------------------------------------------------
 # Sell path sizing fallback tests

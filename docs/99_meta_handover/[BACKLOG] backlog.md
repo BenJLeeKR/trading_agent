@@ -5122,3 +5122,42 @@ read-only 분석, 코드 변경 없음)
   완료). 이번 턴은 코드 1개 파일 + 문서 반영.
 - 상세: `docs/20_system_analysis/buy_path_variable_gate_matrix.md`
   §13.3.2.
+
+### execution path 별건 — `stale_snapshot_guard` zero-position false-stale 수정 완료(2026-08-03 KST)
+
+- 전제: R1~R5(BUY 경로 점수/게이트 리팩터링)와 무관한 별도 인시던트.
+  `001450`의 `order_request`가 KIS 제출 전 `stale_snapshot_guard`에
+  매번 차단되던 문제를 read-only 조사로 확정한 뒤(전체 이력 134건
+  차단, 그중 63건이 zero-qty-latest 패턴), 설계 비교(A/B/C/D)에서
+  A안(함수 내부 `quantity>0` 필터)을 권고한 데 이어 이번 턴에서
+  실제로 적용했다.
+- 무엇을 어떻게 바꿨는지: `execution_service.py::_check_account_
+  snapshot_freshness()`에서 `position_snapshots.list_latest_by_
+  account()` 결과를 `quantity is not None and quantity > 0`인 행만
+  으로 좁힌 뒤 `max(snapshot_at)`·staleness를 계산하도록 수정했다.
+  `quantity is None`도 보수적으로 미보유 취급해 제외한다. 필터 후
+  목록이 비면 기존 docstring이 명시한 "zero-position account
+  policy"(cash만 fresh하면 통과)가 실제로 발동한다.
+- 왜 zero-position false-stale만 해결되고 다른 정책은 무변화인지:
+  `list_latest_by_account()` 자체의 반환 계약·저장 로직, `is_cash_
+  stale` 판정, run-level fallback(`health.is_stale`, 별도 함수),
+  `held_position` sell bypass는 이 함수의 position 필터링과 코드
+  경로가 완전히 분리돼 있어 손대지 않았다.
+- 검증: `bash scripts/harness/run.sh accept backend-file
+  src/agent_trading/services/execution_service.py` — 선택된 3개 파일
+  중 2개(`test_decision_orchestrator.py`, `test_decision_replay.py`)
+  에서 총 8건 실패했으나 `git stash`로 수정 전 `main`에서도 동일하게
+  재현되는 선재·무관 실패임을 확인했다. 신규 회귀 테스트 2건을
+  `test_decision_orchestrator.py`에 추가(`ExecutionService._check_
+  account_snapshot_freshness()` 직접 호출) — 수정 전 코드로는 zero-
+  qty 케이스가 실패함을 확인해 회귀 재현을 검증했고, 수정 후에는
+  두 테스트 모두 통과했다. `test_decision_submit_pipeline.py`의
+  기존 stale 테스트 3건은 fixture 보정 없이 그대로 통과했다.
+  `py_compile`/`ruff check` 통과. 전체 테스트는 수행하지 않았다.
+- 운영 실측: 아직 남아 있다 — 이번 턴은 코드 적용까지만, 재기동 이후
+  실제 운영 사이클에서 `001450` 유형 BUY가 더 이상 `stale_snapshot_
+  guard`에 막히지 않는지 확인은 다음 턴 과제.
+- git 상태: 브랜치 `fix-stale-snapshot-guard-zero-position-false-
+  stale`, `main`(HEAD `12bc6414`) 기준.
+- 상세: `docs/20_system_analysis/buy_path_variable_gate_matrix.md`
+  §14.

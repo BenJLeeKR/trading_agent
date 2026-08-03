@@ -1728,10 +1728,21 @@ class ExecutionService:
         ``account_id``.  Uses the same ``_stale_threshold_seconds`` as the
         run-level summary.
 
-        **Zero-position account policy**: if ``list_latest_by_account()``
-        returns an empty list, the positions are considered fresh *iff* a
-        cash snapshot exists and is fresh (because the sync function
-        fetches cash and positions together).
+        **Zero-position account policy**: if there are no *currently held*
+        (``quantity > 0``) positions, the positions are considered fresh
+        *iff* a cash snapshot exists and is fresh (because the sync
+        function fetches cash and positions together).
+
+        ``list_latest_by_account()`` returns the latest snapshot row per
+        instrument ever held, including rows that were zeroed out after a
+        full sell — those rows stop being rewritten once an account has no
+        current holdings, so their ``snapshot_at`` would otherwise freeze
+        and falsely read as stale forever. Freshness is therefore computed
+        only over rows with ``quantity > 0`` (rows with ``quantity is
+        None`` are treated conservatively as not currently held, same as
+        ``quantity == 0``, and excluded from this calculation). This does
+        not change what ``list_latest_by_account()`` itself returns or
+        stores — only how this function interprets the result.
         """
         now = datetime.now(timezone.utc)
 
@@ -1753,15 +1764,23 @@ class ExecutionService:
             now - cash_snapshot.snapshot_at
         ).total_seconds() > self._stale_threshold_seconds
 
-        # 2. Position snapshots
+        # 2. Position snapshots — freshness is only meaningful for
+        # currently held (quantity > 0) positions; see docstring above.
         position_snapshots = (
             await self._repos.position_snapshots.list_latest_by_account(account_id)
         )
+        held_position_snapshots = [
+            snapshot
+            for snapshot in position_snapshots
+            if snapshot.quantity is not None and snapshot.quantity > 0
+        ]
         latest_position_snapshot_at: datetime | None = None
         is_position_stale = False
 
-        if position_snapshots:
-            latest_position_snapshot_at = max(s.snapshot_at for s in position_snapshots)
+        if held_position_snapshots:
+            latest_position_snapshot_at = max(
+                s.snapshot_at for s in held_position_snapshots
+            )
             is_position_stale = (
                 now - latest_position_snapshot_at
             ).total_seconds() > self._stale_threshold_seconds

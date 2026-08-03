@@ -10594,7 +10594,18 @@ agent 설계 문서 기준으로도 순서는 다음이 맞다.
      `buy_candidate` 최종식의 `allocation_budget_ok` 재확인을
      제거했다. `eligibility_passed`가 이미 이 조건을 내포함을 코드
      구조로 증명했고, 관련 테스트 25건 전부 fixture 변경 없이 통과해
-     판정 무변화임을 확인했다. R3 트랙은 이것으로 닫는다 +
+     판정 무변화임을 확인했다. R3 트랙은 이것으로 닫는다. **[2026-
+     08-03 KST 14차 갱신] execution path 별건 — `stale_snapshot_
+     guard` zero-position false-stale 수정 완료**(`buy_path_
+     variable_gate_matrix.md` §14, R1~R5와 무관한 별도 인시던트) —
+     `_check_account_snapshot_freshness()`에서 `list_latest_by_
+     account()` 결과를 `quantity>0`으로 필터링한 뒤 freshness를
+     계산하도록 수정해, 전량 매도 후 quantity=0으로 굳은 오래된
+     position snapshot 때문에 KIS 제출 전 매번 차단되던 문제(전체
+     이력 63건 재현)를 닫았다. `list_latest_by_account()` 계약·
+     cash/run-level stale 정책·held_position sell bypass는 전부
+     무변화. 회귀 테스트 2건 신규 추가, 기존 stale 테스트 3건은
+     보정 없이 통과. 운영 재기동 이후 실측은 다음 턴 과제로 남긴다 +
      [1-B순위] **D안 순수 효과 재측정** — S5로 stale bias가 사라진 뒤
      §137.5의 2.13배(상한)를 다시 측정 +
      [1-B순위] `strategy_alignment` 제거의 **게이트 영향 재관측** —
