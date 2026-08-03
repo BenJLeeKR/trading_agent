@@ -3747,3 +3747,11 @@ approve`이자 `order_requests` 체결까지 간 실제 사례(`011070`,
 곧바로 제거하지 않고 A/B/C 설계 비교부터 다음 턴에 진행할 것을
 권고한다. 상세: `docs/20_system_analysis/buy_path_variable_gate_
 matrix.md` §13.2.7.
+
+**[2026-08-03 KST, 최소 미러링] `risk_off -0.15` 처리 방식 A/B/C
+설계 비교 완료.** C 집합 3,692건 중 `bullish_trend`가 3,616건
+(97.9%)으로, 하드 게이트는 `bearish_trend`+`risk_off` 조합에서만
+발동해 이 population의 98.6%를 전혀 커버하지 못한다. **C안(제거)은
+권고하지 않으며, 1순위 권고안은 B안(계수 완화)**이다. 다음 코드
+수정 단위는 **B(추가 실측 1건 필요)**로 좁혔다. 상세: `docs/
+20_system_analysis/buy_path_variable_gate_matrix.md` §13.2.8.
