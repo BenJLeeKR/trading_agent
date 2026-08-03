@@ -4891,3 +4891,44 @@ read-only 분석, 코드 변경 없음)
   수정하며 코드 변경은 없다.
 - 상세: `docs/20_system_analysis/buy_path_variable_gate_matrix.md`
   §13.2.7.
+
+### `risk_off -0.15` 처리 방식 A/B/C 설계 비교(2026-08-03 KST,
+read-only 설계 검토, 코드 변경 없음)
+
+- 전제(이미 닫힌 사실, 재검증 없이 사용): R1 정리(§13.1.1~§13.1.6),
+  R2 allocation 4분류·실측·구조 분리·제거(§13.2.1~§13.2.5), regime/
+  risk 서브조건 분해(§13.2.6), `risk_off -0.15` 기여도 실측·판정 C
+  (§13.2.7) — 전부 참조만 하고 다시 열지 않는다.
+- 새로 확인한 사실(핵심): §13.2.7의 C 집합(전체 이력 3,692건)을
+  `regime_label`별로 분해하니 `bullish_trend` 3,616건(97.9%),
+  `range_bound` 74건(2.0%), `bearish_trend` 50건(1.4%)이었다. 하드
+  게이트(`_is_core_risk_off_regime()`/`_assess_buy_eligibility()`의
+  risk_off 블록)는 `bearish_trend`+`risk_off` 조합에서만 발동하므로,
+  **C 집합의 98.6%(3,666건)는 하드 게이트가 전혀 커버하지 못하는
+  population**이다. `011070`(2026-06-19 KST 체결 사례)도 이
+  `bullish_trend` population에 속한다.
+- A/B/C 비교: A(유지, 무변화이나 마찰 지속)/B(계수 완화, 후보
+  `-0.10`/`-0.05`, restraint 유지하며 마찰 일부 완화)/C(entry_score
+  에서 제거, 하드 게이트만 유지 — 그러나 하드 게이트가 population의
+  98.6%를 커버 못 해 안전망 없는 완화가 됨). `risk_off_exception_
+  eligible`은 A/B/C 어느 안에서도 `entry_score`와 무관해 무변화임을
+  확인했다.
+- 왜 allocation과 다른가: allocation은 (a) C=0건, (b) authoritative
+  게이트가 같은 신호를 수학적으로 동일하게 반영해 제거해도 공백이
+  없었다. `risk_off -0.15`는 이 두 조건을 모두 충족하지 못한다 —
+  (a) C=3,692건, (b) 하드 게이트 커버리지가 soft penalty 커버리지의
+  1.4%뿐이라 C안 제거는 "중복 제거"가 아니라 "실질적 완화"다.
+- 판정: **C안은 권고하지 않는다.** 1순위 권고안은 **B안(계수 완화)**
+  이며, 다음 코드 수정 단위는 **B(추가 실측 1건 필요)** — 후보
+  계수별 C 집합 축소 규모를 다음 턴에 실측한 뒤 계수를 확정한다.
+- 미확인 사항: B안 후보 계수별 C 집합 축소 규모, `bearish_trend`
+  C 집합 50건의 `risk_off_exception_eligible` 실제 처리 경로, B안
+  적용 시 override 빈도 실제 변화 — 전부 다음 턴 과제.
+- git 상태: 이번 턴 확인 시점 로컬 `main`(HEAD `ec656e13`) =
+  `origin/main`(이격 0, PR #108/#109 머지 반영 완료). PR #109
+  (Codex)로 `scripts/harness/run.sh`의 workspace-role 패치와 docs
+  sync-only 허용목록이 정식 커밋됐음을 확인했다 — 더 이상 이 파일을
+  스테이징에서 제외할 필요가 없다. 이번 턴은 문서 5건만 수정하며
+  코드 변경은 없다.
+- 상세: `docs/20_system_analysis/buy_path_variable_gate_matrix.md`
+  §13.2.8.
