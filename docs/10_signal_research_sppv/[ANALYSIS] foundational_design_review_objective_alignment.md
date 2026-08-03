@@ -3772,3 +3772,12 @@ matrix.md` §13.2.7.
 직접 mount 검증 25 passed). `risk_off` 하드 게이트 단일 권위화는
 별도 후속 과제로 남긴다. 상세: `docs/20_system_analysis/buy_path_
 variable_gate_matrix.md` §13.2.10.
+
+**[2026-08-03 KST, 최소 미러링] 운영 반영 초기 실측 완료.** 사용자
+승인에 따른 장중 예외 배포 이후 실제 운영 데이터 10개 종목 전량에서
+`entry_score +0.10`/`ranking_score +0.055` 이동을 확인했고, `073240`
+종목의 `buy_candidate` `false→true` 뒤집힘도 관측했다. **판정 B(초기
+방향성 확인)** — `approve`/`order_requests`는 0건이라 효과 확인은
+다음 턴 이후 과제. `sync_source`가 컨테이너 재기동보다 먼저 끝나
+그 시점부터 새 코드가 이미 적용됐다는 사실도 새로 확인했다. 상세:
+`docs/20_system_analysis/buy_path_variable_gate_matrix.md` §13.2.11.

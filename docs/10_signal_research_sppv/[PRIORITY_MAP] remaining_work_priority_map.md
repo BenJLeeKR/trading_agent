@@ -10572,7 +10572,14 @@ agent 설계 문서 기준으로도 순서는 다음이 맞다.
      패널티를 `-0.15→-0.05`로 완화했다. 하드 게이트·authoritative
      게이트 코드·shadow·reporting은 무변화이며, `0.28` 경계 fixture
      2건만 최소 보정했다(dev tree 직접 mount 검증 25 passed). `risk_
-     off` 하드 게이트 단일 권위화는 별도 후속 과제로 남긴다 +
+     off` 하드 게이트 단일 권위화는 별도 후속 과제로 남긴다. **[2026-
+     08-03 KST 11차 갱신] 운영 반영 초기 실측 완료**(`buy_path_
+     variable_gate_matrix.md` §13.2.11) — 사용자 승인에 따른 장중
+     예외 배포 이후 실제 운영 데이터 10개 종목 전량에서 `entry_score
+     +0.10`/`ranking_score +0.055` 이동을 확인했고, `073240` 종목의
+     `buy_candidate` 뒤집힘도 관측했다. **판정 B(초기 방향성 확인)**
+     — `approve`/`order_requests`는 0건이라 효과 확인은 다음 턴
+     이후 과제 +
      [1-B순위] **D안 순수 효과 재측정** — S5로 stale bias가 사라진 뒤
      §137.5의 2.13배(상한)를 다시 측정 +
      [1-B순위] `strategy_alignment` 제거의 **게이트 영향 재관측** —
