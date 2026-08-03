@@ -5010,3 +5010,41 @@ read-only, 코드 변경 없음)
   브랜치에서 커밋·PR로 진행한다.
 - 상세: `docs/20_system_analysis/buy_path_variable_gate_matrix.md`
   §13.2.10.
+
+### `risk_off` soft penalty B2(-0.05) 운영 반영 초기 실측(2026-08-03
+KST, read-only, 코드 변경 없음)
+
+- 전제(이미 닫힌 사실, 재검증 없이 사용): R1 정리(§13.1.1~§13.1.6),
+  R2 allocation 트랙(§13.2.1~§13.2.5), regime/risk 서브조건 분해
+  (§13.2.6), `risk_off -0.15` 기여도 실측(§13.2.7), A/B/C 설계 비교
+  (§13.2.8), B안 후보 계수별 영향 실측(§13.2.9), B2(-0.05) 코드 적용
+  (§13.2.10) — 전부 참조만 하고 다시 열지 않는다.
+- 새로 확인한 사실 1(런타임 반영): 컨테이너 내부 파일 확인 +
+  `_build_entry_score()` 직접 호출로 `-0.05` 반영을 확인했다.
+- 새로 확인한 사실 2(배포 반영 시점, 중요): 컨테이너 재기동은
+  `11:56:23 KST`였지만, 소스 파일 자체는 `sync_source`(git reset
+  --hard)가 `11:55:32 KST`에 이미 끝나 있었다. 매매 루프가 cycle마다
+  새 `python3` 서브프로세스를 띄우는 구조라, **컨테이너 재기동을
+  기다리지 않고 `11:55:32 KST` 이후 첫 cycle부터 이미 새 코드로
+  동작했다.**
+- 새로 확인한 사실 3(집계): 이전(`-0.15`, 11:45/11:50 cycle) 24건
+  중 `risk_off` 20건, `entry_score>=0.65` 2건. 이후(`-0.05`, 11:56~
+  12:09 4개 cycle) 48건 중 `risk_off` 40건, `entry_score>=0.65` 8건.
+  `approve`/`order_requests`는 양쪽 다 0건.
+- 새로 확인한 사실 4(대표 종목 전/후 비교): 동일 종목 10개 전량에서
+  `entry_score +0.1000`, `ranking_score +0.0550`(`=0.55*0.10`)이
+  정확히 관측됐다. `073240` 종목은 `entry_score 0.6134→0.7134`로
+  `buy_candidate`가 `false→true`로 실제 뒤집혔다.
+- 판정: **B(초기 방향성 확인)**. 런타임 반영과 설계대로의 이동은
+  확실히 확인됐고 실제 판정 플립 사례도 관측했으나, `approve`/
+  `order_requests`가 0건이라 §13.2.9의 동기가 된 override 마찰
+  감소 효과까지는 아직 판단할 수 없다.
+- 미확인 사항: 더 많은 cycle 누적 후 `risk_off_exception_eligible`/
+  `approve` 발생 여부, `bearish_trend`+`risk_off` population의
+  이번 창 부재(다음 관측 필요), 여러 거래일 누적 기준 재집계 — 전부
+  다음 턴 과제.
+- git 상태: 이번 턴 확인 시점 로컬 `main`(HEAD `2b87778e`) =
+  `origin/main`(이격 0, PR #113 머지 및 사용자 승인 장중 예외 배포
+  반영 완료). 이번 턴은 문서 5건만 수정하며 코드 변경은 없다.
+- 상세: `docs/20_system_analysis/buy_path_variable_gate_matrix.md`
+  §13.2.11.

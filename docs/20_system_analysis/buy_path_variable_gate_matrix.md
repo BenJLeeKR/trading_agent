@@ -2099,6 +2099,118 @@ authoritative 게이트의 `0.28` threshold를 정확히 걸치도록 설계된
    않음"으로 판정한 C안과 연결되는 논의이며, 다음 턴 이후 과제로
    남긴다.
 
+#### 13.2.11 R2 — `risk_off` soft penalty B2(-0.05) 운영 반영 초기 실측(2026-08-03 KST, read-only)
+
+**목적**: §13.2.10에서 적용한 `risk_off -0.05` 코드가 실제 운영
+서버(사용자 승인에 따른 장중 예외 배포)에 반영된 뒤, 재기동 이후
+첫 intraday cycle들에서 실제로 반영됐는지와 초기 영향을 read-only로
+확인한다. 코드는 변경하지 않았다.
+
+**전제(이미 닫힌 사실, 재검증하지 않음)**: R1 정리(§13.1.1~§13.1.6),
+R2 allocation 트랙(§13.2.1~§13.2.5), regime/risk 서브조건 분해
+(§13.2.6), `risk_off -0.15` 기여도 실측(§13.2.7), A/B/C 설계 비교
+(§13.2.8), B안 후보 계수별 영향 실측(§13.2.9), B2(-0.05) 코드 적용
+(§13.2.10) — 전부 참조만 하고 다시 열지 않는다.
+
+**새로 확인한 사실 1(런타임 반영 확인 방법과 결과)**: `docker exec
+agent_trading-app-1`로 컨테이너 내부 `/app/src/agent_trading/
+services/deterministic_trigger_engine.py`를 직접 확인한 결과,
+`risk_off` 블록이 `score -= 0.05`(§13.2.9 실측 근거 주석 포함)로
+반영돼 있음을 확인했다. 같은 컨테이너 안에서 `_build_entry_score()`
+를 직접 호출해(`market_regime.risk_tone="risk_off"`,
+`regime_label="bullish_trend"`) `trigger_risk_off_penalty`
+reason code와 함께 `-0.05`가 적용된 점수가 나오는 것도 확인했다.
+
+**새로 확인한 사실 2(실제 배포 반영 시점 — 컨테이너 재기동 시각이
+아니다, 중요)**: 컨테이너는 `2026-08-03 11:56:23 KST`에 재기동됐지만
+(`docker inspect .State.StartedAt`), 소스 파일 자체는 `sync_source`
+단계(`git reset --hard`)가 그보다 먼저 끝나 `2026-08-03 11:55:32
+KST`에 이미 갱신돼 있었다(파일 mtime으로 확인). 이 시스템의 매매
+루프(`ops-scheduler`)는 cycle마다 `python3` 서브프로세스를 새로
+띄우는 구조라(`decision_submit_gate`, `post_submit_sync` 등 로그에서
+확인), **컨테이너 재기동을 기다리지 않고 `sync_source`가 끝난 시점
+(11:55:32 KST) 이후 첫 cycle부터 이미 새 코드로 동작했다.** 즉 이번
+실측의 진짜 경계는 `11:56:23`(컨테이너 재기동)이 아니라 `11:55:32`
+(소스 동기화 완료)다.
+
+**실측 시점(경계 재확인 반영)**: 진짜 이전(old, `-0.15`) 기준 cycle은
+`11:55:32` 이전에 완료된 `11:45`, `11:50` cycle이고, 이후(new,
+`-0.05`) cycle은 `11:56`, `11:58`, `12:03`, `12:09` 4개 cycle이다
+(`decision_submit_gate` 로그의 `CADENCE_TRACE` 완료 기록과 `trade_
+decisions` 타임스탬프 클러스터로 교차 확인, cycle당 12건씩 정확히
+일치).
+
+**새로 확인한 사실 3(cycle별 집계표, `risk_tone=="risk_off"` 표본
+기준)**:
+
+| 집계 창 | 표본 수(전체) | `risk_off` 표본 | `entry_score>=0.65` | `buy_candidate=true` | `risk_off_exception_eligible=true` | `decision_type=approve` |
+|---|---|---|---|---|---|---|
+| 이전(`-0.15`, 11:45/11:50 cycle) | 24 | 20 | 2 | 2 | 0 | 0 |
+| 이후(`-0.05`, 11:56/58/12:03/09 cycle) | 48 | 40 | 8 | 8 | 0 | 0 |
+
+`order_requests` 생성 건수는 `11:55:00 KST` 이후 전체 심볼 기준으로도
+**0건**이었다.
+
+**새로 확인한 사실 4(대표 종목 전/후 비교, 직전 cycle(`11:50`, old) 대
+직후 cycle(`11:56`, new) 동일 종목 10개 전수)**:
+
+| symbol | `entry_score` 전 | `entry_score` 후 | Δ | `ranking_score` 전 | `ranking_score` 후 | Δ | `buy_candidate` 전→후 | `regime_label` |
+|---|---|---|---|---|---|---|---|---|
+| 000810 | 0.4336 | 0.5336 | **+0.1000** | 0.2685 | 0.3235 | +0.0550 | false→false | bullish_trend |
+| 001450 | 0.7564 | 0.8564 | **+0.1000** | 0.4460 | 0.5010 | +0.0550 | true→true | bullish_trend |
+| 051900 | 0.4161 | 0.5161 | **+0.1000** | 0.2588 | 0.3138 | +0.0550 | false→false | event_driven_unstable |
+| **073240** | **0.6134** | **0.7134** | **+0.1000** | 0.3674 | 0.4224 | +0.0550 | **false→true** | bullish_trend |
+| 078930 | 0.5368 | 0.6368 | **+0.1000** | 0.3253 | 0.3803 | +0.0550 | false→false | bullish_trend |
+| 081660 | 0.4133 | 0.5133 | **+0.1000** | 0.2573 | 0.3123 | +0.0550 | false→false | bullish_trend |
+| 111770 | 0.3609 | 0.4609 | **+0.1000** | 0.2285 | 0.2835 | +0.0550 | false→false | range_bound |
+| 138040 | 0.5219 | 0.6219 | **+0.1000** | 0.3170 | 0.3720 | +0.0550 | false→false | bullish_trend |
+| 316140 | 0.3705 | 0.4705 | **+0.1000** | 0.2338 | 0.2888 | +0.0550 | false→false | range_bound |
+| 383220 | 0.5068 | 0.6068 | **+0.1000** | 0.3088 | 0.3638 | +0.0550 | false→false | bullish_trend |
+
+**10개 종목 전부 `entry_score`가 정확히 `+0.1000`, `ranking_score`가
+정확히 `+0.0550`(`=0.55*0.10`) 이동했다** — §13.2.9/§13.2.10에서
+예상한 수식(`+0.10` 직접, `0.55*entry_score` 경로로 `+0.055`)과
+소수점 4자리까지 정확히 일치한다. `073240`은 이 이동으로 `entry_
+score`가 `0.6134→0.7134`로 `buy_candidate_threshold(0.65)`를
+새로 넘어 `buy_candidate`가 `false→true`로 뒤집혔다 — §13.2.9가
+예측한 정확한 메커니즘(entry_score 상승으로 인한 신규 통과)이 실제
+운영 데이터에서 관측된 첫 사례다.
+
+**직전 기준 대비 확인(4번 질문에 대한 답)**: `entry_score`는 예상대로
+`+0.10` 이동한 사례가 **표본 전량(10/10)**에서 확인됐고,
+authoritative 게이트 쪽 경로(`ranking_score = 0.55*entry_score +
+0.10*allocation_bonus_like`)도 `+0.055`로 정확히 해석되는 것을
+확인했다 — `allocation_bonus_like`가 동일 종목 전/후로 변하지
+않았으므로 이동폭 전부가 `0.55*0.10` 항에서만 나왔다는 뜻이다.
+
+**초기 판정: B. 초기 방향성 확인됨.**
+
+근거:
+1. 런타임 반영은 코드·실행 결과 양쪽에서 확실히 확인됐다(A 수준은
+   이미 충족).
+2. `entry_score`/`ranking_score` 이동폭이 표본 전량에서 설계 그대로
+   (`+0.10`/`+0.055`) 재현돼, "우연이 아니라 의도한 메커니즘이 그대로
+   작동한다"는 방향성이 확인됐다.
+3. 실제 `buy_candidate` 플립 사례(`073240`)가 1건 관측됐다 — 이는
+   단순 반영 확인을 넘어 **실제 판정 결과가 바뀐 사례**다.
+4. 다만 `risk_off_exception_eligible`/`decision_type=approve`/
+   `order_requests` 생성은 이 실측 창(4 cycle, 40건)에서 전부 0건
+   이라, §13.2.9의 동기가 된 override 마찰(`011070`류)이 실제로
+   줄어드는지는 **아직 확인할 수 없다** — 표본이 너무 적고
+   (`bearish_trend`+`risk_off` 조합 자체가 이 창에 아예 없었다),
+   그 결론까지 내리기엔 이르다. 그래서 "C. 효과까지 확인"은 아니다.
+
+**아직 미확인인 것**:
+1. `risk_off_exception_eligible=true`/`decision_type=approve` 사례가
+   더 많은 cycle이 누적되면 실제로 나타나는지, 그리고 §13.2.9가 겨냥한
+   override 마찰이 줄어드는지는 이번 턴 표본으로는 판단할 수 없다 —
+   더 많은 intraday cycle 누적 후 재실측이 필요하다.
+2. `bearish_trend`+`risk_off` population(§13.2.8의 50건)이 이번
+   실측 창에는 전혀 나타나지 않았다 — 관측 가능한 시점에 재확인이
+   필요하다.
+3. 이번 실측은 오늘(2026-08-03 KST) 장중 4개 cycle(40건)에 한정된다
+   — 장 마감 후 또는 여러 거래일 누적 기준 재집계는 다음 턴 과제다.
+
 ### 13.3 R3 — `portfolio_allocation`의 역할 분리
 
 - 범위:
@@ -2229,7 +2341,16 @@ authoritative 게이트의 `0.28` threshold를 정확히 걸치도록 설계된
    shadow·reporting은 전부 무변화이며, `0.28` 경계에 걸린 fixture
    2건만 최소 재실측·보정했다(dev tree 직접 mount 검증 25 passed).
    `risk_off` 하드 게이트 단일 권위화는 인지만 하고 이번 턴 범위
-   밖으로 남긴다
+   밖으로 남긴다. **[2026-08-03 KST 11차 갱신] 운영 반영 초기 실측
+   완료(13.2.11)** — 사용자 승인에 따른 장중 예외 배포 이후 실제
+   운영 데이터 10개 종목 전량에서 `entry_score +0.10`/`ranking_score
+   +0.055` 이동을 확인했고, `073240` 종목이 `buy_candidate`
+   `false→true`로 실제 뒤집힌 사례도 관측했다. **판정 B(초기 방향성
+   확인)** — `risk_off_exception_eligible`/`approve`/`order_
+   requests`는 이번 창(4 cycle)에 전부 0건이라 효과 확인은 아직
+   이르다. 소스 동기화(`sync_source`)가 컨테이너 재기동보다 먼저
+   끝나 그 시점부터 이미 새 코드가 적용됐다는 것도 이번에 새로
+   확인했다
 3. **R3/R4**: allocation/activity를 점수 밖으로 내릴지 검토
 4. **R5**: 상류 결정 이후 하류 연쇄 영향 확인
 

@@ -169,7 +169,15 @@
    은 무변화이며, `0.28` 경계 fixture 2건만 최소 재실측·보정했다
    (dev tree 직접 mount 검증 25 passed). R2는 이번 적용으로 `risk_
    off` 서브조건 트랙을 일단락하며, `risk_off` 하드 게이트 단일
-   권위화는 별도 후속 과제로 남긴다.
+   권위화는 별도 후속 과제로 남긴다. **[2026-08-03 KST 11차 갱신,
+   R2 상태: 운영 반영 초기 실측 완료]** `buy_path_variable_gate_
+   matrix.md` §13.2.11 — 사용자 승인에 따른 장중 예외 배포 이후 실제
+   운영 데이터 10개 종목 전량에서 `entry_score +0.10`/`ranking_score
+   +0.055` 이동을 확인했고, `073240` 종목의 `buy_candidate` `false→
+   true` 뒤집힘도 관측했다. **판정 B(초기 방향성 확인)** — `approve`/
+   `order_requests`는 이번 창(4 cycle)에 0건이라 효과 확인은 다음
+   턴 이후 과제로 남긴다. `sync_source`가 컨테이너 재기동보다 먼저
+   끝나 그 시점부터 새 코드가 이미 적용됐다는 사실도 새로 확인했다.
 - [x] `ranking_score`는 유지 가치가 있는가 — **[2026-08-01 KST 갱신]
    판정 C(제거/대체)로 닫힘.** `buy_path_variable_gate_matrix.md`
    §13.1.1 참고. **[2026-08-02 KST 갱신]** 대체 contract 설계 비교
