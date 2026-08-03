@@ -478,23 +478,24 @@ def _assess_buy_eligibility(
         return False, tuple(reasons)
     reasons.append("eligibility_allocation_available")
 
-    if (
-        market_regime is not None
-        and market_regime.risk_tone == "risk_off"
-        and market_regime.regime_label == "bearish_trend"
-    ):
-        if source_type == "core":
-            if risk_off_exception_eligible:
+    if _is_bearish_trend_risk_off_regime(market_regime):
+        # risk_off 하드 게이트의 최종 pass/block 권위는 오직
+        # risk_off_exception_eligible(_assess_core_risk_off_buy_guard()가
+        # 계산) 하나에 있다 — 이 함수는 그 값을 그대로 소비할 뿐, 별도로
+        # 재계산하지 않는다. source_type("core"/그 외)에 따라 달라지는
+        # 것은 오직 리포팅용 reason_code 구성뿐이다(core는 authoritative
+        # 게이트의 세부 사유를 그대로 노출, 그 외는 단일 사유만 노출 —
+        # 기존 동작을 그대로 유지).
+        if risk_off_exception_eligible:
+            if source_type == "core":
                 reasons.extend(core_risk_off_guard_reasons)
-                reasons.append("eligibility_risk_off_exception_pass")
-            else:
+            reasons.append("eligibility_risk_off_exception_pass")
+        else:
+            if source_type == "core":
                 reasons.extend(
                     core_risk_off_guard_reasons or ("eligibility_core_risk_off_guard_blocked",)
                 )
                 return False, tuple(dict.fromkeys(reasons))
-        elif risk_off_exception_eligible:
-            reasons.append("eligibility_risk_off_exception_pass")
-        else:
             reasons.append("eligibility_risk_off_block")
             return False, tuple(reasons)
     reasons.append("eligibility_regime_pass")
@@ -588,6 +589,24 @@ def _assess_buy_eligibility(
     return True, tuple(reasons)
 
 
+def _is_bearish_trend_risk_off_regime(
+    market_regime: MarketRegimeAssessment | None,
+) -> bool:
+    """risk_off 하드 게이트가 적용되는 레짐 조건의 단일 정의.
+
+    `_is_core_risk_off_regime()`(authoritative 게이트 발동 여부)와
+    `_assess_buy_eligibility()`(하드 게이트 자체)가 각자 이 조건을 인라인으로
+    복제해 쓰던 것을 여기 하나로 모았다 — source_type 여부는 이 함수의
+    관심사가 아니다.
+    """
+    if market_regime is None:
+        return False
+    return (
+        market_regime.risk_tone == "risk_off"
+        and market_regime.regime_label == "bearish_trend"
+    )
+
+
 def _is_core_risk_off_regime(
     *,
     source_type: str,
@@ -595,12 +614,7 @@ def _is_core_risk_off_regime(
 ) -> bool:
     if source_type != "core":
         return False
-    if market_regime is None:
-        return False
-    return (
-        market_regime.risk_tone == "risk_off"
-        and market_regime.regime_label == "bearish_trend"
-    )
+    return _is_bearish_trend_risk_off_regime(market_regime)
 
 
 def _assess_core_risk_off_buy_guard(

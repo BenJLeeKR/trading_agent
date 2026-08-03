@@ -5161,3 +5161,52 @@ read-only 분석, 코드 변경 없음)
   stale`, `main`(HEAD `12bc6414`) 기준.
 - 상세: `docs/20_system_analysis/buy_path_variable_gate_matrix.md`
   §14.
+
+### `risk_off` 하드 게이트 단일 권위화 B안 설계·적용 완료(2026-08-03 KST, 동작 무변화)
+
+- 전제: `entry_score`의 `risk_off -0.05` soft penalty(§13.2.10)는
+  유지한 채, `risk_off`의 최종 차단/예외 승인 판정이 soft penalty/
+  hard gate/authoritative gate 3곳에 흩어진 구조만 정리한다. C안
+  (soft penalty 제거)은 범위 밖.
+- 설계 비교: A안(현행 유지)/B안(soft penalty 유지, hard gate만 단일
+  권위화)/C안(soft penalty 제거)을 비교했다. C안은 `bullish_trend+
+  risk_off`(하드 게이트가 전혀 발동하지 않는 population, 이력 다수)
+  에 안전망 없이 완화가 번지는 위험이 커 §13.2.8과 같은 논리로
+  기각했고, **B안(가장 보수적, 판정 무변화)**을 권고했다.
+- `source_type` 분기 위치 확정: `_assess_core_risk_off_buy_guard()`
+  안으로 흡수하지 않고 `_assess_buy_eligibility()` 바깥(호출자 쪽)
+  wrapper 성격으로 유지했다 — authoritative 게이트가 eligibility
+  전용 reason-code 컨벤션·source_type 구분까지 알 필요가 없어지므로
+  흡수보다 결합도가 낮다.
+- 무엇을 단일 권위화했는지: (1) `market_regime.risk_tone=="risk_off"
+  and regime_label=="bearish_trend"` 조건을 `_is_bearish_trend_
+  risk_off_regime()` 헬퍼 하나로 추출해 `_is_core_risk_off_regime()`
+  과 `_assess_buy_eligibility()`가 공유하도록 통일했다. (2)
+  `_assess_buy_eligibility()` 내부의 4-leaf 분기(core/비-core ×
+  pass/block을 각각 따로 기술)를 `risk_off_exception_eligible` 값
+  하나로 pass/block을 판단하는 2-leaf 분기로 줄였다 — source_type은
+  reason_code 구성에만 관여하도록 좁혔다.
+- 왜 판정 무변화인지: 4개 (source_type, risk_off_exception_eligible)
+  조합을 전수 대조해 새 코드와 기존 코드의 분기 결과가 동일함을 코드
+  추적으로 증명했고, 기존 테스트 25건이 fixture 변경 없이 통과했다
+  (신규 헬퍼 직접 검증용 1건 추가, 총 26건). `expected_value_gate.py`
+  /`test_core_risk_off_topk_projection.py` 관련 테스트 7건도 무변화로
+  통과했다.
+- 검증: `bash scripts/harness/run.sh accept backend-file
+  src/agent_trading/services/deterministic_trigger_engine.py` PASS.
+  dev tree 직접 mount 임시 컨테이너에서 `test_deterministic_trigger_
+  engine.py` 26 passed, `test_expected_value_gate.py`+`test_core_
+  risk_off_topk_projection.py` 7 passed, `ruff check` 통과. 전체
+  테스트는 수행하지 않았다.
+- 운영 실측: 필요 없다고 판단 — 구조 정리이며 판정 결과(계수·
+  threshold·reason_code)가 전혀 바뀌지 않았으므로, 운영 데이터로
+  재확인할 대상 자체가 없다.
+- 범위 밖: C안(soft penalty 제거), `decision_orchestrator.py`의
+  pre-AI short circuit에서 발견한 `risk_off_exception_eligible`
+  재확인 코드(R3의 `allocation_budget_ok`와 유사한 무해한 재확인
+  후보, 별도 소규모 정리 후보로만 기록), `expected_value_gate.py`/
+  AI-context/downstream reporting.
+- git 상태: 브랜치 `risk-off-hard-gate-single-authority-b`,
+  `main`(HEAD `c4eb852b`) 기준.
+- 상세: `docs/20_system_analysis/buy_path_variable_gate_matrix.md`
+  §13.2.12.
