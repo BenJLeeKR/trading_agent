@@ -5293,3 +5293,12 @@ read-only 분석, 코드 변경 없음)
   턴은 문서 4건만 수정하며 코드 변경은 없다.
 - 상세: `docs/20_system_analysis/buy_path_variable_gate_matrix.md`
   §13.4.2.
+
+### `SPPV-3` 존속 판정 — 폐기 아닌 재정의 후 지속(2026-08-03 KST, read-only, 새 실측 없음)
+
+- 판정: `BUY 경로 리팩터링`(R1~R4) 완료를 반영해 `SPPV-3`를 폐기하지
+  않고 **재정의 후 지속**하기로 판정했다. 상세: `[DESIGN] signal_
+  predictive_power_validation.md` §28.
+- 다음 1순위 액션: **SPPV-3 재정의 문서 초안 확장**(§28의 재정의
+  목표·검증 축 4개를 근거로 §4.3~§4.5의 새 공식 기준 재작성) —
+  체크리스트 작성은 이 초안의 부산물로 뒤따른다.

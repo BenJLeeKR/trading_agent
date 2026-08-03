@@ -3800,3 +3800,12 @@ variable_gate_matrix.md` §13.2.10.
 확인했다. `portfolio_allocation`의 다른 소비처는 전부 범위 밖으로
 유지했다. 상세: `docs/20_system_analysis/buy_path_variable_gate_
 matrix.md` §13.3.2.
+
+**[2026-08-03 KST, 최소 미러링] `SPPV-3` 존속 판정 — 재정의 후
+지속(폐기 아님).** `BUY 경로 리팩터링`(R1~R4)은 경로/계약/병목
+정리이고 `SPPV-3`는 신호/점수 예측력 검증이라 전자가 끝나도 후자는
+자동 소멸하지 않는다. 다만 §4.3~§4.5가 전제한 구 `entry_score`
+공식은 R2에서 이미 바뀌었고, funnel 전환율 측정에는 `stale_
+snapshot_guard`(PR #119) 병목이 섞여 있었다는 점에서 기존 SPPV-3를
+그대로 이어갈 수는 없다. 상세: `[DESIGN] signal_predictive_power_
+validation.md` §28.
