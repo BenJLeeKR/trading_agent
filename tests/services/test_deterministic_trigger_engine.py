@@ -398,6 +398,12 @@ def test_trigger_engine_core_risk_off_ranking_boundary_shifts_by_coverage_score_
     Δ=0.025) authoritative 게이트 점수도 함께 낮아져 경계가 이동했다.
     좁은 경계 자체를 다시 실측해 blocked/passed 값을 재조정했다(overall
     0.33/0.34 → 0.44/0.45) — 게이트 코드/threshold(0.28)는 무변화다.
+
+    §13.2.9/§13.2.10: `risk_off` soft penalty를 `-0.15 → -0.05`로
+    완화해 entry_score가 이 fixture 기준 0.10만큼 다시 높아지면서
+    경계가 재차 이동했다. 좁은 경계를 다시 실측해 blocked/passed
+    값을 재조정했다(overall 0.44/0.45 → 0.00/0.02) — 하드 게이트
+    코드/threshold(0.28)는 여전히 무변화다.
     """
     common_kwargs = dict(
         source_type="core",
@@ -409,7 +415,7 @@ def test_trigger_engine_core_risk_off_ranking_boundary_shifts_by_coverage_score_
 
     blocked = assess_deterministic_triggers(
         signal_feature_snapshot=_make_signal(
-            overall="0.44",
+            overall="0.00",
             fast="0.80",
             slow="0.30",
             volume_surge_ratio="1.20",
@@ -419,7 +425,7 @@ def test_trigger_engine_core_risk_off_ranking_boundary_shifts_by_coverage_score_
     )
     passed = assess_deterministic_triggers(
         signal_feature_snapshot=_make_signal(
-            overall="0.45",
+            overall="0.02",
             fast="0.80",
             slow="0.30",
             volume_surge_ratio="1.20",
@@ -453,6 +459,10 @@ def test_trigger_engine_core_risk_off_authoritative_score_matches_ranking_score_
     §13.2.5: entry_score에서 자본 보너스/패널티 항을 제거해 경계가
     이동했으므로(overall 0.33/0.34 → 0.44/0.45, 위 boundary 테스트와
     동일한 재실측 근거), fixture를 함께 갱신했다.
+
+    §13.2.9/§13.2.10: `risk_off` soft penalty를 `-0.15 → -0.05`로
+    완화해 경계가 재차 이동했으므로(overall 0.44/0.45 → 0.00/0.02,
+    위 boundary 테스트와 동일한 재실측 근거), fixture를 함께 갱신했다.
     """
     portfolio_allocation = _make_portfolio(max_new_capital_pct=2.5, current_weight_pct=0.0)
     common_kwargs = dict(
@@ -465,7 +475,7 @@ def test_trigger_engine_core_risk_off_authoritative_score_matches_ranking_score_
 
     passed = assess_deterministic_triggers(
         signal_feature_snapshot=_make_signal(
-            overall="0.45",
+            overall="0.02",
             fast="0.80",
             slow="0.30",
             volume_surge_ratio="1.20",
@@ -475,7 +485,7 @@ def test_trigger_engine_core_risk_off_authoritative_score_matches_ranking_score_
     )
     blocked = assess_deterministic_triggers(
         signal_feature_snapshot=_make_signal(
-            overall="0.44",
+            overall="0.00",
             fast="0.80",
             slow="0.30",
             volume_surge_ratio="1.20",
