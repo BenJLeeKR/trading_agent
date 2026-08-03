@@ -5210,3 +5210,46 @@ read-only 분석, 코드 변경 없음)
   `main`(HEAD `c4eb852b`) 기준.
 - 상세: `docs/20_system_analysis/buy_path_variable_gate_matrix.md`
   §13.2.12.
+
+### R4(`relative_activity` 역할 분리) 판정 완료(2026-08-03 KST, read-only 분석, 코드 변경 없음)
+
+- 전제(이미 닫힌 사실, 재검증 없이 사용): R1~R3(§13.1~§13.3), R2의
+  `risk_off` 하드 게이트 단일 권위화(§13.2.12) — 전부 참조만 하고
+  다시 열지 않는다.
+- 전수 매핑: `volume_surge_ratio`/`turnover_surge_ratio`가
+  `entry_score`의 `relative_activity_bonus`(soft, 최대 `+0.10`),
+  `_assess_buy_eligibility()`의 `eligibility_low_relative_activity`
+  (hard, `max(...)<1.10`, 전체 BUY 공통), `_assess_core_risk_off_
+  buy_guard()`의 `eligibility_core_risk_off_activity_blocked`(hard,
+  `max(...)<1.20`, topk override 시 `1.10`, `core`+`bearish_trend`+
+  `risk_off` 서브셋 전용), shadow 함수 2개(`>=1.10`/`>=1.15`,
+  reporting only), `market_regime.py`의 regime 분류 입력
+  (`volume_surge_ratio>=1.5`)에 각각 반영됨을 확인했다.
+  `average_volume_20d`/`average_turnover_20d`·참여율 게이트는 R3에서
+  이미 execution feasibility로 분류된 별개 개념이라 제외했다.
+- 판정: entry_score soft bonus vs eligibility 1.10 hard gate는
+  **정당한 역할 분리**다(이력 6,345건 차단 중 309건·2종목은
+  `entry_score≥0.65`였던 실제 결정적 사례). eligibility 1.10과
+  authoritative gate 1.20의 중복은 **과잉 중복에 가깝다** —
+  authoritative gate 쪽은 이력 13,312건 전체에서 이 사유로 차단된
+  적이 0건이고(ranking `0.28`/signal 체크가 항상 먼저 걸러냄), topk
+  override(`activity_min`을 1.10으로 완화)도 이력상 0건 선택됐다.
+  다만 두 게이트의 적용 population이 다르므로 "관측된 범위 내에서
+  dead"라는 조건부 판정이다.
+- 설계안: A안(현행 유지)/B안(authoritative gate의 activity 하드
+  플로어 제거, eligibility 판정에 위임)/C안(두 hard gate threshold를
+  하나로 통합)을 비교했다. C안은 R2 C안과 같은 패턴으로 threshold
+  재산정이 필요해 기각한다. **B안 방향이 유력**하나, "dead"라는
+  근거가 topk override 미관측 조건부 사실이라 다음 턴은 코드 수정이
+  아니라 **추가 실측**(topk override 케이스 포함 C-set 확인)을
+  먼저 진행한다.
+- 미확인 사항: topk override가 실제로 선택될 수 있는 조건에서
+  activity 체크가 결정적이었던 적이 정말 없는지(이력상 선택 자체가
+  0건이라 직접 관측 불가), authoritative gate가 activity 체크에
+  도달하기 전에 항상 ranking/signal로 걸러지는 구조가 우연이 아니라
+  구조적으로 항상 그런지.
+- git 상태: 이번 턴 확인 시점 로컬 `main`(HEAD `52cdb0ee`) =
+  `origin/main`(이격 0, PR #120 머지 및 자동 배포 반영 완료). 이번
+  턴은 문서 4건만 수정하며 코드 변경은 없다.
+- 상세: `docs/20_system_analysis/buy_path_variable_gate_matrix.md`
+  §13.4.1.

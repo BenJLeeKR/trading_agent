@@ -60,8 +60,10 @@
 - [x] `entry_score` 역할 1차 분류 완료
 - [x] `ranking_score` 역할 1차 분류 완료
 - [x] `market_regime` 역할 1차 분류 완료
-- [ ] `portfolio_allocation` 역할 1차 분류 완료
-- [ ] `relative_activity` 역할 1차 분류 완료
+- [x] `portfolio_allocation` 역할 1차 분류 완료 — **[2026-08-03 KST
+  갱신]** `buy_path_variable_gate_matrix.md` §13.3.1/§13.3.2로 완료
+- [x] `relative_activity` 역할 1차 분류 완료 — **[2026-08-03 KST
+  갱신]** §13.4.1로 완료(다음 코드 수정은 추가 실측 이후)
 - [x] `preferred_strategy` 역할 1차 분류 완료
 - [x] "정당한 중복"과 "과잉 중복"을 분리한 표 작성
 - [x] 이번 리팩터링에서 당장 건드리지 않을 축 명시
@@ -223,8 +225,13 @@
    상세: `buy_path_variable_gate_matrix.md` §13.1.6 "검증 환경 설명
    재확인/정정". 이 질문은 2단계를 기다리지 않고 먼저 닫혔으며, 남은
    2~4번 질문과 R2~R4는 이 일정대로 진행한다(날짜 변경 없음).
-- [ ] `portfolio_allocation`은 후보 점수에 남아야 하는가
-- [ ] `relative_activity`는 soft bonus로 둘 이유가 남아 있는가
+- [x] `portfolio_allocation`은 후보 점수에 남아야 하는가 — R1(§13.1.5
+  C안)에서 authoritative 게이트 전용으로 이미 의도적으로 결정된 사안
+- [x] `relative_activity`는 soft bonus로 둘 이유가 남아 있는가 —
+  **[2026-08-03 KST 갱신]** §13.4.1에서 "그렇다"(entry_score soft
+  bonus는 정당한 분리)로 답이 좁혀졌다. 남은 것은 hard gate 쪽 중복
+  (eligibility 1.10 vs authoritative gate 1.20)이며 다음 턴은 추가
+  실측이다
 
 완료 조건 체크리스트:
 
@@ -432,7 +439,15 @@ threshold는 무변화).
   갱신] A 적용 완료(13.3.2)** — `buy_candidate` 최종식의
   `allocation_budget_ok` 재확인을 제거했다(동작 무변화, 테스트 25건
   fixture 변경 없이 통과). R3 트랙은 이것으로 닫는다.
-- [ ] R4 activity 계열 soft/hard 중복 정리 시작
+- [x] R4 activity 계열 soft/hard 중복 정리 시작 — **[2026-08-03 KST
+  갱신]** 전수 매핑·역할 분리 판정 완료(§13.4.1). entry_score soft
+  bonus vs eligibility 1.10 hard gate는 정당한 분리(이력 309건이
+  실제 결정적)로 판정했다. eligibility 1.10과 authoritative gate
+  1.20의 중복은 과잉 중복에 가깝다고 판정했다 — authoritative gate
+  쪽은 이력 13,312건 전체에서 이 사유로 차단된 적이 0건이다(topk
+  override도 0건 선택). A/B/C 비교 결과 B안(authoritative gate의
+  activity 하드 플로어 제거)을 권고하나, "dead"라는 근거가 조건부라
+  다음 턴은 코드 수정이 아니라 추가 실측이다.
 - [ ] selection vs sizing vs feasibility 경계 재설정 — R3 쪽은
   §13.3.1에서 "sizing은 risk의 하위 개념으로 흡수됨"으로 정리됐다.
   R4 쪽은 아직 미착수.
