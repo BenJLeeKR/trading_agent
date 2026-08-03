@@ -162,7 +162,14 @@
    해소된다. **1순위 권고 후보는 B2(-0.05)**이며, 참고용 상한
    비교 `B3(0.00)`은 `bearish_trend`/`range_bound`까지 끌어들여
    권고하지 않는다. 다음 코드 수정 단위는 **A(바로 초안 가능)**로
-   좁혔다.
+   좁혔다. **[2026-08-03 KST 10차 갱신, R2 상태: B2(-0.05) 코드
+   적용 완료]** `buy_path_variable_gate_matrix.md` §13.2.10 —
+   `_build_entry_score()`의 `risk_off` 패널티를 `-0.15→-0.05`로
+   완화했다. 하드 게이트·authoritative 게이트 코드·shadow·reporting
+   은 무변화이며, `0.28` 경계 fixture 2건만 최소 재실측·보정했다
+   (dev tree 직접 mount 검증 25 passed). R2는 이번 적용으로 `risk_
+   off` 서브조건 트랙을 일단락하며, `risk_off` 하드 게이트 단일
+   권위화는 별도 후속 과제로 남긴다.
 - [x] `ranking_score`는 유지 가치가 있는가 — **[2026-08-01 KST 갱신]
    판정 C(제거/대체)로 닫힘.** `buy_path_variable_gate_matrix.md`
    §13.1.1 참고. **[2026-08-02 KST 갱신]** 대체 contract 설계 비교

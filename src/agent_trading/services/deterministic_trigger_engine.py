@@ -1234,7 +1234,10 @@ def _build_entry_score(
             score += 0.05
             reason_codes.append("trigger_risk_on")
         if market_regime.risk_tone == "risk_off":
-            score -= 0.15
+            # §13.2.9 실측(B2 권고)에 따라 -0.15 -> -0.05로 완화한다.
+            # 하드 게이트(_is_core_risk_off_regime/_assess_buy_eligibility의
+            # bearish_trend+risk_off 조건)는 이 계수와 무관하게 그대로다.
+            score -= 0.05
             reason_codes.append("trigger_risk_off_penalty")
 
     # entry_score의 자본 보너스/패널티 항(구 entry_score_allocation_

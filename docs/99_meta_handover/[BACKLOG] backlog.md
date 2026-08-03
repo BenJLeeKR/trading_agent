@@ -4970,3 +4970,43 @@ read-only, 코드 변경 없음)
   이번 턴은 문서 5건만 수정하며 코드 변경은 없다.
 - 상세: `docs/20_system_analysis/buy_path_variable_gate_matrix.md`
   §13.2.9.
+
+### `risk_off` soft penalty B2(-0.05) 코드 적용(2026-08-03 KST,
+코드 수정, DB write/KIS 호출 없음)
+
+- 전제(이미 닫힌 사실, 재검증 없이 사용): R1 정리(§13.1.1~§13.1.6),
+  R2 allocation 트랙(§13.2.1~§13.2.5), regime/risk 서브조건 분해
+  (§13.2.6), `risk_off -0.15` 기여도 실측·판정 C(§13.2.7), A/B/C
+  설계 비교·1순위 B안(§13.2.8), B안 후보 계수별 영향 실측·1순위 B2
+  (§13.2.9) — 전부 참조만 하고 다시 열지 않는다.
+- 무엇을 바꿨는지: `_build_entry_score()`의 `if market_regime.
+  risk_tone == "risk_off": score -= 0.15`를 `score -= 0.05`로
+  바꿨다. 조건식·`reason_codes` append는 그대로다 — 계수 값 하나만
+  바꾼 최소 수정이다.
+- 건드리지 않은 범위: `bullish_trend +0.10`/`risk_on +0.05`, 하드
+  게이트(`_is_core_risk_off_regime()`/`_assess_buy_eligibility()`),
+  authoritative 게이트(`_assess_core_risk_off_buy_guard()`) 코드,
+  `_build_buy_ranking_score()` 공식, shadow/reporting 함수 — 전부
+  코드 무변화(단, `entry_score`가 입력인 값들은 `risk_off` 표본에서
+  `0.55*0.10=0.055`만큼 자연스럽게 이동).
+- fixture 보정(최소 2건): authoritative `0.28` 경계를 정확히
+  걸치도록 설계된 좁은 경계 테스트 2건(`test_trigger_engine_core_
+  risk_off_ranking_boundary_shifts_by_coverage_score_weight`,
+  `test_trigger_engine_core_risk_off_authoritative_score_matches_
+  ranking_score_formula`)의 `overall` 입력값을 `0.44/0.45→0.00/0.02`
+  로 재실측·보정했다. 게이트 코드·threshold는 무변화.
+- 검증(dev tree 직접 mount, 이전 턴 문서화 사유로 재논의 않음):
+  pytest 25 passed, py_compile·ruff 통과. (표준 명령) `accept
+  backend-file` PASS(3 tests). full pytest·KIS 호출·DB write·
+  `.env` 수정은 하지 않았다.
+- 아직 남은 운영 실측: `B2` 적용 후 실제 override 빈도 변화,
+  `bearish_trend`+`risk_off`(50건)의 `risk_off_exception_eligible`
+  최종 처리 경로 — 전부 다음 턴 이후 과제. `risk_off` 하드 게이트
+  단일 권위화는 인지만 하고 구현하지 않았다(§13.2.8에서 이미
+  "권고하지 않음"으로 판정한 C안과 연결되는 별도 논의).
+- git 상태: 이번 턴 확인 시점 로컬 `main`(HEAD `e027ec08`) =
+  `origin/main`(이격 0, PR #112 머지 반영 완료). 이번 턴 변경분은
+  코드 2건(구현 파일 + 테스트 파일) + 문서 5건이며 별도 작업
+  브랜치에서 커밋·PR로 진행한다.
+- 상세: `docs/20_system_analysis/buy_path_variable_gate_matrix.md`
+  §13.2.10.

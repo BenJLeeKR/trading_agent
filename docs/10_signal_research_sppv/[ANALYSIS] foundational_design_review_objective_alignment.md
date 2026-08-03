@@ -3764,3 +3764,11 @@ matrix.md` §13.2.7.
 않는다. 다음 코드 수정 단위는 **A(바로 초안 가능)**로 좁혔다.
 상세: `docs/20_system_analysis/buy_path_variable_gate_matrix.md`
 §13.2.9.
+
+**[2026-08-03 KST, 최소 미러링] B2(-0.05) 코드 적용 완료.**
+`_build_entry_score()`의 `risk_off` 패널티를 `-0.15→-0.05`로
+완화했다. 하드 게이트·authoritative 게이트 코드·shadow·reporting은
+무변화이며, `0.28` 경계 fixture 2건만 최소 재실측·보정했다(dev tree
+직접 mount 검증 25 passed). `risk_off` 하드 게이트 단일 권위화는
+별도 후속 과제로 남긴다. 상세: `docs/20_system_analysis/buy_path_
+variable_gate_matrix.md` §13.2.10.

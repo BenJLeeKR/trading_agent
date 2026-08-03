@@ -1995,6 +1995,110 @@ row 기준과 같은 방향이다 — `B1`은 매우 소수(전체 이력 3종�
    으로 얼마나 이동하는지(§13.1.6 명시식 기준 재계산)는 코드 초안
    작성 시점에 함께 확인해야 한다.
 
+#### 13.2.10 R2 — `risk_off` soft penalty B2(-0.05) 코드 적용(2026-08-03 KST)
+
+**목적**: §13.2.9에서 1순위로 좁힌 B2(-0.05) 권고 후보를 실제
+코드로 반영한다. 이번 턴은 `risk_off` soft penalty 계수 완화만
+수행하며, 하드 게이트 구조(`bearish_trend`+`risk_off` 조합에서만
+발동)는 그대로 유지한다 — "`risk_off` 하드 게이트 단일 권위화"는
+인지하되 이번 턴 범위 밖으로 남긴다.
+
+**전제(이미 닫힌 사실, 재검증하지 않음)**: R1 정리(§13.1.1~§13.1.6),
+R2 allocation 4분류·실측·구조 분리·제거(§13.2.1~§13.2.5), regime/risk
+서브조건 분해(§13.2.6), `risk_off -0.15` 기여도 실측·판정 C(§13.2.7),
+A/B/C 설계 비교·1순위 B안 권고(§13.2.8), B안 후보 계수별 영향 실측·
+1순위 B2 권고(§13.2.9) — 전부 참조만 하고 다시 열지 않는다.
+
+**어떤 상수를 어떻게 바꿨는지**: `_build_entry_score()` 1236~1239행의
+`if market_regime.risk_tone == "risk_off": score -= 0.15`를
+`score -= 0.05`로 바꿨다. 조건식(`risk_tone=="risk_off"`, `regime_
+label`과 무관하게 적용)과 `reason_codes.append("trigger_risk_off_
+penalty")`는 그대로 유지했다 — 계수 값 하나만 바꾼 최소 수정이다.
+
+**건드리지 않은 범위**:
+- `bullish_trend +0.10`, `risk_on +0.05` — 코드 한 줄도 건드리지
+  않았다.
+- 하드 게이트(`_is_core_risk_off_regime()`, `_assess_buy_eligibility()`
+  의 `risk_off`+`bearish_trend` 블록) — `entry_score`를 참조하지
+  않는 독립 코드라 전혀 영향받지 않는다. 조건식 자체도 무변화다.
+- authoritative 게이트(`_assess_core_risk_off_buy_guard()`, §13.1.6)
+  — `allocation_bonus_like` 계산과 `0.28` threshold 코드는 무변화다.
+  다만 `entry_score`가 입력이므로 게이트가 계산하는 점수 값 자체는
+  `risk_off` 표본에서 `0.55*0.10=0.055`만큼 높아진다(코드 변경이
+  아니라 입력값 변화에 따른 자연스러운 결과).
+- `_build_buy_ranking_score()`(`ranking_score` 공식) — 코드 무변화,
+  다만 같은 이유로 `risk_off` 표본에서 값 자체는 `0.055`만큼 높아진다.
+- shadow(`_build_core_risk_off_shadow_experiment_metadata()`,
+  `_build_event_overlay_shadow_experiment_metadata()`) — 코드
+  무변화. 다만 이 함수들이 받는 `entry_score`/`ranking_score` 값이
+  `risk_off` 표본에서 함께 이동하므로, 그 값을 사용하는 shadow
+  bucket 판정 결과가 fixture 차원에서 달라질 수 있다(아래 확인).
+- reporting(`decision_factory.py`, `trigger_proxy_attribution.py`) —
+  코드 무변화, 저장 구조도 무변화.
+- EV gate — 이 신호를 참조하지 않으므로 무관(§13.2.6에서 이미 확인,
+  재검증 안 함).
+
+**실행한 검증과 결과**(변경 파일 기준 좁은 범위, dev tree 직접 mount
+— 이유는 이전 턴에 이미 문서화, 재논의하지 않음):
+- `python3 -m pytest tests/services/test_deterministic_trigger_
+  engine.py -v` → **25 passed**(경계값 보정 2건 반영 후 전부 통과,
+  아래 참고)
+- `python3 -m py_compile src/agent_trading/services/deterministic_
+  trigger_engine.py tests/services/test_deterministic_trigger_
+  engine.py` → 통과(exit 0)
+- `python3 -m ruff check src/agent_trading/services/deterministic_
+  trigger_engine.py tests/services/test_deterministic_trigger_
+  engine.py` → All checks passed
+- (표준 명령) `bash scripts/harness/run.sh accept backend-file
+  src/agent_trading/services/deterministic_trigger_engine.py` →
+  PASS(`tests_run_count=3`, `test_failed_count=0`)
+- full pytest·KIS 호출·DB write·`.env` 수정은 하지 않았다.
+
+**fixture 보정이 필요했던 이유(최소 범위 2건)**: 계수를 `-0.15→
+-0.05`로 완화하면 `risk_off` 표본의 `entry_score`가 일률적으로
+`0.10`만큼 높아진다. `test_trigger_engine_core_risk_off_ranking_
+boundary_shifts_by_coverage_score_weight`(§13.2.5에서 이미 `overall
+0.33/0.34→0.44/0.45`로 한 차례 재조정된 좁은 경계 테스트)와
+`test_trigger_engine_core_risk_off_authoritative_score_matches_
+ranking_score_formula`(§13.1.6 회귀 테스트, 같은 fixture 재사용)는
+authoritative 게이트의 `0.28` threshold를 정확히 걸치도록 설계된
+좁은 경계 테스트라, `entry_score`가 `0.10` 높아지면서 두 fixture
+(`overall=0.44`/`0.45`)가 모두 통과 쪽으로 넘어갔다. 실측으로 새
+경계를 다시 찾아 `overall 0.44/0.45 → 0.00/0.02`로 최소 범위만
+갱신했다 — **게이트 코드·threshold(`0.28`)는 이번에도 무변화**이며,
+바뀐 것은 좁은 경계를 만드는 fixture 입력값뿐이다. 다른 23건은
+계수 완화의 영향권 밖이거나(risk_off 무관 fixture) 영향권 안이라도
+`0.65`/`0.28` 경계에서 충분히 떨어져 있어 보정이 필요 없었다.
+
+**확인 항목별 결과**:
+1. `entry_score`만 계수 완화되고 하드 게이트 조건식 자체는 그대로인지
+   — 그대로다. `_is_core_risk_off_regime()`/`_assess_buy_eligibility()`
+   코드에 `entry_score`를 참조하는 부분이 없음을 재확인했다.
+2. `buy_candidate_threshold(0.65)` 경계 fixture가 바뀌면 최소 범위로만
+   조정했는지 — 이번 계수 변경으로 `0.65` 경계 자체에 걸린 기존
+   fixture는 없었다(§13.2.9 실측에서 `B2`의 신규 통과분은 기존에
+   경계 테스트로 쓰이지 않던 population). 조정이 필요했던 것은
+   `0.28`(authoritative) 경계 fixture 2건뿐이었다.
+3. authoritative 게이트 관련 fixture도 `entry_score` 입력 변화 때문에
+   영향받으면 최소 보정했는지 — 위 2건이 정확히 이 경우였고, `overall`
+   입력값만 재실측해 최소 보정했다.
+4. shadow/reporting 값은 로직 변경 없이 유지됐는지 — 로직(함수 코드)은
+   전부 무변화이며, 나머지 23건 통과 결과가 이를 뒷받침한다(shadow
+   관련 테스트 6건 모두 fixture 변경 없이 그대로 통과).
+
+**아직 남은 운영 실측 필요 사항**:
+1. `B2(-0.05)` 적용 후 실제 운영 데이터에서 `011070`류 override
+   빈도가 실제로 줄어드는지는 이번 턴에서 확인하지 않았다 — 코드
+   병합·운영 반영 이후 별도 실측이 필요하다.
+2. `bearish_trend`+`risk_off` population(§13.2.8의 50건)에 대한
+   `risk_off_exception_eligible` 최종 처리 경로는 여전히 미확인
+   (§13.2.7/§13.2.8과 동일 범위 제한).
+3. `risk_off` 하드 게이트 단일 권위화(entry_score 쪽 soft penalty를
+   완전히 없애고 하드 게이트만 남기는 구조 재편)는 이번 턴에서
+   인지만 했을 뿐 설계·구현하지 않았다 — §13.2.8에서 이미 "권고하지
+   않음"으로 판정한 C안과 연결되는 논의이며, 다음 턴 이후 과제로
+   남긴다.
+
 ### 13.3 R3 — `portfolio_allocation`의 역할 분리
 
 - 범위:
@@ -2119,7 +2223,13 @@ row 기준과 같은 방향이다 — `B1`은 매우 소수(전체 이력 3종�
    해소된다. **1순위 권고 후보는 B2(-0.05)**이며, 참고용 상한
    비교인 `B3(0.00)`은 `bearish_trend`/`range_bound`까지 끌어들여
    권고하지 않는다. 다음 코드 수정 단위는 **A(바로 초안 가능)**로
-   좁혔다
+   좁혔다. **[2026-08-03 KST 10차 갱신] B2(-0.05) 코드 적용 완료
+   (13.2.10)** — `_build_entry_score()`의 `risk_off` 패널티를
+   `-0.15→-0.05`로 완화했다. 하드 게이트·authoritative 게이트 코드·
+   shadow·reporting은 전부 무변화이며, `0.28` 경계에 걸린 fixture
+   2건만 최소 재실측·보정했다(dev tree 직접 mount 검증 25 passed).
+   `risk_off` 하드 게이트 단일 권위화는 인지만 하고 이번 턴 범위
+   밖으로 남긴다
 3. **R3/R4**: allocation/activity를 점수 밖으로 내릴지 검토
 4. **R5**: 상류 결정 이후 하류 연쇄 영향 확인
 
