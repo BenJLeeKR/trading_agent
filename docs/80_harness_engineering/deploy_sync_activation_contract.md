@@ -62,6 +62,7 @@ sync 이후 실제 런타임에 변경을 반영하는 단계다.
 
 - `sync_source`는 장 종료 후 일반 배포에서 실행된다.
 - 장중에도 `activate_required=0`, `sync_only_allowlist_count>0`, `sync_only_blocked_count=0`이면 `sync_source`만 실행할 수 있다. 이 경로에는 `docs/` 변경과 제한된 read-only `scripts/` 변경이 포함된다.
+- 이때 `market_hours_guard`가 `skipped`되더라도 `sync_source`는 `always()`와 `needs.market_hours_guard.result == 'skipped'` 분기를 통해 sync-only 조건을 계속 평가해야 한다.
 - `activate_runtime`은 `sync_source` 성공 이후, `allow_deploy=1`일 때만 실행된다.
 - `activate_runtime`은 `push main`에서는 `activate_required=1`일 때만 실행하고, 수동 `workflow_dispatch + deploy_main=true`는 항상 activate를 허용한다.
 - 실행 지표 `deploy_sync_run_count`, `deploy_sync_only_run_count`, `deploy_activate_run_count`, `deploy_activate_skipped_by_market_hours_count`를 추가했다.

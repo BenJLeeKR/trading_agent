@@ -26,6 +26,7 @@ GitHub Actions도 사람과 AI가 쓰는 동일한 하네스를 사용한다. CI
 - 운영 배포는 `.github/workflows/harness.yml`의 `sync_source`, `activate_runtime` job으로 분리돼 있고 둘 다 `needs: safe` 성공 뒤에만 실행한다.
 - 문서만 변경된 `main` push는 `changes` job에서 `deploy_required=0`, `activate_required=0`으로 판정해 운영 재기동을 실행하지 않는다.
 - 문서만 변경된 `main` push는 `docs/` 경로가 sync-only 허용 대상으로 잡히면 `sync_source`만 실행하고 `activate_runtime`은 실행하지 않는다.
+- 이 경로는 `market_hours_guard`가 `skipped`여도 `sync_source`의 `always()` 조건으로 분기 평가가 계속 진행돼야 한다.
 - `changes` job은 `activate_required`, `sync_only_candidate_count`, `sync_only_allowlist_count`, `sync_only_blocked_count`를 함께 출력해 장중 sync-only 후보와 runtime 영향 변경을 구분한다.
 - 수동 재배포는 `workflow_dispatch`의 `deploy_main=true` 입력으로만 연다.
 - 수동 재배포는 과거 workflow run을 재개하지 않고, 실행 시점의 최신 `origin/main` SHA를 다시 fetch한 뒤 그 SHA를 배포한다.
@@ -194,6 +195,7 @@ Makefile에서는 승인 필요 명령을 `heavy-*` target으로 노출한다. �
 - `deploy_sync_job_present_count`: `sync_source` job이 workflow에 선언된 수.
 - `deploy_activate_job_present_count`: `activate_runtime` job이 workflow에 선언된 수.
 - `deploy_activate_guard_present_count`: `activate_runtime` job이 장 시간 guard와 `sync_source` 성공 조건을 함께 요구하는 workflow 수.
+- `deploy_sync_skipped_guard_present_count`: `sync_source` job이 `always()`와 `market_hours_guard.result == 'skipped'` 보호 조건을 함께 가진 workflow 수.
 - `deploy_sync_only_run_metric_count`: workflow가 `deploy_sync_only_run_count` 지표를 출력하는 수.
 - `deploy_activate_run_metric_count`: workflow가 `deploy_activate_run_count` 지표를 출력하는 수.
 - `deploy_activate_skipped_by_market_hours_metric_count`: workflow가 `deploy_activate_skipped_by_market_hours_count` 지표를 출력하는 수.
