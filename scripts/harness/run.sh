@@ -11,6 +11,10 @@ BASE_WORKSPACE_ROOT="/workspace/agent_trading"
 DEV_WORKSPACE_ROOT="/workspace/agent_trading_dev"
 
 detect_workspace_role() {
+  if [[ "${HARNESS_CI:-}" == "1" ]]; then
+    printf '%s\n' "ci"
+    return
+  fi
   case "$ROOT_DIR" in
     "$DEV_WORKSPACE_ROOT") printf '%s\n' "dev" ;;
     "$BASE_WORKSPACE_ROOT") printf '%s\n' "base" ;;
