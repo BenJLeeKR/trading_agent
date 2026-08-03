@@ -2507,6 +2507,76 @@ B안 방향이 유력하나, "dead"라는 근거가 topk override 미관측 조�
 스크립트)는 각자 목적이 다른 정당한 분리로 판정해 재설계 대상에서
 제외했다.
 
+#### 13.4.2 R4 — authoritative gate activity floor 추가 실측(2026-08-03 KST, read-only)
+
+**(1) topk override 경로 실측표**: `core_risk_off_guard_active=true`
+population(전체 이력 13,312건) 기준.
+
+| 구간 | 건수 | `apply_ready=true` | `eligibility_core_risk_off_topk_override_pass` reason | `eligibility_core_risk_off_shadow_rank_promoted` reason |
+|---|---|---|---|---|
+| 최근 3거래일(2026-07-30~08-03) | 592 | 0 | 0 | 0 |
+| 최근 1개월(2026-07-04~) | 10,849 | 0 | 0 | 0 |
+| 전체 이력 | 13,312 | 0 | 0 | 0 |
+
+topk override 경로(activity 완화 `1.20→1.10`)는 3개 시간창 전부에서
+**단 한 번도 선택된 적이 없다.**
+
+**(2) authoritative gate 하위 조건 분해표**: 동일 population을
+`core_risk_off_guard_reasons` 조합별로 분해.
+
+| ranking | signal | activity | strategy | guard_pass | 전체 이력 | 최근 1개월 | 최근 3거래일 |
+|---|---|---|---|---|---|---|---|
+| blocked | — | — | — | — | 13,188(99.07%) | 10,725 | 518 |
+| pass | blocked | — | — | — | 124(0.93%) | 124 | 74 |
+| pass | pass | blocked/pass | any | any | **0** | 0 | 0 |
+
+두 패턴의 합(13,188+124=13,312)이 전체 population과 **정확히 일치**
+한다 — `activity_blocked`/`strategy_blocked`/`guard_pass`로 끝나는
+행이 전체 이력에 단 하나도 없다. `signal_feature_snapshot is None`
+경로(activity 체크 이전 단계의 데이터 결측 차단)도 0건이라, "데이터
+결측 때문에 activity gate가 사실상 비활성"인 것도 아니다 — 애초에
+이 지점까지 도달하는 행 자체가 없다.
+
+**(3) 구조적 dead vs 관측 범위 내 dead 판정**: 대수적으로 반례를
+구성해봤다 — `authoritative_entry_gate_score = 0.55*entry_score +
+0.10*allocation_bonus_like >= 0.28`를 만족하면서 동시에 `overall>=0.0
+and slow>=-0.05`(signal 플로어 통과)도 만족하는 조합이 이론상
+존재한다(예: `fast` 성분이 강하고 activity/strategy/allocation
+보너스가 겹치면 `entry_score≈0.35` 수준에서 `overall=0`, `slow=
+-0.05`처럼 신호 플로어 경계값에 걸쳐 있어도 두 조건을 동시에
+만족할 수 있다). 즉 **수학적으로 100% 불가능하다고 증명되지는
+않는다.** 다만 전체 이력 13,312건, 3개 시간창(3거래일/1개월/전체)
+전부에서 예외 없이 이 조합이 단 한 번도 관측되지 않았다는 것은
+매우 강한 경험적 증거다. **판정: "관측 범위 내 dead"** — 구조적
+불가능 증명에는 못 미치지만, 실측 가능한 전체 이력을 통틀어 activity
+gate에 도달한 표본이 0건이라는 사실은 변하지 않는다.
+
+**(4) null 처리 방식의 비대칭(신규 확인 사항)**: 일반 eligibility의
+`eligibility_low_relative_activity`는 `volume_surge_ratio is not None
+and turnover_surge_ratio is not None and max(...)<1.10`으로, **둘 중
+하나라도 결측이면 게이트 자체를 건너뛴다**(통과 처리). 반면
+authoritative gate는 `max(volume_surge_ratio or 0.0, turnover_surge_
+ratio or 0.0) < required_activity_min`으로, **결측을 0.0으로 취급해
+오히려 차단 쪽으로 해석한다.** 이 비대칭은 이번 실측에서 activity_
+blocked가 0건이라 지금까지는 드러난 적이 없지만, B안(authoritative
+게이트의 activity 하드 플로어를 제거하고 eligibility 판정에 위임)을
+실제로 구현할 때는 이 null 처리 차이까지 감안해야 한다는 점을
+다음 턴을 위해 기록해 둔다.
+
+**(5) 일반 eligibility gate가 살아있다는 근거(한 줄 정리)**:
+`eligibility_low_relative_activity`(1.10)는 전체 BUY population
+(bearish_trend+risk_off에 국한되지 않음)에서 이력 6,345건을 차단했고
+그중 309건(2종목)은 `entry_score>=0.65`였던 실제 결정적 사례라
+authoritative gate와 무관하게 독립적으로 살아 있다 — 따라서
+authoritative gate의 activity 하드 플로어를 제거해도 일반 BUY 경로의
+활동성 최저 기준 자체는 이 게이트가 그대로 지킨다.
+
+**(6) B안 착수 가능 여부**: 위 (1)~(5)로 이번 턴이 요구한 추가
+실측 2건(topk override 경로, 구조적 dead 여부)을 모두 닫았다.
+**바로 코드 초안 착수가 가능한 수준으로 좁혀졌다** — 다만 (4)의
+null 처리 비대칭은 구현 시 명시적으로 다뤄야 할 설계 포인트로
+남긴다.
+
 ### 13.5 R5 — 하류 contract 정리
 
 - 범위:
@@ -2656,7 +2726,17 @@ B안 방향이 유력하나, "dead"라는 근거가 topk override 미관측 조�
    override도 0건 선택). A/B/C 설계안 비교 결과 **B안(authoritative
    gate의 activity 하드 플로어 제거, eligibility 판정에 위임)**을
    권고하나, "dead"라는 근거가 topk override 미관측 조건부 사실이라
-   **다음 턴은 코드 수정이 아니라 추가 실측**을 먼저 진행한다
+   **다음 턴은 코드 수정이 아니라 추가 실측**을 먼저 진행한다.
+   **[2026-08-03 KST 갱신] 추가 실측 2건 완료(13.4.2)** — topk
+   override는 3개 시간창(3거래일/1개월/전체 이력) 전부에서 0건
+   선택됐고, authoritative gate 하위 조건은 전체 이력 13,312건이
+   `ranking_blocked`(13,188)/`signal_blocked`(124) 단 두 패턴으로
+   100% 소진돼 `activity_blocked`가 도달할 표본 자체가 없음을
+   확인했다. 대수적 반례 검토 결과 수학적으로 100% 불가능하다고
+   증명되지는 않아 **"관측 범위 내 dead"**로 판정을 좁혔다. 다음
+   턴은 **바로 코드 초안 착수 가능**하다 — 단 eligibility/
+   authoritative 게이트의 null 처리 방식 비대칭(결측 시 통과 vs
+   차단)은 구현 시 명시적으로 다뤄야 한다
 5. **R5**: 상류 결정 이후 하류 연쇄 영향 확인
 
 즉 현재는 "BUY 경로 전체 리팩터링"이라는 이름보다,

@@ -5253,3 +5253,43 @@ read-only 분석, 코드 변경 없음)
   턴은 문서 4건만 수정하며 코드 변경은 없다.
 - 상세: `docs/20_system_analysis/buy_path_variable_gate_matrix.md`
   §13.4.1.
+
+### R4 — authoritative gate activity floor 추가 실측 2건 완료(2026-08-03 KST, read-only 분석, 코드 변경 없음)
+
+- 전제: §13.4.1에서 권고한 B안(authoritative gate의 activity 하드
+  플로어 제거) 착수 전, 요구된 추가 실측 2건(topk override 경로,
+  구조적 dead 여부)만 닫는다.
+- topk override 실측: `core_risk_off_guard_active=true` population
+  (전체 이력 13,312건)에서 `apply_ready=true`, `eligibility_core_
+  risk_off_topk_override_pass`, `eligibility_core_risk_off_shadow_
+  rank_promoted` reason 전부 최근 3거래일(592건)/1개월(10,849건)/
+  전체 이력(13,312건) 3개 시간창 모두에서 **0건**임을 확인했다.
+- authoritative gate 하위 조건 분해: 동일 population을 reason 조합
+  별로 분해한 결과 `ranking_blocked`(13,188건, 99.07%)와
+  `signal_blocked`(124건, 0.93%) 단 두 패턴의 합이 전체 population과
+  정확히 일치했다 — `activity_blocked`/`strategy_blocked`/`guard_
+  pass`로 끝나는 행이 전체 이력에 **단 하나도 없다**.
+- 구조적 dead vs 관측 범위 내 dead 판정: 대수적으로 반례를 구성해본
+  결과(`fast` 성분이 강하고 activity/strategy/allocation 보너스가
+  겹치면 신호 플로어 경계값에서도 ranking·signal을 동시 통과할 수
+  있는 조합이 이론상 존재), **수학적으로 100% 불가능하다고 증명되지
+  는 않는다.** 다만 전체 이력·3개 시간창 전부에서 예외 없이 이
+  조합이 관측된 적이 없어 **"관측 범위 내 dead"**로 판정을 좁혔다.
+- 신규 확인 사항(null 처리 비대칭): 일반 eligibility의 `eligibility_
+  low_relative_activity`는 volume/turnover surge ratio 둘 중 하나만
+  결측이어도 게이트를 건너뛰지만(통과), authoritative gate는 결측을
+  0.0으로 취급해 오히려 차단 쪽으로 해석한다 — 지금까지는 activity_
+  blocked 자체가 0건이라 드러난 적 없지만, B안 구현 시 이 차이를
+  명시적으로 다뤄야 한다.
+- 일반 eligibility gate가 살아있다는 근거: `eligibility_low_relative_
+  activity`(1.10)는 전체 BUY population에서 이력 6,345건을 차단했고
+  그중 309건(2종목)은 `entry_score>=0.65`였던 실제 결정적 사례라,
+  authoritative gate와 무관하게 독립적으로 살아 있다.
+- B안 착수 가능 여부: **바로 코드 초안 착수 가능**하다고 판정했다 —
+  단 null 처리 비대칭은 구현 시 설계 포인트로 명시적으로 다뤄야
+  한다.
+- git 상태: 이번 턴 확인 시점 로컬 `main`(HEAD `1ba7e10d`) =
+  `origin/main`(이격 0, PR #121 머지 및 자동 배포 반영 완료). 이번
+  턴은 문서 4건만 수정하며 코드 변경은 없다.
+- 상세: `docs/20_system_analysis/buy_path_variable_gate_matrix.md`
+  §13.4.2.
