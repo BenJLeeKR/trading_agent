@@ -19,7 +19,11 @@ split_env_file_list() {
 
 load_external_env_files() {
   local env_dir="$AGENT_TRADING_ENV_DIR"
-  local -a required_files optional_files loaded_files missing_files unreadable_files
+  local -a required_files=()
+  local -a optional_files=()
+  local -a loaded_files=()
+  local -a missing_files=()
+  local -a unreadable_files=()
   local file path joined=""
 
   split_env_file_list "$AGENT_TRADING_REQUIRED_ENV_FILES" required_files
