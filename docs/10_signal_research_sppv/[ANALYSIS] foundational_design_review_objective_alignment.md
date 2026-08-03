@@ -3755,3 +3755,12 @@ matrix.md` §13.2.7.
 권고하지 않으며, 1순위 권고안은 B안(계수 완화)**이다. 다음 코드
 수정 단위는 **B(추가 실측 1건 필요)**로 좁혔다. 상세: `docs/
 20_system_analysis/buy_path_variable_gate_matrix.md` §13.2.8.
+
+**[2026-08-03 KST, 최소 미러링] B안 후보 계수별 영향 실측 완료.**
+`B1(-0.10)`/`B2(-0.05)`의 신규 통과 표본(전체 이력 297건/2,047건)은
+전부 `bullish_trend`뿐이고, 실제 override 사례(`011070`)는 `B2`부터
+해소된다. **1순위 권고 후보는 B2(-0.05)**이며, 참고용 상한 비교
+`B3(0.00)`은 `bearish_trend`/`range_bound`까지 끌어들여 권고하지
+않는다. 다음 코드 수정 단위는 **A(바로 초안 가능)**로 좁혔다.
+상세: `docs/20_system_analysis/buy_path_variable_gate_matrix.md`
+§13.2.9.
