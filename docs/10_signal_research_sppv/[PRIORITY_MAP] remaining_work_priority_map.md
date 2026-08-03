@@ -10538,7 +10538,14 @@ agent 설계 문서 기준으로도 순서는 다음이 맞다.
      `allocation_bonus_like` 코드는 무변화이나, entry_score가 게이트
      입력이라 관련 fixture 5건의 경계값을 최소 범위로 재실측·보정했다
      (게이트 threshold `0.28`은 무변화). dev tree 직접 mount 검증 25
-     passed +
+     passed. **[2026-08-02 KST 6차 갱신] R2 다음 후보 = regime/risk
+     항 정리 여부 판정**(`buy_path_variable_gate_matrix.md` §13.2.6,
+     read-only) — regime/risk 블록을 `bullish_trend`(+0.10)/`risk_
+     on`(+0.05)/`risk_off`(-0.15) 3개 서브조건으로 분해했다. `risk_
+     off` 서브조건만 `core_risk_off_guard_active`·eligibility 하드
+     게이트와 같은 원신호를 중복 반영(population 39,500건)하고,
+     나머지는 대응 하드 게이트가 없어 "유지"에 가깝다. 다음 코드
+     수정 단위는 **B(read-only 실측 먼저)**로 좁혔다 +
      [1-B순위] **D안 순수 효과 재측정** — S5로 stale bias가 사라진 뒤
      §137.5의 2.13배(상한)를 다시 측정 +
      [1-B순위] `strategy_alignment` 제거의 **게이트 영향 재관측** —

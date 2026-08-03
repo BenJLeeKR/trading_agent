@@ -4805,3 +4805,47 @@ read-only, 코드 변경 없음)
   변경분까지 포함해 갱신된다.
 - 상세: `docs/20_system_analysis/buy_path_variable_gate_matrix.md`
   §13.2.5.
+
+### R2 다음 후보 = regime/risk 항 정리 여부 판정(2026-08-02 KST,
+read-only 분석, 코드 변경 없음)
+
+- 전제(이미 닫힌 사실, 재검증 없이 사용): R1 정리(§13.1.1~§13.1.6),
+  R2 allocation 4분류·실측·구조 분리·제거(§13.2.1~§13.2.5) — 전부
+  참조만 하고 다시 열지 않는다. `strategy`/`source-type`/`alpha`는
+  이번 턴 범위 밖, `activity`는 §13.4(R4) 연계 축이라 섞지 않았다.
+- 새로 확인한 사실 1(코드 위치): `_build_entry_score()` 1229~1238행의
+  regime/risk 블록은 단일 항목이 아니라 `bullish_trend`(+0.10)/
+  `risk_on`(+0.05)/`risk_off`(-0.15) 3개 서브조건으로 나뉜다.
+- 새로 확인한 사실 2(BUY 경로 재사용 매핑): `risk_off` 서브조건은
+  `_is_core_risk_off_regime()`(→`core_risk_off_guard_active`)와
+  `_assess_buy_eligibility()`의 하드 차단이 **정확히 같은 원신호
+  (`risk_tone=="risk_off" and regime_label=="bearish_trend"`)를
+  이미 두 곳에서 하드 게이트로 쓰고 있다** — `entry_score`의
+  `-0.15`는 이를 세 번째로 soft 반영하는 것이라 과잉 중복에 가깝다.
+  `bullish_trend`/`risk_on` 서브조건은 대응하는 하드 게이트가 없다
+  (AI 컨텍스트에 원문 노출은 되나 판정에 되먹임되지 않음). EV gate
+  (`expected_value_gate.py`)는 이 신호를 전혀 참조하지 않음을 코드
+  전수 검색으로 확인했다. `regime_switch_v1` 게이트는 이름만 겹칠
+  뿐 완전히 다른 입력(별도 모니터링 신호)을 쓰는 무관한 시스템이다.
+- 새로 확인한 사실 3(규모, read-only DB 조회): `side='buy'` 전체
+  이력에서 `risk_off` 서브조건이 적용되는 population은
+  `bearish_trend/bullish_trend/range_bound/event_driven_unstable`
+  × `risk_off` 조합 합계 `39,500`건으로 대다수를 차지한다.
+  `risk_on` 서브조건이 적용되는 population은 `42`건뿐이다.
+- 판정: regime/risk 블록 전체를 하나로 뭉뚱그려 "제거해도 영향
+  미미"라 단정할 수 없다 — `risk_off` 서브조건만 allocation과 유사한
+  과잉 중복 구조이고, `bullish_trend`/`risk_on` 서브조건은 성격이
+  다르다(유지에 가까움).
+- 다음 코드 수정 단위: **B(read-only 실측 먼저)** — `risk_off`
+  서브조건에 대해 §13.2.3과 같은 방법론(C 집합 실측)을 다음 턴에
+  적용한다. `bullish_trend`/`risk_on` 서브조건은 "유지" 판정을 유지한
+  채 별도로 다시 열지 않는다.
+- 미확인 사항: `risk_off` 서브조건의 `buy_candidate_threshold(0.65)`
+  기여도 실측, `_is_core_risk_off_regime()`/`_assess_buy_
+  eligibility()`의 코드 레벨 조건식 중복 정리 필요성, `bullish_
+  trend`+`risk_on`(42건) population의 세부 실측 — 전부 다음 턴 과제.
+- git 상태: 이번 턴 확인 시점 로컬 `main`(HEAD `1b3f9189`) =
+  `origin/main`(이격 0, PR #104/#106 머지 반영 완료), 이번 턴은 문서
+  4건만 수정하며 코드 변경은 없다.
+- 상세: `docs/20_system_analysis/buy_path_variable_gate_matrix.md`
+  §13.2.6.

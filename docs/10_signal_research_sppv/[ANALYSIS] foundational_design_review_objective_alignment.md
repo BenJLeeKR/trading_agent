@@ -3729,3 +3729,12 @@ helper를 제거했다. authoritative 게이트(§13.1.6)의 코드는 무변화
 `entry_score`가 게이트 입력이라 관련 fixture 5건의 경계값을 최소
 범위로 재실측·보정했다(게이트 threshold는 무변화). 상세: `docs/
 20_system_analysis/buy_path_variable_gate_matrix.md` §13.2.5.
+
+**[2026-08-02 KST, 최소 미러링] R2 다음 후보 = regime/risk 항 정리
+여부 판정(read-only).** regime/risk 블록을 `bullish_trend`(+0.10)/
+`risk_on`(+0.05)/`risk_off`(-0.15) 3개 서브조건으로 분해했다. `risk_
+off` 서브조건만 `core_risk_off_guard_active`·eligibility 하드
+게이트와 같은 원신호를 중복 반영(population 39,500건)하고, 나머지는
+대응 하드 게이트가 없어 "유지"에 가깝다. 다음 코드 수정 단위는
+**B(read-only 실측 먼저)**로 좁혔다. 상세: `docs/20_system_analysis/
+buy_path_variable_gate_matrix.md` §13.2.6.
