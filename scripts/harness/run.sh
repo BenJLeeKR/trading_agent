@@ -484,6 +484,15 @@ deploy_activate_guard_present_count = int(
         "needs.sync_source.result == 'success'",
     )
 )
+deploy_sync_skipped_guard_present_count = int(
+    contains(
+        workflow,
+        "sync_source:",
+        "always() &&",
+        "needs.market_hours_guard.result == 'success'",
+        "needs.market_hours_guard.result == 'skipped'",
+    )
+)
 deploy_sync_job_present_count = int("  sync_source:" in workflow_text)
 deploy_activate_job_present_count = int("  activate_runtime:" in workflow_text)
 deploy_sync_only_run_metric_count = int("deploy_sync_only_run_count=" in workflow_text)
@@ -566,6 +575,7 @@ contract_checks = [
     ("workflow_deploy_has_market_hours_guard", contains(workflow, "market_hours_guard:", "TZ=Asia/Seoul date +%H%M", "allow_market_hours_deploy", "deploy_skipped_by_market_hours_count", "deploy_market_hours_override_count")),
     ("workflow_deploy_jobs_present", deploy_sync_job_present_count == 1 and deploy_activate_job_present_count == 1),
     ("workflow_deploy_activate_guard_present", deploy_activate_guard_present_count == 1),
+    ("workflow_deploy_sync_handles_skipped_guard", deploy_sync_skipped_guard_present_count == 1),
     ("workflow_deploy_change_detector_emits_activate_required", deploy_activate_required_output_count == 1),
     ("workflow_deploy_change_detector_emits_sync_only_counts", deploy_sync_only_candidate_count_output_count == 1 and deploy_sync_only_allowlist_count_output_count == 1 and deploy_sync_only_blocked_count_output_count == 1),
     ("workflow_deploy_change_detector_defines_sync_only_allowlist", deploy_sync_only_allowlist_defined_count == 1),
@@ -647,6 +657,7 @@ informational_metrics = {
     "deploy_sync_job_present_count",
     "deploy_activate_job_present_count",
     "deploy_activate_guard_present_count",
+    "deploy_sync_skipped_guard_present_count",
     "deploy_sync_only_run_metric_count",
     "deploy_activate_run_metric_count",
     "deploy_activate_skipped_by_market_hours_metric_count",
