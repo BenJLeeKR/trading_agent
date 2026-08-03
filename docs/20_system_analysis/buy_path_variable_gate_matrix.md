@@ -1446,6 +1446,134 @@ threshold(0.65)` 판정 자체는 영향이 없을 것으로 예상되지만, �
 3. `max_new_capital_pct<=0`인 population(entry_score가 오히려
    높아지는 방향)에 대한 영향은 이번 턴에서 별도로 실측하지 않았다.
 
+#### 13.2.6 R2 — `entry_score` 내부 regime/risk 보정항 정리 여부 판정(2026-08-02 KST, read-only 분석)
+
+**목적**: allocation 항 제거(§13.2.5)가 끝난 지금, R2의 다음 후보인
+`entry_score` 내부 regime/risk 보정항이 "제거/이관 후보로 확정
+가능한지"를 좁힌다. 이번 턴은 코드 수정 없이 read-only 분석만
+진행했다.
+
+**전제(이미 닫힌 사실, 재검증하지 않음)**: R1 정리(§13.1.1~§13.1.6),
+R2 allocation 4분류·실측·구조 분리·제거(§13.2.1~§13.2.5) — 전부
+참조만 하고 다시 열지 않는다. `strategy`, `source-type`, `alpha`
+항목은 이번 턴 범위 밖으로 유지한다. `activity` 항목은 §13.4(R4)
+연계 축이므로 섞지 않는다.
+
+**(1) `entry_score` 안의 regime/risk 보정항 — 정확한 코드 위치**
+
+`_build_entry_score()`(`deterministic_trigger_engine.py` 1229~1238행)
+안의 다음 블록이다.
+
+```text
+if market_regime is not None:
+    if market_regime.regime_label == "bullish_trend":
+        score += 0.10                      # trigger_bullish_regime
+    if market_regime.risk_tone == "risk_on":
+        score += 0.05                      # trigger_risk_on
+    if market_regime.risk_tone == "risk_off":
+        score -= 0.15                      # trigger_risk_off_penalty
+```
+
+이 블록은 **단일 항목이 아니라 서로 다른 발동 조건을 가진 3개의
+하위 조건**이다 — 이 구분이 이번 절 판정의 핵심이다.
+
+**(2) BUY 경로 내 중복 반영 경로 — 전수 매핑**
+
+| 소비처 | 조건/역할 | 판정 성격 | `entry_score` regime/risk 블록과의 관계 |
+|---|---|---|---|
+| `entry_score`의 regime/risk 블록(현재 분석 대상) | `bullish_trend`+`0.10`, `risk_on`+`0.05`, `risk_off`-`0.15` | soft 가중치 | — |
+| `_is_core_risk_off_regime()` → `core_risk_off_guard_active` | `risk_tone=="risk_off" and regime_label=="bearish_trend"`일 때만 `True` | hard 게이트 **활성화 조건** | `risk_off` 서브조건과 **정확히 같은 원신호**를 별도로 재확인 |
+| `_assess_buy_eligibility()`의 risk_off 블록(449~497행) | `risk_tone=="risk_off" and regime_label=="bearish_trend"`이면 `risk_off_exception_eligible` 없이는 하드 차단 | hard 게이트 | 위 `_is_core_risk_off_regime()`와 **완전히 동일한 조건식을 별도 함수에서 다시 계산**(코드 레벨 재계산 중복) |
+| AI context(`prompt_context_projection.py` regime_label/risk_tone 주입) | `regime_label`/`risk_tone` 원문을 프롬프트에 삽입 | reporting/컨텍스트 제공 | 원신호를 그대로 노출(AI가 참고, 하드 게이트 아님) |
+| `decision_factory.py`의 `regime_label` 저장 | `trade_decisions.regime_label` 컬럼에 저장 | 순수 리포팅 | 판정에 되먹임되지 않음 |
+| `expected_value_gate.py`(EV gate) | 참조 없음(코드 전수 검색 결과 0건) | 무관 | — |
+| `regime_switch_v1` 게이트(`regime_switch_gate.py`, §21) | 별도 모니터링 신호(`regime_switch_v1_trigger_status`) 기반, `classify_market_regime()`이 만드는 이 `market_regime`과 **입력 자체가 다름** | 무관(다른 시스템) | 이름만 "regime"이 겹칠 뿐 서로 다른 개념 — 혼동 주의 |
+| `_build_exit_ranking_score()`/`_build_exit_score()`의 regime 항 | `bearish_trend`+`0.6`(exit ranking 내부), `bearish_trend`+`risk_off` 가산(exit score) | SELL/EXIT 경로 전용 | BUY 경로 범위 밖(문서 §2 scope 그대로 유지, 재론 안 함) |
+
+**(3) 정당한 분리 vs 과잉 중복 판정 — 서브조건별로 나뉜다**
+
+regime/risk 블록은 하나의 항목처럼 보이지만, 실제로는 중복 성격이
+서로 다른 두 그룹으로 나뉜다.
+
+- **`risk_off` 서브조건(`-0.15`)**: `core_risk_off_guard_active`
+  판정과 `_assess_buy_eligibility()`의 하드 차단이 **정확히 같은
+  원신호(`risk_tone=="risk_off" and regime_label=="bearish_
+  trend"`)를 이미 두 곳에서 하드 게이트로 쓰고 있다.** `entry_score`
+  의 `-0.15`는 이 신호를 **세 번째로**, 그것도 이미 이분법적으로
+  하드 게이트가 걸린 상황에 대해 soft 페널티를 추가하는 것이라
+  **과잉 중복에 가깝다** — allocation 항이 authoritative 게이트의
+  `allocation_bonus_like`와 같은 신호를 이중 반영했던 구조(§13.1.6/
+  §13.2.3)와 매우 유사하다.
+- **`bullish_trend`(`+0.10`)/`risk_on`(`+0.05`) 서브조건**: BUY
+  경로에는 이에 대응하는 **하드 게이트가 없다**(하드 게이트는
+  `bearish_trend`+`risk_off` 쪽에만 존재). AI 컨텍스트에 원문이
+  노출되긴 하지만 그건 판정에 되먹임되지 않는 참고자료다. 즉 이
+  두 서브조건은 alpha 보정과 유사하게 **정당한 역할(연속적이지는
+  않지만 유일한 soft 가중치)로 볼 여지가 있다** — 다만 alpha처럼
+  연속값이 아니라 이산 라벨이라는 점은 여전히 남는 특징이다.
+
+**결론: regime/risk 블록 전체를 "제거해도 영향 미미"라고 단정할 수
+없다** — `risk_off` 서브조건만 allocation과 유사한 과잉 중복
+구조이고, `bullish_trend`/`risk_on` 서브조건은 하드 게이트 대응쌍이
+없어 성격이 다르다. 하나의 판정으로 뭉뚱그리면 §13.2.3 같은 실측
+없이 성급하게 제거 범위를 넓히는 위험이 있다.
+
+**(4) 규모 참고(read-only DB 조회, 전면 실측 아님 — changed-scope
+수준의 근거만 수집)**: `trading_db`에서 `side='buy'`, `entry_score`
+가 존재하는 전체 이력 기준으로 `regime_label`×`risk_tone` 조합별
+건수를 확인했다.
+
+| `regime_label` | `risk_tone` | 건수 | `entry_score>=0.65` | `entry_score∈[0.50,0.65)` |
+|---|---|---|---|---|
+| `bearish_trend` | `risk_off` | 24,211 | 148 | 50 |
+| `bullish_trend` | `risk_off` | 7,922 | 439 | 3,556 |
+| `range_bound` | `risk_off` | 7,303 | 50 | 74 |
+| (없음) | (없음) | 1,947 | 0 | 395 |
+| `range_bound` | `neutral` | 231 | 0 | 78 |
+| `event_driven_unstable` | `risk_off` | 64 | 0 | 0 |
+| `bullish_trend` | `risk_on` | 42 | 42 | 0 |
+| `event_driven_unstable` | `neutral` | 4 | 0 | 4 |
+
+`risk_off` 서브조건(패널티 `-0.15`)이 적용되는 population은
+`24,211+7,922+7,303+64=39,500`건으로 전체 buy-path 표본의 대다수를
+차지한다. `risk_on` 서브조건(보너스 `+0.05`)이 적용되는 population은
+`42`건뿐으로 극히 작다. 이 규모 차이 자체가 다음 턴 실측 설계의
+우선순위(어느 서브조건부터 §13.2.3 방식으로 실측할지)를 정하는 데
+직접적인 근거가 된다 — 다만 이 표는 규모 확인용이며, `entry_score
+- regime_risk_adjustment < 0.65 <= entry_score`인 C 집합 계산은
+이번 턴에서 수행하지 않았다.
+
+**(5) 다음 코드 수정 단위 — A/B/C 중 어디까지 좁힐 수 있는가**
+
+**B. read-only 실측 먼저**로 좁힌다. 근거:
+1. `risk_off` 서브조건은 allocation과 유사한 과잉 중복 구조로
+   보이지만, allocation과 달리 **적용 population이 39,500건으로
+   훨씬 크고**, 이 서브조건이 활성화되는 상황은 정확히
+   `core_risk_off_guard_active=true`인 상황과 겹친다 — §13.1.3/
+   §13.2.3와 같은 방식으로 "이 항 덕분에만 `0.65`를 넘긴 표본"(C
+   집합)을 먼저 실측하지 않고 구조 분리·제거로 바로 가면, allocation
+   때보다 훨씬 큰 population에 대한 근거 없는 변경이 된다.
+2. `bullish_trend`/`risk_on` 서브조건은 하드 게이트 대응쌍이 없어
+   "제거 후보"로 판정하기엔 근거가 약하고, 오히려 §13.2.1의 "유지"
+   판정에 더 가깝다 — 이 부분은 A(무변화 구조 분리)조차 아직 이르며,
+   먼저 "정말 제거 후보가 맞는지" 자체를 다시 봐야 한다.
+3. 결과적으로 규모가 유의미한 `risk_off` 서브조건 하나만 골라
+   §13.2.3과 같은 방법론(C 집합 실측)을 먼저 적용하는 것이 다음
+   턴의 1순위 권고안이다 — `bullish_trend`/`risk_on` 서브조건은
+   이번 턴 결과대로 "유지" 판정을 유지한 채 별도로 다시 열지 않는다.
+
+**아직 미확인 사항**:
+1. `risk_off` 서브조건(entry_score의 `-0.15`)이 `buy_candidate_
+   threshold(0.65)`에 실제로 얼마나 기여하는지(§13.2.3과 같은 C
+   집합 실측)는 이번 턴에서 수행하지 않았다 — 다음 턴 과제.
+2. `_is_core_risk_off_regime()`와 `_assess_buy_eligibility()`가
+   같은 조건식을 각자 재계산하는 코드 레벨 중복(구현상 중복, 판정
+   결과와는 무관)의 정리 필요성은 이번 턴에서 판단하지 않았다 —
+   R2 범위인지 별도 정리 트랙인지도 다음 턴에 정할 사안이다.
+3. `bullish_trend`+`risk_on`(`42`건)처럼 작은 population에 대한
+   서브조건별 세부 실측은 규모상 우선순위가 낮다고 판단했으나,
+   완전히 배제한 것은 아니다.
+
 ### 13.3 R3 — `portfolio_allocation`의 역할 분리
 
 - 범위:
@@ -1538,7 +1666,16 @@ threshold(0.65)` 판정 자체는 영향이 없을 것으로 예상되지만, �
    코드는 무변화로 유지했으나, `entry_score`가 입력으로 들어가는
    구조상 게이트 관련 fixture 5건(authoritative 2건 + 관찰용 shadow
    2건 + §13.1.6 회귀 테스트 1건)의 경계값을 재실측해 최소 범위로
-   보정했다. dev tree 직접 mount 검증 25 passed
+   보정했다. dev tree 직접 mount 검증 25 passed. **[2026-08-02 KST
+   6차 갱신] regime/risk 보정항 정리 여부 판정(13.2.6, read-only)** —
+   regime/risk 블록은 `bullish_trend`(+0.10)/`risk_on`(+0.05)/
+   `risk_off`(-0.15) 3개 서브조건으로 나뉘며, **`risk_off` 서브조건만
+   `core_risk_off_guard_active`·eligibility 하드 게이트와 같은
+   원신호를 중복 반영**(과잉 중복에 가까움, population 39,500건)하고,
+   `bullish_trend`/`risk_on` 서브조건은 대응하는 하드 게이트가 없어
+   "유지" 판정에 가깝다. 다음 코드 수정 단위는 **B(read-only 실측
+   먼저)**로 좁혔다 — `risk_off` 서브조건에 대해 §13.2.3과 같은
+   방법론(C 집합 실측)을 다음 턴에 적용한다
 3. **R3/R4**: allocation/activity를 점수 밖으로 내릴지 검토
 4. **R5**: 상류 결정 이후 하류 연쇄 영향 확인
 

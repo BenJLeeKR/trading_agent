@@ -127,7 +127,16 @@
    코드는 무변화이나, `entry_score`가 게이트의 입력이라 관련 fixture
    5건의 경계값을 최소 범위로 재실측·보정했다(게이트 threshold `0.28`
    자체는 무변화). dev tree 직접 mount 검증 25 passed. 운영 데이터로
-   재실측하는 것은 다음 턴 과제로 남긴다.
+   재실측하는 것은 다음 턴 과제로 남긴다. **[2026-08-02 KST 6차 갱신,
+   R2 다음 후보 = regime/risk 항 정리 여부 판정]** `buy_path_variable_
+   gate_matrix.md` §13.2.6 — regime/risk 블록을 `bullish_trend`
+   (+0.10)/`risk_on`(+0.05)/`risk_off`(-0.15) 3개 서브조건으로 분해해
+   BUY 경로 재사용을 매핑했다. `risk_off` 서브조건만 `core_risk_off_
+   guard_active`·eligibility 하드 게이트와 같은 원신호를 중복
+   반영(population 39,500건)하고, 나머지 두 서브조건은 대응 하드
+   게이트가 없어 "유지"에 가깝다. 다음 코드 수정 단위는 **B(read-
+   only 실측 먼저)**로 좁혔다 — `risk_off` 서브조건에 §13.2.3과 같은
+   C 집합 실측을 다음 턴에 적용한다.
 - [x] `ranking_score`는 유지 가치가 있는가 — **[2026-08-01 KST 갱신]
    판정 C(제거/대체)로 닫힘.** `buy_path_variable_gate_matrix.md`
    §13.1.1 참고. **[2026-08-02 KST 갱신]** 대체 contract 설계 비교
