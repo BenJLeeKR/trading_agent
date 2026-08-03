@@ -7,6 +7,43 @@ export HARNESS_ROOT_DIR="$ROOT_DIR"
 SAFE_TIMEOUT_SECONDS="${HARNESS_SAFE_TIMEOUT_SECONDS:-90}"
 HEAVY_TIMEOUT_SECONDS="${HARNESS_HEAVY_TIMEOUT_SECONDS:-900}"
 
+BASE_WORKSPACE_ROOT="/workspace/agent_trading"
+DEV_WORKSPACE_ROOT="/workspace/agent_trading_dev"
+
+detect_workspace_role() {
+  case "$ROOT_DIR" in
+    "$DEV_WORKSPACE_ROOT") printf '%s\n' "dev" ;;
+    "$BASE_WORKSPACE_ROOT") printf '%s\n' "base" ;;
+    *) printf '%s\n' "unknown" ;;
+  esac
+}
+
+WORKSPACE_ROLE="$(detect_workspace_role)"
+export HARNESS_WORKSPACE_ROLE="$WORKSPACE_ROLE"
+
+print_workspace_context() {
+  local validation_target="$1"
+  local mismatch="$2"
+  local container_name="${3:-none}"
+  echo "workspace_role=$WORKSPACE_ROLE"
+  echo "workspace_root=$ROOT_DIR"
+  echo "validation_target=$validation_target"
+  echo "workspace_mismatch_detected=$mismatch"
+  echo "container_name=$container_name"
+}
+
+require_known_workspace_role() {
+  [[ "$WORKSPACE_ROLE" != "unknown" ]] || fail \
+    "지원되지 않는 작업 경로입니다. 허용 경로: $BASE_WORKSPACE_ROOT, $DEV_WORKSPACE_ROOT"
+}
+
+require_no_prod_container_from_dev() {
+  if [[ "$WORKSPACE_ROLE" == "dev" ]] && docker ps --format '{{.Names}}' | grep -qx 'agent_trading-app-1'; then
+    print_workspace_context "production_container" "1" "agent_trading-app-1"
+    fail "dev 작업 경로에서는 production checkout이 mount된 agent_trading-app-1 검증을 사용할 수 없습니다."
+  fi
+}
+
 usage() {
   cat <<'EOF'
 사용법:
@@ -65,9 +102,20 @@ run_with_timeout() {
 run_python_with_timeout() {
   local seconds="$1"
   shift
+
+  require_known_workspace_role
+
+  if [[ "$WORKSPACE_ROLE" == "dev" ]]; then
+    print_workspace_context "host_python3" "0"
+    timeout "$seconds" python3 "$@"
+    return
+  fi
+
   if docker ps --format '{{.Names}}' | grep -qx 'agent_trading-app-1'; then
+    print_workspace_context "production_container" "0" "agent_trading-app-1"
     timeout "$seconds" docker exec -w /app agent_trading-app-1 python3 "$@"
   else
+    print_workspace_context "host_python3" "0"
     echo "WARN: agent_trading-app-1 컨테이너가 없어 host python3를 사용합니다." >&2
     timeout "$seconds" python3 "$@"
   fi
@@ -131,6 +179,11 @@ require_heavy_allowed() {
 
 require_ops_dump_allowed() {
   [[ "${HARNESS_ALLOW_OPS_DUMP:-}" == "1" ]] || fail "운영 리포트 DB 덤프는 차단되었습니다. 사용자가 명시 승인한 경우에만 HARNESS_ALLOW_OPS_DUMP=1을 설정해 실행하세요."
+}
+
+print_harness_command() {
+  local command_name="$1"
+  echo "harness_command=$command_name"
 }
 
 run_api_inmemory() {
@@ -466,6 +519,7 @@ deploy_sync_only_allowlist_defined_count = int(
     contains(
         workflow,
         "sync_only_allowlist_pattern=",
+        "docs/.+",
         "analyze_trigger_proxy_attribution\\.py",
         "check_index_membership_staleness\\.py",
         "check_t3_db_status\\.py",
@@ -2998,6 +3052,8 @@ main() {
       env_check
       ;;
     py-compile)
+      print_harness_command "py-compile"
+      require_known_workspace_role
       local target="${1:-}"
       require_arg "$target" "python_file"
       local file_path
@@ -3008,6 +3064,8 @@ main() {
       run_python_with_timeout "$SAFE_TIMEOUT_SECONDS" -m py_compile "$normalized_target"
       ;;
     test-one)
+      print_harness_command "test-one"
+      require_known_workspace_role
       local selector="${1:-}"
       require_arg "$selector" "test_selector"
       [[ "$selector" == *::* ]] || fail "test-one은 tests/path.py::test_name 형태만 허용합니다."
@@ -3015,6 +3073,8 @@ main() {
       run_python_with_timeout "$SAFE_TIMEOUT_SECONDS" -m pytest "$selector" -v
       ;;
     test-file)
+      print_harness_command "test-file"
+      require_known_workspace_role
       local test_file="${1:-}"
       require_arg "$test_file" "test_file"
       require_safe_test_selector "$test_file"
@@ -3059,6 +3119,8 @@ main() {
           accept_no_bypass
           ;;
         backend-file)
+          print_harness_command "accept-backend-file"
+          require_known_workspace_role
           accept_backend_file "${2:-}"
           ;;
         backend-runtime)
