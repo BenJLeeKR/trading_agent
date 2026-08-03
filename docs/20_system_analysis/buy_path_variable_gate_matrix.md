@@ -2465,6 +2465,48 @@ ok"]` 기록에 계속 쓰이므로 그대로 유지했다.
   - risk-off guard와 일반 eligibility의 activity 중복을 줄여야 하는지
 - 우선순위: **4순위**
 
+#### 13.4.1 `relative_activity` BUY 경로 전수 매핑 및 역할 분리 판정(2026-08-03 KST, read-only 분석)
+
+**(1) 전수 매핑**: `volume_surge_ratio`/`turnover_surge_ratio`가
+`_build_entry_score()`의 `relative_activity_bonus`(soft, `[1.0,3.0]→
+[0,1]` 정규화, 최대 `+0.10`), `_assess_buy_eligibility()`의 `eligibility_
+low_relative_activity`(hard, `max(...)<1.10`, 전체 BUY 공통), `_assess_
+core_risk_off_buy_guard()`의 `eligibility_core_risk_off_activity_
+blocked`(hard, `max(...)<1.20`, topk override 시 `1.10`, `core`+
+`bearish_trend`+`risk_off` 서브셋 전용), 2개 shadow 함수(`>=1.10`/
+`>=1.15`, reporting only), `market_regime.py`의 regime 분류 입력
+(`volume_surge_ratio>=1.5`, `event_driven_unstable` 판정)에 각각
+반영됨을 확인했다. `average_volume_20d`/`average_turnover_20d`·참여율
+게이트는 R3에서 이미 execution feasibility로 분류된 **별개 개념**
+(절대 유동성 규모)이라 이번 절 범위에서 제외했다.
+
+**(2) 중복 판정**: entry_score soft bonus vs eligibility 1.10 hard
+gate는 R2의 `risk_off` 패턴과 같은 논리로 **정당한 역할 분리**다 —
+이력 6,345건 차단 중 309건(2종목)은 `entry_score≥0.65`였던 실제
+결정적 사례라 살아있는 게이트임을 확인했다. 반면 **eligibility
+1.10 hard gate와 authoritative gate 1.20 hard gate는 과잉 중복에
+가깝다** — 같은 원신호를 서로 다른 threshold로 두 번 하드 게이팅
+하는데, authoritative gate 쪽은 이력 13,312건 전체에서 이 사유로
+차단된 적이 **0건**이다(ranking `0.28`/signal 체크가 항상 먼저
+걸러냄). topk override(activity_min을 1.10으로 완화)도 이력상
+`apply_ready=true`가 **0건**이라 한 번도 선택되지 않았다. 다만 두
+게이트의 적용 population이 다르므로(eligibility는 전체 BUY,
+authoritative는 서브셋) "관측된 범위 내에서 dead"라는 조건부
+판정이다.
+
+**(3) 설계안**: A안(현행 유지) / **B안(authoritative gate의 activity
+하드 플로어 제거, eligibility 판정에 위임)** / C안(두 hard gate
+threshold를 하나로 통합)을 비교했다. C안은 R2 C안과 같은 패턴으로
+threshold 재산정이 필요해 무변화 리팩터링이 성립하지 않아 기각한다.
+B안 방향이 유력하나, "dead"라는 근거가 topk override 미관측 조건부
+사실이라 **다음 턴은 코드 수정이 아니라 topk override 케이스를
+포함한 추가 실측**(별도 C-set 확인)을 먼저 권고한다.
+
+**(4) 범위 밖**: `market_regime.py`의 regime 분류 입력 채널,
+2개 shadow 함수, `trigger_proxy_attribution.py`(오프라인 분석
+스크립트)는 각자 목적이 다른 정당한 분리로 판정해 재설계 대상에서
+제외했다.
+
 ### 13.5 R5 — 하류 contract 정리
 
 - 범위:
@@ -2605,7 +2647,16 @@ ok"]` 기록에 계속 쓰이므로 그대로 유지했다.
    코드 구조로 증명했고, 관련 테스트 25건 전부 fixture 변경 없이
    통과해 판정 무변화임을 확인했다. `portfolio_allocation`의 다른
    소비처는 전부 범위 밖으로 유지했다 — R3 트랙은 이것으로 닫는다
-4. **R4**: activity를 점수 밖으로 내릴지 검토
+4. **R4**: [2026-08-03 KST 갱신] `relative_activity` BUY 경로 전수
+   매핑·역할 분리 판정 완료(13.4.1) — entry_score soft bonus vs
+   eligibility 1.10 hard gate는 정당한 분리(이력상 309건이 실제
+   결정적)로 판정했다. eligibility 1.10과 authoritative gate 1.20의
+   중복은 **과잉 중복에 가깝다**고 판정했다 — authoritative gate 쪽은
+   이력 13,312건 전체에서 이 사유로 차단된 적이 0건이다(topk
+   override도 0건 선택). A/B/C 설계안 비교 결과 **B안(authoritative
+   gate의 activity 하드 플로어 제거, eligibility 판정에 위임)**을
+   권고하나, "dead"라는 근거가 topk override 미관측 조건부 사실이라
+   **다음 턴은 코드 수정이 아니라 추가 실측**을 먼저 진행한다
 5. **R5**: 상류 결정 이후 하류 연쇄 영향 확인
 
 즉 현재는 "BUY 경로 전체 리팩터링"이라는 이름보다,

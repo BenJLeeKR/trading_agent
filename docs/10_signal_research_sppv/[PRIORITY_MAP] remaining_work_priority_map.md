@@ -10616,7 +10616,18 @@ agent 설계 문서 기준으로도 순서는 다음이 맞다.
      조건을 단일화하고 `_assess_buy_eligibility()`의 4-leaf 분기를
      `risk_off_exception_eligible` 하나로 판단하는 2-leaf 분기로
      정리했다 — 계수·threshold·reason_code 값 전부 무변화, 테스트
-     26건 fixture 변경 없이 통과해 판정 무변화를 확인했다 +
+     26건 fixture 변경 없이 통과해 판정 무변화를 확인했다. **[2026-
+     08-03 KST 16차 갱신] R4(`relative_activity`) 전수 매핑·역할
+     분리 판정 완료**(`buy_path_variable_gate_matrix.md` §13.4.1,
+     read-only) — entry_score soft bonus vs eligibility 1.10 hard
+     gate는 정당한 분리(이력 309건이 실제 결정적)로 판정했다.
+     eligibility 1.10과 authoritative gate 1.20의 중복은 **과잉
+     중복에 가깝다**고 판정했다 — authoritative gate 쪽은 이력
+     13,312건 전체에서 이 사유로 차단된 적이 0건이다(topk override도
+     0건 선택). A/B/C 비교 결과 B안(authoritative gate의 activity
+     하드 플로어 제거)을 권고하나, "dead"라는 근거가 topk override
+     미관측 조건부 사실이라 **다음 턴은 코드 수정이 아니라 추가
+     실측**이다 +
      [1-B순위] **D안 순수 효과 재측정** — S5로 stale bias가 사라진 뒤
      §137.5의 2.13배(상한)를 다시 측정 +
      [1-B순위] `strategy_alignment` 제거의 **게이트 영향 재관측** —
