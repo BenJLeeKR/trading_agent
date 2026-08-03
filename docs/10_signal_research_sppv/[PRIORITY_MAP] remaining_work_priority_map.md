@@ -10627,7 +10627,16 @@ agent 설계 문서 기준으로도 순서는 다음이 맞다.
      0건 선택). A/B/C 비교 결과 B안(authoritative gate의 activity
      하드 플로어 제거)을 권고하나, "dead"라는 근거가 topk override
      미관측 조건부 사실이라 **다음 턴은 코드 수정이 아니라 추가
-     실측**이다 +
+     실측**이다. **[2026-08-03 KST 17차 갱신] 추가 실측 2건 완료**
+     (`buy_path_variable_gate_matrix.md` §13.4.2) — topk override는
+     3개 시간창(3거래일/1개월/전체 이력) 전부 0건 선택, authoritative
+     gate 하위 조건은 전체 이력 13,312건이 `ranking_blocked`(13,188)
+     /`signal_blocked`(124) 두 패턴으로 100% 소진돼 activity 체크에
+     도달한 표본이 없음을 확인했다. 대수적 반례 검토상 수학적 불가능
+     증명에는 못 미쳐 **"관측 범위 내 dead"**로 판정했다. **다음
+     턴은 B안 코드 초안 착수 가능**하며, eligibility/authoritative의
+     null 처리 방식 비대칭(결측 시 통과 vs 차단)은 구현 시 다뤄야
+     할 포인트로 남긴다 +
      [1-B순위] **D안 순수 효과 재측정** — S5로 stale bias가 사라진 뒤
      §137.5의 2.13배(상한)를 다시 측정 +
      [1-B순위] `strategy_alignment` 제거의 **게이트 영향 재관측** —

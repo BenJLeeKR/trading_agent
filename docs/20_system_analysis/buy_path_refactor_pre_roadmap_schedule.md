@@ -63,7 +63,9 @@
 - [x] `portfolio_allocation` 역할 1차 분류 완료 — **[2026-08-03 KST
   갱신]** `buy_path_variable_gate_matrix.md` §13.3.1/§13.3.2로 완료
 - [x] `relative_activity` 역할 1차 분류 완료 — **[2026-08-03 KST
-  갱신]** §13.4.1로 완료(다음 코드 수정은 추가 실측 이후)
+  갱신]** §13.4.1로 완료. **[동일자 재갱신]** 추가 실측 2건(topk
+  override 경로, authoritative gate 하위 조건 분해)까지 §13.4.2로
+  닫혀 다음 턴은 B안 코드 초안 착수 가능
 - [x] `preferred_strategy` 역할 1차 분류 완료
 - [x] "정당한 중복"과 "과잉 중복"을 분리한 표 작성
 - [x] 이번 리팩터링에서 당장 건드리지 않을 축 명시
@@ -447,7 +449,15 @@ threshold는 무변화).
   쪽은 이력 13,312건 전체에서 이 사유로 차단된 적이 0건이다(topk
   override도 0건 선택). A/B/C 비교 결과 B안(authoritative gate의
   activity 하드 플로어 제거)을 권고하나, "dead"라는 근거가 조건부라
-  다음 턴은 코드 수정이 아니라 추가 실측이다.
+  다음 턴은 코드 수정이 아니라 추가 실측이다. **[2026-08-03 KST
+  재갱신] 추가 실측 2건 완료(§13.4.2)** — topk override는 3개
+  시간창(3거래일/1개월/전체) 전부 0건 선택, authoritative gate
+  하위 조건은 전체 이력 13,312건이 `ranking_blocked`(13,188)/
+  `signal_blocked`(124) 두 패턴으로 100% 소진돼 activity 체크에
+  도달한 표본이 없다. 대수적 반례 검토상 수학적 불가능 증명에는
+  못 미쳐 **"관측 범위 내 dead"**로 판정했다. 다음 턴은 B안 코드
+  초안 착수 가능하며, eligibility/authoritative의 null 처리 방식
+  비대칭(결측 시 통과 vs 차단)은 구현 시 다뤄야 할 포인트로 남긴다.
 - [ ] selection vs sizing vs feasibility 경계 재설정 — R3 쪽은
   §13.3.1에서 "sizing은 risk의 하위 개념으로 흡수됨"으로 정리됐다.
   R4 쪽은 아직 미착수.
