@@ -2648,6 +2648,22 @@ reason이 나올 확률이 이론상 더 낮아졌을 뿐 여전히 발생 가�
   - 상류 리팩터링 뒤 하류 contract를 같이 손봐야 하는지
 - 우선순위: **5순위**
 
+#### 13.5.1 R5-a — `translation.py` `WATCH` 이중 분기 정리 적용(2026-08-03 KST, 동작 무변화)
+
+R5 전수 매핑(하류 6개 파일: decision_orchestrator/expected_value_gate/
+decision_factory/prompt_context_projection/execution_service/
+translation) 결과, `build_submit_order_request_from_decision()`가
+`actionable_types`에 `"WATCH"`를 넣어놓고 바로 다음 줄에서 다시
+`WATCH`면 `return None`하던 무해한 이중 분기(R5-a)를 정리했다 —
+`"WATCH"`를 `actionable_types`에서 제외하고 별도 분기를 제거했다.
+두 분기 결과가 항상 동일함을 신규 회귀 테스트로 고정했고(전/후 코드
+모두 통과 확인), 기존 pytest 24건도 fixture 변경 없이 통과했다.
+`expected_value_gate_passed`/`quantity>0`/`held_position` 분기,
+다른 decision_type 처리는 전부 무변화다. 상세는 R5 원본 매핑
+분석(대화 이력)을 참고 — R5-b(`expected_value_gate.py`의 metadata
+fallback), R5-f(`decision_orchestrator.py`의 `evaluate_action_envelope`
+재확인)는 이번 턴 범위 밖으로 남긴다.
+
 ### 13.6 이번 리팩터링 범위 밖
 
 - SELL/exit 공식 재설계

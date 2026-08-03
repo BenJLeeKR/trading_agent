@@ -137,6 +137,15 @@ class TestBuildSubmitOrderRequestSide:
         result = build_submit_order_request_from_decision(intent)
         assert result is None, "Expected None for zero-quantity order"
 
+    def test_watch_is_not_submitted(self) -> None:
+        """WATCH는 모니터링 대상일 뿐 제출 request를 만들지 않아야 함
+        (R5-a: actionable_types에서 WATCH를 뺀 무변화 구조 정리 회귀 확인)."""
+        intent = _make_intent(
+            decision_type="WATCH", side="buy", request_side=OrderSide.BUY
+        )
+        result = build_submit_order_request_from_decision(intent)
+        assert result is None, "Expected None for WATCH decision"
+
     def test_exit_sell_with_positive_quantity(self) -> None:
         """EXIT + sell + positive quantity → result.side == OrderSide.SELL."""
         intent = _make_intent(

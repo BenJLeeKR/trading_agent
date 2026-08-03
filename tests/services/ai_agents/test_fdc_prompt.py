@@ -254,9 +254,9 @@ class TestBuildSubmitOrderRequestWatch:
     """WATCH must be recognised but must not produce a submit request."""
 
     def test_watch_in_actionable_types(self) -> None:
-        """WATCH must be in the actionable_types set (not silently dropped)."""
-        # The function now includes WATCH in actionable_types.
-        # It should reach the WATCH-specific check and return None.
+        """WATCH must never produce a submit request."""
+        # R5-a: WATCH is excluded from actionable_types (not a separate
+        # follow-up branch anymore) — both forms return None identically.
         intent = _make_intent(decision_type="WATCH")
         result = build_submit_order_request_from_decision(intent)
         assert result is None, "WATCH must NOT produce a submit request"
