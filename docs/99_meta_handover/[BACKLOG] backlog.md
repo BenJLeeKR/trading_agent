@@ -4849,3 +4849,45 @@ read-only 분석, 코드 변경 없음)
   4건만 수정하며 코드 변경은 없다.
 - 상세: `docs/20_system_analysis/buy_path_variable_gate_matrix.md`
   §13.2.6.
+
+### `entry_score` 내부 `risk_off -0.15` 서브조건 기여도 실측
+(2026-08-03 KST, read-only 분석, 코드 변경 없음)
+
+- 전제(이미 닫힌 사실, 재검증 없이 사용): R1 정리(§13.1.1~§13.1.6),
+  R2 allocation 4분류·실측·구조 분리·제거(§13.2.1~§13.2.5), regime/
+  risk 서브조건 분해·매핑(§13.2.6) — 전부 참조만 하고 다시 열지
+  않는다. `bullish_trend`/`risk_on` 서브조건은 이번 턴에서 다시 열지
+  않았다.
+- 조회 방법: `trading_db`에 read-only `SELECT`로 직접 접속해
+  `entry_score`, `buy_candidate`, `risk_tone`, `regime_label`,
+  `final_intent`, `decision_type`을 추출했다. `side='buy'` 필터만
+  적용. DB write·KIS 호출·코드 수정은 하지 않았다.
+- 집합: B=`risk_tone=="risk_off"` 전체, A=B 중 `entry_score>=0.65`,
+  C=B 중 `entry_score<0.65`이지만 `entry_score+0.15>=0.65`(패널티
+  때문에만 차단), D=A 중 `entry_score+0.15>=0.65`(A와 수학적으로
+  동일, 패널티는 감산이라 제거해도 통과 유지는 자명).
+- 새로 확인한 사실 1(집계): 최근 3거래일(07-30~08-03, 주말 제외)
+  B=2,586/A=155/C=472, 최근 1개월(07-04~08-03) B=23,293/A=640/
+  C=1,733, 전체 이력(06-19~08-03) B=39,530/A=640/C=3,692. D=A=640
+  으로 확인.
+- 새로 확인한 사실 2(핵심, allocation과 다름): **C 집합이 0건이
+  아니다** — 전체 이력 population의 약 9.3%. distinct symbol+거래일
+  기준으로도 27종목/89조합에 걸쳐 나타나 특정 표본 편중이 아니다.
+- 새로 확인한 사실 3(실제 사례): C 집합 안에 `decision_type=
+  approve`이자 `order_requests.status=filled`까지 간 사례 1건
+  (`symbol=011070`, `2026-06-19 11:03:51 KST`, `entry_score=0.5647`
+  →`0.7147`, `regime_label=bullish_trend`, `buy_candidate=false`)이
+  확인됐다 — 결정론적 게이트는 이 패널티 때문에 차단했지만 AI가
+  override해 실제 체결까지 갔다.
+- 판정: **C(실제 BUY 경로에 유의미)**.
+- 다음 턴 1순위 권고안: 곧바로 제거하지 않고, R1(§13.1.2)에서 쓴
+  A(유지)/B(계수 완화)/C(제거하고 eligibility 하드 게이트만 남김)
+  설계 비교부터 진행한다.
+- 미확인 사항: override 빈도가 패널티 제거·완화 시 실제로 줄어드는지,
+  `bullish_trend`와 동시 적용되는 population에서의 상호작용 세부
+  분석, A/B/C 설계 비교 자체 — 전부 다음 턴 과제.
+- git 상태: 이번 턴 확인 시점 로컬 `main`(HEAD `8242d809`) =
+  `origin/main`(이격 0, PR #107 머지 반영 완료), 이번 턴은 문서 5건만
+  수정하며 코드 변경은 없다.
+- 상세: `docs/20_system_analysis/buy_path_variable_gate_matrix.md`
+  §13.2.7.

@@ -3738,3 +3738,12 @@ off` 서브조건만 `core_risk_off_guard_active`·eligibility 하드
 대응 하드 게이트가 없어 "유지"에 가깝다. 다음 코드 수정 단위는
 **B(read-only 실측 먼저)**로 좁혔다. 상세: `docs/20_system_analysis/
 buy_path_variable_gate_matrix.md` §13.2.6.
+
+**[2026-08-03 KST, 최소 미러링] `risk_off -0.15` 기여도 실측 완료.**
+allocation(§13.2.3, C=0건)과 달리 **C 집합이 0건이 아니다**(전체
+이력 3,692건/27종목/89 symbol+거래일 조합). `decision_type=
+approve`이자 `order_requests` 체결까지 간 실제 사례(`011070`,
+2026-06-19 KST)도 확인됐다. **판정 C(실제 BUY 경로에 유의미)**로,
+곧바로 제거하지 않고 A/B/C 설계 비교부터 다음 턴에 진행할 것을
+권고한다. 상세: `docs/20_system_analysis/buy_path_variable_gate_
+matrix.md` §13.2.7.

@@ -1574,6 +1574,152 @@ regime/risk 블록은 하나의 항목처럼 보이지만, 실제로는 중복 �
    서브조건별 세부 실측은 규모상 우선순위가 낮다고 판단했으나,
    완전히 배제한 것은 아니다.
 
+#### 13.2.7 R2 — `entry_score` 내부 `risk_off -0.15` 서브조건 기여도 실측(2026-08-03 KST, read-only)
+
+**목적**: §13.2.6에서 판정한 "다음 코드 수정 단위 = B(read-only 실측
+먼저)"에 따라, `entry_score`의 `risk_off -0.15` 서브조건 하나만을
+대상으로 §13.2.3(allocation)과 같은 방법론으로 `buy_candidate_
+threshold(0.65)` 기여도를 실측한다. `bullish_trend +0.10`/`risk_on
++0.05`는 이번 턴에서 다시 열지 않는다. 코드는 변경하지 않았다.
+
+**전제(이미 닫힌 사실, 재검증하지 않음)**: R1 정리(§13.1.1~§13.1.6),
+R2 allocation 4분류·실측·구조 분리·제거(§13.2.1~§13.2.5), regime/risk
+서브조건 분해·매핑(§13.2.6, `risk_off` 서브조건만 과잉 중복 후보로
+판정) — 전부 참조만 하고 다시 열지 않는다.
+
+**조회 방법**: `trading_db`(PostgreSQL) 컨테이너에 read-only
+`SELECT`로 직접 접속해 `trading.trade_decisions.decision_json`에서
+`deterministic_trigger.entry_score`, `deterministic_trigger.buy_
+candidate`, `deterministic_trigger.metadata.risk_tone`,
+`deterministic_trigger.metadata.regime_label`, `candidate_vs_final.
+final_intent`, `decision_type`을 추출했다. `side='buy'` 필터만
+적용했고, DB write·KIS 호출·코드 수정은 하지 않았다.
+
+**`risk_off -0.15` 적용 위치 재확인**: `_build_entry_score()`
+1236~1238행 —
+
+```text
+if market_regime.risk_tone == "risk_off":
+    score -= 0.15                      # trigger_risk_off_penalty
+```
+
+`regime_label`과 무관하게 `risk_tone=="risk_off"`이기만 하면 항상
+적용된다(`bullish_trend`의 `+0.10`과 동시에 적용될 수 있음 — 실제로
+아래 실측 population 대부분이 `regime_label="bullish_trend"`다).
+
+**집합 정의**: B = `risk_tone=="risk_off"`가 적용된 전체 표본. A =
+B 중 `entry_score>=0.65`(현재 통과). C = B 중 현재 `entry_score<0.65`
+이지만 `entry_score+0.15>=0.65`(패널티 때문에만 차단, 즉 `entry_
+score∈[0.50,0.65)`). D = A 중 `entry_score+0.15>=0.65`(패널티를
+없애도 여전히 통과 — A와 필연적으로 동일하다, 아래 확인).
+
+**새로 확인한 사실 1(집계 창별 비교표, row 기준)**:
+
+| 집계 창 | B(전체) | A(현재 통과) | C(패널티 때문에만 차단) | D(패널티 없어도 통과) |
+|---|---|---|---|---|
+| 최근 3거래일(08-01~08-03, 08-01/08-02는 주말이라 실제 거래일은 07-30·07-31·08-03) | 2,586 | 155 | 472 | 155 |
+| 최근 1개월(07-04~08-03) | 23,293 | 640 | 1,733 | 640 |
+| 전체 이력(06-19~08-03) | 39,530 | 640 | 3,692 | 640 |
+
+**D = A는 수학적으로 자명하다** — `risk_off -0.15`는 패널티이므로
+이를 제거(즉 `+0.15`)하면 점수는 커지기만 하고 작아지지 않는다.
+따라서 이미 `0.65`를 넘은 A 표본은 패널티를 없애도 반드시 그대로
+통과한다(D=A=640건, 실측으로 확인). **allocation 항(§13.2.3)이
+보너스였던 것과 반대로 `risk_off`는 패널티라, "덕분에만 통과"(C
+집합, allocation 쪽 개념)가 아니라 "패널티 때문에만 차단"(C 집합,
+이번 절 개념)이 실측 대상이라는 점이 방향상의 차이다.**
+
+**새로 확인한 사실 2(핵심 결과, allocation과 다름)**: **C 집합이
+0건이 아니다.** 전체 이력 `3,692`건, 최근 1개월 `1,733`건, 최근
+3거래일 `472`건이 `risk_off -0.15` 패널티 때문에만 `0.65` 문턱
+아래로 내려가 있다.
+
+**새로 확인한 사실 3(distinct `symbol`+거래일 기준)**:
+
+| 집계 창 | distinct symbol(C) | distinct symbol+거래일 조합(C) |
+|---|---|---|
+| 최근 3거래일 | 10 | 10 |
+| 최근 1개월 | 14 | 31 |
+| 전체 이력 | 27 | 89 |
+
+row 기준 결론과 같은 방향이다 — 특정 하루 반복 호출에 몰린 소수
+종목의 편중이 아니라, **27개 서로 다른 종목·89개 서로 다른 종목+
+거래일 조합**에 걸쳐 나타나는 표본이라 "distinct 기준으로도 같은
+결론이 유지된다."
+
+**상위 10건**(distinct `symbol`+거래일, `entry_score` 내림차순 —
+문턱에 가장 가까웠던 사례):
+
+| symbol | 거래일(KST) | entry_score | entry_score_without_risk_off_penalty | regime_label | buy_candidate | final_intent | decision_type |
+|---|---|---|---|---|---|---|---|
+| 073240 | 2026-08-03 | 0.6434 | 0.7934 | bullish_trend | false | no_action | hold |
+| 000810 | 2026-07-28 | 0.6200 | 0.7700 | bullish_trend | false | no_action | hold |
+| 000810 | 2026-07-28 | 0.6200 | 0.7700 | bullish_trend | false | watch | watch |
+| 000810 | 2026-07-27 | 0.6200 | 0.7700 | bullish_trend | false | no_action | hold |
+| 000810 | 2026-07-27 | 0.6200 | 0.7700 | bullish_trend | false | watch | watch |
+| 000660 | 2026-06-29 | 0.6086 | 0.7586 | bullish_trend | false | watch | watch |
+| 000660 | 2026-06-29 | 0.6086 | 0.7586 | bullish_trend | false | no_action | hold |
+| 000660 | 2026-06-25 | 0.6085 | 0.7585 | bullish_trend | false | no_action | hold |
+| 000660 | 2026-06-25 | 0.6085 | 0.7585 | bullish_trend | false | watch | watch |
+| 000660 | 2026-06-26 | 0.6065 | 0.7565 | bullish_trend | false | watch | watch |
+
+상위 10건 전부 `regime_label="bullish_trend"`다 — `risk_off` 패널티
+(`-0.15`)와 `bullish_trend` 보너스(`+0.10`)가 **동시에 적용돼 순
+`-0.05`만큼만 순감소**했음에도 불구하고, `entry_score`가 원래
+`0.65` 부근이었던 표본에서는 이 순감소만으로 문턱을 넘지 못했다.
+
+**새로 확인한 사실 4(`decision_type=approve`/`order_requests`와의
+관계, 실제 사례)**: A 집합(24건 `approve`, `order_requests` 도달
+`0`건)과 달리, **C 집합에서 `approve`이자 실제 `order_requests`에
+도달(체결)한 사례가 1건 있었다**:
+
+- `symbol=011070`, `2026-06-19 11:03:51 KST`, `entry_score=0.5647`
+  (패널티 제거 시 `0.7147`), `regime_label=bullish_trend`,
+  `buy_candidate=false`(결정론적 게이트는 차단), `final_intent=buy`,
+  `decision_type=approve`, `order_requests.status=filled`.
+
+즉 **결정론적 `buy_candidate` 게이트는 `risk_off` 패널티 때문에
+이 표본을 차단했지만, AI가 이를 override해 실제로 매수해 체결까지
+갔다.** 이는 `risk_off` 패널티가 결정론적 게이트와 AI 최종 판단
+사이에 실제 괴리를 만든 구체적 사례이며, allocation 실측(§13.2.3,
+`order_requests` 도달 `0`건)에서는 나타나지 않았던 종류의 결과다.
+
+**1순위 판정: C. 실제 BUY 경로에 유의미하다.**
+
+근거:
+1. C 집합이 세 집계 창 모두 **0건이 아니며**, 전체 이력 `3,692`건
+   (해당 population의 약 `9.3%`)에 달한다 — allocation 항(§13.2.3,
+   전 구간 `0`건)과 명확히 다른 결과다.
+2. distinct `symbol`+거래일 기준으로도 `27`개 종목·`89`개 조합에
+   걸쳐 나타나 특정 표본 편중이 아니다.
+3. C 집합 안에 실제로 `decision_type=approve`이자 `order_requests`
+   에서 체결까지 간 사례(`011070`, `2026-06-19`)가 존재한다 —
+   결정론적 게이트와 AI 최종 판단이 이 패널티 하나 때문에 실제로
+   어긋난 구체적 증거다.
+
+**다음 턴 1순위 권고안**: allocation 때처럼 곧바로 "제거" 코드
+수정으로 가지 않는다. C 집합 규모와 실제 override 사례(011070)가
+보여주듯, `risk_off` 패널티는 최소한 일부 population에서 결정론적
+게이트의 판정을 실질적으로 바꾸고 있어 "제거해도 영향 미미"라고
+할 수 없다. 대신 **R1(§13.1.2)에서 썼던 A/B/C 설계 비교 패턴**을
+다음 턴에 적용해, `risk_off` 패널티를 (A) 그대로 유지, (B) 계수만
+줄이는 완화, (C) `entry_score`에서 제거하고 필요하면 eligibility의
+기존 하드 게이트(`risk_off`+`bearish_trend` 차단)만 남기는 안 —
+세 방향의 blast radius와 근거를 비교하는 **설계 검토**부터 시작할
+것을 권고한다. 코드 수정은 그 설계 검토 이후로 미룬다.
+
+**아직 미확인인 것**:
+1. `risk_off` 패널티를 제거·완화했을 때 하류(EV gate, AI downgrade,
+   최종 submit)에서 override 빈도가 실제로 줄어드는지는 이번 턴에서
+   확인하지 않았다 — `011070` 1건은 override가 이미 일어나고 있다는
+   사실만 보여준다.
+2. `bullish_trend` 보너스(`+0.10`)와 `risk_off` 패널티(`-0.15`)가
+   동시에 적용되는 population(상위 10건 전부 해당)에서 두 서브조건을
+   함께 조정할 필요가 있는지는 §13.2.6에서 이미 "`bullish_trend`는
+   유지"로 판정했으므로 이번 턴에서 재검토하지 않았다.
+3. A/B/C 설계 비교 자체는 다음 턴 과제이며 이번 턴에서 수행하지
+   않았다.
+
 ### 13.3 R3 — `portfolio_allocation`의 역할 분리
 
 - 범위:
@@ -1675,7 +1821,14 @@ regime/risk 블록은 하나의 항목처럼 보이지만, 실제로는 중복 �
    `bullish_trend`/`risk_on` 서브조건은 대응하는 하드 게이트가 없어
    "유지" 판정에 가깝다. 다음 코드 수정 단위는 **B(read-only 실측
    먼저)**로 좁혔다 — `risk_off` 서브조건에 대해 §13.2.3과 같은
-   방법론(C 집합 실측)을 다음 턴에 적용한다
+   방법론(C 집합 실측)을 다음 턴에 적용한다. **[2026-08-03 KST 7차
+   갱신] `risk_off -0.15` 기여도 실측 완료(13.2.7)** — allocation과
+   달리 **C 집합이 0건이 아니다**(전체 이력 3,692건/27종목/89
+   symbol+거래일 조합, 최근 1개월 1,733건, 최근 3거래일 472건).
+   C 집합 안에 `decision_type=approve`이자 `order_requests`
+   체결까지 간 실제 사례(`011070`, `2026-06-19`)도 확인됐다. **판정
+   C(실제 BUY 경로에 유의미)**로, 곧바로 제거하지 않고 A/B/C 설계
+   비교(§13.1.2 패턴)부터 다음 턴에 진행할 것을 권고한다
 3. **R3/R4**: allocation/activity를 점수 밖으로 내릴지 검토
 4. **R5**: 상류 결정 이후 하류 연쇄 영향 확인
 

@@ -10545,7 +10545,14 @@ agent 설계 문서 기준으로도 순서는 다음이 맞다.
      off` 서브조건만 `core_risk_off_guard_active`·eligibility 하드
      게이트와 같은 원신호를 중복 반영(population 39,500건)하고,
      나머지는 대응 하드 게이트가 없어 "유지"에 가깝다. 다음 코드
-     수정 단위는 **B(read-only 실측 먼저)**로 좁혔다 +
+     수정 단위는 **B(read-only 실측 먼저)**로 좁혔다. **[2026-08-03
+     KST 7차 갱신] `risk_off -0.15` 기여도 실측 완료**(`buy_path_
+     variable_gate_matrix.md` §13.2.7) — allocation(C=0건)과 달리
+     **C 집합이 0건이 아니다**(전체 이력 3,692건/27종목/89 조합).
+     `decision_type=approve`이자 `order_requests` 체결까지 간 실제
+     사례(`011070`, 2026-06-19 KST)도 확인됐다. **판정 C(실제 BUY
+     경로에 유의미)**로, 곧바로 제거하지 않고 A/B/C 설계 비교부터
+     다음 턴에 진행할 것을 권고한다 +
      [1-B순위] **D안 순수 효과 재측정** — S5로 stale bias가 사라진 뒤
      §137.5의 2.13배(상한)를 다시 측정 +
      [1-B순위] `strategy_alignment` 제거의 **게이트 영향 재관측** —
