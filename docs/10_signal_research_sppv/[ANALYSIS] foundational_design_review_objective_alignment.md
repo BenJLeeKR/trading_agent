@@ -3792,3 +3792,11 @@ variable_gate_matrix.md` §13.2.10.
 다음 코드 수정 단위는 **A(무변화 구조 분리, 작고 선택적)**로 좁혔다.
 상세: `docs/20_system_analysis/buy_path_variable_gate_matrix.md`
 §13.3.1.
+
+**[2026-08-03 KST, 최소 미러링] R3 — A 적용 완료(동작 무변화).**
+`buy_candidate` 최종식의 `allocation_budget_ok` 재확인을 제거했다.
+`eligibility_passed`가 이미 이 조건을 내포함을 코드 구조로 증명했고,
+관련 테스트 25건 전부 fixture 변경 없이 통과해 판정 무변화임을
+확인했다. `portfolio_allocation`의 다른 소비처는 전부 범위 밖으로
+유지했다. 상세: `docs/20_system_analysis/buy_path_variable_gate_
+matrix.md` §13.3.2.

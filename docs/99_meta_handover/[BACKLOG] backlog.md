@@ -5089,3 +5089,36 @@ read-only 분석, 코드 변경 없음)
   완료). 이번 턴은 문서 5건만 수정하며 코드 변경은 없다.
 - 상세: `docs/20_system_analysis/buy_path_variable_gate_matrix.md`
   §13.3.1.
+
+### `allocation_budget_ok` 이중 확인 소규모 정리 적용(2026-08-03 KST,
+동작 무변화)
+
+- 전제: §13.3.1에서 확인된 유일한 정리 후보 1건만 다룬다.
+  `portfolio_allocation`의 다른 소비처(authoritative guard의
+  `allocation_bonus_like`, `ranking_score`의 `allocation_quality`,
+  참여율/실행 가능성 게이트, AI 컨텍스트/`decision_json`)는 전부
+  범위 밖으로 유지했다. `risk_off` 하드 게이트 단일 권위화도 범위
+  밖이다.
+- 기존 이중 확인 위치: 계산은 `_build_deterministic_trigger_
+  assessment()` 내부(`allocation_budget_ok = portfolio_allocation is
+  None or portfolio_allocation.max_new_capital_pct > 0`). 1차 확인은
+  `_assess_buy_eligibility()` 내부 — `not allocation_budget_ok`이면
+  즉시 `False`를 반환(제어 흐름상 이 조건을 뒤집는 다른 경로 없음).
+  2차 확인(제거 대상)은 `buy_candidate` 최종 조건식에서 `eligibility_
+  passed`와 별개로 `and allocation_budget_ok`를 다시 확인하던 부분.
+- 무엇을 제거했고 왜 무변화인지: `eligibility_passed=True`는 항상
+  `allocation_budget_ok=True`를 함의한다는 것이 `_assess_buy_
+  eligibility()`의 제어 흐름 자체로 증명되므로, 최종식의 `and
+  allocation_budget_ok`만 제거했다. 변수 자체는 인자 전달·metadata
+  기록에 계속 쓰이므로 유지했다.
+- 검증: `bash scripts/harness/run.sh accept backend-file
+  src/agent_trading/services/deterministic_trigger_engine.py` PASS.
+  개발 트리 대상 ephemeral 컨테이너에서 `tests/services/test_
+  deterministic_trigger_engine.py` 25건 전부 fixture 변경 없이 통과
+  (`max_new_capital_pct=0.0` 할당 예산 차단 케이스 포함). `py_compile`,
+  `ruff check` 통과. 전체 테스트는 수행하지 않았다.
+- git 상태: 이번 턴 확인 시점 로컬 `main`(HEAD `c8db05d1`) =
+  `origin/main`(이격 0, PR #115 머지 및 사용자 승인 장중 배포 반영
+  완료). 이번 턴은 코드 1개 파일 + 문서 반영.
+- 상세: `docs/20_system_analysis/buy_path_variable_gate_matrix.md`
+  §13.3.2.

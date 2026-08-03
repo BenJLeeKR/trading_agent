@@ -2351,6 +2351,53 @@ score 중복(authoritative guard vs `ranking_score`)은 이미 R1에서
 3. `assess_portfolio_allocation()`(값 생성 로직 자체)의 내부 구현은
    이번 절의 범위 밖이다 — BUY 경로 소비처 매핑에 집중했다.
 
+#### 13.3.2 `allocation_budget_ok` 이중 확인 소규모 정리 적용(2026-08-03 KST, 동작 무변화)
+
+**(1) 기존 이중 확인 위치**:
+- 계산: `_build_deterministic_trigger_assessment()` 내부(약 197-200행)
+  ```python
+  allocation_budget_ok = (
+      portfolio_allocation is None
+      or portfolio_allocation.max_new_capital_pct > 0
+  )
+  ```
+- 1차 확인: `_assess_buy_eligibility()` 내부(약 474-477행) — `not
+  allocation_budget_ok`이면 즉시 `eligibility_passed=False`,
+  `"eligibility_allocation_blocked"` reason과 함께 반환한다.
+- 2차 확인(제거 대상): `buy_candidate` 최종 조건식(약 280-288행)에서
+  `eligibility_passed`와 별개로 `and allocation_budget_ok`를 다시 확인.
+
+**(2) 중복 검증**: `_assess_buy_eligibility()`의 제어 흐름상
+`allocation_budget_ok=False`일 때 함수가 그 즉시 `False, (...)`를
+반환하는 return문이 유일한 분기이며, 그 뒤에 `allocation_budget_ok`를
+다시 뒤집는 코드 경로는 없다. 즉 `eligibility_passed=True`는 항상
+`allocation_budget_ok=True`를 함의한다 — 최종식의 `and
+allocation_budget_ok`는 이미 참으로 확정된 조건을 다시 확인하는
+무변화 재확인이다.
+
+**(3) 적용한 정리**: `buy_candidate` 최종 조건식에서 `and
+allocation_budget_ok` 절만 제거했다. `allocation_budget_ok` 변수 자체는
+`_assess_buy_eligibility()` 인자 전달과 `metadata["allocation_budget_
+ok"]` 기록에 계속 쓰이므로 그대로 유지했다.
+
+**(4) 최소 검증**:
+- `bash scripts/harness/run.sh accept backend-file
+  src/agent_trading/services/deterministic_trigger_engine.py` → PASS
+  (선택된 테스트 3건 전부 통과, 신규 실패 0건)
+- 개발 트리 대상 ephemeral 컨테이너에서
+  `tests/services/test_deterministic_trigger_engine.py` 25건 전부
+  통과(fixture 변경 없음 — 판정 무변화라는 사실 자체를 증명) — 특히
+  `max_new_capital_pct=0.0`으로 할당 예산을 막는 기존 케이스(약
+  214-220행, `eligibility_allocation_blocked` 확인)가 수정 없이 그대로
+  통과했다.
+- `py_compile`, `ruff check` 모두 통과.
+
+**(5) 범위 밖으로 유지한 항목**: `max_new_capital_pct`의 다른 소비처
+(authoritative guard의 `allocation_bonus_like`, `ranking_score`의
+`allocation_quality`, 참여율/실행 가능성 게이트, AI 컨텍스트/
+`decision_json` 저장)는 이번 정리에서 전혀 건드리지 않았다.
+`risk_off` 하드 게이트 단일 권위화도 이번 턴 범위 밖이다.
+
 ### 13.4 R4 — activity 계열의 soft/hard 중복 정리
 
 - 범위:
@@ -2488,7 +2535,12 @@ score 중복(authoritative guard vs `ranking_score`)은 이미 R1에서
    2건은 서로 다른 시장충격 관점이라 정당한 분리로 판정했다. 유일한
    정리 후보는 `allocation_budget_ok`의 코드 레벨 재확인(판정 결과
    무영향)뿐이다. 다음 코드 수정 단위는 **A(무변화 구조 분리, 작고
-   선택적)**로 좁혔다
+   선택적)**로 좁혔다. **[2026-08-03 KST 갱신] A 적용 완료(13.3.2)**
+   — `buy_candidate` 최종식의 `allocation_budget_ok` 재확인을
+   제거했다. `eligibility_passed`가 이미 이 조건을 내포한다는 것을
+   코드 구조로 증명했고, 관련 테스트 25건 전부 fixture 변경 없이
+   통과해 판정 무변화임을 확인했다. `portfolio_allocation`의 다른
+   소비처는 전부 범위 밖으로 유지했다 — R3 트랙은 이것으로 닫는다
 4. **R4**: activity를 점수 밖으로 내릴지 검토
 5. **R5**: 상류 결정 이후 하류 연쇄 영향 확인
 

@@ -279,8 +279,10 @@ def assess_deterministic_triggers(
     else:
         if (
             eligibility_passed
+            # §13.3.2: allocation_budget_ok는 _assess_buy_eligibility() 내부에서
+            # 이미 False일 때 eligibility_passed=False로 확정되므로(코드
+            # 474-477행), 여기서 다시 확인하는 것은 무변화 재확인이라 제거한다.
             and entry_score >= thresholds["buy_candidate_threshold"]
-            and allocation_budget_ok
             and (
                 regime_switch_v1_gate_assessment is None
                 or regime_switch_v1_gate_assessment.gate_open
