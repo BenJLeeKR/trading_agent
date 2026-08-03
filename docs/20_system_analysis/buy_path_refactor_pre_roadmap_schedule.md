@@ -457,3 +457,16 @@ threshold는 무변화).
 - [x] R1 정의 고정
 - [ ] R2 경계 확인(운영 재실측 포함)
 - [ ] Roadmap 작성 착수
+
+## 9. execution path 별건 — `stale_snapshot_guard` zero-position false-stale(2026-08-03 KST)
+
+R1~R5(BUY 경로 점수/게이트 리팩터링)와 무관한 별도 인시던트를
+`execution_service.py`에서 발견해 같은 턴 계열로 처리했다 — 상세는
+`buy_path_variable_gate_matrix.md` §14 참고.
+
+- [x] 원인 확정(zero-qty 최신 position snapshot이 `list_latest_by_
+  account()`의 "빈 목록" 우회를 막음, 63/76건 재현)
+- [x] 설계안 비교(A/B/C/D) 및 A안 권고 확정
+- [x] A안 코드 적용 — `_check_account_snapshot_freshness()`에
+  `quantity>0` 필터 추가, 회귀 테스트 2건 신규 추가
+- [ ] 운영 재기동 이후 실측(다음 턴)
