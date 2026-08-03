@@ -70,14 +70,13 @@ def build_submit_order_request_from_decision(
         no quantity).
     """
     # ── Decision type check: skip non-actionable decisions ──
+    # WATCH는 모니터링 대상일 뿐 제출 대상이 아니므로(호출자가 로깅
+    # 책임을 진다) actionable_types에 넣지 않는다 — 넣고 별도 분기로
+    # 다시 걸러내던 이전 구조는 두 분기 결과가 항상 동일한 무해한
+    # 이중 확인이라 R5-a로 정리했다(동작 무변화).
     decision_type = intent.ai_backend_inputs.decision_type
-    actionable_types = {"APPROVE", "BUY", "SELL", "EXIT", "REDUCE", "WATCH"}
+    actionable_types = {"APPROVE", "BUY", "SELL", "EXIT", "REDUCE"}
     if decision_type not in actionable_types:
-        return None
-
-    # WATCH decisions are monitored but never submitted.
-    # (Caller is responsible for any logging.)
-    if decision_type == "WATCH":
         return None
 
     if not _has_required_expected_value_anchor(
