@@ -58,6 +58,8 @@ total += fill_price * fill_quantity * multiplier - fee - tax
 
 - 왜: `_sync_fills()`가 `fill_events`에 새 행을 append하는 지점에서 ledger를 함께 갱신해야 "체결 기준" 요구사항이 충족된다.
 - 산출물: fill 저장 성공 후 ledger 갱신 호출 + 실패 시 복구 계약(상세 설계 문서 8절 — 재처리 큐/`recompute_required`/운영 지표 중 최소 하나를 반드시 포함).
+  - **orchestration 서비스 구현 완료, `order_sync_service` 훅은 아직 없음**: [`src/agent_trading/services/realized_pnl_ledger_service.py`](../../src/agent_trading/services/realized_pnl_ledger_service.py)의 `RealizedPnlLedgerService.apply_fill()`이 fill → NormalizedFill 정규화(join 포함) → 계산 엔진 호출 → state/event/일자집계 저장 → 실패 시 recompute_queue/recompute_required 처리를 전부 구현했다(단위 테스트: [`tests/services/test_realized_pnl_ledger_service.py`](../../tests/services/test_realized_pnl_ledger_service.py)). 다만 `order_sync_service._sync_fills()`가 이 서비스를 실제로 호출하는 훅은 아직 삽입하지 않았다 — 서비스는 독립적으로 호출 가능한 상태로만 존재한다.
+  - idempotency 한계: SELL은 `fill_event_id` UNIQUE 조회로 완전 방어, BUY는 "가장 최근 적용 fill과의 일치"만 방어(상세 설계 문서 6절).
 - 검증 명령: `bash scripts/harness/run.sh accept backend-runtime`, 모킹된 broker 기반 통합 테스트.
 
 ### 4단계 — 백필(backfill) — 후속 확장, 1차 범위 아님
@@ -85,7 +87,7 @@ total += fill_price * fill_quantity * multiplier - fee - tax
 | 0 | 전제 확인 결과 | 미착수 |
 | 1 | 계산 엔진 + 단위 테스트 | **구현 완료**(`realized_pnl_engine.py`, 저장소 미연결) |
 | 2 | 신규 마이그레이션(초안)/엔티티/repository | **마이그레이션 초안만 작성 완료**(0053/0054, 미실행) — entity/repository는 미착수 |
-| 3 | 실시간 반영 훅 + 복구 계약 | 미착수 |
+| 3 | 실시간 반영 훅 + 복구 계약 | **orchestration 서비스 구현 완료**(`realized_pnl_ledger_service.py`) — `order_sync_service` 훅 연결은 미착수 |
 | 4 | 백필 배치 + 실행 요약 | 미착수(후속) |
 | 5 | 조회 API | 미착수(후속) |
 | 6 | 화면/문서 정리 | 미착수(후속) |
@@ -162,6 +164,13 @@ total += fill_price * fill_quantity * multiplier - fee - tax
 - `src/agent_trading/services/realized_pnl_engine.py`가 저장소를 호출하지 않는 순수 함수로 작성되고, `tests/services/test_realized_pnl_engine.py`가 이 문서/상세 설계 3.2절의 계산 규칙과 불변식을 모두 커버한다.
 - 계산 엔진은 저장소를 전혀 몰라야 한다 — `order_sync_service` 연결, backfill 러너, API, Admin UI는 이번 단계에 포함하지 않는다(3단계 이후 후속 작업).
 - 이 단계에서 "구현 완료"는 순수 함수와 그 단위 테스트가 통과한다는 뜻이며, 실제 KIS 체결 데이터로의 실측 검증은 아직 이루어지지 않았다.
+
+### 이번 단계(3단계 — repository write orchestration)의 완료 기준
+
+- `src/agent_trading/services/realized_pnl_ledger_service.py`의 `RealizedPnlLedgerService.apply_fill()`이 계산은 전부 `realized_pnl_engine.py`에 위임하고, fill → NormalizedFill 정규화·현재 상태 조회·저장·idempotency·out-of-order/실패 시 recompute_queue·recompute_required 처리를 담당한다.
+- `tests/services/test_realized_pnl_ledger_service.py`가 BUY/SELL 반영, fee/tax 정규화, idempotency(SELL 완전 방어/BUY 제한적 방어), 계산 엔진 예외, out-of-order, lineage 조인 실패, computation run 카운트를 in-memory repository 기반으로 커버한다.
+- "구현 완료"는 이 서비스가 독립적으로 호출 가능하고 테스트를 통과한다는 뜻이며, `order_sync_service`가 실제로 이 서비스를 호출하는 훅은 **포함하지 않는다** — 그 연결은 후속 작업이다.
+- BUY dedup이 "가장 최근 적용 fill과의 일치"만 방어한다는 한계는 완료 기준 위반이 아니라 명시적으로 문서화된 현재 범위다.
 
 ## 10. 추가 보정사항 / 유지해야 할 원칙 / 완료 후 보고 가이드
 
