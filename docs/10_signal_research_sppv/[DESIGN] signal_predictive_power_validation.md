@@ -9120,3 +9120,89 @@ canonical 국면 분해 표에서 빠져 있다는 데이터 공백을 이번 �
 공백을 메우는 것이다(3년 캐시도 이미 존재해 신규 KIS 호출 없이
 가능). 그 다음에야 축 1 전체를 "1차+2차 모두 확인 완료"로 닫을 수
 있다.
+
+## 33. `SPPV-3` 축 1 — `slow_momentum` 3년 시장공통 국면 분해 공백 해소(2026-08-04, read-only 실행)
+
+§32.6에서 발견한 데이터 공백(`slow_momentum`이 §14의 3년 시장공통
+국면 분해 표에 없음)을 메운다. `fast_score`/`slow_trend`, 축
+2/3/4, `BUY 경로 리팩터링`은 다루지 않는다.
+
+### 33.1 실행 방법 — §14와 동일한 3년 캐시·동일한 함수
+
+`scripts/validate_signal_predictive_power_v4_extended_period.py`
+(§14의 canonical 스크립트)의 `main()`은 `DIRECT_SIGNALS=["slow_
+score","fast_score","overall_score"]`만 순회해 `slow_momentum`을
+표에 넣지 않는다. 이 턴은 그 스크립트를 수정하지 않고, 같은 3년
+캐시(`logs/_bars_cache_core87_3y_2026-07-14/`)와 같은 함수
+(`_build_benchmark_daily_series`/`_cross_sectional_ic_by_date`/
+`_quintile_spread_series`/`_summarize_series`, 전부 §14와 동일한
+코드)를 그대로 재사용하는 최소 드라이버로 `slow_momentum`을 `overall_
+score`/`slow_score`와 나란히 계산했다(§32와 같은 방식, client는
+캐시 hit 시 참조되지 않는 no-op — 예외 발생 시 즉시 드러남).
+
+**신규 KIS 호출 확인**: 실행 로그에 `KIS_CALLS_MADE=0`,
+`MISSING_CACHE=[]`(87개 평가 종목 전부 캐시 hit, 벤치마크
+`069500` 별도 포함) — 신규 KIS 호출 0건.
+
+**재현성 검증**: 이 드라이버로 재계산한 `overall_score`/`slow_score`
+의 pooled·4개 국면별 `t_NW` 16개 값 전부가 §14.2의 기존 표와
+**정확히 일치**했다 — §32에 이어 다시 한번 방법론 결정론성을
+재확인했다.
+
+### 33.2 `slow_momentum` 3년 시장공통 국면 분해 표(§14.2와 동일 표준)
+
+| horizon | 구분 | `n`(거래일) | `t_NW`(부호) |
+|---|---|---|---|
+| T+5 | pooled(653일) | 653 | -0.06(무의미) |
+| T+5 | `bullish_trend` | 351 | 0.07(무의미) |
+| T+5 | `bearish_trend` | 96 | **-0.63(무의미, 음수)** |
+| T+5 | `range_bound` | 200 | -0.06(무의미) |
+| T+5 | `event_driven_unstable` | 6 | 4.22(표본부족, 판정 제외) |
+| T+20 | pooled(653일) | 653 | 0.52(무의미) |
+| T+20 | `bullish_trend` | 351 | -0.30(무의미) |
+| T+20 | `bearish_trend` | 96 | **0.88(무의미, 양수)** |
+| T+20 | `range_bound` | 200 | 0.96(무의미) |
+| T+20 | `event_driven_unstable` | 6 | 5.28(표본부족, 판정 제외) |
+
+### 33.3 `overall_score`/`slow_score` 대비 비교 요약
+
+| 신호 | pooled T+5 | pooled T+20 | `bearish_trend` T+5 | `bearish_trend` T+20 |
+|---|---|---|---|---|
+| `slow_momentum` | -0.06(무의미) | 0.52(무의미) | -0.63(무의미) | 0.88(무의미) |
+| `overall_score`(§14.2) | 1.03(무의미) | 1.32(무의미) | **-1.71(방향 역전, 비유의)** | -0.14(무의미) |
+| `slow_score`(§14.2) | 0.43(무의미) | 0.76(무의미) | -0.88(무의미) | 0.63(무의미) |
+
+`slow_momentum`은 세 신호 중 **가장 신호가 약하다** — pooled에서도
+`overall_score`/`slow_score`보다 `\|t_NW\|`가 작고, `bearish_trend`
+에서도 `overall_score`처럼 방향이 뚜렷하게 뒤집히는 패턴조차
+보이지 않는다(T+5는 음수, T+20은 양수로 horizon 간 부호도 일관되지
+않음). 파일럿(§6)에서 "예측력의 주력"으로 지목됐던 것과는 정반대로,
+3년 canonical 기준에서는 세 핵심 신호 중 가장 정보가 없는 신호임이
+확인됐다.
+
+### 33.4 §14.2/§16.2 기준 판정 — 하락장 거동은 "무의미"
+
+`slow_momentum`의 하락장(`bearish_trend`, n=96) 거동은 **유의한
+양(+)/역방향 둘 다 아니고, 무의미(`\|t_NW\|<1` 양 horizon 모두)다.**
+`overall_score`처럼 방향이 뚜렷하게 뒤집히는 "위험한" 신호는 아니지만,
+`\|t_NW\|≥2`에 해당하는 "유효한" 신호도 아니다. §16.2 Go 게이트
+(a)(1차 유의성)는 §32에서 이미 탈락이 확정됐으므로, 이번 (b)(2차
+국면 무역전) 결과와 무관하게 최종 판정은 바뀌지 않는다.
+
+### 33.5 이번 턴 판정 — **Hold 유지**(데이터 공백 해소, 판정 자체는 불변)
+
+- "Hold 강화"는 아니다 — 새로운 부정적 증거(유의한 역방향)가 추가로
+  나온 것이 아니라, 애초에 아무 신호도 없다는 사실이 확인됐을 뿐이다.
+- "Watch 여지"도 아니다 — 어떤 국면·horizon 조합에서도 `\|t_NW\|≥2`
+  에 근접하는 값이 없다.
+- 결론: §32에서 확정한 Hold를 그대로 유지하며, 이번 턴으로 그
+  근거(3년 국면 분해)가 완전해졌다 — 축 1의 `slow_momentum` 관련
+  데이터 공백은 이것으로 해소됐다.
+
+### 33.6 다음 1순위 액션
+
+`slow_momentum`/`overall_score`/`slow_score` 3개 핵심 신호 모두
+1차(§32)·2차(§14/§33) 양쪽에서 Hold로 판정이 닫혔다 — **축 1(alpha
+자체 예측력)의 핵심 대상 판정을 "완료"로 종료**하고, §30.6에서
+함께 즉시 착수 가능으로 분류했던 **축 3(downstream 분리 순수
+deterministic 성과)** 착수로 넘어가는 것을 다음 1순위로 제안한다.

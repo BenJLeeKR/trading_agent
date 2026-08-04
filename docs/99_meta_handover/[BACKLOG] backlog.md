@@ -5386,3 +5386,26 @@ read-only 분석, 코드 변경 없음)
   표에 포함시켜 하락장 거동 확인**(3년 캐시 존재, 신규 KIS 호출
   불필요).
 - 상세: `[DESIGN] signal_predictive_power_validation.md` §32.
+
+### `SPPV-3` 축 1 — `slow_momentum` 3년 시장공통 국면 분해 공백 해소(2026-08-04, read-only 실행)
+
+- 실행 방법: §14의 canonical 스크립트(`validate_signal_predictive_
+  power_v4_extended_period.py`)를 수정하지 않고, 같은 3년 캐시·같은
+  함수를 재사용하는 최소 드라이버로 `slow_momentum`을 `overall_
+  score`/`slow_score`와 나란히 계산했다. 실행 로그에서 `KIS_CALLS_
+  MADE=0`, `MISSING_CACHE=[]`(87개 종목 전부 캐시 hit) 확인 — 신규
+  KIS 호출 0건.
+- 재현성 검증: `overall_score`/`slow_score`의 pooled·4개 국면별
+  `t_NW` 16개 값 전부가 §14.2 기존 표와 정확히 일치했다.
+- `slow_momentum` 3년 시장공통 국면 분해: `bearish_trend`(n=96)
+  T+5 `t_NW=-0.63`, T+20 `t_NW=0.88` — 양 horizon 모두 `\|t_NW\|<1`
+  로 **무의미**(유의한 역방향도 유의한 양(+)도 아님). pooled·
+  `bullish_trend`·`range_bound`도 전부 `\|t_NW\|<1`. 세 핵심 신호 중
+  가장 정보가 없는 신호로 확인됐다.
+- 판정: **Hold 유지**(데이터 공백만 해소, §32의 Hold 판정 자체는
+  불변) — "Hold 강화"(새 부정적 증거 없음)도 "Watch 여지"(유의한
+  값 없음)도 아니다.
+- 다음 1순위 액션: 핵심 대상 3개 전부 1차+2차 확인이 끝나 축 1을
+  종료하고, **축 3(downstream 분리 순수 deterministic 성과) 착수**로
+  넘어간다.
+- 상세: `[DESIGN] signal_predictive_power_validation.md` §33.
