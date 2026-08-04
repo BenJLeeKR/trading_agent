@@ -134,3 +134,29 @@ def test_expected_value_gate_raises_entry_edge_for_risk_off_exception_path() -> 
 
     assert result.minimum_required_edge_bps == Decimal("17.50")
     assert "expected_value_risk_off_exception_path" in result.reason_codes
+
+
+def test_expected_value_gate_ignores_metadata_only_risk_off_flag() -> None:
+    """R5-b: metadata["risk_off_exception_eligible"] fallback 제거 확인.
+
+    실제 호출부는 전부 DeterministicTriggerAssessment를 넘기므로 이
+    duck-typed 시나리오(metadata에만 플래그가 있고 top-level 속성은
+    없는 경우)는 발생하지 않지만, fallback이 의도적으로 제거됐음을
+    회귀로 고정한다 — top-level 속성이 없으면 metadata 값과 무관하게
+    risk_off_exception_eligible로 취급하지 않는다.
+    """
+    result = evaluate_expected_value_gate(
+        decision_type="BUY",
+        confidence=0.9,
+        conviction=0.8,
+        risk_score=0.3,
+        context=SimpleNamespace(
+            signal_feature_snapshot=None,
+            deterministic_trigger=SimpleNamespace(
+                metadata={"risk_off_exception_eligible": True},
+            ),
+        ),
+    )
+
+    assert result.minimum_required_edge_bps == Decimal("10.00")
+    assert "expected_value_risk_off_exception_path" not in result.reason_codes

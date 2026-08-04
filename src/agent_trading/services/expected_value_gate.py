@@ -223,14 +223,19 @@ def _estimate_round_trip_cost_bps(
 
 
 def _is_risk_off_exception_path(deterministic_trigger: object | None) -> bool:
+    # R5-b 확인(2026-08-04): metadata["risk_off_exception_eligible"]
+    # fallback을 제거했다. evaluate_expected_value_gate()의 실제 호출부
+    # 3곳(decision_agent_runner.py 2곳, decision_orchestrator.py 1곳)이
+    # 넘기는 context.deterministic_trigger는 전부 AssembledContext/
+    # AIPolicyContextView의 정적 타입 필드(DeterministicTriggerAssessment
+    # | None)를 통해서만 전달되며, dict/duck-typed 객체가 실제로 흘러드는
+    # 경로는 없다. 또한 DeterministicTriggerAssessment의 유일한 생성
+    # 지점(deterministic_trigger_engine.py)에서 risk_off_exception_
+    # eligible 속성과 metadata["risk_off_exception_eligible"]는 항상
+    # 동일한 계산식으로 함께 채워져 값이 어긋날 수 없다.
     if deterministic_trigger is None:
         return False
-    if bool(getattr(deterministic_trigger, "risk_off_exception_eligible", False)):
-        return True
-    metadata = getattr(deterministic_trigger, "metadata", None)
-    if isinstance(metadata, dict):
-        return bool(metadata.get("risk_off_exception_eligible"))
-    return False
+    return bool(getattr(deterministic_trigger, "risk_off_exception_eligible", False))
 
 
 def _estimate_slippage_buffer_bps(

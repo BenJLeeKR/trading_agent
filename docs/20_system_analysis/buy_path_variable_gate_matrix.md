@@ -2664,6 +2664,31 @@ translation) 결과, `build_submit_order_request_from_decision()`가
 fallback), R5-f(`decision_orchestrator.py`의 `evaluate_action_envelope`
 재확인)는 이번 턴 범위 밖으로 남긴다.
 
+#### 13.5.2 R5-b — `expected_value_gate.py` metadata fallback 정리 적용(2026-08-04, 동작 무변화)
+
+`_is_risk_off_exception_path()`는 `deterministic_trigger.risk_off_
+exception_eligible` 속성을 확인한 뒤, 실패하면 `deterministic_
+trigger.metadata["risk_off_exception_eligible"]`까지 재확인하는
+fallback을 갖고 있었다. `evaluate_expected_value_gate()`의 실제
+호출부 3곳(`decision_agent_runner.py` 2곳, `decision_orchestrator.py`
+1곳)을 전수 확인한 결과, 전부 `AssembledContext`/`AIPolicyContextView`
+의 정적 타입 필드(`deterministic_trigger: DeterministicTriggerAssessment
+| None`)를 통해서만 전달되며 dict/duck-typed 객체가 실제로 흘러드는
+경로는 없었다. 또한 `DeterministicTriggerAssessment`의 유일한 생성
+지점(`deterministic_trigger_engine.py`)에서 `risk_off_exception_
+eligible` 속성과 `metadata["risk_off_exception_eligible"]`는 항상
+동일한 계산식으로 함께 채워진다 — 값이 어긋날 수 없음을 코드로
+확정했다.
+
+안전이 확정돼 metadata fallback을 제거했다. 신규 회귀 테스트
+(`test_expected_value_gate_ignores_metadata_only_risk_off_flag`)를
+추가해 duck-typed 시나리오(metadata에만 플래그가 있고 top-level
+속성은 없는 경우)에서 이제 `risk_off_exception_eligible`로 취급하지
+않음을 고정했다 — 수정 전 코드로는 이 테스트가 실패함을 확인해
+회귀 재현을 검증했다. 기존 테스트 4건은 fixture 변경 없이 통과했다.
+R5-f(`decision_orchestrator.py`의 `evaluate_action_envelope` 재확인)는
+이번 턴 범위 밖으로 남긴다.
+
 ### 13.6 이번 리팩터링 범위 밖
 
 - SELL/exit 공식 재설계
