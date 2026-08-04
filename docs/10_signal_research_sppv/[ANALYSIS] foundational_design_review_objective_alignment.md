@@ -3817,3 +3817,11 @@ snapshot 등)은 사실상 `BUY 경로 리팩터링`(R1~R5) 트랙으로 전개�
 종료됐다 — 같은 번호 체계로 더 이어가지 않는다. 이후 검증은
 재정의된 `SPPV-3`로 넘어간다. 상세: `[DESIGN] signal_predictive_
 power_validation.md` §29.
+
+**[2026-08-04 KST, 최소 미러링] `SPPV-3` 검증 계획 초안 확장
+완료.** 4개 검증 축을 질문/입력 데이터/집계 단위/비교 기준/판정
+기준/선행 전제 표로 구체화했다. 축 1(alpha 자체 예측력)·축
+3(downstream 분리 성과)은 즉시 착수 가능, 축 2(정리된 gate 통과
+후 성과)·축 4(funnel 전환 기여도)는 선행 운영 관측이 끝나야
+착수 가능으로 분리했다. 상세: `[DESIGN] signal_predictive_power_
+validation.md` §30.
