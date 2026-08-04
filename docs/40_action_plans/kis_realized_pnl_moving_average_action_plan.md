@@ -43,7 +43,8 @@ total += fill_price * fill_quantity * multiplier - fee - tax
 ### 1단계 — 계산 엔진(순수 함수)
 
 - 왜: DB나 repository 없이 독립적으로 검증 가능한 부분을 먼저 고정해야 이후 단계의 리스크가 줄어든다.
-- 산출물: 상세 설계 문서 5절의 상태 전이 함수(`apply_fill_to_cost_basis` 등) + 단위 테스트. 매수/매도/부분매도/같은 날 교차/완전청산 원가 리셋/재매수/fee·tax 반영/중복 fill 재적용 no-op 시나리오 포함.
+- 산출물: 상세 설계 문서 3.2절의 상태 전이 함수(`apply_fill_to_cost_basis` 등) + 단위 테스트. 매수/매도/부분매도/같은 날 교차/완전청산 원가 리셋/재매수/fee·tax 반영/중복 fill 재적용 no-op 시나리오 포함.
+  - **구현 완료**: [`src/agent_trading/services/realized_pnl_engine.py`](../../src/agent_trading/services/realized_pnl_engine.py)(`apply_fill_to_cost_basis()`, `replay_fills()`, 전용 예외 7종) + [`tests/services/test_realized_pnl_engine.py`](../../tests/services/test_realized_pnl_engine.py)(21개 assert 케이스, parametrize 포함). 저장소를 호출하지 않는 순수 함수이며, `order_sync_service` 연결·backfill 러너·API 연동은 아직 없다(3단계 이후).
 - 검증 명령: `bash scripts/harness/run.sh accept backend-file <새 파일 경로>`, `bash scripts/harness/run.sh test-file tests/services/test_<신규 파일>.py`.
 
 ### 2단계 — DB 스키마 / 엔티티 / repository
@@ -82,7 +83,7 @@ total += fill_price * fill_quantity * multiplier - fee - tax
 | 단계 | 산출물 | 상태 |
 |---|---|---|
 | 0 | 전제 확인 결과 | 미착수 |
-| 1 | 계산 엔진 + 단위 테스트 | 미착수 |
+| 1 | 계산 엔진 + 단위 테스트 | **구현 완료**(`realized_pnl_engine.py`, 저장소 미연결) |
 | 2 | 신규 마이그레이션(초안)/엔티티/repository | **마이그레이션 초안만 작성 완료**(0053/0054, 미실행) — entity/repository는 미착수 |
 | 3 | 실시간 반영 훅 + 복구 계약 | 미착수 |
 | 4 | 백필 배치 + 실행 요약 | 미착수(후속) |
@@ -155,6 +156,12 @@ total += fill_price * fill_quantity * multiplier - fee - tax
 - `bash scripts/harness/run.sh accept db-structure` 결과 `migration_duplicate_number_count=0`, `migration_sequence_gap_count=0`, `migration_filename_violation_count=0`.
 - 이 migration은 아직 어떤 DB에도 실행되지 않았다 — "작성 완료"와 "적용 완료"를 구분해서 보고한다.
 - entity/repository/runtime 코드는 이번 단계에 포함하지 않는다(2단계의 나머지 부분 + 3단계는 후속 작업).
+
+### 이번 단계(1단계 — 계산 엔진)의 완료 기준
+
+- `src/agent_trading/services/realized_pnl_engine.py`가 저장소를 호출하지 않는 순수 함수로 작성되고, `tests/services/test_realized_pnl_engine.py`가 이 문서/상세 설계 3.2절의 계산 규칙과 불변식을 모두 커버한다.
+- 계산 엔진은 저장소를 전혀 몰라야 한다 — `order_sync_service` 연결, backfill 러너, API, Admin UI는 이번 단계에 포함하지 않는다(3단계 이후 후속 작업).
+- 이 단계에서 "구현 완료"는 순수 함수와 그 단위 테스트가 통과한다는 뜻이며, 실제 KIS 체결 데이터로의 실측 검증은 아직 이루어지지 않았다.
 
 ## 10. 추가 보정사항 / 유지해야 할 원칙 / 완료 후 보고 가이드
 
