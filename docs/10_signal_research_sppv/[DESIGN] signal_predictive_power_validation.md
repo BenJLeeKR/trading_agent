@@ -8840,3 +8840,90 @@ R2 allocation 제거 이후 운영 재실측 — 이 둘은 **"`SPPV-2` 후속"�
 **(6) 다음 1순위 액션**: **`SPPV-3` 재정의 문서 초안 확장** — §28/
 §29의 목표·검증 축 4개를 근거로 `§4.3~§4.5`를 새 공식·새 경로 기준
 으로 다시 쓴다. 체크리스트 작성은 이 초안의 부산물로 뒤따른다.
+
+## 30. `SPPV-3` 재정의 검증 계획 초안(2026-08-04, read-only 문서 확장)
+
+이 절은 §28/§29에서 확정한 4개 검증 축을 **실제 착수 가능한 계획**
+으로 구체화한다. 새 실측·새 코드 분석은 하지 않는다. `SPPV-2.xxx`
+번호는 새로 만들지 않는다 — 아래 소절은 `SPPV-3` 자체의 하위
+구조(§30.1~§30.5)로만 번호를 매긴다.
+
+### 30.1 검증 대상 4개 축 요약
+
+1. **alpha 자체 예측력** — 원신호가 리팩터링과 무관하게 여전히
+   미래 수익률을 예측하는가
+2. **리팩터링된 deterministic gate 통과 후 성과** — R1~R5로 정리된
+   현재 `entry_score`/eligibility/authoritative gate를 통과한
+   표본의 실제 forward return
+3. **downstream(AI/EV/submit)과 분리한 순수 deterministic 성과** —
+   AI 개입 유무에 따라 deterministic 신호 단독 성과가 어떻게
+   달라지는가
+4. **`order_request`/submit 전환까지의 funnel 기여도** — 정리된
+   게이트를 통과한 신호가 실제 주문 전환까지 이어지는 비율과, 그
+   비율이 신호 강도와 상관관계를 갖는가
+
+### 30.2 축별 구체화표
+
+| 축 | 질문 | 필요한 입력 데이터 | 집계 단위 | 비교 기준 | 성공/실패 판정 기준 | 이번 턴 기준 선행 전제 |
+|---|---|---|---|---|---|---|
+| 1. alpha 자체 예측력 | 원신호(`slow_momentum`/`overall_score` 등)가 국면별로도 부호 일관되게 미래 수익률을 예측하는가 | SPPV-2(§9~§23)에서 이미 수집된 rolling IC 산출물(재사용), 필요 시 구간 확장용 point-in-time 일봉 | 거래일별 cross-sectional Spearman IC(종목×거래일) | Newey-West 보정 `\|t_NW\|`, §16 Go 게이트(1차 최근 12개월 + 2차 3년 모두 충족) | §3의 IC 구간 분류 + 국면별 부호 일관성 + out-of-sample 재현성 | **없음** — 기존 산출물 재사용 가능 |
+| 2. 정리된 gate 통과 후 성과 | R1~R5 정리 이후의 `entry_score`/eligibility를 통과한 표본이 차단된 표본보다 forward return이 우월한가 | 정리된 코드 반영 이후 운영 `decision_json`(`entry_score`/`eligibility_reasons`/`buy_candidate`) + 해당 시점 forward return | symbol-trade_date(게이트 통과/차단 이분) | 통과 표본 vs 차단 표본의 forward return quintile/비용 차감 성과 | 통과 표본이 비용 차감 후 유의하게 양의 기대수익을 보임 | R1~R5 코드는 이미 반영됐으나, **정리된 공식 기준 population이 아직 충분히 쌓이지 않음** |
+| 3. downstream 분리 순수 deterministic 성과 | AI/EV/submit 레이어 개입이 없었다면 deterministic 신호 단독 성과는 어땠을 것인가 | `deterministic_trigger` 메타데이터(`entry_score`/`buy_candidate`/`ranking_score`) + AI 개입·override 발생 여부(R5-a/b/f로 정리된 경로 기준) + forward return | symbol-trade_date, AI 개입 유무로 분리 | deterministic 단독 가상 성과 vs 실제(AI 개입 후) 성과 | AI 개입이 deterministic 단독 대비 유의미하게 개선 또는 최소 열등하지 않음 | R5(하류 contract)가 이미 닫혀 있어 AI 개입 경로 자체는 안정적 — **R5 정리 이후 데이터만 사용해야 함**(이전 데이터는 재정리 전 경로 혼입) |
+| 4. funnel 전환까지의 기여도 | 정리된 게이트를 통과한 신호가 실제로 `order_request`→submit까지 이어지고, 그 전환율이 신호 강도와 상관관계를 갖는가 | `order_requests`/`execution_attempts`/`order_submission_attempts` + 동시점 `entry_score`/`ranking_score` | symbol-trade_date, `candidate→selected→submitted` 단계별 전환 | PR #119 이전/이후 구간을 반드시 분리 비교 | PR #119 이후 데이터 기준 전환율이 신호 강도와 양의 상관을 보임 | **PR #119 이후 실제 BUY 시도 자체가 아직 충분히 누적되지 않음**(2026-08-03/08-04 실측 결과 각각 0~4건 수준) |
+
+### 30.3 `§4.3~§4.5` 새 버전 뼈대(구 버전은 §4에 "구 전제"로 그대로 유지)
+
+구 `§4.3~§4.5`는 삭제하지 않고 R1~R5 이전 시점의 전제로 그대로
+남긴다. 아래는 **현재 BUY 경로/현재 `entry_score`/현재 gate 구조
+기준**으로 다시 쓴 뼈대이며, 상세 실행은 별도 착수 턴에서 채운다.
+
+- **4.3′ `entry_score`(현행 공식) 재현**: R1~R5 반영 이후의
+  `entry_score` 공식(allocation 항 제거, `risk_off -0.05`, 단일
+  권위화된 hard gate)을 기준으로, 거래일별 regime/allocation/
+  strategy/source 상태를 복원해 당시 `entry_score`와 BUY
+  eligibility를 point-in-time으로 재계산한다. 구 §4.3과 달리
+  "재현 대상 공식"이 현재 운영 공식과 일치해야 함을 전제 조건으로
+  명시한다.
+- **4.4′ 잔여 중복 확인(제한적 범위)**: R2/R3/R4/R5가 이미 닫은
+  중복(allocation, risk_off 하드 게이트 이중화, `relative_activity`
+  authoritative gate dead branch, `evaluate_action_envelope` 재확인
+  등)은 재론하지 않는다. 이 소절은 **그 정리 이후에도 남아 있는
+  것으로 새로 발견되는 중복**만 다루는 자리로 좁힌다 — 현재 시점
+  기준 신규 발견 없음.
+- **4.5′ 전체 funnel back-simulation(정리된 경로 기준)**: 각
+  shadow formula가 아니라 **현재 운영 공식 그대로**를 기준으로
+  `candidate → selected → expected value → would_buy → submitted`
+  전환율과 비용 차감 수익률/MAE/낙폭을 비교한다. 구 §4.5와 달리
+  `stale_snapshot_guard`(PR #119) 병목이 걷힌 이후 데이터만
+  사용한다는 것을 실행 전제로 명시한다.
+
+### 30.4 `§7` 새 기준선(향후 재산출 필요)
+
+구 §7("BUY 주문 0건 운영 기준선", 2026-07-14 시점, 구 `entry_score`
+공식 기준)은 삭제하지 않고 그대로 유지한다. **새 기준선은 아직
+재산출하지 않았다** — R1~R5 반영 이후, 그리고 PR #119 이후 표본이
+충분히 쌓인 시점에 아래 항목을 같은 형식(표본 수 / `entry_score≥
+0.52`·`≥0.65` 건수 / `BUY_CANDIDATE` 건수 / eligibility 통과 건수 /
+`risk_off_penalty` 적용 건수 / 최대·평균 `entry_score` / BUY
+주문요청·broker submit 건수)으로 재산출해 별도 소절(§7′)로 추가한다.
+이번 턴은 재산출을 수행하지 않고 "필요하다"는 사실만 기록한다.
+
+### 30.5 착수 전제 확인(검증 축 자체가 아님)
+
+아래 항목은 `SPPV-3`의 검증 축이 아니라, 각 축을 실제로 착수할 수
+있는 **전제 조건이 언제 갖춰지는지**를 가리키는 관측 항목이다(§28/
+§29와 동일한 분류 유지).
+
+- PR #119(`stale_snapshot_guard` zero-position false-stale 수정)
+  운영 재기동 이후 재현 확인 — 2026-08-03/08-04 실측 결과 BUY 시도
+  자체가 아직 충분히 발생하지 않아 미확정 상태가 이어지고 있다.
+- R2 allocation 제거(§13.2.5) 이후 운영 재실측.
+
+### 30.6 즉시 착수 가능 축 vs 선행 관측 필요 축
+
+- **즉시 착수 가능**: 축 1(alpha 자체 예측력 — 기존 산출물 재사용),
+  축 3(downstream 분리 순수 deterministic 성과 — R5가 이미 닫혀
+  전제 충족).
+- **선행 관측이 끝나야 시작 가능**: 축 2(정리된 gate 통과 후 성과 —
+  정리된 공식 기준 population 축적 필요), 축 4(funnel 전환 기여도 —
+  §30.5의 PR #119 이후 BUY 시도 누적 필요).
