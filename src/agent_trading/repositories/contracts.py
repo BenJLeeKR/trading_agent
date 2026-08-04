@@ -52,7 +52,11 @@ from agent_trading.domain.entities import (
     UniverseFreezeRunEntity,
     UniverseFreezeRunItemEntity,
 )
-from agent_trading.domain.enums import Environment, OrderStatus
+from agent_trading.domain.enums import (
+    Environment,
+    OrderStatus,
+    RealizedPnlComputationRunType,
+)
 from agent_trading.repositories.filters import AccountLookup, DecisionContextQuery, OrderQuery
 
 
@@ -866,7 +870,7 @@ class RealizedPnlComputationRunRepository(Protocol):
         self,
         limit: int = 50,
         status: str | None = None,
-        run_type: str | None = None,
+        run_type: RealizedPnlComputationRunType | None = None,
     ) -> Sequence[RealizedPnlComputationRunEntity]:
         ...
 

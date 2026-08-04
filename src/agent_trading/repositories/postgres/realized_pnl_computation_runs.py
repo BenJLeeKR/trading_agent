@@ -7,6 +7,7 @@ from uuid import UUID
 from agent_trading.db.row_mapper import row_to_entity
 from agent_trading.db.transaction import TransactionManager
 from agent_trading.domain.entities import RealizedPnlComputationRunEntity
+from agent_trading.domain.enums import RealizedPnlComputationRunType
 
 
 class PostgresRealizedPnlComputationRunRepository:
@@ -30,7 +31,7 @@ class PostgresRealizedPnlComputationRunRepository:
             RETURNING *
             """,
             run.computation_run_id,
-            run.run_type,
+            run.run_type.value,
             run.account_id,
             run.status,
             run.fills_applied,
@@ -63,7 +64,7 @@ class PostgresRealizedPnlComputationRunRepository:
             RETURNING *
             """,
             run.computation_run_id,
-            run.run_type,
+            run.run_type.value,
             run.account_id,
             run.status,
             run.fills_applied,
@@ -89,7 +90,7 @@ class PostgresRealizedPnlComputationRunRepository:
         self,
         limit: int = 50,
         status: str | None = None,
-        run_type: str | None = None,
+        run_type: RealizedPnlComputationRunType | None = None,
     ) -> Sequence[RealizedPnlComputationRunEntity]:
         conditions: list[str] = []
         params: list[object] = []
@@ -100,7 +101,7 @@ class PostgresRealizedPnlComputationRunRepository:
             idx += 1
         if run_type is not None:
             conditions.append(f"run_type = ${idx}")
-            params.append(run_type)
+            params.append(run_type.value)
             idx += 1
         where_clause = f" WHERE {' AND '.join(conditions)}" if conditions else ""
         params.append(limit)

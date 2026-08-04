@@ -47,7 +47,7 @@ class PostgresRealizedPnlEventRepository:
             event.avg_cost_basis_before,
             event.fee,
             event.tax,
-            event.fee_tax_source,
+            event.fee_tax_source.value,
             event.realized_pnl_gross,
             event.realized_pnl_net,
             event.position_quantity_after,
