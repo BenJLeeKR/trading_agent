@@ -348,8 +348,8 @@ ungated_deploy_workflows = [
 ]
 deploy_missing_migration_workflows = [
     path for path, text in deploy_workflows
-    if "docker compose run --rm migrate" not in text
-    and "bash scripts/harness/docker_compose_env.sh run --rm migrate" not in text
+    if "docker compose run --build --rm migrate" not in text
+    and "bash scripts/harness/docker_compose_env.sh run --build --rm migrate" not in text
 ]
 deploy_missing_proxy_reload_workflows = [
     path for path, text in deploy_workflows
@@ -583,8 +583,8 @@ contract_checks = [
     ("workflow_deploy_change_detector_defines_runtime_affecting_rules", deploy_runtime_affecting_path_rule_count == 1),
     ("workflow_deploy_emits_sync_activate_metrics", deploy_sync_only_run_metric_count == 1 and deploy_activate_run_metric_count == 1 and deploy_activate_skipped_by_market_hours_metric_count == 1),
     ("workflow_deploy_runs_migration_before_restart", (
-        contains(workflow, "docker compose run --rm migrate", "docker compose up -d --build --remove-orphans")
-        or contains(workflow, "bash scripts/harness/docker_compose_env.sh run --rm migrate", "bash scripts/harness/docker_compose_env.sh up -d --build --remove-orphans")
+        contains(workflow, "docker compose run --build --rm migrate", "docker compose up -d --build --remove-orphans")
+        or contains(workflow, "bash scripts/harness/docker_compose_env.sh run --build --rm migrate", "bash scripts/harness/docker_compose_env.sh up -d --build --remove-orphans")
     )),
     ("workflow_deploy_reloads_proxy_after_restart", contains(workflow, "docker exec nginx-proxy nginx -s reload", "deploy_proxy_reload_run=1")),
     ("readme_declares_ci_harness", contains(readme, "CI 검증 기준", ".github/workflows/harness.yml", "bash scripts/harness/run.sh", "Require Harness on main", "Safe harness contracts")),
