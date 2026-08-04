@@ -11,6 +11,8 @@
 - `trading.fill_events` — [`order_sync_service.py:1444-1549`](../../src/agent_trading/services/order_sync_service.py)의 `_sync_fills()`가 `broker.get_fills()` 결과를 REST 폴링(`source_channel="rest_poll"`)으로 저장. `broker_order_id + broker_fill_id` 우선, 없으면 `(broker_order_id, fill_timestamp, fill_price, fill_quantity)` 복합키로 dedup.
 - `trading.broker_fill_snapshots` — [`fill_history_sync.py`](../../src/agent_trading/services/fill_history_sync.py)가 KIS VTTC0081R(일별체결조회)을 자체 `dedupe_key`로 upsert. 관측/백필 목적의 별도 테이블이며, `fill_events`와 독립적으로 채워진다.
 
+`fill_events.source_channel` CHECK 제약은 스키마상 `'websocket' | 'rest_poll' | 'backfill' | 'manual'` 4가지를 허용하지만, 이번 조사에서 확인한 confirmed writer는 `_sync_fills()`의 REST 경로(`rest_poll`)뿐이다. 별도의 websocket fill writer가 존재하는지는 확인하지 못했다. 따라서 **1차 구현(1~3단계)은 REST 기반 fill 입력만을 전제로 진행한다.**
+
 그런데 이 두 소스로부터 **종목별 이동평균 매입원가 기준 실현 손익을 계산·보관하는 로직은 존재하지 않는다.** 현재 실현 손익으로 노출되는 값은 [`performance_summary.py`](../../src/agent_trading/services/performance_summary.py)의 `calc_realized_pnl_for_order()` / `_calc_per_fill_pnl()`이며, 그 계산은 다음과 같다.
 
 ```python
@@ -34,7 +36,7 @@ total += fill_price * fill_quantity * multiplier - fee - tax
 
 ### 0단계 — 전제 확인 (구현 착수 전, read-only)
 
-- 왜: 상세 설계 문서([`12_realized_pnl_moving_average_ledger.md`](../00_foundational_design/detailed_design/12_realized_pnl_moving_average_ledger.md) 2절)에 정리한 미확인 가정(KIS websocket 체결 통보 경로 실존 여부, 국내주식 계좌의 숏 포지션 발생 가능성, admin_ui의 실현 손익 소비 화면 범위)을 실제 구현 전에 검증해야 스키마 재작업을 피할 수 있다.
+- 왜: 상세 설계 문서([`12_realized_pnl_moving_average_ledger.md`](../00_foundational_design/detailed_design/12_realized_pnl_moving_average_ledger.md) 2절)에 정리한 미확인 가정 — REST 기반 입력 경로 확정을 전제로 했을 때 그와 별개로 websocket fill writer가 존재하는지 여부, 국내주식 계좌의 숏 포지션 발생 가능성, admin_ui의 실현 손익 소비 화면 범위 — 을 실제 구현 전에 검증해야 스키마 재작업을 피할 수 있다.
 - 산출물: 확인 결과 요약(짧은 코멘트 또는 이슈, 별도 보고서 문서 생성은 하지 않음).
 - 검증 기준: 사용자에게 전제가 맞는지 1회 확인받는다.
 
@@ -94,7 +96,7 @@ total += fill_price * fill_quantity * multiplier - fee - tax
 - **파괴적 변경이 전혀 없다**: 기존 `fill_events`/`order_requests`/`broker_orders`/`position_snapshots`의 컬럼·제약을 하나도 바꾸지 않는다. 신규 테이블 5개 추가와 기존 테이블에 대한 비파괴적 보조 인덱스 1개(`order_requests`) 추가뿐이다. 실패해도 기존 런타임에 영향이 없다.
 - **append-only 원칙을 스키마가 직접 강제한다**: `realized_pnl_events`에는 UPDATE 경로를 전제하지 않고, `superseded_by_event_id` self-reference로만 정정이 가능하도록 설계했다. migration 자체가 이 원칙을 깨는 트리거나 규칙을 포함하지 않는다.
 - **idempotency의 1차 방어선을 DB 제약으로 고정한다**: `realized_pnl_events.fill_event_id`에 UNIQUE 제약을 걸어, 이후 계산 엔진이 어떤 구현이든 같은 fill을 두 번 반영하면 애플리케이션 로직이 아니라 DB가 막는다.
-- **숏 포지션 미지원 정책을 하드 가드로 남긴다**: `position_cost_basis_state.quantity >= 0` CHECK. 실제로 숏 포지션을 지원하기로 결정되면 별도 migration으로 완화하면 되고, 지금은 계산 엔진 버그가 음수 잔량을 조용히 저장하는 경로를 원천 차단한다.
+- **숏 포지션은 임시 가드로 막아 둔다**: `position_cost_basis_state.quantity >= 0` CHECK. 현재는 개인 계좌 기준으로 음수 잔량을 지원 범위에 넣지 않았다는 뜻일 뿐, 장기 정책으로 확정된 것은 아니다. 지금은 계산 엔진 버그가 음수 잔량을 조용히 저장하는 경로를 DB 레벨에서 막아 두고, 실제로 숏 포지션을 지원하기로 결정되면 별도 migration으로 완화한다.
 - **관측성을 스키마 차원에서 준비해 둔다**: `realized_pnl_computation_runs`(처리 건수/이상 건수 컬럼)와 `realized_pnl_recompute_queue`(장애 복구 큐)를 실시간 반영 코드(3단계)보다 먼저 만들어 두면, 3단계 구현이 "조용히 실패를 감춘다"는 실수를 할 수 있는 여지를 스키마 단계에서 줄인다.
 - **인덱스는 필요한 것만 남겼다**: 사용자가 검토를 요청한 인덱스 후보 중 `fill_events (broker_order_id, fill_timestamp, created_at, fill_event_id)`는 이미 존재하는 `idx_fill_events_broker_order_time (broker_order_id, fill_timestamp DESC)`([`0001_initial_schema.sql:458-459`](../../db/migrations/0001_initial_schema.sql))와 90% 이상 겹치고, btree 인덱스는 역방향(ASC) 스캔도 동일 비용으로 지원하므로 방향 차이가 별도 인덱스를 정당화하지 않는다고 판단해 제외했다. `realized_pnl_computation_runs`는 사용자가 제안한 복합 인덱스 `(started_at DESC, status)` 대신, 기존 `fill_sync_runs`([`0029_add_fill_history_snapshot_tables.sql`](../../db/migrations/0029_add_fill_history_snapshot_tables.sql))와 동일하게 단일 컬럼 인덱스 2개로 분리했다(기존 관례 일치 + status 단독 필터 조회 지원).
 
@@ -132,8 +134,8 @@ total += fill_price * fill_quantity * multiplier - fee - tax
 
 | 이슈 | 내용 | 처리 방침 |
 |---|---|---|
-| KIS websocket 체결 통보 경로 미확인 | `fill_events.source_channel` CHECK 제약에 `'websocket'` 값이 이미 예약되어 있으나([`0001_initial_schema.sql:361`](../../db/migrations/0001_initial_schema.sql)), 실제 writer는 `_sync_fills()`의 REST 폴링(`rest_poll`)만 확인됨. websocket 경로가 별도로 존재한다면 순서/지연 특성이 다를 수 있음 | 0단계에서 확인 전까지 "REST 폴링만 존재"를 전제로 설계. 확인 결과에 따라 상세 설계 문서를 갱신 |
-| 숏 포지션 발생 가능성 | 국내주식 paper/live 계좌에서 매도 후 음수 잔량이 발생하는 케이스가 있는지 미확인 | 발생 시 조용히 잘못된 숫자를 만들지 않도록 상태를 격리하는 불변식 검증을 설계에 포함(상세 설계 문서 6절) |
+| websocket fill writer 존재 여부 미확인 | `fill_events`의 confirmed writer는 현재 조사 범위 기준 REST 기반 `_sync_fills()`(`broker.get_fills()`)이며, `broker_fill_snapshots`는 VTTC0081R 백필/대사 전용 경로다. `fill_events.source_channel` CHECK 제약에 `'websocket'` 값이 스키마상 허용되어 있으나([`0001_initial_schema.sql:361`](../../db/migrations/0001_initial_schema.sql)), 별도의 websocket fill writer가 존재하는지는 확인하지 못했다 | 1차 구현(1~3단계)은 REST 기반 fill 입력만을 전제로 진행. websocket writer 존재가 나중에 확인되면 5절 정렬 키/실시간 반영 설계를 재검토 |
+| 숏 포지션 발생 가능성 | 국내주식 paper/live 계좌에서 매도 후 음수 잔량이 발생하는 케이스가 있는지 미확인 | 현재는 개인 계좌 기준으로 음수 잔량을 지원 범위에 넣지 않고, `position_cost_basis_state.quantity >= 0` CHECK를 DB 레벨 임시 가드로 둔다(상세 설계 문서 6절). 장기 정책으로 확정된 것은 아니며, 지원 여부가 결정되면 별도 migration으로 완화한다 |
 | 기존 지표와의 병행 기간 | `AccountPerformanceSummary.realized_pnl` 소비처(대시보드, gate evaluation)가 즉시 교체되면 회귀처럼 보일 수 있음 | 6단계에서 신규/기존 값을 함께 노출하고 차이를 설명하는 방식으로 시작(상세 설계 문서 11절) |
 | broker_fill_snapshots와의 이중 관측 | 같은 실제 체결이 `fill_events`와 `broker_fill_snapshots` 양쪽에 서로 다른 시점/필드로 기록될 수 있음 | ledger는 `fill_events`만을 1차 입력으로 확정하고, `broker_fill_snapshots`는 대사 전용으로 한정(상세 설계 문서 10절) |
 
