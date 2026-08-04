@@ -5336,3 +5336,25 @@ read-only 분석, 코드 변경 없음)
 - 다음 1순위 액션: **축 1(alpha 자체 예측력) 착수** — 기존 산출물
   재사용으로 바로 시작 가능.
 - 상세: `[DESIGN] signal_predictive_power_validation.md` §30.
+
+### `SPPV-3` 축 1(alpha 자체 예측력) 착수 완료(2026-08-04, read-only, 새 실측 없음)
+
+- authoritative 입력 신호 집합 확정: 핵심 대상 `slow_momentum`/
+  `overall_score`/`slow_score`, 비교군(Go 후보 아님) `fast_score`/
+  `slow_trend`. `risk_adj_momentum_3m`/`regime_switch_v1` 등 파생
+  후보는 별개 신호 설계 트랙으로 명시 분리.
+- 현재 시점 판정 재확인: §14(3년, canonical)/§16(1차 12개월/2차 3년
+  게이트) 기준 핵심 대상 3개 신호 **전부 여전히 Hold** — pooled
+  유의성 소멸(`overall_score` T+20 t_NW 2.30→1.32), 하락장에서 부호
+  역전/무의미. R1~R5(BUY 경로 리팩터링)와 무관한, 원신호 자체의
+  미해결 문제임을 재확인했다.
+- 재사용 가능/재검증 필요 분리: 원시 JSON 로그는 소실됐으나
+  **point-in-time 일봉 캐시(`logs/_bars_cache_core87_3y_2026-07-14/`,
+  `_bars_cache_core88_2026-07-14/`)는 그대로 남아 있음을 확인** —
+  다음 1차 실측은 신규 KIS 호출 없이 기존 스크립트 재실행만으로
+  가능하다.
+- 다음 1순위 액션: **기존 스크립트(`validate_signal_predictive_
+  power_v5_recency_window.py`)를 오늘(2026-08-04) 기준 1차(최근
+  12개월) 창으로 재실행** — 2차(3년)는 3주 경과만으로 구조적 변화
+  가능성이 낮아 이번엔 재실행하지 않고 §14를 그대로 참고한다.
+- 상세: `[DESIGN] signal_predictive_power_validation.md` §31.
