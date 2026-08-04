@@ -2,11 +2,13 @@
 
 ## 목적
 
-이 문서는 유니버스 선정 단계에서 활동성 부족 후보를 얼마나 더 일찍 걸러야 하는지 다일자 실측으로 판단하기 위한 실행 계획이다.
+이 문서는 유니버스 선정 단계에서 활동성이 부족한 종목을 더 앞단에서 걸러내고, 그 자리를 더 나은 거래 후보로 대체할 수 있도록 사전 필터 보정 기준을 다일자 실측으로 판단하기 위한 실행 계획이다.
 
 핵심 질문은 다음 하나다.
 
 - 현재 `pre-AI` 단계의 `활동성 부족` 차단이 유효하다는 전제 아래, 어떤 활동성 기준을 유니버스 단계로 당겨와야 **후보 손실을 최소화하면서** 불필요한 BUY 평가 대상을 줄일 수 있는가
+
+즉, 이 계획의 목적은 단순히 `활동성 부족` 차단 건수를 낮추는 것이 아니라, BUY 단계에서 반복적으로 탈락할 종목을 유니버스 앞단에서 미리 제외함으로써 유니버스의 한정된 슬롯을 더 우수한 종목에 배분할 수 있게 만드는 데 있다.
 
 이 문서는 구현 지시가 아니라 측정 계획, 지표 정의, read-only 분석 스크립트 설계안을 고정한다.
 
@@ -232,6 +234,32 @@
   - `signal_feature_snapshots`
 
 정확한 테이블/JSON 경로는 구현 전에 현재 저장 구조를 한 번 더 확인한다.
+
+**[구현 착수 시 확인 결과, 2026-08-04 KST]** `scripts/analysis/
+analyze_universe_activity_gap.py` 초안 구현 전 실제 저장소 구조를
+확인한 결과, 위 가정과 아래와 같은 차이가 있어 스크립트에 그대로
+반영했다(계획의 의도는 바꾸지 않는다 — 데이터 소스 경로만 정정).
+
+- **"실행 단위(run)" 전용 테이블이 없다.** decision loop 개별 사이클을
+  기록하는 run 테이블이 존재하지 않아, `trading.decision_contexts.
+  created_at`을 시간 간격 클러스터링해 파생 재구성한다(근사치,
+  스크립트 상단 docstring 참고).
+- **차단 사유는 `guardrail_evaluations`가 아니라 `trade_decisions.
+  decision_json.deterministic_trigger.eligibility_reasons`에 있다.**
+  `guardrail_evaluations`는 주문 단계 validation(사이징/규정 준수)
+  결과 테이블이며, `eligibility_low_average_volume`/
+  `eligibility_low_turnover`/`eligibility_low_relative_activity`
+  차단 사유 코드는 이 테이블을 전혀 거치지 않는다.
+- **유니버스 종목/`source_type` 복원은 `universe_freeze_run_items`
+  대신 `trade_decisions.source_type`을 직접 사용한다.** 이미 각
+  decision 행에 그 순간의 평가 대상 `source_type`이 컬럼으로 있어
+  더 직접적이다. `universe_freeze_run_id`는
+  `decision_json.universe_anchor`를 통해 보조 메타데이터로만
+  조인한다.
+- **`market_overlay_enabled`는 저장된 플래그가 없다.**
+  `MarketOverlayDiagnostics.enabled`는 API 응답 전용이라 DB에
+  남지 않는다 — 해당 실행 단위에 `source_type='market_overlay'`
+  행 존재 여부로 추정한다(결과 기반 추정치임을 명시).
 
 ### 내부 처리 단계
 
