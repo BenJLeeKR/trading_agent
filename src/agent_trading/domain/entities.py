@@ -13,6 +13,8 @@ from agent_trading.domain.enums import (
     OrderSide,
     OrderStatus,
     OrderType,
+    RealizedPnlComputationRunType,
+    RealizedPnlFeeTaxSource,
     TimeInForce,
 )
 
@@ -432,10 +434,15 @@ class RealizedPnlComputationRunEntity:
 
     ``trading.realized_pnl_computation_runs``에 대응한다
     (db/migrations/0053_add_realized_pnl_ledger_tables.sql).
+
+    ``status``는 의도적으로 ``str``을 유지한다 — ``fill_sync_runs``,
+    ``snapshot_sync_runs``, ``reconciliation_runs``의 실행 상태 필드도
+    모두 동일한 lifecycle 값 집합(``running``/``completed``/``partial``/
+    ``failed`` 계열)을 str로 유지하는 기존 관례와 맞춘 것이다.
     """
 
     computation_run_id: UUID
-    run_type: str
+    run_type: RealizedPnlComputationRunType
     status: str
     fills_applied: int
     fills_skipped_duplicate: int
@@ -488,7 +495,7 @@ class RealizedPnlEventEntity:
     avg_cost_basis_before: Decimal
     fee: Decimal
     tax: Decimal
-    fee_tax_source: str
+    fee_tax_source: RealizedPnlFeeTaxSource
     realized_pnl_gross: Decimal
     realized_pnl_net: Decimal
     position_quantity_after: Decimal
@@ -522,6 +529,12 @@ class RealizedPnlRecomputeQueueEntity:
 
     ``trading.realized_pnl_recompute_queue``에 대응한다. "fill 저장 성공 후
     ledger 실패"를 조용히 넘기지 않기 위한 관측 가능한 복구 계약의 저장소다.
+
+    ``reason_code``는 의도적으로 ``str``을 유지한다 — 현재 4개 값으로
+    닫혀 있지만, 이 저장소의 ``PipelineStopReason``처럼 이런 계열의 reason
+    코드는 운영 경험이 쌓이면서 값이 늘어나는 경우가 많고, entity 계층에서도
+    ``status_reason_code``/``stop_reason`` 등 유사 필드를 모두 str로 유지하는
+    관례를 따른다.
     """
 
     recompute_queue_id: UUID

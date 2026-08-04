@@ -206,6 +206,25 @@ PK: `(account_id, instrument_id, trade_date)`. **이 테이블은 캐시다** �
 | `resolved_at` nullable | |
 | `resolved_by_computation_run_id` nullable FK | |
 
+### 4.6 애플리케이션 타입 계층 — enum으로 승격한 필드와 str로 유지한 필드
+
+DB 컬럼은 모두 `VARCHAR` + `CHECK` 제약이며 이번 단계에서 바꾸지 않는다. 다만
+계산 엔진(다음 단계)이 분기 조건으로 직접 사용할 필드는 Python
+`class X(str, Enum)`으로 승격해 오탈자·미정의 값 유입을 타입 체크 단계에서
+막는다(`src/agent_trading/domain/enums.py`).
+
+- **enum으로 승격**: `run_type` → `RealizedPnlComputationRunType`(값 2개,
+  계산 엔진이 "단일 fill 증분 반영"과 "계좌×종목 전체 replay"를 분기하는
+  기준이라 계산 엔진이 이 값에 직접 의존한다), `fee_tax_source` →
+  `RealizedPnlFeeTaxSource`(값 2개, 계산 엔진이 매 이벤트 생성 시 반드시
+  채우는 provenance 필드).
+- **str로 유지**: `status`(`realized_pnl_computation_runs`)는
+  `fill_sync_runs`/`snapshot_sync_runs`/`reconciliation_runs`의 실행 상태
+  필드가 모두 str인 기존 관례를 따른다. `reason_code`
+  (`realized_pnl_recompute_queue`)는 `PipelineStopReason`처럼 운영 경험에
+  따라 값이 늘어날 수 있는 reason 계열 필드이므로, `status_reason_code`/
+  `stop_reason` 등 기존 엔티티의 동일 계열 필드와 같이 str로 유지한다.
+
 ## 5. 정렬 키(tie-break) 설계
 
 이동평균 계산은 **순서에 강하게 의존**한다. 정렬 키를 다음 우선순위로 확정한다.

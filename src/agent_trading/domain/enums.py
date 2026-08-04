@@ -200,6 +200,33 @@ class BucketType(str, Enum):
     MARKET_DATA = "market_data"
 
 
+class RealizedPnlComputationRunType(str, Enum):
+    """이동평균 실현 손익 ledger 계산 실행의 종류.
+
+    ``trading.realized_pnl_computation_runs.run_type`` CHECK 제약과 동일한
+    2개 값으로 닫혀 있다(db/migrations/0053_add_realized_pnl_ledger_tables.sql).
+    계산 엔진이 이 값을 기준으로 "단일 fill 증분 반영"과 "계좌×종목 전체
+    히스토리 replay"를 분기하므로(설계 문서 6절 — 이동평균은 중간 지점
+    재계산이 불가능해 replay는 항상 처음부터 다시 돎) enum으로 승격한다.
+    """
+
+    REALTIME_INCREMENTAL = "realtime_incremental"
+    BACKFILL_REPLAY = "backfill_replay"
+
+
+class RealizedPnlFeeTaxSource(str, Enum):
+    """실현 손익 이벤트의 수수료/세금 출처 구분.
+
+    ``trading.realized_pnl_events.fee_tax_source`` CHECK 제약과 동일한 2개
+    값으로 닫혀 있다. 계산 엔진이 매 이벤트 생성 시 항상 채워야 하는
+    계산 provenance 필드이며(설계 문서 3.3절), 브로커가 fee/tax를 보고하지
+    않아 0으로 간주한 경우와 실제 보고값을 구분해 정확도를 추적한다.
+    """
+
+    REPORTED = "reported"
+    ASSUMED_ZERO = "assumed_zero"
+
+
 class SourceReliabilityTier(str, Enum):
     """Reliability tier for external event data sources.
 
