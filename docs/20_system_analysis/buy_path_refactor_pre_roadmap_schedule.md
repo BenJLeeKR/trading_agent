@@ -484,10 +484,13 @@ threshold는 무변화).
   prompt_context_projection/execution_service/translation) 전수
   매핑 완료(`buy_path_variable_gate_matrix.md` §13.5.1 및 대화
   이력). `translation.py`의 `WATCH` 이중 분기(R5-a)만 무변화 구조
-  정리 적용, R5-b/R5-f는 후속 후보로 남김
-- [x] EV gate 경로 점검 — 매핑에 포함(위와 동일 갱신)
+  정리 적용, R5-b/R5-f는 후속 후보로 남김. **[2026-08-04 갱신]**
+  `expected_value_gate.py`의 metadata fallback(R5-b)도 §13.5.2로
+  정리 완료 — 호출부 전수 확인 결과 안전 확정, 동작 무변화
+- [x] EV gate 경로 점검 — 매핑에 포함(위와 동일 갱신), R5-b로 추가
+  정리 완료
 - [x] submit translation 경로 점검 — R5-a 적용으로 일부 정리 완료
-- [ ] 하류 contract 독립 정리 필요 여부 판정 — R5-b/R5-f 착수 여부는
+- [ ] 하류 contract 독립 정리 필요 여부 판정 — R5-f 착수 여부는
   다음 턴 과제
 
 ### 8.5 현재 착수 판정
