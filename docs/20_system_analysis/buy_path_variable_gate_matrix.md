@@ -2689,6 +2689,42 @@ eligible` 속성과 `metadata["risk_off_exception_eligible"]`는 항상
 R5-f(`decision_orchestrator.py`의 `evaluate_action_envelope` 재확인)는
 이번 턴 범위 밖으로 남긴다.
 
+#### 13.5.3 R5-f — `_check_ai_buy_override_gate()` 내부 `evaluate_action_envelope` 재확인 제거(2026-08-04, 동작 무변화)
+
+`_check_ai_buy_override_gate()`는 호출자(`assemble()`)에서 항상
+`_check_source_policy_upgrade_guard()`가 먼저 실행된 뒤에만 호출된다.
+그 가드가 `evaluate_action_envelope(source_type, has_position)`로
+`allow_new_buy=False`를 확인하면 `decision_type`을 이미 `HOLD`/`WATCH`
+로 낮추고, `_check_ai_buy_override_gate()`는 자신의 `decision_type`
+체크(`APPROVE`/`BUY` 아니면 `return None`)에서 먼저 빠진다.
+
+`source_type`/`has_position`은 두 호출 사이에 바뀌지 않고(같은
+`position_snapshot`/`derivation.source_type`을 그대로 재사용),
+`evaluate_action_envelope()`는 이 두 값에만 의존하는 순수 함수다(
+`held_position`은 무조건 차단, `reconciliation_overlay`는 `has_
+position`이 거짓일 때만 차단, 그 외 `core`/`market_overlay`/
+`event_overlay`는 항상 허용 — 5개 `source_type` 전수 검토 결과
+반례 없음). 따라서 이 지점에 `decision_type`이 `APPROVE`/`BUY`로
+남아 있다는 것 자체가 이미 그 가드의 동일한 envelope 평가가
+`allow_new_buy=True`였음을 뜻하며, 여기서 다시 확인해도 절대 다른
+결과가 나올 수 없다 — "관측 범위 내 dead"가 아니라 5개 `source_
+type` 전수 검토로 **구조적으로 100% 도달 불가능**함을 확정했다.
+
+`_check_ai_buy_override_gate()` 내부의 `envelope = evaluate_action_
+envelope(...)` 계산과 `if not envelope.allow_new_buy: ... return
+(...)` 재확인 분기만 제거했다. `normalized_source_type` 변수는 이후
+rationale 로그 문자열에서 계속 쓰이므로 그대로 유지했다. `source_
+policy_upgrade_guard`/`watch_candidate_upgrade_guard`/`buy_
+eligibility_upgrade_guard`의 판정 순서·정책·downgrade 의미는 전혀
+건드리지 않았다.
+
+기존 테스트를 직접 호출하는 방식이 아니라 전체 `assemble()` 경로를
+통해서만 이 가드를 검증하는 기존 관례를 그대로 따랐다 — 이 재확인
+분기를 단독으로 호출해 exercise하는 테스트는 원래 없었고(전수
+grep 확인), `reconciliation_overlay` flat-buy·`held_position` 관련
+기존 시나리오를 포함해 관련 테스트 111건이 fixture 변경 없이 그대로
+통과했다.
+
 ### 13.6 이번 리팩터링 범위 밖
 
 - SELL/exit 공식 재설계
