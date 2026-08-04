@@ -10672,7 +10672,18 @@ agent 설계 문서 기준으로도 순서는 다음이 맞다.
      재산출은 아직 미수행)도 §30에 정리했다. `SPPV-2.xxx` 신규
      번호는 만들지 않았다. **다음 1순위: 축 1(alpha 자체 예측력)
      착수** — 기존 SPPV-2 IC 산출물을 그대로 재사용해 바로 시작
-     가능 +
+     가능. **[2026-08-04 재갱신] 축 1 착수 완료**(`[DESIGN] signal_
+     predictive_power_validation.md` §31, read-only, 새 실측 없음)
+     — authoritative 신호 집합(핵심: `slow_momentum`/`overall_
+     score`/`slow_score`, 비교군: `fast_score`/`slow_trend`)을
+     확정하고, §14(3년, canonical)/§16(1차 12개월/2차 3년 게이트)
+     기준 **현재도 전부 Hold**임을 재확인했다(pooled 유의성 소멸,
+     하락장 부호 역전/무의미). 원시 JSON 로그는 소실됐으나
+     point-in-time 일봉 캐시(`logs/_bars_cache_core87_3y_2026-07-14/`)
+     는 남아 있어 **다음 1차 실측은 신규 KIS 호출 없이 재실행
+     가능**함을 확인했다. **다음 1순위: 기존 스크립트(`validate_
+     signal_predictive_power_v5_recency_window.py`)를 오늘 기준
+     1차 창으로 재실행** +
      [1-B순위] **D안 순수 효과 재측정** — S5로 stale bias가 사라진 뒤
      §137.5의 2.13배(상한)를 다시 측정 +
      [1-B순위] `strategy_alignment` 제거의 **게이트 영향 재관측** —
