@@ -397,7 +397,7 @@ jobs:
 
             cd /workspace/agent_trading
 
-            bash scripts/harness/docker_compose_env.sh run --rm migrate
+            bash scripts/harness/docker_compose_env.sh run --build --rm migrate
             echo "deploy_migration_run=1"
 
             bash scripts/harness/docker_compose_env.sh up -d --build --remove-orphans

@@ -298,6 +298,10 @@ GitHub Actions 실제 run으로 다음 `2`개 결과를 확인했다.
    - `activate_required=1`
    - `market_hours_guard.allow_deploy == 1`
 
+### 3.1 migration 이미지 freshness
+
+`migrate` 서비스가 `profiles: [migrate]`로 분리된 compose 구조에서는, 일반 `docker compose up -d --build`가 profile-only 서비스 이미지를 재빌드하지 않을 수 있다. 따라서 `activate_runtime`의 migration 단계는 단순 `run --rm migrate`가 아니라 **반드시** 최신 소스를 반영하는 `run --build --rm migrate`(또는 동등한 freshness 보장 명령)를 사용해야 한다.
+
 ### 4. 장중 동작 원칙
 
 장중 무승인일 때:
