@@ -31,10 +31,15 @@ from agent_trading.domain.entities import (
     OrderRequestEntity,
     OrderSubmissionAttemptEntity,
     OrderStateEventEntity,
+    PositionCostBasisStateEntity,
     PositionSnapshotEntity,
     ReconciliationOrderLinkEntity,
     ReconciliationPositionLinkEntity,
     ReconciliationRunEntity,
+    RealizedPnlComputationRunEntity,
+    RealizedPnlDailyAggregateEntity,
+    RealizedPnlEventEntity,
+    RealizedPnlRecomputeQueueEntity,
     RiskLimitSnapshotEntity,
     SignalFeatureSnapshotEntity,
     SignalFeatureBatchRunEntity,
@@ -762,6 +767,135 @@ class BrokerFillSnapshotRepository(Protocol):
         absent from the result. Empty input returns an empty dict without a
         query.
         """
+        ...
+
+
+class PositionCostBasisStateRepository(Protocol):
+    """계좌×종목 단위 이동평균 매입원가 상태 저장소.
+
+    ``(account_id, instrument_id)``가 PK다. 실시간 반영/replay 계산 엔진이
+    다음에 적용할 fill을 결정하기 위해 현재 상태를 조회·갱신하는 용도다.
+    """
+
+    async def get(
+        self, account_id: UUID, instrument_id: UUID
+    ) -> PositionCostBasisStateEntity | None:
+        ...
+
+    async def upsert(
+        self, state: PositionCostBasisStateEntity
+    ) -> PositionCostBasisStateEntity:
+        ...
+
+    async def list_recompute_required(
+        self, limit: int = 100
+    ) -> Sequence[PositionCostBasisStateEntity]:
+        """재계산 대기(``recompute_required=True``) 상태를 오래된 순으로 반환한다."""
+        ...
+
+
+class RealizedPnlEventRepository(Protocol):
+    """매도 체결 기준 append-only 실현 손익 원장 저장소."""
+
+    async def add(self, event: RealizedPnlEventEntity) -> RealizedPnlEventEntity:
+        ...
+
+    async def get_by_fill_event_id(
+        self, fill_event_id: UUID
+    ) -> RealizedPnlEventEntity | None:
+        """``fill_event_id`` UNIQUE 제약을 전제로 한 idempotency 조회다."""
+        ...
+
+    async def list_by_account_and_instrument(
+        self,
+        account_id: UUID,
+        instrument_id: UUID,
+        *,
+        limit: int = 200,
+        before: datetime | None = None,
+    ) -> Sequence[RealizedPnlEventEntity]:
+        """``fill_timestamp`` 최신순으로 반환한다.
+
+        ``before``가 주어지면 그 시각보다 이전인 이벤트만 반환한다(페이지네이션).
+        """
+        ...
+
+
+class RealizedPnlDailyAggregateRepository(Protocol):
+    """조회 성능용 일자 집계 캐시 저장소.
+
+    ``realized_pnl_events``에서 언제든 재생성 가능한 파생 데이터를 담는다.
+    """
+
+    async def upsert(
+        self, aggregate: RealizedPnlDailyAggregateEntity
+    ) -> RealizedPnlDailyAggregateEntity:
+        ...
+
+    async def list_by_account_and_instrument(
+        self,
+        account_id: UUID,
+        instrument_id: UUID,
+        *,
+        start_date: date | None = None,
+        end_date: date | None = None,
+    ) -> Sequence[RealizedPnlDailyAggregateEntity]:
+        """``trade_date`` 오름차순으로 반환한다."""
+        ...
+
+
+class RealizedPnlComputationRunRepository(Protocol):
+    """실현 손익 ledger 실시간 반영/백필 실행 이력 저장소."""
+
+    async def add(
+        self, run: RealizedPnlComputationRunEntity
+    ) -> RealizedPnlComputationRunEntity:
+        ...
+
+    async def update_run(
+        self, run: RealizedPnlComputationRunEntity
+    ) -> RealizedPnlComputationRunEntity:
+        ...
+
+    async def get(
+        self, computation_run_id: UUID
+    ) -> RealizedPnlComputationRunEntity | None:
+        ...
+
+    async def list_runs(
+        self,
+        limit: int = 50,
+        status: str | None = None,
+        run_type: str | None = None,
+    ) -> Sequence[RealizedPnlComputationRunEntity]:
+        ...
+
+
+class RealizedPnlRecomputeQueueRepository(Protocol):
+    """ledger 갱신 실패 / out-of-order fill / anomaly 재계산 큐 저장소.
+
+    "fill 저장 성공 후 ledger 실패"를 조용히 넘기지 않기 위한 관측 가능한
+    복구 계약의 저장소다.
+    """
+
+    async def add(
+        self, item: RealizedPnlRecomputeQueueEntity
+    ) -> RealizedPnlRecomputeQueueEntity:
+        ...
+
+    async def list_pending(
+        self, limit: int = 100
+    ) -> Sequence[RealizedPnlRecomputeQueueEntity]:
+        """미해결(``resolved_at IS NULL``) 항목을 ``requested_at`` 오름차순으로 반환한다."""
+        ...
+
+    async def mark_resolved(
+        self,
+        recompute_queue_id: UUID,
+        *,
+        resolved_by_computation_run_id: UUID,
+        resolved_at: datetime | None = None,
+    ) -> RealizedPnlRecomputeQueueEntity | None:
         ...
 
 

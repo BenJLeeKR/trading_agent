@@ -427,6 +427,114 @@ class BrokerFillSnapshotEntity:
 
 
 @dataclass(slots=True, frozen=True)
+class RealizedPnlComputationRunEntity:
+    """이동평균 실현 손익 ledger의 실시간 반영/백필 실행 이력.
+
+    ``trading.realized_pnl_computation_runs``에 대응한다
+    (db/migrations/0053_add_realized_pnl_ledger_tables.sql).
+    """
+
+    computation_run_id: UUID
+    run_type: str
+    status: str
+    fills_applied: int
+    fills_skipped_duplicate: int
+    fills_replayed: int
+    anomalies_detected: int
+    started_at: datetime
+    account_id: UUID | None = None
+    summary_json: dict[str, object] | None = None
+    completed_at: datetime | None = None
+    created_at: datetime | None = None
+
+
+@dataclass(slots=True, frozen=True)
+class PositionCostBasisStateEntity:
+    """계좌×종목 단위 이동평균 매입원가 상태(가변).
+
+    ``trading.position_cost_basis_state``에 대응한다. PK는
+    ``(account_id, instrument_id)``다. ``position_snapshot.average_price``
+    (브로커 원장값)와는 별개의, 체결 이벤트로부터 내부에서 계산한 값이다.
+    """
+
+    account_id: UUID
+    instrument_id: UUID
+    quantity: Decimal
+    average_cost: Decimal
+    last_applied_fill_event_id: UUID | None = None
+    last_applied_fill_timestamp: datetime | None = None
+    recompute_required: bool = False
+    recompute_reason: str | None = None
+    updated_at: datetime | None = None
+
+
+@dataclass(slots=True, frozen=True)
+class RealizedPnlEventEntity:
+    """매도 체결 1건당 append-only 실현 손익 원장 행.
+
+    ``trading.realized_pnl_events``에 대응한다. ``fill_event_id``는
+    UNIQUE 제약이며 idempotency의 1차 방어선이다. 정정은 UPDATE/DELETE가
+    아니라 ``superseded_by_event_id``를 채운 보정 행 append로만 한다.
+    """
+
+    realized_pnl_event_id: UUID
+    account_id: UUID
+    instrument_id: UUID
+    fill_event_id: UUID
+    broker_order_id: UUID
+    order_request_id: UUID
+    sell_quantity: Decimal
+    sell_price: Decimal
+    avg_cost_basis_before: Decimal
+    fee: Decimal
+    tax: Decimal
+    fee_tax_source: str
+    realized_pnl_gross: Decimal
+    realized_pnl_net: Decimal
+    position_quantity_after: Decimal
+    computation_run_id: UUID
+    fill_timestamp: datetime
+    superseded_by_event_id: UUID | None = None
+    created_at: datetime | None = None
+
+
+@dataclass(slots=True, frozen=True)
+class RealizedPnlDailyAggregateEntity:
+    """조회 성능용 일자 집계 캐시.
+
+    ``trading.realized_pnl_daily_aggregates``에 대응한다. PK는
+    ``(account_id, instrument_id, trade_date)``다. ``realized_pnl_events``에서
+    언제든 재생성 가능한 파생 데이터이며 진실의 원천이 아니다.
+    """
+
+    account_id: UUID
+    instrument_id: UUID
+    trade_date: date
+    realized_pnl_net_sum: Decimal
+    sell_event_count: int
+    computation_run_id: UUID
+    updated_at: datetime | None = None
+
+
+@dataclass(slots=True, frozen=True)
+class RealizedPnlRecomputeQueueEntity:
+    """ledger 갱신 실패 / out-of-order fill / anomaly 재계산 큐 항목.
+
+    ``trading.realized_pnl_recompute_queue``에 대응한다. "fill 저장 성공 후
+    ledger 실패"를 조용히 넘기지 않기 위한 관측 가능한 복구 계약의 저장소다.
+    """
+
+    recompute_queue_id: UUID
+    account_id: UUID
+    instrument_id: UUID
+    reason_code: str
+    triggering_fill_event_id: UUID | None = None
+    requested_at: datetime | None = None
+    resolved_at: datetime | None = None
+    resolved_by_computation_run_id: UUID | None = None
+
+
+@dataclass(slots=True, frozen=True)
 class ReconciliationRunEntity:
     reconciliation_run_id: UUID
     account_id: UUID

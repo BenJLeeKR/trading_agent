@@ -32,10 +32,15 @@ from agent_trading.domain.entities import (
     OrderRequestEntity,
     OrderSubmissionAttemptEntity,
     OrderStateEventEntity,
+    PositionCostBasisStateEntity,
     PositionSnapshotEntity,
     ReconciliationOrderLinkEntity,
     ReconciliationPositionLinkEntity,
     ReconciliationRunEntity,
+    RealizedPnlComputationRunEntity,
+    RealizedPnlDailyAggregateEntity,
+    RealizedPnlEventEntity,
+    RealizedPnlRecomputeQueueEntity,
     RiskLimitSnapshotEntity,
     SignalFeatureSnapshotEntity,
     SignalFeatureBatchRunEntity,
@@ -986,6 +991,172 @@ class InMemoryFillSyncRunRepository:
             retried_days=int(summary_json.get("retried_days", 0) or 0),
             total_retries=int(summary_json.get("total_retries", 0) or 0),
         )
+
+
+class InMemoryPositionCostBasisStateRepository:
+    def __init__(self) -> None:
+        self._items: dict[tuple[UUID, UUID], PositionCostBasisStateEntity] = {}
+
+    async def get(
+        self, account_id: UUID, instrument_id: UUID
+    ) -> PositionCostBasisStateEntity | None:
+        return self._items.get((account_id, instrument_id))
+
+    async def upsert(
+        self, state: PositionCostBasisStateEntity
+    ) -> PositionCostBasisStateEntity:
+        self._items[(state.account_id, state.instrument_id)] = state
+        return state
+
+    async def list_recompute_required(
+        self, limit: int = 100
+    ) -> Sequence[PositionCostBasisStateEntity]:
+        items = [item for item in self._items.values() if item.recompute_required]
+        items.sort(key=lambda item: item.updated_at or datetime.min.replace(tzinfo=timezone.utc))
+        return tuple(items[:limit])
+
+
+class InMemoryRealizedPnlEventRepository:
+    def __init__(self) -> None:
+        self._items: dict[UUID, RealizedPnlEventEntity] = {}
+        self._by_fill_event_id: dict[UUID, UUID] = {}
+
+    async def add(self, event: RealizedPnlEventEntity) -> RealizedPnlEventEntity:
+        if event.fill_event_id in self._by_fill_event_id:
+            raise ValueError(
+                f"realized_pnl_event already exists for fill_event_id={event.fill_event_id}"
+            )
+        self._items[event.realized_pnl_event_id] = event
+        self._by_fill_event_id[event.fill_event_id] = event.realized_pnl_event_id
+        return event
+
+    async def get_by_fill_event_id(
+        self, fill_event_id: UUID
+    ) -> RealizedPnlEventEntity | None:
+        event_id = self._by_fill_event_id.get(fill_event_id)
+        return self._items.get(event_id) if event_id is not None else None
+
+    async def list_by_account_and_instrument(
+        self,
+        account_id: UUID,
+        instrument_id: UUID,
+        *,
+        limit: int = 200,
+        before: datetime | None = None,
+    ) -> Sequence[RealizedPnlEventEntity]:
+        items = [
+            item
+            for item in self._items.values()
+            if item.account_id == account_id and item.instrument_id == instrument_id
+        ]
+        if before is not None:
+            items = [item for item in items if item.fill_timestamp < before]
+        items.sort(key=lambda item: item.fill_timestamp, reverse=True)
+        return tuple(items[:limit])
+
+
+class InMemoryRealizedPnlDailyAggregateRepository:
+    def __init__(self) -> None:
+        self._items: dict[tuple[UUID, UUID, date], RealizedPnlDailyAggregateEntity] = {}
+
+    async def upsert(
+        self, aggregate: RealizedPnlDailyAggregateEntity
+    ) -> RealizedPnlDailyAggregateEntity:
+        key = (aggregate.account_id, aggregate.instrument_id, aggregate.trade_date)
+        self._items[key] = aggregate
+        return aggregate
+
+    async def list_by_account_and_instrument(
+        self,
+        account_id: UUID,
+        instrument_id: UUID,
+        *,
+        start_date: date | None = None,
+        end_date: date | None = None,
+    ) -> Sequence[RealizedPnlDailyAggregateEntity]:
+        items = [
+            item
+            for item in self._items.values()
+            if item.account_id == account_id and item.instrument_id == instrument_id
+        ]
+        if start_date is not None:
+            items = [item for item in items if item.trade_date >= start_date]
+        if end_date is not None:
+            items = [item for item in items if item.trade_date <= end_date]
+        items.sort(key=lambda item: item.trade_date)
+        return tuple(items)
+
+
+class InMemoryRealizedPnlComputationRunRepository:
+    def __init__(self) -> None:
+        self._items: dict[UUID, RealizedPnlComputationRunEntity] = {}
+
+    async def add(
+        self, run: RealizedPnlComputationRunEntity
+    ) -> RealizedPnlComputationRunEntity:
+        self._items[run.computation_run_id] = run
+        return run
+
+    async def update_run(
+        self, run: RealizedPnlComputationRunEntity
+    ) -> RealizedPnlComputationRunEntity:
+        self._items[run.computation_run_id] = run
+        return run
+
+    async def get(
+        self, computation_run_id: UUID
+    ) -> RealizedPnlComputationRunEntity | None:
+        return self._items.get(computation_run_id)
+
+    async def list_runs(
+        self,
+        limit: int = 50,
+        status: str | None = None,
+        run_type: str | None = None,
+    ) -> Sequence[RealizedPnlComputationRunEntity]:
+        items = list(self._items.values())
+        if status is not None:
+            items = [item for item in items if item.status == status]
+        if run_type is not None:
+            items = [item for item in items if item.run_type == run_type]
+        items.sort(key=lambda item: item.started_at, reverse=True)
+        return tuple(items[:limit])
+
+
+class InMemoryRealizedPnlRecomputeQueueRepository:
+    def __init__(self) -> None:
+        self._items: dict[UUID, RealizedPnlRecomputeQueueEntity] = {}
+
+    async def add(
+        self, item: RealizedPnlRecomputeQueueEntity
+    ) -> RealizedPnlRecomputeQueueEntity:
+        self._items[item.recompute_queue_id] = item
+        return item
+
+    async def list_pending(
+        self, limit: int = 100
+    ) -> Sequence[RealizedPnlRecomputeQueueEntity]:
+        items = [item for item in self._items.values() if item.resolved_at is None]
+        items.sort(key=lambda item: item.requested_at or datetime.min.replace(tzinfo=timezone.utc))
+        return tuple(items[:limit])
+
+    async def mark_resolved(
+        self,
+        recompute_queue_id: UUID,
+        *,
+        resolved_by_computation_run_id: UUID,
+        resolved_at: datetime | None = None,
+    ) -> RealizedPnlRecomputeQueueEntity | None:
+        existing = self._items.get(recompute_queue_id)
+        if existing is None:
+            return None
+        updated = replace(
+            existing,
+            resolved_at=resolved_at or datetime.now(timezone.utc),
+            resolved_by_computation_run_id=resolved_by_computation_run_id,
+        )
+        self._items[recompute_queue_id] = updated
+        return updated
 
 
 class InMemoryReconciliationRepository:

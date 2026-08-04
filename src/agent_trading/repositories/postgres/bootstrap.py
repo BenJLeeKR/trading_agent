@@ -60,11 +60,26 @@ from agent_trading.repositories.postgres.order_submission_attempts import (
     PostgresOrderSubmissionAttemptRepository,
 )
 from agent_trading.repositories.postgres.orders import PostgresOrderRepository
+from agent_trading.repositories.postgres.position_cost_basis_states import (
+    PostgresPositionCostBasisStateRepository,
+)
 from agent_trading.repositories.postgres.position_snapshots import (
     PostgresPositionSnapshotRepository,
 )
 from agent_trading.repositories.postgres.reconciliation import (
     PostgresReconciliationRepository,
+)
+from agent_trading.repositories.postgres.realized_pnl_computation_runs import (
+    PostgresRealizedPnlComputationRunRepository,
+)
+from agent_trading.repositories.postgres.realized_pnl_daily_aggregates import (
+    PostgresRealizedPnlDailyAggregateRepository,
+)
+from agent_trading.repositories.postgres.realized_pnl_events import (
+    PostgresRealizedPnlEventRepository,
+)
+from agent_trading.repositories.postgres.realized_pnl_recompute_queue import (
+    PostgresRealizedPnlRecomputeQueueRepository,
 )
 from agent_trading.repositories.postgres.risk_limit_snapshots import (
     PostgresRiskLimitSnapshotRepository,
@@ -159,4 +174,9 @@ def build_postgres_repositories(
         universe_freeze_run_items=PostgresUniverseFreezeRunItemRepository(tx),
         market_session_repo=PostgresMarketSessionRepository(tx),
         order_submission_attempts=PostgresOrderSubmissionAttemptRepository(tx),
+        position_cost_basis_states=PostgresPositionCostBasisStateRepository(tx),
+        realized_pnl_events=PostgresRealizedPnlEventRepository(tx),
+        realized_pnl_daily_aggregates=PostgresRealizedPnlDailyAggregateRepository(tx),
+        realized_pnl_computation_runs=PostgresRealizedPnlComputationRunRepository(tx),
+        realized_pnl_recompute_queue=PostgresRealizedPnlRecomputeQueueRepository(tx),
     )
