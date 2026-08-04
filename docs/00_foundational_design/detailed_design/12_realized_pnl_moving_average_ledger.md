@@ -51,11 +51,15 @@ position_snapshots  (계좌×종목, 브로커가 보고하는 시점별 quantit
 2. **`fill_events`와 `broker_fill_snapshots`는 서로 다른 테이블, 서로 다른 dedup 키를 갖는 독립 경로다.** `broker_fill_snapshots.order_request_id`는 [`0031_link_fill_snapshots_to_orders.sql`](../../../db/migrations/0031_link_fill_snapshots_to_orders.sql)에서 nullable FK로 추가되었을 뿐이며, 두 테이블이 같은 실제 체결을 항상 1:1로 가리킨다는 보장은 없다.
 3. **`position_snapshots.average_price`는 브로커 원장값이다.** `source_of_truth` CHECK 제약(`'internal' | 'broker' | 'reconciled'`)이 이미 이 구분을 스키마 차원에서 인정하고 있다([`0001_initial_schema.sql:179-192`](../../../db/migrations/0001_initial_schema.sql)). 이번 설계로 추가하는 `position_cost_basis_state`(9절)는 `source_of_truth='internal'`에 대응하는 개념이며, 브로커 값을 대체하지 않는다.
 
-### 2.1 미확인 경로 (구현 착수 전 확인 필요)
+### 2.1 현재 확인된 입력 경로와 아직 확인되지 않은 것
 
-- **KIS websocket 체결 통보**: `fill_events.source_channel` CHECK 제약은 `'websocket' | 'rest_poll' | 'backfill' | 'manual'`을 허용하도록 이미 설계되어 있으나([`0001_initial_schema.sql:361`](../../../db/migrations/0001_initial_schema.sql)), 이번 조사에서 확인한 유일한 writer인 `_sync_fills()`는 항상 `source_channel="rest_poll"`을 사용한다. **websocket 경로로 fill_events가 채워지는 별도 writer가 존재하는지는 확인하지 못했다.** 존재한다면 순서·지연 특성이 다를 수 있으므로 5절의 정렬 키 설계에 영향을 줄 수 있다.
+**현재 확인된 fill 입력 경로**는 REST 기반 `_sync_fills()`(`broker.get_fills()`) 하나뿐이다([`order_sync_service.py:1444-1549`](../../../src/agent_trading/services/order_sync_service.py)). 이 writer는 항상 `source_channel="rest_poll"`로 저장한다. `broker_fill_snapshots`는 KIS VTTC0081R(일별체결조회) 기반 백필/대사 전용 경로이며(1절), ledger의 1차 입력으로 쓰지 않는다(10절). **따라서 이 설계와 1차 구현(action plan 1~3단계)은 REST 기반 fill 입력만을 전제로 한다.**
+
+이 전제 위에서, 아래는 구현 착수 전 확인이 필요한 항목이다.
+
+- **websocket fill writer 존재 여부**: `fill_events.source_channel` CHECK 제약은 `'websocket' | 'rest_poll' | 'backfill' | 'manual'`을 허용하도록 이미 설계되어 있으나([`0001_initial_schema.sql:361`](../../../db/migrations/0001_initial_schema.sql)), 이번 조사에서 확인한 유일한 writer는 위의 REST 경로뿐이다. `'websocket'` 값은 스키마상 허용되어 있을 뿐, 그 값을 실제로 쓰는 별도 writer가 존재하는지는 확인하지 못했다. 존재한다면 순서·지연 특성이 다를 수 있으므로 5절의 정렬 키 설계에 영향을 줄 수 있다 — 확인되기 전까지는 REST 경로만 있다고 가정하고 설계한다.
 - **`position_snapshots` 생성 경로**: 이 문서는 `position_snapshots` 테이블의 존재와 컬럼만 확인했고, 실제로 어떤 서비스가 이를 채우는지는 조사 범위에 포함하지 않았다.
-- **숏 포지션 가능성**: 국내주식 계좌에서 매도 후 음수 잔량이 실제로 발생하는지 미확인.
+- **숏 포지션 가능성**: 국내주식 계좌에서 매도 후 음수 잔량이 실제로 발생하는지 미확인. 6절/9절에서는 이를 "지원 여부가 결정되지 않은 것"으로 다루고, 임시로 DB 레벨 가드만 둔다.
 - **`admin_ui`의 실현 손익 소비 화면**: 어떤 컴포넌트가 `/performance-summary` 등을 소비하는지 미확인.
 
 ## 3. 이동평균법 실현 손익 계산 의미론
@@ -298,4 +302,4 @@ ORDER BY fill_timestamp ASC, broker_fill_id ASC NULLS LAST, created_at ASC, fill
 - `broker_fill_snapshots`와의 정식 대사 리포트 및 임계값 정책.
 - FIFO 병행 지원(세무 목적 필요 시 별도 lot 테이블 추가).
 - 숏 포지션 지원 여부 검토(현재는 발생 시 격리만 설계, 지원 자체는 범위 밖).
-- KIS websocket 체결 통보 경로 확인 후, 필요 시 5절 정렬 키 설계 재검토.
+- websocket fill writer 존재 여부 확인 후, 필요 시 5절 정렬 키 설계 재검토.
