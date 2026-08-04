@@ -25,8 +25,13 @@ from agent_trading.repositories.contracts import (
     MarketSessionRepository,
     OrderRepository,
     OrderStateEventRepository,
+    PositionCostBasisStateRepository,
     PositionSnapshotRepository,
     ReconciliationRepository,
+    RealizedPnlComputationRunRepository,
+    RealizedPnlDailyAggregateRepository,
+    RealizedPnlEventRepository,
+    RealizedPnlRecomputeQueueRepository,
     RiskLimitSnapshotRepository,
     SignalFeatureSnapshotRepository,
     SignalFeatureBatchRunRepository,
@@ -78,3 +83,8 @@ class RepositoryContainer:
     external_events: ExternalEventRepository
     market_session_repo: MarketSessionRepository
     order_submission_attempts: OrderSubmissionAttemptRepository
+    position_cost_basis_states: PositionCostBasisStateRepository
+    realized_pnl_events: RealizedPnlEventRepository
+    realized_pnl_daily_aggregates: RealizedPnlDailyAggregateRepository
+    realized_pnl_computation_runs: RealizedPnlComputationRunRepository
+    realized_pnl_recompute_queue: RealizedPnlRecomputeQueueRepository

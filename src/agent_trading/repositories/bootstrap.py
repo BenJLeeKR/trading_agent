@@ -27,8 +27,13 @@ from agent_trading.repositories.memory import (
     InMemoryOrderRepository,
     InMemoryOrderStateEventRepository,
     InMemoryOrderSubmissionAttemptRepository,
+    InMemoryPositionCostBasisStateRepository,
     InMemoryPositionSnapshotRepository,
     InMemoryReconciliationRepository,
+    InMemoryRealizedPnlComputationRunRepository,
+    InMemoryRealizedPnlDailyAggregateRepository,
+    InMemoryRealizedPnlEventRepository,
+    InMemoryRealizedPnlRecomputeQueueRepository,
     InMemoryRiskLimitSnapshotRepository,
     InMemorySignalFeatureSnapshotRepository,
     InMemorySignalFeatureBatchRunRepository,
@@ -116,6 +121,11 @@ def build_in_memory_repositories() -> RepositoryContainer:
         universe_freeze_run_items=InMemoryUniverseFreezeRunItemRepository(),
         market_session_repo=InMemoryMarketSessionRepository(),
         order_submission_attempts=InMemoryOrderSubmissionAttemptRepository(),
+        position_cost_basis_states=InMemoryPositionCostBasisStateRepository(),
+        realized_pnl_events=InMemoryRealizedPnlEventRepository(),
+        realized_pnl_daily_aggregates=InMemoryRealizedPnlDailyAggregateRepository(),
+        realized_pnl_computation_runs=InMemoryRealizedPnlComputationRunRepository(),
+        realized_pnl_recompute_queue=InMemoryRealizedPnlRecomputeQueueRepository(),
     )
     # Seed a fresh sync run so pipelines work out of the box.
     _seed_fresh_sync_run(repos.snapshot_sync_runs)
