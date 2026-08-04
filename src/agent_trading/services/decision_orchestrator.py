@@ -596,20 +596,20 @@ class DecisionOrchestratorService:
             else "HOLD"
         )
         normalized_source_type = (source_type or "core").strip().lower()
-        envelope = evaluate_action_envelope(
-            source_type=normalized_source_type,
-            has_position=False,
-        )
-        if not envelope.allow_new_buy:
-            rationale = (
-                f"[ai_override_gate] source_type={normalized_source_type} "
-                f"action_envelope blocked FDC={decision_type} -> {downgrade_decision}"
-            )
-            return (
-                downgrade_decision,
-                rationale,
-                ("ai_override_gate", "ai_override_source_policy_blocked"),
-            )
+        # R5-f 확인(2026-08-04): 이 함수는 호출자(assemble())에서 항상
+        # _check_source_policy_upgrade_guard()가 먼저 실행된 뒤에만
+        # 호출된다. 그 가드가 evaluate_action_envelope(source_type,
+        # has_position)로 allow_new_buy=False를 확인하면 decision_type을
+        # 이미 HOLD/WATCH로 낮추고, 이 함수는 바로 위 decision_type 체크
+        # (APPROVE/BUY 아니면 return None)에서 먼저 빠진다. source_type/
+        # has_position은 두 호출 사이에 바뀌지 않고(같은 position_
+        # snapshot/derivation.source_type을 그대로 재사용), evaluate_
+        # action_envelope()는 이 두 값에만 의존하는 순수 함수라, 이
+        # 지점에 decision_type이 APPROVE/BUY로 남아 있다는 것 자체가
+        # 이미 그 가드의 동일한 envelope 평가가 allow_new_buy=True였음을
+        # 뜻한다 — 여기서 다시 확인해도 절대 다른 결과가 나올 수 없다
+        # (5개 source_type 전수 검토 결과 반례 없음). 과거의 재확인
+        # 분기는 이 지점에서 참이 될 수 없는 조건이라 제거했다.
 
         eligibility_passed = bool(
             getattr(deterministic_trigger, "eligibility_passed", False)
