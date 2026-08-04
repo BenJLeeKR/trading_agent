@@ -70,6 +70,20 @@ read-only 원칙, ``held_position``/``reconciliation_overlay``/
   더 클 수 있다는 것을 조용히 덮지 않고 드러낸다.
 - ``structural_notes``를 "구조 확인 결과(사실)" / "PLACEHOLDER(분석용
   임시값)" / "분석용 임계값(운영 정책 아님)" 세 갈래로 분리했다.
+
+**[2026-08-04 KST 실측 실행 검증 중 발견/보정]** 실제 데이터로 짧게
+실행해본 결과, 아래 불일치를 발견해 고쳤다:
+
+- ``simulate_filter_hypothesis()``의 분자(``block_reduction``/
+  ``candidate_loss``)는 ``(run_id, symbol)`` 단위로 중복 제거하는데,
+  분모(``applicable_population``)는 row(=decision 행) 단위 그대로였다.
+  실제 데이터에서 같은 클러스터링 run 안에 동일 종목이 여러 decision
+  행으로 중복되는 사례(2026-08-03~04 표본 29건)가 확인되어, 분모도
+  ``(run_id, symbol)`` 단위로 통일했다. 이 통일 후에도 상단 ``baseline``
+  섹션의 ``pre_ai_activity_block_rate``(row 단위)와 가설 섹션의
+  ``baseline_block_rate``(종목 단위)는 **의도적으로 다른 값**이다 —
+  전자는 "decision 인스턴스 기준 차단율", 후자는 "run당 유니버스 슬롯
+  기준 차단율"이라는 서로 다른 질문에 답하기 때문이다.
 """
 
 from __future__ import annotations
@@ -698,11 +712,25 @@ def simulate_filter_hypothesis(
     - ``EXEMPT_SOURCE_TYPES``(``held_position``/``reconciliation_
       overlay``)는 계획 문서 지시대로 항상 예외로 두어, 어떤 가설도
       이 종목들을 제외 대상으로 세지 않는다.
+
+    [실측 검증 중 발견/보정] universe 사전 필터는 종목 단위로 한 번
+    적용되는 것이지, 같은 run 안에서 그 종목이 재평가된 개별 decision
+    행 단위로 여러 번 적용되는 것이 아니다. 그런데 클러스터링된 run
+    하나에 동일 ``(run_id, symbol)``이 여러 decision 행으로 중복될 수
+    있다는 사실이 실제 데이터에서 확인됐다(2026-08-03~04, 29건). 최초
+    구현은 분자(``block_reduction``/``candidate_loss``)만 ``(run_id,
+    symbol)`` 단위로 중복 제거하고, 분모(``applicable_population``)는
+    row 단위 그대로 둬서 ``baseline_block_rate``가 상단 ``baseline``의
+    ``pre_ai_activity_block_rate``와 다른 숫자가 되는 불일치가 있었다.
+    아래는 분자·분모 모두 ``(run_id, symbol)`` 단위로 통일한 것이다.
     """
     buy_path_rows = [r for r in rows if r.is_new_buy_candidate_scope]
     applicable = [r for r in buy_path_rows if r.source_type not in EXEMPT_SOURCE_TYPES]
     if scope is not None:
         applicable = [r for r in applicable if scope(r)]
+
+    applicable_keys = {(r.run_id, r.symbol) for r in applicable}
+    applicable_population = len(applicable_keys)
 
     excluded = [r for r in applicable if predicate(r)]
     excluded_symbols = {(r.run_id, r.symbol) for r in excluded}
@@ -718,7 +746,7 @@ def simulate_filter_hypothesis(
     candidate_loss_keys = excluded_symbols - currently_blocked_keys
     candidate_loss_count = len(candidate_loss_keys)
 
-    remaining_after_filter = len(applicable) - len(excluded_symbols)
+    remaining_after_filter = applicable_population - len(excluded_symbols)
     remaining_still_blocked = len(currently_blocked_keys - excluded_symbols)
     simulated_block_rate_after_filter = (
         round(remaining_still_blocked / remaining_after_filter, 4)
@@ -738,20 +766,30 @@ def simulate_filter_hypothesis(
         round(block_reduction / candidate_loss_count, 4) if candidate_loss_count > 0 else None
     )
 
-    missing_feature_rows = [r for r in applicable if not r.has_signal_feature]
+    # signal feature 결측 여부도 종목(run, symbol) 단위로 판정한다 — 같은
+    # 종목이 같은 run에서 여러 decision 행으로 중복돼도 feature는 동일한
+    # 배치 조회 결과를 공유하므로(row 단위로 셀 이유가 없다) 이중 집계를
+    # 피한다.
+    missing_feature_keys = {
+        (r.run_id, r.symbol) for r in applicable if not r.has_signal_feature
+    }
 
     return {
         "hypothesis": hypothesis_name,
-        "applicable_population": len(applicable),
+        "applicable_population": applicable_population,
         "simulated_universe_filtered_count": len(excluded_symbols),
         "simulated_activity_block_reduction": block_reduction,
         "simulated_candidate_loss_count": candidate_loss_count,
         "simulated_candidate_loss_rate": (
-            round(candidate_loss_count / len(applicable), 4) if applicable else None
+            round(candidate_loss_count / applicable_population, 4)
+            if applicable_population
+            else None
         ),
         "simulated_block_rate_after_filter": simulated_block_rate_after_filter,
         "baseline_block_rate": (
-            round(len(currently_blocked_keys) / len(applicable), 4) if applicable else None
+            round(len(currently_blocked_keys) / applicable_population, 4)
+            if applicable_population
+            else None
         ),
         "efficiency_score": efficiency_score,
         "efficiency_score_unbounded": zero_loss_with_reduction,
@@ -759,9 +797,11 @@ def simulate_filter_hypothesis(
         # 보수적으로 판정한다 — 즉 이 가설의 실제 효과가 여기 표시된 수치보다
         # 더 클 수도 있다는 뜻이다. 결측 비율이 높으면 그 사실을 반드시
         # 함께 읽어야 한다(조용히 덮지 않음).
-        "missing_signal_feature_count": len(missing_feature_rows),
+        "missing_signal_feature_count": len(missing_feature_keys),
         "missing_signal_feature_rate": (
-            round(len(missing_feature_rows) / len(applicable), 4) if applicable else None
+            round(len(missing_feature_keys) / applicable_population, 4)
+            if applicable_population
+            else None
         ),
     }
 
@@ -1114,6 +1154,12 @@ async def main(argv: Sequence[str] | None = None) -> int:
             "trade_decisions.decision_context_id는 UNIQUE 제약이 없어(0019 마이그레이션)"
             " 같은 context에 여러 TD가 쌓일 수 있다 — DISTINCT ON(created_at DESC)으로"
             " 가장 최신 행만 결정론적으로 채택했다.",
+            "실측 실행 결과 같은 클러스터링 run 안에 동일 종목이 여러 decision"
+            " 행으로 중복되는 사례가 확인됐다(2026-08-03~04 표본) — 가설 비교"
+            " 결과(hypotheses)는 (run_id, symbol) 단위로 통일해 집계하므로,"
+            " 상단 baseline(row/decision 인스턴스 단위)과 가설의"
+            " baseline_block_rate(종목 단위)는 서로 다른 질문에 답하는"
+            " 의도적으로 다른 수치다.",
         ],
         # 계획 문서에 명시되지 않아 이 스크립트가 도입한 임시값. 운영 정책
         # 확정치가 아니며, 다음 턴에서 재확인이 필요하다.

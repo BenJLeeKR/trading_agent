@@ -273,6 +273,19 @@ analyze_universe_activity_gap.py` 초안 구현 전 실제 저장소 구조를
   (`idx_trade_decisions_context_created`)와 동일한 정렬 기준을 써서
   가장 최신 행만 결정론적으로 채택하도록 스크립트를 고쳤다.
 
+**[실측 실행 검증 결과, 2026-08-04 KST]** `agent_trading-app-1` 컨테이너에서
+`Entrypoint Paper` 계정, 2026-08-03~08-04 범위로 read-only 실행 검증을
+1회 수행했다. 실행 자체는 정상 종료됐고 baseline/by_source_type/
+by_time_bucket/by_market_overlay/hypotheses/recommendation이 모두
+출력됐으며 JSON/CSV 산출물도 정상 생성됨을 확인했다. 이 과정에서
+클러스터링된 실행 단위(run) 하나에 동일 종목이 여러 decision 행으로
+중복되는 사례(표본 29건)가 실제로 존재함을 발견했고, 가설 시뮬레이션의
+분자·분모 granularity 불일치를 스크립트에서 고쳤다(자세한 내용은
+스크립트 상단 `[2026-08-04 KST 실측 실행 검증 중 발견/보정]` 참고).
+이 표본에서는 `market_overlay_enabled` 추정 run이 0건이었다 — 이 기간
+동안 `market_overlay` source_type이 실제로 없었기 때문이며, 분리
+집계 로직 자체의 결함은 아니다.
+
 ### 내부 처리 단계
 
 1. 날짜 범위의 대상 실행 집합을 수집한다.
