@@ -10707,7 +10707,23 @@ agent 설계 문서 기준으로도 순서는 다음이 맞다.
      세 핵심 신호 중 가장 정보가 없는 신호로 확인됐다. **판정: Hold
      유지**(데이터 공백만 해소, 판정은 불변). 축 1 핵심 대상 3개
      전부 1차+2차 확인 완료로 축 1을 종료한다. **다음 1순위: 축
-     3(downstream 분리 순수 deterministic 성과) 착수** +
+     3(downstream 분리 순수 deterministic 성과) 착수**.
+     **[2026-08-04 재갱신] 축 3 착수 분석 완료**(`[DESIGN] signal_
+     predictive_power_validation.md` §34, read-only, 새 실측 없음)
+     — 검증 질문을 "AI/EV/submit 개입이 없었다면 deterministic
+     단독 판단이 실제 최종 결정 대비 더 나았을지"로 고정하고, 6개
+     BUY 경로 파일의 deterministic/downstream 경계를 확인했다(단일
+     플래그가 아니라 `decision_orchestrator.py`의 7개 guard 체인,
+     마지막 guard `_check_ai_buy_override_gate` 반환 이후가 실질
+     경계). 비교군은 B안(`decision_json.candidate_vs_final.
+     alignment_status`로 `matched`/`upgraded`/`downgraded`/
+     `promoted_from_no_action`/`suppressed` 분리, 이미 존재하는
+     필드라 신규 계측 없이 즉시 조회 가능)을 1순위로 권고했다.
+     **판정: 부분적으로 즉시 실측 가능** — population 자체는 이미
+     확인했으나(R5 마감 이후 표본 24~55건대), forward return 비교를
+     위한 가상 진입가 방법론 확정이 선행돼야 한다. **다음 1순위:
+     가상 진입가 방법론 확정 후 `suppressed`/`downgraded` vs
+     `matched` 1차 실측** +
      [1-B순위] **D안 순수 효과 재측정** — S5로 stale bias가 사라진 뒤
      §137.5의 2.13배(상한)를 다시 측정 +
      [1-B순위] `strategy_alignment` 제거의 **게이트 영향 재관측** —
