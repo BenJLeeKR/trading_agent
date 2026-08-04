@@ -1,6 +1,12 @@
 # 12. KIS 실체결 기준 이동평균 실현 손익(Realized PnL) Ledger — 상세 설계
 
-> **문서 상태**: 설계안이다. 4절의 신규 테이블 5종은 `db/migrations/0053_add_realized_pnl_ledger_tables.sql` + `0054_add_realized_pnl_support_indexes.sql`로 migration 초안이 작성되었지만 **아직 어떤 DB에도 실행되지 않았다.** 계산 엔진(5절)·repository·API·runtime 반영 코드는 **아직 구현되지 않았다.** 구현 순서와 단계 분리는 [`kis_realized_pnl_moving_average_action_plan.md`](../../40_action_plans/kis_realized_pnl_moving_average_action_plan.md)를 따른다.
+> **문서 상태**: 설계 + 일부 구현 완료 상태다.
+> - 4절의 신규 테이블 5종은 `db/migrations/0053_add_realized_pnl_ledger_tables.sql` + `0054_add_realized_pnl_support_indexes.sql`로 migration 초안이 작성되었지만 **아직 어떤 DB에도 실행되지 않았다.**
+> - entity/repository 계층(4절)은 구현 완료([`domain/entities.py`](../../../src/agent_trading/domain/entities.py), [`repositories/contracts.py`](../../../src/agent_trading/repositories/contracts.py) 등).
+> - **계산 엔진(3.2절)은 순수 함수로 구현 완료** — [`src/agent_trading/services/realized_pnl_engine.py`](../../../src/agent_trading/services/realized_pnl_engine.py) (`apply_fill_to_cost_basis()`, `replay_fills()`). 단위 테스트는 [`tests/services/test_realized_pnl_engine.py`](../../../tests/services/test_realized_pnl_engine.py).
+> - **아직 연결되지 않음**: `order_sync_service`와의 실시간 반영 연결, repository에 실제로 쓰는 orchestration, backfill 러너, API, Admin UI. 계산 엔진은 저장소를 전혀 모른다(순수 함수) — 이 경계는 의도적으로 유지한다.
+>
+> 구현 순서와 단계 분리는 [`kis_realized_pnl_moving_average_action_plan.md`](../../40_action_plans/kis_realized_pnl_moving_average_action_plan.md)를 따른다.
 > **범위**: 국내주식(KIS) 계좌의 종목별 이동평균 매입원가 기반 실현 손익. FIFO는 2절에서 비교만 하고 이번 설계는 이동평균으로 확정한다.
 
 ## 1. 도메인 문제 정의
@@ -96,7 +102,9 @@ SELL 체결 적용:
 
 - **완전 청산 후 원가 리셋**: `quantity == 0`이 되는 순간 `average_cost = 0`으로 리셋한다. 이후 재매수는 완전히 새로운 원가 계산으로 시작한다(직전 매도 손익과 무관).
 - **같은 날 다회 매수/매도, 부분체결, 장중 재매수**: 별도 분기를 두지 않는다. 정렬된 fill을 순서대로 적용하는 것만으로 자동 처리된다 — 이것이 상태 전이 함수로 설계하는 핵심 이유다.
-- **숏 포지션(2.1절 미확인 사항)**: `new_quantity < 0`이 되는 경우가 발생하면 계산을 계속 진행하지 않고 해당 계좌×종목을 "이상 상태"로 격리한다(8절). 조용히 음수 평균단가를 계산하지 않는다.
+- **숏 포지션(2.1절 미확인 사항)**: `new_quantity < 0`이 되는 경우(직전 상태 없이 SELL이 오거나, 보유 수량을 초과하는 SELL)는 계산을 계속 진행하지 않고 **엔진 레벨에서 예외로 명시 실패**한다(`MissingCostBasisStateError`/`InsufficientPositionQuantityError`, `realized_pnl_engine.py`). 그 예외를 잡아 `realized_pnl_recompute_queue`에 기록해 "이상 상태"로 격리하는 것은 8절에서 설명하는 **orchestration 레벨의 책임**이며, 아직 구현되지 않았다(다음 단계 — `order_sync_service` 연결).
+
+> **구현 상태**: 위 상태 전이 규칙은 [`apply_fill_to_cost_basis()`](../../../src/agent_trading/services/realized_pnl_engine.py)로 그대로 구현되어 있다. 여러 fill을 순서대로 반영하는 replay는 [`replay_fills()`](../../../src/agent_trading/services/realized_pnl_engine.py)가 담당하며, `fill_timestamp` 역행만 감지해 `FillsNotSortedError`로 실패한다(그 이상의 out-of-order 복구는 7절대로 아직 범위 밖). 두 함수 모두 저장소를 호출하지 않는 순수 함수다 — 저장은 다음 단계의 책임이다.
 
 ### 3.3 fee/tax 반영 정책 — 체결 건별 반영 확정
 
@@ -108,7 +116,9 @@ SELL 체결 적용:
 | 주문 단위 배분 | fee/tax가 주문 단위로만 내려오는 경우 대응 가능 | 부분체결 시 수량 비례/균등 배분 중 임의 선택 필요 — 추가 불확실성 | 미채택 |
 | 일단 제외 | 구현 단순 | 실현 손익을 과대평가 → 리스크 판단에 위험 | 미채택 |
 
-`fill_fee`/`fill_tax`가 `None`인 경우 0으로 처리하되, 이를 "0으로 간주됨"으로 구분하기 위해 `realized_pnl_events.fee_tax_source`(`'reported' | 'assumed_zero'`)를 남긴다(9.2절).
+`fill_fee`/`fill_tax`가 `None`인 경우 0으로 처리하되, 이를 "0으로 간주됨"으로 구분하기 위해 `realized_pnl_events.fee_tax_source`(`'reported' | 'assumed_zero'`)를 남긴다(9.2절). 계산 엔진은 `fee_tax_source='assumed_zero'`인데 fee/tax가 0이 아닌 입력을 모순으로 보고 `FeeTaxSourceMismatchError`로 명시 실패한다(상류 정규화 단계의 버그를 조용히 넘기지 않기 위함).
+
+**v1 범위의 알려진 단순화**: BUY 체결의 fee는 현재 평균단가 계산에 포함하지 않는다(3.2절 BUY 공식에 fee 항이 없음). 표준 원가회계에서는 매입 수수료를 원가에 포함하는 것이 더 정확하지만, 이번 v1은 설계 문서/실행 계획에 명시된 공식을 그대로 구현했다. 매입 수수료가 유의미한 규모라면 실현 손익이 실제 경제적 이익보다 소폭 과대평가될 수 있다 — 후속 확장 후보(12절)로 남긴다.
 
 ## 4. 신규 엔티티 / 테이블 제안
 
@@ -315,10 +325,13 @@ ORDER BY fill_timestamp ASC, broker_fill_id ASC NULLS LAST, created_at ASC, fill
 
 ## 12. 향후 확장 범위
 
+- `order_sync_service` 실시간 반영 연결 — fill 저장 성공 후 `apply_fill_to_cost_basis()` 호출, 실패 시 `realized_pnl_recompute_queue` 기록(8절 orchestration 책임).
+- 백필 러너 — 계좌×종목별 전체 fill 히스토리를 정렬해 `replay_fills()`에 전달하고 결과를 저장.
 - 과거 체결 백필(전체 replay) 및 실행 결과 검증 절차.
 - 종목별 누계/체결별/일자별 조회 API 구현.
 - admin_ui 노출 화면.
 - `broker_fill_snapshots`와의 정식 대사 리포트 및 임계값 정책.
 - FIFO 병행 지원(세무 목적 필요 시 별도 lot 테이블 추가).
-- 숏 포지션 지원 여부 검토(현재는 발생 시 격리만 설계, 지원 자체는 범위 밖).
+- 매입(BUY) 수수료를 평균단가 계산에 포함하는 방식 검토(현재 v1은 미반영, 3.3절).
+- 숏 포지션 지원 여부 검토(현재는 계산 엔진이 예외로 실패만 하고, orchestration의 격리 처리는 아직 없음).
 - websocket fill writer 존재 여부 확인 후, 필요 시 5절 정렬 키 설계 재검토.
