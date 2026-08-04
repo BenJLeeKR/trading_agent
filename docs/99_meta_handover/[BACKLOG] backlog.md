@@ -5302,3 +5302,19 @@ read-only 분석, 코드 변경 없음)
 - 다음 1순위 액션: **SPPV-3 재정의 문서 초안 확장**(§28의 재정의
   목표·검증 축 4개를 근거로 §4.3~§4.5의 새 공식 기준 재작성) —
   체크리스트 작성은 이 초안의 부산물로 뒤따른다.
+
+### `SPPV-2.107~2.159` 구간 종료 선언(2026-08-04, read-only 문서 정리, 새 실측 없음)
+
+- 판정: `SPPV-2.107~2.159`(`ranking_score`/`relative_activity`/
+  `coverage_score`/`regime_tailwind`/`strategy_alignment`/`core_
+  cap`/stale snapshot 등)는 사실상 `BUY 경로 리팩터링`(R1~R5)
+  트랙으로 전개돼 종료됐다 — 같은 번호 체계로 더 이어가지 않는다.
+  canonical 기록은 `buy_path_variable_gate_matrix.md` §13(R1~R5).
+- 이후 검증은 재정의된 `SPPV-3`(alpha 자체 예측력/정리된
+  deterministic gate 통과 후 성과/downstream 분리 성과/
+  `order_request`·submit 전환까지의 funnel 기여도 4개 축)로
+  넘어간다. 남은 운영 관측(PR #119 재현 확인, allocation 제거 운영
+  재실측)은 "SPPV-2 후속"이 아니라 "SPPV-3 착수 전제 확인"으로
+  재배치했다.
+- 다음 1순위 액션: **SPPV-3 재정의 문서 초안 확장**(위와 동일).
+- 상세: `[DESIGN] signal_predictive_power_validation.md` §29.

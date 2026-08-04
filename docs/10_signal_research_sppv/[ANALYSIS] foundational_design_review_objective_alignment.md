@@ -3809,3 +3809,11 @@ matrix.md` §13.3.2.
 snapshot_guard`(PR #119) 병목이 섞여 있었다는 점에서 기존 SPPV-3를
 그대로 이어갈 수는 없다. 상세: `[DESIGN] signal_predictive_power_
 validation.md` §28.
+
+**[2026-08-04 KST, 최소 미러링] `SPPV-2.107~2.159` 구간 종료
+선언.** 이 구간(`ranking_score`/`relative_activity`/`coverage_
+score`/`regime_tailwind`/`strategy_alignment`/`core_cap`/stale
+snapshot 등)은 사실상 `BUY 경로 리팩터링`(R1~R5) 트랙으로 전개돼
+종료됐다 — 같은 번호 체계로 더 이어가지 않는다. 이후 검증은
+재정의된 `SPPV-3`로 넘어간다. 상세: `[DESIGN] signal_predictive_
+power_validation.md` §29.
