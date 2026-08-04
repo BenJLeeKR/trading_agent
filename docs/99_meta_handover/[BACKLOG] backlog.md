@@ -5358,3 +5358,31 @@ read-only 분석, 코드 변경 없음)
   12개월) 창으로 재실행** — 2차(3년)는 3주 경과만으로 구조적 변화
   가능성이 낮아 이번엔 재실행하지 않고 §14를 그대로 참고한다.
 - 상세: `[DESIGN] signal_predictive_power_validation.md` §31.
+
+### `SPPV-3` 축 1 — 1차 창(최근 12개월) 실측 재확인 완료(2026-08-04, read-only 실행)
+
+- 실행 방법: KIS 인증정보가 dev 체크아웃에 없어(`.env` 부재)
+  `_build_kis_live_quote_client()` 경로를 피하고, `_fetch_extended_
+  bars()`가 캐시 hit 시 `client`를 전혀 참조하지 않음을 코드로
+  확인한 뒤, 캐시 미스 시 예외를 던지는 no-op client로 기존 v2/v4
+  함수(수정 없음)를 그대로 재사용하는 최소 드라이버를 스크래치패드에
+  작성해 실행했다. 실행 로그에서 `KIS_CALLS_MADE=0`, `MISSING_
+  CACHE=[]`(88개 심볼 전부 캐시 hit)를 직접 확인했다 — 신규 KIS
+  호출 0건.
+- 집계 범위: 1차 창 2025-06-16~2026-06-16(캐시 마지막 유효 거래일
+  기준, §16.3과 동일), horizon T+5/T+20, 시장 공통(KODEX 200) 국면
+  분해.
+- 실측 결과: `overall_score`(`t_NW=1.18`)/`slow_score`(`-0.15`)/
+  `fast_score`(`0.12`)는 §16.3 기존 값과 **정확히 일치**(결정론성
+  재확인). `slow_momentum`/`slow_trend`는 1차 표에 처음 집계됐고,
+  `slow_momentum`은 T+5(-0.51)/T+20(-0.49) 모두 부호가 반대(음수).
+- §16.2 Go 게이트 판정: 핵심 대상 3개(`slow_momentum`/`overall_
+  score`/`slow_score`) **전부 Hold 유지**(1차 `\|t_NW\|<2` 또는
+  부호 불일치). 비교군(`fast_score`/`slow_trend`)도 승격 없음.
+- 새로 발견한 데이터 공백: `slow_momentum`이 §14의 3년 시장공통
+  국면 분해 표에 아예 포함돼 있지 않아, 하락장 거동이 여전히
+  미확인 상태다.
+- 다음 1순위 액션: **`slow_momentum`을 §14와 동일한 3년 국면 분해
+  표에 포함시켜 하락장 거동 확인**(3년 캐시 존재, 신규 KIS 호출
+  불필요).
+- 상세: `[DESIGN] signal_predictive_power_validation.md` §32.

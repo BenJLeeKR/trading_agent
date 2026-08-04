@@ -10683,7 +10683,20 @@ agent 설계 문서 기준으로도 순서는 다음이 맞다.
      는 남아 있어 **다음 1차 실측은 신규 KIS 호출 없이 재실행
      가능**함을 확인했다. **다음 1순위: 기존 스크립트(`validate_
      signal_predictive_power_v5_recency_window.py`)를 오늘 기준
-     1차 창으로 재실행** +
+     1차 창으로 재실행**. **[2026-08-04 재갱신] 1차 창 실측 재확인
+     완료**(`[DESIGN] signal_predictive_power_validation.md` §32,
+     read-only 실행, KIS 호출 0건 확인) — 기존 함수를 그대로 재사용해
+     캐시(2025-06-16~2026-06-16) 기준으로 재실행한 결과, `overall_
+     score`(`t_NW=1.18`)/`slow_score`(`-0.15`)/`fast_score`(`0.12`)
+     는 §16.3 기존 값과 정확히 일치해 결정론성을 재확인했다.
+     `slow_momentum`/`slow_trend`는 1차 표에 처음 집계됐고,
+     `slow_momentum`은 T+5/T+20 모두 부호가 반대(음수)로 나타났다.
+     §16.2 Go 게이트 기준 **핵심 대상 3개(`slow_momentum`/`overall_
+     score`/`slow_score`) 전부 Hold 유지** — 비교군(`fast_score`/
+     `slow_trend`)도 승격 없음. `slow_momentum`이 §14의 3년 시장공통
+     국면 분해 표에서 빠져 있다는 데이터 공백을 발견했다. **다음
+     1순위: `slow_momentum`을 §14와 동일한 3년 국면 분해 표에
+     포함시켜 하락장 거동 확인**(3년 캐시 존재, 신규 KIS 호출 불필요) +
      [1-B순위] **D안 순수 효과 재측정** — S5로 stale bias가 사라진 뒤
      §137.5의 2.13배(상한)를 다시 측정 +
      [1-B순위] `strategy_alignment` 제거의 **게이트 영향 재관측** —
