@@ -3825,3 +3825,13 @@ power_validation.md` §29.
 후 성과)·축 4(funnel 전환 기여도)는 선행 운영 관측이 끝나야
 착수 가능으로 분리했다. 상세: `[DESIGN] signal_predictive_power_
 validation.md` §30.
+
+**[2026-08-04 KST, 최소 미러링] `SPPV-3` 축 1 종료, 축 3 착수
+분석 완료.** 축 1(alpha 자체 예측력)은 핵심 대상 3개 신호(`slow_
+momentum`/`overall_score`/`slow_score`) 전부 1차·2차 확인이 끝나
+Hold로 종료됐다(§32~§33). 축 3(downstream 분리 순수 deterministic
+성과)은 `decision_json.candidate_vs_final.alignment_status`(이미
+존재하는 필드)로 실제 개입 유무를 분리하는 B안을 권고했고, 판정은
+"부분적으로 즉시 실측 가능"(population 확인 완료, forward return
+비교를 위한 가상 진입가 방법론 확정이 선행 필요)이다. 상세:
+`[DESIGN] signal_predictive_power_validation.md` §34.

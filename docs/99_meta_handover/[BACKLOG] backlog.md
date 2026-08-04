@@ -5409,3 +5409,33 @@ read-only 분석, 코드 변경 없음)
   종료하고, **축 3(downstream 분리 순수 deterministic 성과) 착수**로
   넘어간다.
 - 상세: `[DESIGN] signal_predictive_power_validation.md` §33.
+
+### `SPPV-3` 축 3(downstream 분리 순수 deterministic 성과) 착수 분석 완료(2026-08-04, read-only)
+
+- 검증 질문 고정: "AI/EV/submit 레이어의 override·downgrade·
+  suppress 개입이 없었다면 deterministic 레이어 단독 판단이 실제
+  최종 결정 대비 더 나은 성과를 냈을지, 최소 열등하지 않았을지"를
+  확인한다.
+- deterministic/downstream 경계: `decision_orchestrator.py`,
+  `expected_value_gate.py`, `decision_factory.py`, `prompt_
+  context_projection.py`, `translation.py`, `execution_service.py`
+  6개 파일을 코드로 확인한 결과, 단일 플래그가 아니라
+  `decision_orchestrator.py` 내부 **7개 guard 체인**이 경계이며,
+  마지막 guard(`_check_ai_buy_override_gate`) 반환 이후 `decision_
+  type`/`side`가 고정된다. `expected_value_gate.py`/`decision_
+  factory.py`는 deterministic 값을 읽기만 하고 절대 수정하지
+  않음을 코드로 확인했다.
+- 비교군 설계: A안(gate 통과 vs 미통과, 축 1 방법론 재사용) / B안
+  (`decision_json.candidate_vs_final.alignment_status`로 실제
+  개입 유무 분리, 이미 존재하는 필드) 2안을 비교해 **B안을 1순위로
+  권고**했다 — 신규 계측 없이 즉시 조회 가능(`matched` 35,714 /
+  `promoted_from_no_action` 3,894 / `suppressed` 3,775 /
+  `downgraded` 427 / `upgraded` 176건, 전체 이력. R5 마감 이후로
+  한정하면 24~55건대).
+- 판정: **부분적으로 즉시 실측 가능** — population 자체는 이미
+  확인했으나, forward return 비교를 위한 "가상 진입가" 방법론
+  확정이 선행돼야 한다.
+- 다음 1순위 액션: 가상 진입가 방법론을 먼저 확정한 뒤, R5 마감
+  이후 `suppressed`/`downgraded` vs `matched` 표본의 forward
+  return 1차 실측으로 진행한다.
+- 상세: `[DESIGN] signal_predictive_power_validation.md` §34.

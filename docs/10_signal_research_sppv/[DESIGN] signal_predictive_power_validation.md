@@ -9206,3 +9206,94 @@ score`/`slow_score`와 나란히 계산했다(§32와 같은 방식, client는
 자체 예측력)의 핵심 대상 판정을 "완료"로 종료**하고, §30.6에서
 함께 즉시 착수 가능으로 분류했던 **축 3(downstream 분리 순수
 deterministic 성과)** 착수로 넘어가는 것을 다음 1순위로 제안한다.
+
+## 34. `SPPV-3` 축 3(downstream 분리 순수 deterministic 성과) 착수 분석(2026-08-04, read-only)
+
+이 절은 §28~§33(축 1)을 닫은 뒤, §30.6에서 함께 즉시 착수 가능으로
+분류했던 축 3을 실제로 착수 가능한 수준까지 구체화한다. 코드 변경
+없음, 새 실측 없음(기존 데이터 구조 확인만), R1~R5·축 1·축 2·축
+4는 재론하지 않는다.
+
+### 34.1 축 3 검증 질문(한 줄로 고정)
+
+**AI/EV/submit 레이어의 override·downgrade·suppress 개입이 없었다면,
+deterministic 레이어(`entry_score`/`buy_candidate`/`eligibility_
+passed`/`ranking_score`) 단독의 판단이 실제 최종 결정 대비 더 나은
+성과를 냈을지, 최소 열등하지 않았을지를 확인한다.**(§30.2의 축 3
+정의를 그대로 계승, 재정의하지 않음)
+
+### 34.2 deterministic / downstream 경계표
+
+BUY 경로 6개 파일을 코드 기준으로 확인한 결과다.
+
+| 파일 | deterministic 필드 읽음 | downstream 개입 지점 | 경계 성격 |
+|---|---|---|---|
+| `deterministic_trigger_engine.py` | (생성 주체) | — | 이 지점까지가 순수 deterministic. `DeterministicTriggerAssessment`가 유일한 산출물 |
+| `decision_orchestrator.py` | `watch_candidate`/`buy_candidate`/`eligibility_passed`/`eligibility_reasons`/`risk_off_exception_eligible`/`ranking_score` | **7개 guard**: `_check_held_position_sell_override`, `_check_source_policy_upgrade_guard`, `_check_watch_candidate_upgrade_guard`, `_check_held_position_exit_hysteresis_gate`, `_check_buy_eligibility_upgrade_guard`, `_check_ai_buy_override_gate`, pre-AI `_evaluate_pre_agent_short_circuit` | **단일 플래그가 아니라 guard 체인** — 마지막 guard(`_check_ai_buy_override_gate`) 반환 이후 `decision_type`/`side`가 고정된다. 이 시점이 실질적 경계 |
+| `expected_value_gate.py` | `entry_score`/`ranking_percentile`/`risk_off_exception_eligible` | **없음(read-only 확인)** — `deterministic_trigger`를 절대 수정하지 않는 순수 함수 | deterministic 값을 소비해 자체 `edge_after_cost_bps>=minimum_required_edge_bps` 게이트만 산출, `decision_type`은 orchestrator의 guard가 이 값을 받아 대신 낮춘다 |
+| `decision_factory.py` | `deterministic_trigger` 전체를 `decision_json`에 원문 저장 | **없음** — 순수 factory | **persistence 경계**: `decision_json.deterministic_trigger`(원본)와 `decision_type`/`candidate_vs_final`(최종)을 **같은 row에 함께 저장**한다 — 이미 존재하는 필드로, 신규 계측 없이 재구성 가능 |
+| `prompt_context_projection.py` | `primary_candidate`/`entry_score` 등 프롬프트 텍스트화 | 없음 | AI 실행 이전 입력 포맷팅 — 경계 이전 단계 |
+| `translation.py` | **없음(직접 참조 없음)** | 자체 4개 하드 게이트(decision_type 허용집합/EV anchor 완전성/`held_position` SELL 전용/`quantity>0`) | deterministic_trigger를 모르는, orchestrator가 이미 확정한 `decision_type`만 신뢰하는 순수 downstream |
+| `execution_service.py` | `eligibility_reasons`(execution 시점 유동성 재확인, Phase 1.6)뿐 | 이 재확인은 `decision_type`이 아니라 주문 형태(block/limit)만 바꿈. `stale_snapshot_guard`(Phase 4c)는 순수 계좌 상태 기반, deterministic/AI 입력과 무관 | infra 안전판이 AI/EV/translation 레이어 **뒤**에 위치 — decision 내용과 무관 |
+
+**경계 요약**: 물리적으로 하나의 플래그는 없지만, `decision_orchestrator.py`의 마지막 guard(`_check_ai_buy_override_gate`)가 반환한 직후가 실질적 경계다. 그 이전은 deterministic 값이 `decision_type`을 바꿀 수 있는 유일한 구간이고, 그 이후(`expected_value_gate`의 EV near-miss 재확인, `decision_factory`의 저장, `translation`/`execution_service`)는 deterministic 값을 읽더라도 더 이상 `decision_type` 자체를 바꾸지 않는다.
+
+### 34.3 모집단 정의
+
+| 단계 | 속하는 구간 | 근거 |
+|---|---|---|
+| deterministic trigger 생성(전량) | **deterministic only** | `buy_candidate`/`eligibility_passed`/`entry_score` 등이 여기서 확정 |
+| `eligibility_passed=true` 통과 | **deterministic only** | eligibility 하드 게이트, AI 미개입 |
+| `buy_candidate=true` | **deterministic only** | threshold(`0.65`) 비교까지 deterministic |
+| AI(EI/AR/AC/FDC) 실행·`decision_type=APPROVE` | **AI/EV 개입 후** | FDC의 1차 산출물, 아직 guard 미반영 |
+| 7개 guard 통과 후 최종 `decision_type` | **AI/EV 개입 후**(guard가 deterministic 값을 근거로 재확인) | §34.2의 guard 체인 결과 |
+| `order_request` 생성 | **AI/EV 개입 후** | `decision_type=approve`가 전제 |
+| submit 이후 상태(`pending_submit`/`submitted`/체결) | **execution/infra 영향 포함** | `stale_snapshot_guard` 등 계좌 상태·브로커 응답이 추가로 개입 |
+
+### 34.4 비교군 설계(2안 비교)
+
+| 설계 | 정의 | 장점 | 한계/혼입 위험 |
+|---|---|---|---|
+| **A안: deterministic gate 통과 vs 미통과** | `buy_candidate=true`(또는 `eligibility_passed=true`) 표본과 `false` 표본을 forward return으로 비교 | 계산이 단순하고 이미 축 1(§9~§33)에서 쓴 방법론(cross-sectional quintile/IC)을 그대로 재사용 가능 | AI/EV의 개입 여부와 무관하게 deterministic 판정 자체의 성과만 보는 것이라, "downstream이 개입해서 더 나아졌는지"는 **직접 답하지 못한다** — 축 1의 재탕에 가까움 |
+| **B안: deterministic 후보 vs downstream 실제 승격/차단 표본** | `decision_json.candidate_vs_final.alignment_status`(`matched`/`upgraded`/`downgraded`/`promoted_from_no_action`/`suppressed`/`diverged`)로 분리해, `suppressed`(deterministic이 원했지만 downstream이 막음)·`downgraded`(deterministic BUY_CANDIDATE를 downstream이 낮춤)·`upgraded`/`promoted_from_no_action`(deterministic이 소극적이었는데 downstream이 승격)의 forward return을 비교 | **이미 존재하는 필드**(`decision_factory.py`가 매 row에 저장, §34.2)라 신규 계측 없이 즉시 조회 가능. "AI가 개입해서 결과가 달라졌는지"를 직접 답하는, 축 3의 원래 질문에 가장 가까운 설계 | `suppressed`/`downgraded` 표본은 실제 주문이 나가지 않아 forward return의 "가상 매수" 기준(진입가/기준일)을 deterministic 판단 시점으로 재구성해야 하고, 표본 수가 아직 적다(§34.5) |
+
+**권고**: **B안을 1순위로, A안은 보조 지표로 함께 본다.** B안이 축 3의
+질문(“개입이 없었다면 어땠을까”)에 직접 답하고, `candidate_vs_final`
+필드가 이미 존재해 즉시 조회 가능하기 때문이다.
+
+### 34.5 즉시 측정 가능 / 추가 관측 필요 분리
+
+- **즉시 측정 가능(코드/구조 확인만으로 확정)**:
+  - `candidate_vs_final.alignment_status` 필드가 이미 모든
+    `trade_decisions` row에 존재함(read-only 확인, 전체 이력
+    `matched` 35,714 / `promoted_from_no_action` 3,894 /
+    `suppressed` 3,775 / `downgraded` 427 / `upgraded` 176건).
+  - R5(하류 contract, R5-a/b/f) 마감 이후로 한정한 population도 이미
+    존재한다(R5-f PR #127 병합 시점 이후 read-only 확인 결과
+    `matched` 439 / `suppressed` 55 / `promoted_from_no_action` 50 /
+    `downgraded` 24건) — §30.2가 요구한 "R5 정리 이후 데이터만
+    사용" 전제를 충족하는 표본이 이미 쌓이고 있다.
+- **추가 관측/정의가 필요한 것**:
+  - `suppressed`/`downgraded` 표본의 forward return을 계산하려면
+    "deterministic이 원했던 시점의 가상 진입가"를 어떤 기준(당일
+    종가/다음날 시가 등)으로 잡을지 방법론을 먼저 정해야 한다 —
+    이번 턴에서 새로 발명하지 않고 다음 착수 턴 과제로 남긴다.
+  - R5 마감 이후 population(24~55건대)은 아직 통계적 판정을
+    내리기엔 작다 — 시간이 지나며 자연 누적을 기다리거나, 필요 시
+    R5 마감 이전 데이터를 "참고용"으로 병행 검토할지 결정이 필요.
+
+### 34.6 이번 턴 최종 판정
+
+1. **축 3을 지금 바로 실측할 수 있는가**: **부분적으로 가능하다.**
+   B안의 population 자체(`candidate_vs_final` 분포)는 코드 변경
+   없이 바로 집계 가능하고 이미 그렇게 확인했다. 다만 forward
+   return까지 포함한 "성과 비교"는 §34.5의 가상 진입가 방법론
+   정의가 선행돼야 한다.
+2. **다음 턴 1순위 실측 단위**: R5 마감 이후 `candidate_vs_final=
+   suppressed`/`downgraded` 표본에 대한 **가상 진입가 방법론을
+   먼저 확정**한 뒤(§30.2의 판정 기준과 동일한 Newey-West/quintile
+   방법론을 그대로 재사용), `matched` 표본과 forward return을
+   비교하는 1차 실측을 진행한다.
+3. **선행 관측/정의가 더 필요한 부분**: 가상 진입가 기준 확정,
+   R5 마감 이후 population의 자연 누적(현재 24~55건대로 아직
+   작음).
