@@ -46,6 +46,30 @@
 read-only 원칙, ``held_position``/``reconciliation_overlay``/
 ``event_overlay`` 예외 정책, ``relative_activity`` shadow-only 정책은
 계획 문서 그대로 유지한다.
+
+**[2026-08-04 KST 실행 가능성/정합성 보정]** 초안 리뷰 후 아래를
+추가로 보정했다(운영 정책·가설 정의는 바꾸지 않았다):
+
+- ``trade_decisions.decision_context_id``가 UNIQUE 제약이 없다
+  (``0019_remove_td_context_unique.sql`` — "동일 decision_context에
+  대해 여러 TD row 허용"). 같은 context에 재시도/정정으로 여러 행이
+  쌓일 수 있어, ``DISTINCT ON(created_at DESC)``으로 가장 최신 행만
+  결정론적으로 채택하도록 조회를 바꿨다.
+- signal feature 조회를 decision(=symbol) 1건마다 개별 쿼리하던
+  방식에서, **run 하나당 1회 배치 쿼리**로 바꿨다 — 20~30 거래일
+  스캔 시 발생할 수 있는 수천 건의 순차 쿼리를 없앤다.
+- ``market_overlay_enabled``를 계산은 했지만 실제로 출력에 연결하지
+  않았던 초안의 누락을 고쳐, 계획 문서 "추가 보정사항"의 "market
+  overlay 활성/비활성 시점 분리 집계" 요구사항을 실제로 구현했다.
+- ``efficiency_score``가 무한대가 되는 경우 ``float("inf")``를 그대로
+  JSON에 쓰면 표준이 아닌 ``Infinity`` 토큰이 섞여 엄격한 JSON
+  파서가 못 읽을 위험이 있어, ``None`` + 별도 플래그로 바꿨다.
+- 각 가설 결과에 ``missing_signal_feature_count``를 추가했다 —
+  signal feature가 결측인 행은 predicate가 "제외 아님"으로 보수적
+  판정하므로, 결측이 많으면 그 가설의 실제 효과가 표시된 수치보다
+  더 클 수 있다는 것을 조용히 덮지 않고 드러낸다.
+- ``structural_notes``를 "구조 확인 결과(사실)" / "PLACEHOLDER(분석용
+  임시값)" / "분석용 임계값(운영 정책 아님)" 세 갈래로 분리했다.
 """
 
 from __future__ import annotations
@@ -190,6 +214,14 @@ class DecisionRow:
         정의: "held_position 제외 후 신규 BUY 평가 대상"."""
         return self.source_type != "held_position"
 
+    @property
+    def has_signal_feature(self) -> bool:
+        """signal_feature_snapshot이 이 decision에 조인됐는지 — 결측이면
+        가설 A/B/C/D의 predicate가 "제외 아님"으로 보수적으로 판정하므로,
+        결측 비율이 높으면 가설 시뮬레이션 결과가 과소평가될 수 있다
+        (오해 방지를 위해 각 가설 결과에 결측 건수를 별도로 노출한다)."""
+        return self.average_volume_20d is not None or self.average_turnover_20d is not None
+
 
 # ─────────────────────────────────────────────────────────────────────
 # 시간 버킷 분류
@@ -310,10 +342,21 @@ async def fetch_run_decision_rows(conn: Any, run: RunWindow) -> list[Any]:
 
     [구조 확인 결과] ``guardrail_evaluations``가 아니라
     ``trade_decisions.decision_json``에서 직접 추출한다.
+
+    [구조 확인 결과 — 2차] ``trade_decisions.decision_context_id``는
+    더 이상 UNIQUE 제약이 없다(``db/migrations/0019_remove_td_context_
+    unique.sql``: "동일 decision_context에 대해 여러 TD row 허용
+    (INSERT-only 정책)"). 즉 같은 ``decision_context_id``에 재시도/정정
+    등으로 여러 ``trade_decisions`` 행이 쌓일 수 있다. 이를 무시하고
+    단순 조회하면 어떤 행이 채택되는지 비결정적이 된다 — ``DISTINCT ON``
+    으로 그 마이그레이션이 추가한 인덱스(``idx_trade_decisions_context_
+    created``)와 동일한 정렬 기준(``created_at DESC, trade_decision_id
+    DESC``)을 사용해 **가장 최신(authoritative) 행만** 결정론적으로
+    선택한다.
     """
     return await conn.fetch(
         """
-        SELECT
+        SELECT DISTINCT ON (td.decision_context_id)
             td.symbol,
             td.market AS market_code,
             td.instrument_id,
@@ -335,7 +378,7 @@ async def fetch_run_decision_rows(conn: Any, run: RunWindow) -> list[Any]:
                 AS freeze_reused
         FROM trading.trade_decisions td
         WHERE td.decision_context_id = ANY($1::uuid[])
-        ORDER BY td.symbol
+        ORDER BY td.decision_context_id, td.created_at DESC, td.trade_decision_id DESC
         """,
         run.decision_context_ids,
     )
@@ -393,42 +436,51 @@ def load_pre_ai_blocks(raw_rows: Sequence[Any]) -> dict[str, dict[str, Any]]:
     return result
 
 
-async def load_signal_features(
+async def load_signal_features_for_run(
     conn: Any,
-    instrument_created_at_pairs: Sequence[tuple[UUID, datetime]],
-) -> dict[tuple[UUID, datetime], dict[str, Any]]:
-    """각 (instrument_id, decision 시각) 쌍에 대해 그 시각 이전(as-of)
-    최신 signal feature snapshot을 조인한다.
+    run: RunWindow,
+    instrument_ids: Sequence[UUID],
+) -> dict[UUID, dict[str, Any]]:
+    """run에 속한 모든 instrument에 대해 그 시각 이전(as-of) 최신
+    signal feature snapshot을 **run당 1회 쿼리**로 배치 조회한다.
 
     다일자 과거 실측이므로 "현재 최신값"이 아니라 **그 결정 시점에
     실제로 존재했던 snapshot**을 골라야 정확하다 — 단순 최신값 조인은
     미래 데이터 유출(look-ahead bias)이 된다.
+
+    [실행 가능성 보정] 최초 초안은 decision(=symbol) 1건마다 개별
+    쿼리를 날려, 20~30 거래일 스캔 시 수천 건의 순차 쿼리가 발생할
+    위험이 있었다. signal feature는 하루 단위(``timeframe='1d'``)라
+    같은 run(수 분 내 클러스터) 안에서는 어느 decision의 정확한
+    ``created_at``을 as-of 기준으로 써도 결과가 달라지지 않는다 —
+    그래서 **run의 종료 시각(``run.ended_at``) 하나를 모든 instrument의
+    공통 as-of 기준**으로 사용해 run당 1회 쿼리로 배치 처리한다. 이
+    근사는 "run 안에서 decision 순서에 따라 신호가 바뀔 수 있다"는
+    시나리오를 놓칠 수 있지만, 일 단위 snapshot 특성상 실질 영향은
+    없다고 판단한다(재확인 필요 시 이 함수를 원래의 per-decision as-of
+    방식으로 되돌릴 수 있도록 구조를 분리해뒀다).
     """
-    if not instrument_created_at_pairs:
+    if not instrument_ids:
         return {}
 
-    result: dict[tuple[UUID, datetime], dict[str, Any]] = {}
-    seen: set[tuple[UUID, datetime]] = set()
-    unique_pairs = [p for p in instrument_created_at_pairs if not (p in seen or seen.add(p))]
+    rows = await conn.fetch(
+        """
+        SELECT DISTINCT ON (instrument_id)
+            instrument_id, snapshot_at, average_volume_20d, average_turnover_20d,
+            volume_surge_ratio, turnover_surge_ratio
+        FROM trading.signal_feature_snapshots
+        WHERE instrument_id = ANY($1::uuid[])
+          AND timeframe = '1d'
+          AND snapshot_at <= $2
+        ORDER BY instrument_id, snapshot_at DESC
+        """,
+        list(set(instrument_ids)),
+        run.ended_at,
+    )
 
-    for instrument_id, created_at in unique_pairs:
-        row = await conn.fetchrow(
-            """
-            SELECT snapshot_at, average_volume_20d, average_turnover_20d,
-                   volume_surge_ratio, turnover_surge_ratio
-            FROM trading.signal_feature_snapshots
-            WHERE instrument_id = $1
-              AND timeframe = '1d'
-              AND snapshot_at <= $2
-            ORDER BY snapshot_at DESC
-            LIMIT 1
-            """,
-            instrument_id,
-            created_at,
-        )
-        if row is None:
-            continue
-        result[(instrument_id, created_at)] = {
+    result: dict[UUID, dict[str, Any]] = {}
+    for row in rows:
+        result[row["instrument_id"]] = {
             "average_volume_20d": (
                 float(row["average_volume_20d"])
                 if row["average_volume_20d"] is not None
@@ -468,20 +520,14 @@ async def build_baseline_rows(
             continue
         blocks = load_pre_ai_blocks(raw_rows)
 
-        pairs = [
-            (r["instrument_id"], r["created_at"])
-            for r in raw_rows
-            if r["instrument_id"] is not None
-        ]
-        features = await load_signal_features(conn, pairs)
+        instrument_ids = [r["instrument_id"] for r in raw_rows if r["instrument_id"] is not None]
+        features = await load_signal_features_for_run(conn, run, instrument_ids)
 
         for r in raw_rows:
             symbol = r["symbol"]
             block_info = blocks.get(symbol, {})
             feat = (
-                features.get((r["instrument_id"], r["created_at"]))
-                if r["instrument_id"] is not None
-                else None
+                features.get(r["instrument_id"]) if r["instrument_id"] is not None else None
             ) or {}
 
             all_rows.append(
@@ -524,6 +570,36 @@ def infer_market_overlay_enabled(rows: Sequence[DecisionRow]) -> dict[str, bool]
         if r.source_type == "market_overlay":
             by_run[r.run_id] = True
     return dict(by_run)
+
+
+def summarize_by_market_overlay(
+    rows: Sequence[DecisionRow],
+    overlay_by_run: dict[str, bool],
+) -> dict[str, Any]:
+    """market overlay 활성/비활성 run을 분리해 baseline을 각각 집계한다
+    (계획 문서 "추가 보정사항" 3번: "market overlay 활성 시점과 비활성
+    시점을 반드시 분리 집계한다" 요구사항 구현).
+
+    [구조 확인 결과] ``overlay_by_run``은 저장된 feature-flag가 아니라
+    ``infer_market_overlay_enabled()``의 결과 기반 추정치다 — 상단
+    docstring 4번 참고.
+    """
+    enabled_rows = [r for r in rows if overlay_by_run.get(r.run_id, False)]
+    disabled_rows = [r for r in rows if not overlay_by_run.get(r.run_id, False)]
+    return {
+        "market_overlay_enabled_runs": {
+            "run_count": len({r.run_id for r in enabled_rows}),
+            **build_baseline_summary(enabled_rows),
+        },
+        "market_overlay_disabled_runs": {
+            "run_count": len({r.run_id for r in disabled_rows}),
+            **build_baseline_summary(disabled_rows),
+        },
+        "note": (
+            "market_overlay_enabled는 저장된 플래그가 아니라 해당 run에 "
+            "source_type='market_overlay' 행 존재 여부로 추정한 값이다."
+        ),
+    }
 
 
 # ─────────────────────────────────────────────────────────────────────
@@ -650,11 +726,19 @@ def simulate_filter_hypothesis(
         else None
     )
 
+    # [출력 안전성 보정] candidate_loss_count == 0이면서 block_reduction > 0인
+    # 경우 "무한대 효율"이 되는데, `float("inf")`를 그대로 쓰면 표준 JSON이
+    # 아닌 `Infinity` 토큰이 summary.json에 섞여 엄격한 JSON 파서(jq 등)가
+    # 읽지 못할 위험이 있다. 그 경우 효율은 None으로 두고 별도 플래그로
+    # "손실 없이 차단만 줄었다"는 사실을 명시적으로 드러낸다 —
+    # `build_recommendation()`도 이 케이스를 efficiency_score 비교 이전에
+    # 먼저 분기해 처리하므로 None이어도 판단에 문제가 없다.
+    zero_loss_with_reduction = candidate_loss_count == 0 and block_reduction > 0
     efficiency_score = (
-        round(block_reduction / candidate_loss_count, 4)
-        if candidate_loss_count > 0
-        else (None if block_reduction == 0 else float("inf"))
+        round(block_reduction / candidate_loss_count, 4) if candidate_loss_count > 0 else None
     )
+
+    missing_feature_rows = [r for r in applicable if not r.has_signal_feature]
 
     return {
         "hypothesis": hypothesis_name,
@@ -670,6 +754,15 @@ def simulate_filter_hypothesis(
             round(len(currently_blocked_keys) / len(applicable), 4) if applicable else None
         ),
         "efficiency_score": efficiency_score,
+        "efficiency_score_unbounded": zero_loss_with_reduction,
+        # [오해 방지] signal feature가 결측인 행은 predicate가 "제외 아님"으로
+        # 보수적으로 판정한다 — 즉 이 가설의 실제 효과가 여기 표시된 수치보다
+        # 더 클 수도 있다는 뜻이다. 결측 비율이 높으면 그 사실을 반드시
+        # 함께 읽어야 한다(조용히 덮지 않음).
+        "missing_signal_feature_count": len(missing_feature_rows),
+        "missing_signal_feature_rate": (
+            round(len(missing_feature_rows) / len(applicable), 4) if applicable else None
+        ),
     }
 
 
@@ -750,7 +843,21 @@ def summarize_daily(rows: Sequence[DecisionRow]) -> list[dict[str, Any]]:
     for business_date in sorted(by_date):
         day_rows = by_date[business_date]
         summary = build_baseline_summary(day_rows)
-        out.append({"business_date": business_date.isoformat(), **summary})
+        reasons = summary["reason_distribution"]
+        out.append(
+            {
+                "business_date": business_date.isoformat(),
+                # CSV로 바로 뽑아 볼 수 있게 계획 문서가 명시한 사유 3종을
+                # 평탄화한다(전체 분포는 summary.json의 reason_distribution
+                # 에 그대로 남아 있다 — CSV는 요약용이지 상세 대체가 아니다).
+                "low_average_volume_count": reasons.get("eligibility_low_average_volume", 0),
+                "low_turnover_count": reasons.get("eligibility_low_turnover", 0),
+                "low_relative_activity_count": reasons.get(
+                    "eligibility_low_relative_activity", 0
+                ),
+                **summary,
+            }
+        )
     return out
 
 
@@ -815,7 +922,7 @@ def build_recommendation(hypotheses: Sequence[dict[str, Any]]) -> dict[str, Any]
             recommended.append(name)
         else:
             eff = h.get("efficiency_score")
-            if eff is not None and eff != float("inf") and eff >= 3.0:
+            if eff is not None and eff >= 3.0:
                 recommended.append(name)
             else:
                 hold.append(name)
@@ -869,10 +976,11 @@ def write_outputs(
     baseline: dict[str, Any],
     by_source_type: dict[str, Any],
     by_time_bucket: dict[str, Any],
+    by_market_overlay: dict[str, Any],
     hypotheses: list[dict[str, Any]],
     recommendation: dict[str, Any],
     blocked_rows: list[DecisionRow],
-    structural_notes: list[str],
+    structural_notes: dict[str, list[str]],
 ) -> None:
     summary_obj = {
         "date_range": {"from": date_from.isoformat(), "to": date_to.isoformat()},
@@ -880,8 +988,13 @@ def write_outputs(
         "baseline": baseline,
         "by_source_type": by_source_type,
         "by_time_bucket": by_time_bucket,
+        "by_market_overlay": by_market_overlay,
         "hypotheses": hypotheses,
         "recommendation": recommendation,
+        # [출력 품질 보정] "구조 확인 결과"(사실로 확인됨)와 "PLACEHOLDER"
+        # (분석용 임시 기준, 운영 정책 확정 아님)를 하나의 뭉뚱그린 리스트로
+        # 두면 어느 게 확정 사실이고 어느 게 재확인 필요 항목인지 구분하기
+        # 어렵다 — 두 키로 분리해 노출한다.
         "structural_notes": structural_notes,
     }
 
@@ -903,12 +1016,15 @@ def write_outputs(
                     "new_buy_candidate_count",
                     "pre_ai_activity_block_count",
                     "pre_ai_activity_block_rate",
+                    "low_average_volume_count",
+                    "low_turnover_count",
+                    "low_relative_activity_count",
                 ]
                 writer = csv.DictWriter(f, fieldnames=fieldnames, extrasaction="ignore")
                 writer.writeheader()
                 for row in daily_summary:
                     writer.writerow(row)
-        print(f"[출력] {daily_path}")
+        print(f"[출력] {daily_path}(전체 사유 분포·source_type/시간대별 세부는 summary.json 참고)")
 
         hyp_path = os.path.join(output_csv_dir, "hypothesis_comparison.csv")
         with open(hyp_path, "w", encoding="utf-8", newline="") as f:
@@ -920,7 +1036,11 @@ def write_outputs(
                 "simulated_candidate_loss_count",
                 "simulated_candidate_loss_rate",
                 "simulated_block_rate_after_filter",
+                "baseline_block_rate",
                 "efficiency_score",
+                "efficiency_score_unbounded",
+                "missing_signal_feature_count",
+                "missing_signal_feature_rate",
             ]
             writer = csv.DictWriter(f, fieldnames=fieldnames, extrasaction="ignore")
             writer.writeheader()
@@ -977,20 +1097,48 @@ async def main(argv: Sequence[str] | None = None) -> int:
     if unknown_buckets:
         raise SystemExit(f"알 수 없는 time bucket: {sorted(unknown_buckets)}")
 
-    structural_notes = [
-        "실행 단위(run)는 전용 run 테이블이 없어 decision_contexts.created_at을"
-        f" {RUN_CLUSTER_GAP_SECONDS}초 간격 클러스터링으로 파생 재구성했다(근사치).",
-        "pre-AI 활동성 차단 사유는 guardrail_evaluations가 아니라"
-        " trade_decisions.decision_json.deterministic_trigger.eligibility_reasons"
-        "에서 추출했다.",
-        "유니버스/source_type 복원은 universe_freeze_run_items 대신"
-        " trade_decisions.source_type을 직접 사용했다"
-        "(universe_freeze_run_id는 참조 메타데이터로만 보조 조인).",
-        "market_overlay_enabled는 저장된 플래그가 아니라 해당 run에"
-        " source_type='market_overlay' 행 존재 여부로 추정한 값이다.",
-        f"시간 버킷 경계({TIME_BUCKET_BOUNDARIES_KST})는 계획 문서에 명시돼 있지"
-        " 않아 KRX 정규장 관례 기반 추정치를 사용했다 — 재확인 필요.",
-    ]
+    structural_notes = {
+        # 실제 코드/스키마를 읽고 확인한 사실(가정이 아님) — 계획 문서와
+        # 다르게 구현한 부분과 그 근거.
+        "structural_corrections": [
+            "실행 단위(run)는 전용 run 테이블이 없어 decision_contexts.created_at을"
+            f" {RUN_CLUSTER_GAP_SECONDS}초 간격 클러스터링으로 파생 재구성했다(근사치).",
+            "pre-AI 활동성 차단 사유는 guardrail_evaluations가 아니라"
+            " trade_decisions.decision_json.deterministic_trigger.eligibility_reasons"
+            "에서 추출했다 — guardrail_evaluations는 주문 단계 validation 결과 테이블이다.",
+            "유니버스/source_type 복원은 universe_freeze_run_items 대신"
+            " trade_decisions.source_type을 직접 사용했다"
+            "(universe_freeze_run_id는 참조 메타데이터로만 보조 조인).",
+            "market_overlay_enabled는 저장된 플래그가 아니라 해당 run에"
+            " source_type='market_overlay' 행 존재 여부로 추정한 값이다.",
+            "trade_decisions.decision_context_id는 UNIQUE 제약이 없어(0019 마이그레이션)"
+            " 같은 context에 여러 TD가 쌓일 수 있다 — DISTINCT ON(created_at DESC)으로"
+            " 가장 최신 행만 결정론적으로 채택했다.",
+        ],
+        # 계획 문서에 명시되지 않아 이 스크립트가 도입한 임시값. 운영 정책
+        # 확정치가 아니며, 다음 턴에서 재확인이 필요하다.
+        "placeholders": [
+            f"RUN_CLUSTER_GAP_SECONDS={RUN_CLUSTER_GAP_SECONDS}"
+            "(실제 decision loop 사이클 주기를 실측하지 않은 임시값).",
+            f"시간 버킷 경계({TIME_BUCKET_BOUNDARIES_KST})는 계획 문서에 명시돼 있지"
+            " 않아 KRX 정규장 관례 기반 추정치를 사용했다.",
+            "load_signal_features_for_run()이 decision 개별 시각 대신 run의 종료"
+            " 시각(ended_at) 하나를 모든 instrument의 공통 as-of 기준으로 사용한다"
+            "(일 단위 snapshot 특성상 실질 영향은 없다고 판단했으나 재확인 가능).",
+            "build_recommendation()의 efficiency_score>=3.0 권장 임계값은 계획"
+            " 문서에 정량 기준이 없어 이 스크립트가 도입한 분석용 임시 기준이다"
+            " — 운영 정책 확정치가 아니다.",
+        ],
+        # 계획 문서 자체가 명시한 값이라 "임시값"은 아니지만, 이 값들은
+        # universe 정책에 바로 반영되는 것이 아니라 어디까지나 분석/비교
+        # 목적의 시뮬레이션 기준임을 다시 명시한다(정책 구현 코드처럼
+        # 오독되지 않도록).
+        "analysis_only_thresholds_not_operational_policy": {
+            "HYPOTHESIS_A_MIN_AVERAGE_VOLUME": HYPOTHESIS_A_MIN_AVERAGE_VOLUME,
+            "HYPOTHESIS_B_MIN_AVERAGE_TURNOVER": HYPOTHESIS_B_MIN_AVERAGE_TURNOVER,
+            "HYPOTHESIS_E_MIN_RELATIVE_ACTIVITY": HYPOTHESIS_E_MIN_RELATIVE_ACTIVITY,
+        },
+    }
 
     await create_pool()
     try:
@@ -1010,6 +1158,8 @@ async def main(argv: Sequence[str] | None = None) -> int:
         baseline = build_baseline_summary(all_rows)
         by_source_type = summarize_by_source_type(all_rows)
         by_time_bucket = summarize_by_time_bucket(all_rows)
+        overlay_by_run = infer_market_overlay_enabled(all_rows)
+        by_market_overlay = summarize_by_market_overlay(all_rows, overlay_by_run)
         daily_summary = summarize_daily(all_rows)
         hypotheses = run_all_hypotheses(all_rows)
         recommendation = build_recommendation(hypotheses)
@@ -1020,6 +1170,8 @@ async def main(argv: Sequence[str] | None = None) -> int:
 
         print("\n=== baseline ===")
         print(json.dumps(baseline, ensure_ascii=False, indent=2, default=str))
+        print("\n=== market overlay 활성/비활성 분리 집계(결과 기반 추정) ===")
+        print(json.dumps(by_market_overlay, ensure_ascii=False, indent=2, default=str))
         print("\n=== 가설 비교 ===")
         for h in hypotheses:
             print(json.dumps(h, ensure_ascii=False, default=str))
@@ -1036,6 +1188,7 @@ async def main(argv: Sequence[str] | None = None) -> int:
             baseline=baseline,
             by_source_type=by_source_type,
             by_time_bucket=by_time_bucket,
+            by_market_overlay=by_market_overlay,
             hypotheses=hypotheses,
             recommendation=recommendation,
             blocked_rows=blocked_rows,

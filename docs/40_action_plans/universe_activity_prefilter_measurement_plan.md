@@ -261,6 +261,18 @@ analyze_universe_activity_gap.py` 초안 구현 전 실제 저장소 구조를
   남지 않는다 — 해당 실행 단위에 `source_type='market_overlay'`
   행 존재 여부로 추정한다(결과 기반 추정치임을 명시).
 
+**[초안 실행 가능성 보정 시 추가 확인, 2026-08-04 KST]** 위 4가지에
+더해 아래 사실을 추가로 확인해 스크립트에 반영했다.
+
+- **`trade_decisions.decision_context_id`는 UNIQUE 제약이 없다**
+  (`db/migrations/0019_remove_td_context_unique.sql`: "동일
+  decision_context에 대해 여러 TD row 허용(INSERT-only 정책)").
+  같은 context에 재시도/정정으로 여러 행이 쌓일 수 있어, 단순 조회는
+  어떤 행이 채택되는지 비결정적이 된다 — `DISTINCT ON(created_at
+  DESC, trade_decision_id DESC)`으로 그 마이그레이션이 추가한 인덱스
+  (`idx_trade_decisions_context_created`)와 동일한 정렬 기준을 써서
+  가장 최신 행만 결정론적으로 채택하도록 스크립트를 고쳤다.
+
 ### 내부 처리 단계
 
 1. 날짜 범위의 대상 실행 집합을 수집한다.
