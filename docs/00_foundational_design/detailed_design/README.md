@@ -61,6 +61,12 @@
    - 전용 계좌/appkey 분리, approval key/세션/구독 한도 정책
    - API contract, UI 구성, polling → relay 단계 전환 계획
 
+12. `12_realized_pnl_moving_average_ledger.md` (설계안, 미구현)
+   - KIS 실체결 기준 종목별 이동평균 매입원가·실현 손익 ledger
+   - `position_cost_basis_state` / `realized_pnl_event` / `realized_pnl_daily_aggregate` 분리 설계
+   - idempotency, out-of-order/중복/정정 처리, 장애 복구 계약
+   - 실행 계획: [`docs/40_action_plans/kis_realized_pnl_moving_average_action_plan.md`](../../40_action_plans/kis_realized_pnl_moving_average_action_plan.md)
+
 ## 설계 원칙
 
 - 실전/모의 환경은 논리적으로만이 아니라 설정, 자격증명, 계좌, 라우팅 수준에서 분리한다.
