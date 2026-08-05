@@ -351,6 +351,17 @@ class RealizedPnlRecomputeService:
 
         for trade_date, day_events in grouped.items():
             net_sum = sum((e.realized_pnl_net for e in day_events), Decimal("0"))
+            # UI용 파생 합계 캐시(도메인 계산 아님) — 절대값 재구성이므로
+            # 그 날짜의 events 전체에서 매번 처음부터 다시 합산한다(증분 아님).
+            buy_amount_sum = sum(
+                (e.sell_quantity * e.avg_cost_basis_before for e in day_events), Decimal("0")
+            )
+            sell_amount_sum = sum(
+                (e.sell_quantity * e.sell_price for e in day_events), Decimal("0")
+            )
+            fee_tax_sum = sum(
+                (e.fee + e.tax for e in day_events), Decimal("0")
+            )
             aggregate = RealizedPnlDailyAggregateEntity(
                 account_id=account_id,
                 instrument_id=instrument_id,
@@ -358,6 +369,9 @@ class RealizedPnlRecomputeService:
                 realized_pnl_net_sum=net_sum,
                 sell_event_count=len(day_events),
                 computation_run_id=computation_run_id,
+                buy_amount_sum=buy_amount_sum,
+                sell_amount_sum=sell_amount_sum,
+                fee_tax_sum=fee_tax_sum,
             )
             await self._repos.realized_pnl_daily_aggregates.upsert(aggregate)
 

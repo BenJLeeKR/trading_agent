@@ -2190,6 +2190,11 @@ class RealizedPnlDailyAggregateView(BaseModel):
     """``GET /performance/realized-pnl/daily`` 한 행 — 일자별 realized PnL aggregate.
 
     ``trading.realized_pnl_daily_aggregates``를 그대로 읽은 값이다(계산 없음).
+
+    ``buy_amount_sum``/``sell_amount_sum``/``fee_tax_sum``은 Admin UI
+    실현손익 화면(design/realized_pnl_screen_spec.md)을 위한 UI용 파생
+    합계 캐시다 — ``realized_pnl_events``의 기존 필드를 그대로 합산한
+    값이며 새로운 손익 계산식이 아니다.
     """
 
     model_config = ConfigDict(from_attributes=True)
@@ -2197,6 +2202,9 @@ class RealizedPnlDailyAggregateView(BaseModel):
     trade_date: date
     realized_pnl_net_sum: Decimal
     sell_event_count: int
+    buy_amount_sum: Decimal = Decimal("0")
+    sell_amount_sum: Decimal = Decimal("0")
+    fee_tax_sum: Decimal = Decimal("0")
 
 
 class RealizedPnlDailyResponse(BaseModel):

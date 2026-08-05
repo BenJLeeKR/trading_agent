@@ -203,6 +203,12 @@ async def test_sell_fill_appends_event_and_creates_daily_aggregate(service, repo
     assert len(aggregates) == 1
     assert aggregates[0].realized_pnl_net_sum == Decimal("200")
     assert aggregates[0].sell_event_count == 1
+    # UI용 파생 합계 캐시(entities.py RealizedPnlDailyAggregateEntity 참고) —
+    # buy_amount_sum = sell_quantity * avg_cost_basis_before = 4 * 100 = 400
+    # sell_amount_sum = sell_quantity * sell_price = 4 * 150 = 600
+    assert aggregates[0].buy_amount_sum == Decimal("400")
+    assert aggregates[0].sell_amount_sum == Decimal("600")
+    assert aggregates[0].fee_tax_sum == Decimal("0")
 
 
 @pytest.mark.asyncio
@@ -237,6 +243,51 @@ async def test_second_sell_same_day_accumulates_daily_aggregate(service, repos, 
     # (150-100)*5 + (120-100)*5 = 250 + 100 = 350
     assert aggregates[0].realized_pnl_net_sum == Decimal("350")
     assert aggregates[0].sell_event_count == 2
+    # 두 매도 모두 avg_cost_basis_before=100(매도는 average_cost를 바꾸지 않는다).
+    # buy_amount_sum = 5*100 + 5*100 = 1000, sell_amount_sum = 5*150 + 5*120 = 1350
+    assert aggregates[0].buy_amount_sum == Decimal("1000")
+    assert aggregates[0].sell_amount_sum == Decimal("1350")
+    assert aggregates[0].fee_tax_sum == Decimal("0")
+
+
+@pytest.mark.asyncio
+async def test_daily_aggregate_accumulates_fee_tax_sum(service, repos, account_id, instrument_id):
+    """``fee_tax_sum``이 SELL마다 ``fee + tax``를 누적하는지 확인한다."""
+    buy_order = await _seed_order(repos, account_id=account_id, instrument_id=instrument_id, side=OrderSide.BUY)
+    await service.apply_fill(
+        _make_fill_event(broker_order_id=buy_order.broker_order_id, quantity=Decimal("10"), price=Decimal("100"))
+    )
+
+    sell_order = await _seed_order(repos, account_id=account_id, instrument_id=instrument_id, side=OrderSide.SELL)
+    await service.apply_fill(
+        _make_fill_event(
+            broker_order_id=sell_order.broker_order_id,
+            quantity=Decimal("4"),
+            price=Decimal("150"),
+            fill_fee=Decimal("3"),
+            fill_tax=Decimal("2"),
+            fill_timestamp=_BASE_TS + timedelta(seconds=1),
+        )
+    )
+    await service.apply_fill(
+        _make_fill_event(
+            broker_order_id=sell_order.broker_order_id,
+            quantity=Decimal("6"),
+            price=Decimal("120"),
+            fill_fee=Decimal("5"),
+            fill_tax=Decimal("1"),
+            fill_timestamp=_BASE_TS + timedelta(seconds=2),
+        )
+    )
+
+    aggregates = await repos.realized_pnl_daily_aggregates.list_by_account_and_instrument(
+        account_id, instrument_id
+    )
+    assert len(aggregates) == 1
+    # (3+2) + (5+1) = 11
+    assert aggregates[0].fee_tax_sum == Decimal("11")
+    assert aggregates[0].buy_amount_sum == Decimal("1000")  # 4*100 + 6*100
+    assert aggregates[0].sell_amount_sum == Decimal("1320")  # 4*150 + 6*120
 
 
 # ======================================================================
