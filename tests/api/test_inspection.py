@@ -30,7 +30,11 @@ from agent_trading.domain.entities import (
     InstrumentEntity,
     OrderRequestEntity,
     OrderSubmissionAttemptEntity,
+    PositionCostBasisStateEntity,
     PositionSnapshotEntity,
+    RealizedPnlDailyAggregateEntity,
+    RealizedPnlEventEntity,
+    RealizedPnlRecomputeQueueEntity,
     UniverseFreezeRunEntity,
     UniverseFreezeRunItemEntity,
 )
@@ -40,6 +44,7 @@ from agent_trading.domain.enums import (
     OrderSide,
     OrderStatus,
     OrderType,
+    RealizedPnlFeeTaxSource,
     TimeInForce,
 )
 from agent_trading.domain.entities import ExecutionAttemptEntity, TradeDecisionEntity
@@ -2024,6 +2029,290 @@ class TestPositions:
         assert data["cash_balance"] is not None
         assert data["cash_balance"]["orderable_amount"] == 443598.0
         assert data["cash_balance"]["settlement_amount"] == 445828.0
+
+
+class TestRealizedPnl:
+    """Realized PnL ledger inspection endpoints (read-only, no calculation)."""
+
+    def _build(self):
+        repos = build_in_memory_repositories()
+        app = create_app(repos=repos, auth_enabled=False)
+        return repos, TestClient(app)
+
+    def _seed_state(self, repos, *, account_id, instrument_id, **overrides):
+        defaults = dict(
+            account_id=account_id,
+            instrument_id=instrument_id,
+            quantity=Decimal("10"),
+            average_cost=Decimal("100"),
+            recompute_required=False,
+            recompute_reason=None,
+            updated_at=datetime.now(timezone.utc),
+        )
+        defaults.update(overrides)
+        state = PositionCostBasisStateEntity(**defaults)
+        asyncio.run(repos.position_cost_basis_states.upsert(state))
+        return state
+
+    def _seed_event(self, repos, *, account_id, instrument_id, fill_timestamp, realized_pnl_net):
+        event = RealizedPnlEventEntity(
+            realized_pnl_event_id=uuid4(),
+            account_id=account_id,
+            instrument_id=instrument_id,
+            fill_event_id=uuid4(),
+            broker_order_id=uuid4(),
+            order_request_id=uuid4(),
+            sell_quantity=Decimal("5"),
+            sell_price=Decimal("120"),
+            avg_cost_basis_before=Decimal("100"),
+            fee=Decimal("10"),
+            tax=Decimal("5"),
+            fee_tax_source=RealizedPnlFeeTaxSource.REPORTED,
+            realized_pnl_gross=Decimal(realized_pnl_net) + Decimal("15"),
+            realized_pnl_net=Decimal(realized_pnl_net),
+            position_quantity_after=Decimal("5"),
+            computation_run_id=uuid4(),
+            fill_timestamp=fill_timestamp,
+        )
+        asyncio.run(repos.realized_pnl_events.add(event))
+        return event
+
+    def _seed_daily(self, repos, *, account_id, instrument_id, trade_date, net_sum, count):
+        agg = RealizedPnlDailyAggregateEntity(
+            account_id=account_id,
+            instrument_id=instrument_id,
+            trade_date=trade_date,
+            realized_pnl_net_sum=Decimal(net_sum),
+            sell_event_count=count,
+            computation_run_id=uuid4(),
+        )
+        asyncio.run(repos.realized_pnl_daily_aggregates.upsert(agg))
+        return agg
+
+    def test_positions_single_instrument_with_cumulative_from_daily_aggregates(self) -> None:
+        """``instrument_id``를 주면 그 계좌×종목 한 건 + daily aggregate 합산 누계를 반환한다."""
+        repos, client = self._build()
+        account_id = uuid4()
+        instrument_id = uuid4()
+        instrument = InstrumentEntity(
+            instrument_id=instrument_id,
+            symbol="005930",
+            market_code="KRX",
+            asset_class="equity",
+            currency="KRW",
+            name="삼성전자",
+        )
+        asyncio.run(repos.instruments.add(instrument))
+        self._seed_state(
+            repos, account_id=account_id, instrument_id=instrument_id,
+            quantity=Decimal("10"), average_cost=Decimal("100"),
+            recompute_required=True, recompute_reason="out_of_order_fill",
+        )
+        self._seed_daily(
+            repos, account_id=account_id, instrument_id=instrument_id,
+            trade_date=date(2026, 8, 1), net_sum="1000", count=2,
+        )
+        self._seed_daily(
+            repos, account_id=account_id, instrument_id=instrument_id,
+            trade_date=date(2026, 8, 2), net_sum="500", count=1,
+        )
+
+        response = client.get(
+            f"/performance/realized-pnl/positions?account_id={account_id}&instrument_id={instrument_id}"
+        )
+        assert response.status_code == 200
+        data = response.json()
+        assert len(data) == 1
+        row = data[0]
+        assert row["account_id"] == str(account_id)
+        assert row["instrument_id"] == str(instrument_id)
+        assert row["symbol"] == "005930"
+        assert row["instrument_name"] == "삼성전자"
+        assert Decimal(str(row["position_quantity"])) == Decimal("10")
+        assert Decimal(str(row["average_cost"])) == Decimal("100")
+        assert row["recompute_required"] is True
+        assert row["recompute_reason"] == "out_of_order_fill"
+        # authoritative source: realized_pnl_daily_aggregates 합산(1000 + 500)
+        assert Decimal(str(row["realized_pnl_net_cumulative"])) == Decimal("1500")
+
+    def test_positions_missing_instrument_lists_all_for_account(self) -> None:
+        """``instrument_id``를 생략하면 계좌의 모든 계좌×종목 상태를 나열한다."""
+        repos, client = self._build()
+        account_id = uuid4()
+        instrument_a = uuid4()
+        instrument_b = uuid4()
+        self._seed_state(repos, account_id=account_id, instrument_id=instrument_a)
+        self._seed_state(repos, account_id=account_id, instrument_id=instrument_b)
+
+        response = client.get(f"/performance/realized-pnl/positions?account_id={account_id}")
+        assert response.status_code == 200
+        data = response.json()
+        assert {row["instrument_id"] for row in data} == {str(instrument_a), str(instrument_b)}
+
+    def test_positions_empty_for_unknown_account(self) -> None:
+        """알 수 없는 계좌×종목은 빈 목록을 반환한다(오류가 아니다)."""
+        _repos, client = self._build()
+        unknown_account = uuid4()
+        unknown_instrument = uuid4()
+
+        response = client.get(
+            f"/performance/realized-pnl/positions?account_id={unknown_account}"
+            f"&instrument_id={unknown_instrument}"
+        )
+        assert response.status_code == 200
+        assert response.json() == []
+
+    def test_positions_invalid_account_uuid(self) -> None:
+        _repos, client = self._build()
+        response = client.get("/performance/realized-pnl/positions?account_id=not-a-uuid")
+        assert response.status_code == 400
+
+    def test_events_list_and_filters(self) -> None:
+        """체결별 realized PnL event가 저장된 그대로(계산 없이) 반환된다."""
+        repos, client = self._build()
+        account_id = uuid4()
+        instrument_id = uuid4()
+        self._seed_event(
+            repos, account_id=account_id, instrument_id=instrument_id,
+            fill_timestamp=datetime(2026, 8, 1, 9, 0, tzinfo=timezone.utc),
+            realized_pnl_net="80",
+        )
+        self._seed_event(
+            repos, account_id=account_id, instrument_id=instrument_id,
+            fill_timestamp=datetime(2026, 8, 2, 9, 0, tzinfo=timezone.utc),
+            realized_pnl_net="120",
+        )
+
+        response = client.get(
+            f"/performance/realized-pnl/events?account_id={account_id}&instrument_id={instrument_id}"
+        )
+        assert response.status_code == 200
+        data = response.json()
+        assert data["account_id"] == str(account_id)
+        assert data["instrument_id"] == str(instrument_id)
+        assert len(data["events"]) == 2
+        # fill_timestamp 내림차순 — 가장 최근(8/2)이 먼저.
+        assert Decimal(str(data["events"][0]["realized_pnl_net"])) == Decimal("120")
+        assert data["events"][0]["fee_tax_source"] == "reported"
+        assert Decimal(str(data["events"][1]["realized_pnl_net"])) == Decimal("80")
+
+    def test_events_missing_instrument_param(self) -> None:
+        _repos, client = self._build()
+        response = client.get(f"/performance/realized-pnl/events?account_id={uuid4()}")
+        assert response.status_code == 422
+
+    def test_events_empty_for_unknown_pair(self) -> None:
+        _repos, client = self._build()
+        response = client.get(
+            f"/performance/realized-pnl/events?account_id={uuid4()}&instrument_id={uuid4()}"
+        )
+        assert response.status_code == 200
+        assert response.json()["events"] == []
+
+    def test_daily_list_with_date_range(self) -> None:
+        """일자별 aggregate가 ``trade_date`` 범위로 필터되어 오름차순으로 반환된다."""
+        repos, client = self._build()
+        account_id = uuid4()
+        instrument_id = uuid4()
+        self._seed_daily(
+            repos, account_id=account_id, instrument_id=instrument_id,
+            trade_date=date(2026, 8, 1), net_sum="100", count=1,
+        )
+        self._seed_daily(
+            repos, account_id=account_id, instrument_id=instrument_id,
+            trade_date=date(2026, 8, 5), net_sum="200", count=1,
+        )
+        self._seed_daily(
+            repos, account_id=account_id, instrument_id=instrument_id,
+            trade_date=date(2026, 8, 10), net_sum="300", count=1,
+        )
+
+        response = client.get(
+            f"/performance/realized-pnl/daily?account_id={account_id}&instrument_id={instrument_id}"
+            "&start_date=2026-08-02&end_date=2026-08-08"
+        )
+        assert response.status_code == 200
+        data = response.json()
+        assert len(data["daily"]) == 1
+        assert data["daily"][0]["trade_date"] == "2026-08-05"
+        assert Decimal(str(data["daily"][0]["realized_pnl_net_sum"])) == Decimal("200")
+
+    def test_daily_invalid_date_range(self) -> None:
+        _repos, client = self._build()
+        response = client.get(
+            f"/performance/realized-pnl/daily?account_id={uuid4()}&instrument_id={uuid4()}"
+            "&start_date=2026-08-10&end_date=2026-08-01"
+        )
+        assert response.status_code == 400
+
+    def test_daily_empty_for_unknown_pair(self) -> None:
+        _repos, client = self._build()
+        response = client.get(
+            f"/performance/realized-pnl/daily?account_id={uuid4()}&instrument_id={uuid4()}"
+        )
+        assert response.status_code == 200
+        assert response.json()["daily"] == []
+
+    def test_recompute_queue_filters_by_account(self) -> None:
+        """recompute_required 상태를 야기한 pending 큐 항목을 계좌 기준으로 볼 수 있다."""
+        repos, client = self._build()
+        account_id = uuid4()
+        other_account_id = uuid4()
+        instrument_id = uuid4()
+
+        asyncio.run(
+            repos.realized_pnl_recompute_queue.add(
+                RealizedPnlRecomputeQueueEntity(
+                    recompute_queue_id=uuid4(),
+                    account_id=account_id,
+                    instrument_id=instrument_id,
+                    reason_code="out_of_order_fill",
+                    requested_at=datetime.now(timezone.utc),
+                )
+            )
+        )
+        asyncio.run(
+            repos.realized_pnl_recompute_queue.add(
+                RealizedPnlRecomputeQueueEntity(
+                    recompute_queue_id=uuid4(),
+                    account_id=other_account_id,
+                    instrument_id=uuid4(),
+                    reason_code="apply_failed",
+                    requested_at=datetime.now(timezone.utc),
+                )
+            )
+        )
+
+        response = client.get(f"/performance/realized-pnl/recompute-queue?account_id={account_id}")
+        assert response.status_code == 200
+        data = response.json()
+        assert len(data["items"]) == 1
+        assert data["items"][0]["account_id"] == str(account_id)
+        assert data["items"][0]["reason_code"] == "out_of_order_fill"
+
+    def test_recompute_queue_no_filter_returns_all_pending(self) -> None:
+        repos, client = self._build()
+        asyncio.run(
+            repos.realized_pnl_recompute_queue.add(
+                RealizedPnlRecomputeQueueEntity(
+                    recompute_queue_id=uuid4(),
+                    account_id=uuid4(),
+                    instrument_id=uuid4(),
+                    reason_code="apply_failed",
+                    requested_at=datetime.now(timezone.utc),
+                )
+            )
+        )
+
+        response = client.get("/performance/realized-pnl/recompute-queue")
+        assert response.status_code == 200
+        assert len(response.json()["items"]) == 1
+
+    def test_recompute_queue_empty(self) -> None:
+        _repos, client = self._build()
+        response = client.get(f"/performance/realized-pnl/recompute-queue?account_id={uuid4()}")
+        assert response.status_code == 200
+        assert response.json()["items"] == []
 
 
 class TestClients:

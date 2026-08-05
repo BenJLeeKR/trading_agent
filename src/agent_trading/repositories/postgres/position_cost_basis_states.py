@@ -71,3 +71,13 @@ class PostgresPositionCostBasisStateRepository:
             limit,
         )
         return tuple(row_to_entity(row, PositionCostBasisStateEntity) for row in rows)
+
+    async def list_by_account(
+        self, account_id: UUID
+    ) -> Sequence[PositionCostBasisStateEntity]:
+        rows = await self._tx.connection.fetch(
+            "SELECT * FROM trading.position_cost_basis_state "
+            "WHERE account_id = $1 ORDER BY instrument_id ASC",
+            account_id,
+        )
+        return tuple(row_to_entity(row, PositionCostBasisStateEntity) for row in rows)

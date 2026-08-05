@@ -444,6 +444,13 @@ def create_app(
 
     protected_routers.append(realtime_quotes_router)
 
+    # Phase 8 — Realized PnL ledger inspection (read-only, no calculation)
+    from agent_trading.api.routes.realized_pnl import (
+        router as realized_pnl_router,
+    )
+
+    protected_routers.append(realized_pnl_router)
+
     if auth_enabled:
         for router in protected_routers:
             app.include_router(router, dependencies=[Depends(require_viewer)])

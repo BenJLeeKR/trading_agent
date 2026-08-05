@@ -1019,6 +1019,13 @@ class InMemoryPositionCostBasisStateRepository:
         items.sort(key=lambda item: item.updated_at or datetime.min.replace(tzinfo=timezone.utc))
         return tuple(items[:limit])
 
+    async def list_by_account(
+        self, account_id: UUID
+    ) -> Sequence[PositionCostBasisStateEntity]:
+        return tuple(
+            item for item in self._items.values() if item.account_id == account_id
+        )
+
 
 class InMemoryRealizedPnlEventRepository:
     def __init__(self) -> None:

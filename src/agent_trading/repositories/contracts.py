@@ -797,6 +797,16 @@ class PositionCostBasisStateRepository(Protocol):
         """재계산 대기(``recompute_required=True``) 상태를 오래된 순으로 반환한다."""
         ...
 
+    async def list_by_account(
+        self, account_id: UUID
+    ) -> Sequence[PositionCostBasisStateEntity]:
+        """계좌의 모든 계좌×종목 상태를 종목 필터 없이 반환한다.
+
+        Inspection API가 ``instrument_id`` 없이 계좌 전체의 realized PnL
+        종목 누계를 나열할 때 사용한다(조회 전용, read path 추가).
+        """
+        ...
+
 
 class RealizedPnlEventRepository(Protocol):
     """매도 체결 기준 append-only 실현 손익 원장 저장소."""
