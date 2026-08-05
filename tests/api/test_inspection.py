@@ -1878,7 +1878,11 @@ class TestIndexMembershipStaleness:
         repos = build_in_memory_repositories()
         instrument_id = uuid4()
         effective_from = date(2026, 6, 27)
-        reflected_date = date(2026, 7, 31)
+        # 라우트에는 ``as_of`` 쿼리 파라미터가 없어 요청의 ``?as_of=...``는 항상
+        # 무시되고 실제 wall-clock "오늘"이 쓰인다(routes/instruments.py) — 그래서
+        # 이 값을 하드코딩하면 그날 하루만 age_days == 0이 맞고 이후로는 계속
+        # 깨진다. 상대 날짜(오늘)로 계산해 항상 age_days == 0이 되게 한다.
+        reflected_date = datetime.now(timezone.utc).date()
         asyncio.run(
             repos.instrument_index_memberships.sync_current_memberships(
                 instrument_id,
@@ -1898,9 +1902,9 @@ class TestIndexMembershipStaleness:
 
         app = create_app(repos=repos, auth_enabled=False)
         with TestClient(app) as client:
-            response = client.get(
-                "/instruments/index-membership/staleness?as_of=2026-07-31"
-            )
+            # 라우트에 ``as_of`` 파라미터가 없어 항상 실제 "오늘"을 쓴다 —
+            # 존재하지 않는 쿼리 파라미터를 붙이지 않는다(위 설명 참고).
+            response = client.get("/instruments/index-membership/staleness")
 
         assert response.status_code == 200
         data = response.json()
