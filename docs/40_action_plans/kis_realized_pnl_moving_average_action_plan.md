@@ -101,7 +101,7 @@ total += fill_price * fill_quantity * multiplier - fee - tax
 | 4 | recompute/replay 복구 서비스 + queue 처리 | **핵심 구현 완료 + 운영 경로 연결 완료**(`realized_pnl_recompute_service.py`, `scripts/run_realized_pnl_recompute_worker.py`) — 대규모 backfill CLI는 미착수 |
 | 5 | 조회 API | **구현 완료**(`src/agent_trading/api/routes/realized_pnl.py`, read-only) |
 | 5b | Admin UI 선행 백엔드 확장(daily aggregate 매수금액/매도금액/비용 합계) | **구현 완료**(`db/migrations/0055_...sql`, `realized_pnl_ledger_service.py`/`realized_pnl_recompute_service.py`/`realized_pnl.py` 응답 확장) — `design/realized_pnl_screen_spec.md`의 P0-선행 항목 |
-| 6 | 화면/문서 정리 | **Admin UI 실현손익 화면 P0 + summary endpoint + Admin UI의 summary 전환 + `RealizedPnlView` 컴포넌트 테스트 + recompute-queue 드릴다운까지 구현 완료**(`admin_ui/src/__tests__/realizedPnl.test.tsx`, 13개 시나리오) — 요약 카드/종목별 탭의 종목 "전체" N+1은 제거됐고, 탭 A(일자별)만 여전히 `daily` N+1을 쓴다(설계상 summary가 날짜별 분해를 제공하지 않기 때문). 차트(P1)는 보류. 기존 `performance_summary.py`/`paper_performance_metrics.md` 정리는 미착수(후속) |
+| 6 | 화면/문서 정리 | **Admin UI 실현손익 화면 P0 + summary endpoint + Admin UI의 summary 전환 + `RealizedPnlView` 컴포넌트 테스트 + recompute-queue 드릴다운까지 구현 완료**(`admin_ui/src/__tests__/realizedPnl.test.tsx`, 13개 시나리오) — 요약 카드/종목별 탭의 종목 "전체" N+1은 제거됐다. 탭 A(일자별) N+1 제거용 `daily-summary` endpoint는 **백엔드 구현 완료**, **Admin UI 전환은 미착수**(후속) — 그 전까지 탭 A는 여전히 `daily` N+1을 쓴다. 차트(P1)는 보류. 기존 `performance_summary.py`/`paper_performance_metrics.md` 정리는 미착수(후속) |
 
 ### 마이그레이션 설계 메모 — 왜 이 구성이 최소 안전선인가
 
@@ -269,6 +269,16 @@ total += fill_price * fill_quantity * multiplier - fee - tax
 - 새 조회(`조회` 버튼)를 실행하면 드릴다운은 접힌 상태로 초기화된다 — 이전 조회 조건의 큐 목록이 새 조회 결과와 혼동되지 않게 한다.
 - 차트/시각화는 건드리지 않았다(보류 유지). 새 도메인 계산도 추가하지 않았다 — 종목명 라벨 조합(`symbol`/`instrument_name` 문자열 결합)만 프런트에서 했다.
 - `realizedPnl.test.tsx`에 3개 시나리오를 추가했다: 상세 보기 클릭 시 pending 항목(종목/사유/등록시각) 노출 + 닫기, 빈 상태, 오류 상태(드릴다운에만 스코프, 요약 카드는 정상 유지) — 총 13개 시나리오.
+
+### 이번 단계(탭 A(일자별) N+1 제거용 `daily-summary` endpoint 추가)의 완료 기준
+
+- **판단(기존 `daily` 확장 vs 별도 endpoint)**: **별도 endpoint(`GET /performance/realized-pnl/daily-summary`)를 추가했다.** 기존 `/performance/realized-pnl/daily`는 응답 스키마(`RealizedPnlDailyResponse.instrument_id: UUID`)가 "계좌×단일 종목" 전용으로 고정돼 있어, `instrument_id`를 optional로 바꾸면 그 필드를 nullable로 바꿔야 하고 기존 소비자(Admin UI 탭 A 단일 종목 경로, 기존 테스트)가 항상 `instrument_id`가 채워져 있다고 가정하는 계약을 흔든다. `summary` endpoint를 추가할 때(#157) 이미 같은 판단(기존 `positions`/`daily`/`events`/`recompute-queue` 계약을 바꾸지 않고 추가만 함)을 내린 전례가 있어 그 판단을 그대로 따랐다.
+- **신규 repository 메서드 불필요**: `summary` endpoint(#157)가 이미 추가한 `RealizedPnlDailyAggregateRepository.list_by_account()`(계좌 전체 종목의 daily aggregate를 단일 조회로 반환, 정렬 순서는 종목/날짜 무관하게 호출자가 재그룹)를 그대로 재사용한다. `summary`는 이 결과를 종목별로 묶고, `daily-summary`는 같은 결과를 날짜별로 묶는다 — 역할만 분리돼 있을 뿐 신규 조회 경로나 migration은 없다.
+- **왜 "새 계산"이 아닌지**: route 안에서 하는 산술은 같은 `trade_date`를 가진 여러 종목의 daily aggregate row를 `sum()`으로 더하는 것뿐이다(`realized_pnl_net_sum`/`sell_event_count`/`buy_amount_sum`/`sell_amount_sum`/`fee_tax_sum` 5개 필드). 이동평균 원가 갱신이나 실현손익 자체의 산출식은 전혀 건드리지 않는다 — 그 값은 항상 `realized_pnl_engine.py`/`RealizedPnlLedgerService`/`RealizedPnlRecomputeService`가 계산해 저장한 값을 그대로 읽는다.
+- 응답 shape는 `summary`와 최대한 비슷하게 유지했다(`account_id`/`start_date`/`end_date` echo + 목록) — Admin UI가 이후 탭 A를 이 endpoint로 전환할 때 기존 `summary` 소비 패턴을 그대로 재사용할 수 있게 하기 위함이다.
+- **범위를 넓히지 않은 부분**: `instrument_id` 파라미터는 추가하지 않았다 — 단일 종목의 일자별 조회는 기존 `/daily`가 이미 담당하고 있고, 이번 endpoint가 풀어야 하는 N+1은 "종목 전체" 경로에서만 발생하기 때문이다.
+- 테스트 4개 추가(`test_daily_summary_aggregates_across_instruments_by_date`/`test_daily_summary_date_range_filters_out_of_range_rows`/`test_daily_summary_empty_for_unknown_account`/`test_daily_summary_invalid_date_range`) — 계좌 전체 종목 날짜별 합산, 기간 필터, 빈 상태, 잘못된 날짜 범위.
+- **Admin UI 전환은 이번 단계에 포함하지 않는다** — `RealizedPnlView.tsx`의 탭 A는 여전히 종목별 `daily` fan-out을 쓴다(후속). 차트(P1)는 계속 보류.
 
 ## 10. 추가 보정사항 / 유지해야 할 원칙 / 완료 후 보고 가이드
 

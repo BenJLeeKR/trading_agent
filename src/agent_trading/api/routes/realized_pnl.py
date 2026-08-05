@@ -2,7 +2,9 @@
 
 ``GET /performance/realized-pnl/positions`` — 계좌×종목 realized PnL 종목 누계 + 현재 상태.
 ``GET /performance/realized-pnl/events`` — 체결별 realized PnL event 목록.
-``GET /performance/realized-pnl/daily`` — 일자별 realized PnL aggregate 목록.
+``GET /performance/realized-pnl/daily`` — 계좌×단일 종목 일자별 realized PnL aggregate 목록.
+``GET /performance/realized-pnl/summary`` — 계좌(전체/단일 종목) 기간 요약 + 종목별 분해.
+``GET /performance/realized-pnl/daily-summary`` — 계좌 전체(모든 종목) 기간 **일자별** 요약.
 ``GET /performance/realized-pnl/recompute-queue`` — 미해결 recompute 큐 항목 목록.
 
 이 endpoint들은 **read-only**이며 저장된 realized PnL ledger
@@ -41,6 +43,7 @@ from agent_trading.api.errors import build_http_exception
 from agent_trading.api.schemas import (
     RealizedPnlDailyAggregateView,
     RealizedPnlDailyResponse,
+    RealizedPnlDailySummaryResponse,
     RealizedPnlEventsResponse,
     RealizedPnlEventView,
     RealizedPnlPositionView,
@@ -362,6 +365,79 @@ async def get_realized_pnl_summary(
         fee_tax_sum=total_fee_tax,
         recompute_pending_count=recompute_pending_count,
         by_instrument=by_instrument,
+    )
+
+
+@router.get(
+    "/performance/realized-pnl/daily-summary",
+    response_model=RealizedPnlDailySummaryResponse,
+)
+async def get_realized_pnl_daily_summary(
+    account_id: str = Query(..., description="Account UUID"),
+    start_date: str = Query(..., description="Start date (YYYY-MM-DD)"),
+    end_date: str = Query(..., description="End date (YYYY-MM-DD)"),
+    repos: RepositoryContainer = Depends(get_repos),
+) -> RealizedPnlDailySummaryResponse:
+    """계좌 전체(모든 종목) 기간 **일자별** 요약 — Admin UI 탭 A(일자별)의
+
+    종목 "전체" N+1(종목마다 개별 ``daily`` 호출 후 프런트에서 날짜별 합산)을
+    없애기 위한 단일 호출 조회다. ``/performance/realized-pnl/summary``가
+    이미 쓰는 ``realized_pnl_daily_aggregates.list_by_account()``(신규
+    repository 메서드 없음)로 계좌의 모든 종목을 한 번에 가져온 뒤,
+    ``summary``가 종목별로 묶는 것과 달리 이 endpoint는 **날짜별**로 묶어
+    5개 합계 필드를 더한다 — 역할이 분리돼 있을 뿐 계산 로직은 없다(``sum()``
+    외 어떤 도메인 계산도 하지 않는다).
+
+    기존 ``/performance/realized-pnl/daily``(계좌×**단일** 종목 전용,
+    ``instrument_id`` 필수)는 계약을 바꾸지 않고 그대로 유지한다 — 이
+    endpoint는 그 계약을 건드리지 않는 **추가** 경로다.
+    """
+    request_path = "/performance/realized-pnl/daily-summary"
+    aid = _parse_uuid(account_id, field="account_id", request_path=request_path)
+    sd = _parse_date(start_date, field="start_date", request_path=request_path)
+    ed = _parse_date(end_date, field="end_date", request_path=request_path)
+
+    if sd > ed:
+        raise build_http_exception(
+            status_code=400,
+            error_code="invalid_date_range",
+            message="start_date must be on or before end_date",
+            field="start_date,end_date",
+            expected="start_date <= end_date",
+            request_path=request_path,
+            next_action="check date range",
+        )
+
+    rows = await repos.realized_pnl_daily_aggregates.list_by_account(
+        aid, start_date=sd, end_date=ed
+    )
+
+    grouped: dict[date, list] = {}
+    for row in rows:
+        grouped.setdefault(row.trade_date, []).append(row)
+
+    daily: list[RealizedPnlDailyAggregateView] = []
+    for trade_date in sorted(grouped):
+        day_rows = grouped[trade_date]
+        daily.append(
+            RealizedPnlDailyAggregateView(
+                trade_date=trade_date,
+                realized_pnl_net_sum=sum(
+                    (r.realized_pnl_net_sum for r in day_rows), Decimal("0")
+                ),
+                sell_event_count=sum(r.sell_event_count for r in day_rows),
+                buy_amount_sum=sum(
+                    (r.buy_amount_sum for r in day_rows), Decimal("0")
+                ),
+                sell_amount_sum=sum(
+                    (r.sell_amount_sum for r in day_rows), Decimal("0")
+                ),
+                fee_tax_sum=sum((r.fee_tax_sum for r in day_rows), Decimal("0")),
+            )
+        )
+
+    return RealizedPnlDailySummaryResponse(
+        account_id=aid, start_date=sd, end_date=ed, daily=daily
     )
 
 
