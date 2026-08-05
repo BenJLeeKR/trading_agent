@@ -272,6 +272,24 @@ export interface RealizedPnlSummaryResponse {
   by_instrument: RealizedPnlSummaryInstrumentView[];
 }
 
+// GET /performance/realized-pnl/recompute-queue 한 행 — 미해결 재계산 큐 항목.
+// 조회 전용이며 계산/해소는 하지 않는다(reason_code/requested_at을 그대로 읽음).
+export interface RealizedPnlRecomputeQueueItemView {
+  recompute_queue_id: string;
+  account_id: string;
+  instrument_id: string;
+  reason_code: string;
+  triggering_fill_event_id: string | null;
+  requested_at: string | null;
+}
+
+export interface RealizedPnlRecomputeQueueResponse {
+  account_id: string | null;
+  instrument_id: string | null;
+  limit: number;
+  items: RealizedPnlRecomputeQueueItemView[];
+}
+
 export interface CashBalanceSnapshotView {
   cash_balance_snapshot_id: string;
   account_id: string;

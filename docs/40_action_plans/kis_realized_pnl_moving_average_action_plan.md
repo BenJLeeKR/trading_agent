@@ -101,7 +101,7 @@ total += fill_price * fill_quantity * multiplier - fee - tax
 | 4 | recompute/replay 복구 서비스 + queue 처리 | **핵심 구현 완료 + 운영 경로 연결 완료**(`realized_pnl_recompute_service.py`, `scripts/run_realized_pnl_recompute_worker.py`) — 대규모 backfill CLI는 미착수 |
 | 5 | 조회 API | **구현 완료**(`src/agent_trading/api/routes/realized_pnl.py`, read-only) |
 | 5b | Admin UI 선행 백엔드 확장(daily aggregate 매수금액/매도금액/비용 합계) | **구현 완료**(`db/migrations/0055_...sql`, `realized_pnl_ledger_service.py`/`realized_pnl_recompute_service.py`/`realized_pnl.py` 응답 확장) — `design/realized_pnl_screen_spec.md`의 P0-선행 항목 |
-| 6 | 화면/문서 정리 | **Admin UI 실현손익 화면 P0 + summary endpoint + Admin UI의 summary 전환 + `RealizedPnlView` 컴포넌트 테스트까지 구현 완료**(`admin_ui/src/__tests__/realizedPnl.test.tsx`, 10개 시나리오) — 요약 카드/종목별 탭의 종목 "전체" N+1은 제거됐고, 탭 A(일자별)만 여전히 `daily` N+1을 쓴다(설계상 summary가 날짜별 분해를 제공하지 않기 때문). 기존 `performance_summary.py`/`paper_performance_metrics.md` 정리는 미착수(후속) |
+| 6 | 화면/문서 정리 | **Admin UI 실현손익 화면 P0 + summary endpoint + Admin UI의 summary 전환 + `RealizedPnlView` 컴포넌트 테스트 + recompute-queue 드릴다운까지 구현 완료**(`admin_ui/src/__tests__/realizedPnl.test.tsx`, 13개 시나리오) — 요약 카드/종목별 탭의 종목 "전체" N+1은 제거됐고, 탭 A(일자별)만 여전히 `daily` N+1을 쓴다(설계상 summary가 날짜별 분해를 제공하지 않기 때문). 차트(P1)는 보류. 기존 `performance_summary.py`/`paper_performance_metrics.md` 정리는 미착수(후속) |
 
 ### 마이그레이션 설계 메모 — 왜 이 구성이 최소 안전선인가
 
@@ -258,6 +258,17 @@ total += fill_price * fill_quantity * multiplier - fee - tax
 - 모든 API 호출은 `api/client.ts`의 `getRealizedPnlPositions`/`getRealizedPnlSummary`/`getRealizedPnlDaily`/`getRealizedPnlEvents`를 `vi.spyOn`으로 모킹했다 — 실제 네트워크 호출 없음.
 - **환경 제약(중요)**: 이 호스트의 `node`(v18.19.1)가 프로젝트 고정 버전(v20.20.2)보다 낮아 `admin-test-one`/전체 vitest 실행이 `jsdom`의 `html-encoding-sniffer → @exodus/bytes` ESM 의존성 체인에서 `ERR_REQUIRE_ESM`으로 전부 실패한다(기존 `accounts.test.tsx` 등 이미 병합된 테스트도 동일하게 실패 — 이번 변경과 무관한 호스트 환경 문제). 대체 검증으로 `docker run --rm -v admin_ui:/app node:20.20.2-slim npx vitest run ...`(프로젝트 고정 Node 버전 컨테이너)를 사용해 실제로 10/10 통과를 확인했다.
 - **부수 발견(수정하지 않음)**: 위 대체 검증 도중 이미 병합된 `accounts.test.tsx`의 `fetches clients and displays account list` 1건이 무관한 이유로 실패하는 것을 발견했다("내부 데이터베이스 계좌 메타데이터" 텍스트를 찾지 못함 — `AccountsView` 표시 문구와 테스트 기대 문구가 어긋난 것으로 보임). 이번 PR의 diff와 완전히 무관하고 `AccountsView`/`accounts.test.tsx`를 건드리지 않았으므로 고치지 않았다 — 별도 후속 과제로 남긴다.
+
+### 이번 단계(Admin UI recompute-queue drill-down 연결)의 완료 기준
+
+- 백엔드 `GET /performance/realized-pnl/recompute-queue`(및 대응 schema)는 5단계에서 이미 구현되어 있었다 — 이번 단계는 **프런트 연결만** 필요했다.
+- **판단(인라인 확장 vs 별도 패널/모달)**: **경고 배너 아래 인라인 확장 영역**으로 연결했다. 이 화면에는 이미 모달 컴포넌트가 없고 배너+`DataTable` 패턴만 쓰고 있어, 새 모달을 들이기보다 기존 패턴과 일치시키는 쪽을 택했다. "상세 보기" 클릭 시에만 지연 호출한다(초기 렌더에서는 배너만 노출, 불필요한 API 호출 없음).
+- 호출 조건: `getRealizedPnlRecomputeQueue(accountId, { instrumentId })` — `accountId`는 현재 조회 조건 바의 값을 그대로 쓰고, 단일 종목이 선택된 상태면 그 종목으로 자동 필터한다(`instrumentId` 생략 시 계좌 전체).
+- 목록 컬럼: 종목(`symbol`/`instrument_name`, 추가 API 호출 없이 이미 로드된 `instrumentOptions`에서 조합), `reason_code`, `requested_at`(KST 포맷).
+- 로딩/빈 상태/오류 상태를 명시적으로 처리했다 — 빈 목록은 "재계산 대기 항목이 없습니다" 문구로, 오류는 드릴다운 영역에만 스코프된 `ErrorBanner`로 표시하고 요약 카드 등 나머지 화면은 그대로 유지한다(오류가 전체 화면을 무너뜨리지 않음).
+- 새 조회(`조회` 버튼)를 실행하면 드릴다운은 접힌 상태로 초기화된다 — 이전 조회 조건의 큐 목록이 새 조회 결과와 혼동되지 않게 한다.
+- 차트/시각화는 건드리지 않았다(보류 유지). 새 도메인 계산도 추가하지 않았다 — 종목명 라벨 조합(`symbol`/`instrument_name` 문자열 결합)만 프런트에서 했다.
+- `realizedPnl.test.tsx`에 3개 시나리오를 추가했다: 상세 보기 클릭 시 pending 항목(종목/사유/등록시각) 노출 + 닫기, 빈 상태, 오류 상태(드릴다운에만 스코프, 요약 카드는 정상 유지) — 총 13개 시나리오.
 
 ## 10. 추가 보정사항 / 유지해야 할 원칙 / 완료 후 보고 가이드
 

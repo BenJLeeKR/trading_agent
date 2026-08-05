@@ -366,6 +366,24 @@ export async function getRealizedPnlEvents(
 }
 
 /**
+ * 미해결(`resolved_at IS NULL`) 재계산 큐 항목 — "재계산 대기" 배너의 드릴다운용.
+ * `accountId`/`instrumentId`를 지정하면 그 범위로 애플리케이션 레벨 필터링된다
+ * (계산 없음, `RealizedPnlRecomputeQueueRepository.list_pending()`이 계좌 필터를
+ * 지원하지 않아 백엔드가 조회 후 필터링한다).
+ */
+export async function getRealizedPnlRecomputeQueue(
+  accountId: string,
+  options?: { instrumentId?: string; limit?: number }
+): Promise<import("../types/api").RealizedPnlRecomputeQueueResponse> {
+  const params = new URLSearchParams({ account_id: accountId });
+  if (options?.instrumentId) params.set("instrument_id", options.instrumentId);
+  if (options?.limit) params.set("limit", String(options.limit));
+  return request<import("../types/api").RealizedPnlRecomputeQueueResponse>(
+    `/performance/realized-pnl/recompute-queue?${params.toString()}`
+  );
+}
+
+/**
  * 계좌(전체 종목 또는 단일 종목) 기간 요약 — 요약 카드/종목별 탭용 단일 호출.
  * `instrumentId`를 생략하면 계좌 전체 종목을 대상으로 한다.
  */

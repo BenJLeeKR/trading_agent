@@ -153,7 +153,7 @@ HTS 실현손익 화면의 전형적인 1차 화면 — "계좌 전체, 이번 �
 | 종목별 all-time 상태(참고) | `GET /performance/realized-pnl/positions` | `position_cost_basis_state` + `realized_pnl_daily_aggregates` 합산 | 기간 필터 없음 — 요약 영역의 `recompute_required` 배지 및 탭 B의 종목/심볼 마스터 목록으로만 사용 |
 | 요약 영역의 실현손익 합계/매도 건수, 탭 A/B의 같은 두 컬럼 | `GET /performance/realized-pnl/daily` | `realized_pnl_daily_aggregates` | 종목 `전체`면 종목별로 개별 호출 후 프런트 합산(N+1, 위 갭 분석 참고) |
 | 요약 영역의 매도금액/비용 합계, 탭 A/B의 매수금액·매도금액·비용, 탭 C 전체 | `GET /performance/realized-pnl/events` | `realized_pnl_events` | 종목 1개 필수, 기간 전체 페이지네이션 필요(위 "신규 API 갭" 절) |
-| 요약 영역 경고 배지 | `GET /performance/realized-pnl/recompute-queue`(선택) | `realized_pnl_recompute_queue` | "왜/언제" 재계산 대기가 걸렸는지 상세를 보여주는 보조 정보(툴팁/드릴다운) |
+| 요약 영역 경고 배지 + 드릴다운 | `GET /performance/realized-pnl/recompute-queue` | `realized_pnl_recompute_queue` | **연동 완료.** 배지의 "상세 보기" 클릭 시에만 지연 호출해 종목/`reason_code`/`requested_at`을 인라인 확장 테이블로 보여준다(모달 아님, `RealizedPnlView.tsx`). 종목명은 별도 호출 없이 `positions`로 이미 받아둔 `instrumentOptions`에서 재사용한다. |
 
 이 화면은 **read-only이며 도메인 계산을 하지 않는다** — 프런트에서 하는 산술은 (1) `daily`/`events` 여러 호출 결과의 단순 합산, (2) `events` 필드 간 단순 곱셈/덧셈(매도금액=수량×가격, 비용=수수료+세금)뿐이다. 이동평균 원가 갱신, 실현손익 자체의 산출식은 절대 프런트에 복제하지 않는다 — 그 값(`realized_pnl_gross`/`realized_pnl_net`/`avg_cost_basis_before`)은 항상 백엔드가 계산해 저장한 값을 그대로 읽는다.
 
