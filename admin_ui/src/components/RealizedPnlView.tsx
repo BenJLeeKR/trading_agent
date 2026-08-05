@@ -5,6 +5,8 @@ import type {
   RealizedPnlPositionView,
   RealizedPnlDailyAggregateView,
   RealizedPnlEventView,
+  RealizedPnlSummaryResponse,
+  RealizedPnlSummaryInstrumentView,
 } from "../types/api";
 import {
   getClients,
@@ -13,6 +15,7 @@ import {
   getRealizedPnlPositions,
   getRealizedPnlDaily,
   getRealizedPnlEvents,
+  getRealizedPnlSummary,
 } from "../api/client";
 import { DataTable } from "./common/DataTable";
 import type { Column } from "./common/DataTable";
@@ -76,13 +79,6 @@ function addTotals(a: DailyTotals, b: RealizedPnlDailyAggregateView): DailyTotal
 
 interface DailyRow extends DailyTotals {
   trade_date: string;
-}
-
-interface InstrumentRow extends DailyTotals {
-  instrument_id: string;
-  symbol: string | null;
-  instrument_name: string | null;
-  recompute_required: boolean;
 }
 
 function accountLabel(a: AccountSummary): string {
@@ -162,10 +158,14 @@ export default function RealizedPnlView() {
   const [queryError, setQueryError] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<TabKey>("daily");
 
-  // 계좌×종목별 daily aggregate — instrument_id -> rows. "전체"면 후보 종목마다
-  // 개별 daily 호출(N+1) 후 프런트에서 날짜별/종목별로 합산한다(계산 아님, 단순
-  // 합산 — design/realized_pnl_screen_spec.md "신규 API 갭" 절 참고. daily에
-  // buy/sell/fee_tax 합계가 이미 저장돼 있어 events 전량 스캔은 필요 없다).
+  // 요약 카드 + 종목별 탭 + recompute 배지 — GET .../summary 단일 호출로 채운다
+  // (계좌 전체든 단일 종목이든 동일 경로 — 아래 "먼저 판단" 주석 참고).
+  const [summaryData, setSummaryData] = useState<RealizedPnlSummaryResponse | null>(null);
+
+  // 탭 A(일자별)만을 위한 계좌×종목별 daily aggregate — instrument_id -> rows.
+  // summary는 날짜별 분해를 제공하지 않으므로(설계서상 의도적 범위 제외) 이
+  // 탭만 여전히 daily를 쓴다. "전체"면 후보 종목마다 개별 daily 호출(N+1)이
+  // 남아 있다 — 요약 카드/종목별 탭에서는 이미 제거됐고, 탭 A에서만 남는다.
   const [dailyByInstrument, setDailyByInstrument] = useState<Record<string, RealizedPnlDailyAggregateView[]>>({});
 
   const [events, setEvents] = useState<RealizedPnlEventView[]>([]);
@@ -204,19 +204,26 @@ export default function RealizedPnlView() {
     setEventsHasMore(false);
 
     try {
+      // 요약 카드 + 종목별 탭 + recompute 배지는 계좌 전체든 단일 종목이든
+      // 동일하게 summary 단일 호출로 채운다(아래 "판단" 참고). 탭 A(일자별)만
+      // summary가 제공하지 않는 날짜별 분해가 필요해 daily를 그대로 쓴다 —
+      // "전체"면 후보 종목마다 개별 daily 호출(N+1)이 이 탭에만 남는다.
       const targetInstruments = instrumentId
         ? instrumentOptions.filter((p) => p.instrument_id === instrumentId)
         : instrumentOptions;
 
-      const results = await Promise.all(
-        targetInstruments.map((p) =>
-          getRealizedPnlDaily(accountId, p.instrument_id, { startDate, endDate })
-        )
-      );
+      const [summaryRes, dailyResults] = await Promise.all([
+        getRealizedPnlSummary(accountId, { startDate, endDate, instrumentId: instrumentId || undefined }),
+        Promise.all(
+          targetInstruments.map((p) => getRealizedPnlDaily(accountId, p.instrument_id, { startDate, endDate }))
+        ),
+      ]);
+
+      setSummaryData(summaryRes);
 
       const byInstrument: Record<string, RealizedPnlDailyAggregateView[]> = {};
       targetInstruments.forEach((p, idx) => {
-        byInstrument[p.instrument_id] = results[idx].daily;
+        byInstrument[p.instrument_id] = dailyResults[idx].daily;
       });
       setDailyByInstrument(byInstrument);
       setActiveTab(instrumentId ? "events" : "daily");
@@ -231,7 +238,7 @@ export default function RealizedPnlView() {
     }
   }
 
-  function handleSelectInstrumentRow(row: InstrumentRow) {
+  function handleSelectInstrumentRow(row: RealizedPnlSummaryInstrumentView) {
     setInstrumentId(row.instrument_id);
     setActiveTab("events");
     setEvents([]);
@@ -239,7 +246,8 @@ export default function RealizedPnlView() {
     fetchEvents(row.instrument_id);
   }
 
-  // ── 집계 (탭 A: 일자별 합산, 탭 B: 종목별 합산) — sum()뿐, 도메인 계산 없음 ──
+  // ── 탭 A(일자별) 집계 — sum()뿐, 도메인 계산 없음. 요약 카드/탭 B는 이제
+  // summaryData를 그대로 쓴다(아래 JSX에서 직접 참조, 별도 집계 불필요). ──
   const dailyRows: DailyRow[] = useMemo(() => {
     const byDate = new Map<string, DailyTotals>();
     Object.values(dailyByInstrument).forEach((rows) => {
@@ -251,36 +259,6 @@ export default function RealizedPnlView() {
       .map(([trade_date, totals]) => ({ trade_date, ...totals }))
       .sort((a, b) => a.trade_date.localeCompare(b.trade_date));
   }, [dailyByInstrument]);
-
-  const instrumentRows: InstrumentRow[] = useMemo(() => {
-    return instrumentOptions
-      .filter((p) => dailyByInstrument[p.instrument_id]?.length)
-      .map((p) => {
-        const totals = (dailyByInstrument[p.instrument_id] ?? []).reduce(addTotals, emptyTotals());
-        return {
-          instrument_id: p.instrument_id,
-          symbol: p.symbol,
-          instrument_name: p.instrument_name,
-          recompute_required: p.recompute_required,
-          ...totals,
-        };
-      });
-  }, [instrumentOptions, dailyByInstrument]);
-
-  const summaryTotals: DailyTotals = useMemo(
-    () => dailyRows.reduce(addTotals, emptyTotals()),
-    [dailyRows]
-  );
-
-  // recompute_required 경고 — 이번 조회에 포함된 종목(전체 선택 시 activity가
-  // 있었던 종목, 단일 종목 선택 시 그 종목) 기준으로 집계한다.
-  const recomputePendingCount = useMemo(() => {
-    if (instrumentId) {
-      const target = instrumentOptions.find((p) => p.instrument_id === instrumentId);
-      return target?.recompute_required ? 1 : 0;
-    }
-    return instrumentRows.filter((r) => r.recompute_required).length;
-  }, [instrumentId, instrumentOptions, instrumentRows]);
 
   const dailyColumns: Column<DailyRow>[] = [
     { key: "trade_date", header: "날짜" },
@@ -296,7 +274,7 @@ export default function RealizedPnlView() {
     },
   ];
 
-  const instrumentColumns: Column<InstrumentRow>[] = [
+  const instrumentColumns: Column<RealizedPnlSummaryInstrumentView>[] = [
     { key: "symbol", header: "심볼", render: (r) => r.symbol ?? "—" },
     { key: "instrument_name", header: "종목", render: (r) => r.instrument_name ?? "—" },
     { key: "sell_event_count", header: "매도 건수", align: "right", render: (r) => r.sell_event_count.toLocaleString() },
@@ -454,25 +432,30 @@ export default function RealizedPnlView() {
               <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
                 <div className="bg-white rounded-xl border border-[#e2e8f0] px-4 py-3 text-sm text-[#475569]">
                   실현손익 합계 :{" "}
-                  <span className={`font-semibold ${pnlClass(summaryTotals.realized_pnl_net_sum)}`}>
-                    {formatSignedKrw(summaryTotals.realized_pnl_net_sum)}
+                  <span className={`font-semibold ${pnlClass(summaryData?.realized_pnl_net_sum ?? 0)}`}>
+                    {formatSignedKrw(summaryData?.realized_pnl_net_sum ?? 0)}
                   </span>
                 </div>
                 <div className="bg-white rounded-xl border border-[#e2e8f0] px-4 py-3 text-sm text-[#475569]">
-                  매도 건수 : <span className="font-semibold text-[#0f172a]">{summaryTotals.sell_event_count.toLocaleString()}건</span>
+                  매도 건수 :{" "}
+                  <span className="font-semibold text-[#0f172a]">
+                    {(summaryData?.sell_event_count ?? 0).toLocaleString()}건
+                  </span>
                 </div>
                 <div className="bg-white rounded-xl border border-[#e2e8f0] px-4 py-3 text-sm text-[#475569]">
-                  매도금액 합계 : <span className="font-semibold text-[#0f172a]">{formatKrw(summaryTotals.sell_amount_sum)}</span>
+                  매도금액 합계 :{" "}
+                  <span className="font-semibold text-[#0f172a]">{formatKrw(summaryData?.sell_amount_sum ?? 0)}</span>
                 </div>
                 <div className="bg-white rounded-xl border border-[#e2e8f0] px-4 py-3 text-sm text-[#475569]">
-                  비용 합계 : <span className="font-semibold text-[#0f172a]">{formatKrw(summaryTotals.fee_tax_sum)}</span>
+                  비용 합계 :{" "}
+                  <span className="font-semibold text-[#0f172a]">{formatKrw(summaryData?.fee_tax_sum ?? 0)}</span>
                 </div>
               </div>
 
-              {recomputePendingCount > 0 && (
+              {(summaryData?.recompute_pending_count ?? 0) > 0 && (
                 <WarningBanner
                   variant="warning"
-                  title={`재계산 대기중 — ${recomputePendingCount}개 종목`}
+                  title={`재계산 대기중 — ${summaryData?.recompute_pending_count}개 종목`}
                   message="이 종목들의 실현손익 값은 재계산 대기 중이라 변경될 수 있습니다."
                 />
               )}
@@ -519,7 +502,7 @@ export default function RealizedPnlView() {
               {activeTab === "byInstrument" && !instrumentId && (
                 <DataTable
                   columns={instrumentColumns}
-                  data={instrumentRows}
+                  data={summaryData?.by_instrument ?? []}
                   idKey="instrument_id"
                   onRowClick={handleSelectInstrumentRow}
                   emptyMessage="이 기간 동안 실현손익이 없습니다."

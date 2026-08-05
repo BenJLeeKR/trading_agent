@@ -365,6 +365,25 @@ export async function getRealizedPnlEvents(
   );
 }
 
+/**
+ * 계좌(전체 종목 또는 단일 종목) 기간 요약 — 요약 카드/종목별 탭용 단일 호출.
+ * `instrumentId`를 생략하면 계좌 전체 종목을 대상으로 한다.
+ */
+export async function getRealizedPnlSummary(
+  accountId: string,
+  options: { startDate: string; endDate: string; instrumentId?: string }
+): Promise<import("../types/api").RealizedPnlSummaryResponse> {
+  const params = new URLSearchParams({
+    account_id: accountId,
+    start_date: options.startDate,
+    end_date: options.endDate,
+  });
+  if (options.instrumentId) params.set("instrument_id", options.instrumentId);
+  return request<import("../types/api").RealizedPnlSummaryResponse>(
+    `/performance/realized-pnl/summary?${params.toString()}`
+  );
+}
+
 export async function getTradingUniversePreview(
   accountId: string,
   options?: {
