@@ -21,6 +21,7 @@ import {
   Menu,
   X,
   Bot,
+  CornerDownRight,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -32,6 +33,9 @@ interface NavItem {
   label: string;
   to: string;
   disabled?: boolean;
+  /** "계좌" 같은 앞 항목의 하위 항목임을 시각적으로만 표시(옵션 A — 진짜 트리 아님).
+   * design/realized_pnl_screen_spec.md "배치 / 내비게이션" 절 참고. */
+  indent?: boolean;
 }
 
 interface NavSection {
@@ -56,6 +60,7 @@ const navSections: NavSection[] = [
       { icon: FileText, label: "주문내역", to: "/orders" },
       { icon: ListOrdered, label: "체결내역", to: "/fills" },
       { icon: Wallet, label: "계좌", to: "/accounts" },
+      { icon: CornerDownRight, label: "실현손익", to: "/accounts/realized-pnl", indent: true },
       { icon: Brain, label: "의사결정", to: "/decisions" },
       { icon: Zap, label: "에이전트 실행", to: "/agent-runs" },
     ],
@@ -113,13 +118,14 @@ function NavSectionsList({
                       end={item.to === "/"}
                       onClick={onNavigate}
                       className={cn(
-                        "flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-semibold transition-colors",
+                        "flex w-full items-center gap-3 rounded-lg py-2.5 text-sm font-semibold transition-colors",
+                        item.indent ? "pl-8 pr-3" : "px-3",
                         isActive
                           ? "bg-[#f1f5f9] text-[#0f172a]"
                           : "text-[#64748b] hover:bg-[#f8fafc] hover:text-[#0f172a]"
                       )}
                     >
-                      <item.icon className="h-5 w-5" />
+                      <item.icon className={item.indent ? "h-4 w-4" : "h-5 w-5"} />
                       {item.label}
                     </NavLink>
                   )}
