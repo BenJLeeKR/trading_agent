@@ -2473,6 +2473,104 @@ class TestRealizedPnl:
             )
         assert response.status_code == 400
 
+    def test_daily_summary_aggregates_across_instruments_by_date(self) -> None:
+        """탭 A(일자별) N+1 제거용 — 계좌 전체 daily aggregate를 날짜별로 단순 합산한다."""
+        repos, app = self._build()
+        account_id = uuid4()
+        instrument_a = uuid4()
+        instrument_b = uuid4()
+
+        self._seed_daily(
+            repos, account_id=account_id, instrument_id=instrument_a,
+            trade_date=date(2026, 8, 1), net_sum="100", count=1,
+            buy_amount="1000", sell_amount="1100", fee_tax="10",
+        )
+        self._seed_daily(
+            repos, account_id=account_id, instrument_id=instrument_b,
+            trade_date=date(2026, 8, 1), net_sum="-20", count=1,
+            buy_amount="200", sell_amount="180", fee_tax="3",
+        )
+        self._seed_daily(
+            repos, account_id=account_id, instrument_id=instrument_a,
+            trade_date=date(2026, 8, 3), net_sum="50", count=1,
+            buy_amount="500", sell_amount="550", fee_tax="5",
+        )
+        # 기간 밖 — 합계에 포함되면 안 된다.
+        self._seed_daily(
+            repos, account_id=account_id, instrument_id=instrument_a,
+            trade_date=date(2026, 7, 1), net_sum="99999", count=99,
+            buy_amount="99999", sell_amount="99999", fee_tax="99999",
+        )
+
+        with TestClient(app) as client:
+            response = client.get(
+                f"/performance/realized-pnl/daily-summary?account_id={account_id}"
+                "&start_date=2026-08-01&end_date=2026-08-31"
+            )
+        assert response.status_code == 200
+        data = response.json()
+        assert data["account_id"] == str(account_id)
+        assert data["start_date"] == "2026-08-01"
+        assert data["end_date"] == "2026-08-31"
+
+        daily = {row["trade_date"]: row for row in data["daily"]}
+        assert list(daily.keys()) == ["2026-08-01", "2026-08-03"]
+        # 08-01: instrument_a(100) + instrument_b(-20) = 80, 건수 2, 매수 1200, 매도 1280, 비용 13
+        row_1 = daily["2026-08-01"]
+        assert Decimal(str(row_1["realized_pnl_net_sum"])) == Decimal("80")
+        assert row_1["sell_event_count"] == 2
+        assert Decimal(str(row_1["buy_amount_sum"])) == Decimal("1200")
+        assert Decimal(str(row_1["sell_amount_sum"])) == Decimal("1280")
+        assert Decimal(str(row_1["fee_tax_sum"])) == Decimal("13")
+        # 08-03: instrument_a만 50
+        row_3 = daily["2026-08-03"]
+        assert Decimal(str(row_3["realized_pnl_net_sum"])) == Decimal("50")
+        assert row_3["sell_event_count"] == 1
+
+    def test_daily_summary_date_range_filters_out_of_range_rows(self) -> None:
+        """기간 필터가 실제로 걸러내는지 확인한다(전체 조회와 별개 시나리오)."""
+        repos, app = self._build()
+        account_id = uuid4()
+        instrument_id = uuid4()
+        self._seed_daily(
+            repos, account_id=account_id, instrument_id=instrument_id,
+            trade_date=date(2026, 8, 1), net_sum="100", count=1,
+        )
+        self._seed_daily(
+            repos, account_id=account_id, instrument_id=instrument_id,
+            trade_date=date(2026, 9, 1), net_sum="200", count=1,
+        )
+
+        with TestClient(app) as client:
+            response = client.get(
+                f"/performance/realized-pnl/daily-summary?account_id={account_id}"
+                "&start_date=2026-08-01&end_date=2026-08-31"
+            )
+        assert response.status_code == 200
+        data = response.json()
+        assert len(data["daily"]) == 1
+        assert data["daily"][0]["trade_date"] == "2026-08-01"
+
+    def test_daily_summary_empty_for_unknown_account(self) -> None:
+        """활동이 전혀 없으면 빈 daily 배열을 반환한다(오류가 아니다)."""
+        _repos, app = self._build()
+        with TestClient(app) as client:
+            response = client.get(
+                f"/performance/realized-pnl/daily-summary?account_id={uuid4()}"
+                "&start_date=2026-08-01&end_date=2026-08-31"
+            )
+        assert response.status_code == 200
+        assert response.json()["daily"] == []
+
+    def test_daily_summary_invalid_date_range(self) -> None:
+        _repos, app = self._build()
+        with TestClient(app) as client:
+            response = client.get(
+                f"/performance/realized-pnl/daily-summary?account_id={uuid4()}"
+                "&start_date=2026-08-10&end_date=2026-08-01"
+            )
+        assert response.status_code == 400
+
 
 class TestClients:
     """Client inspection endpoints."""

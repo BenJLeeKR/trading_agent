@@ -47,7 +47,9 @@ HTS 실현손익 화면의 전형적인 1차 화면 — "계좌 전체, 이번 �
 **해결 방안 (이번 화면 설계에 반영)**:
 
 - **1차(P0, 신규 백엔드 불필요)**: `positions`(`instrument_id` 생략)로 종목 후보 목록을 먼저 얻고, 선택된 기간에 대해 종목별로 `daily`를 개별 호출해 프런트에서 합산한다. N+1 호출이지만 이 저장소의 다른 read 경로(`positions.py`의 종목명 조회, recompute 서비스의 fill 수집)도 같은 N+1 패턴을 이미 쓰고 있어 새로운 패턴은 아니다. 계좌당 종목 수가 크지 않은 운영 콘솔이라는 전제에서 실무적으로 감당 가능하다고 판단한다.
-- ~~**후속(P1, 백엔드 확장 후보)**: 계좌×기간 단위로 `realized_pnl_daily_aggregates`를 종목 구분 없이 합산해 반환하는 신규 read-only endpoint~~ → **구현 완료.** `GET /performance/realized-pnl/summary?account_id=&start_date=&end_date=[&instrument_id=]`(`src/agent_trading/api/routes/realized_pnl.py`). `RealizedPnlDailyAggregateRepository.list_by_account()`를 최소 추가해 종목별 `daily` 반복 호출 없이 단일 조회로 계좌 전체 종목의 일자 집계를 가져온다. **Admin UI 전환 완료.** `RealizedPnlView.tsx`가 요약 카드/종목별 탭(+recompute 배지)을 이 endpoint 단일 호출로 채운다(계좌 전체·단일 종목 공통 경로). 종목 "전체"의 종목별 `daily` N+1은 이 두 화면 요소에서는 제거됐다 — 다만 탭 A(일자별)는 `summary`가 날짜별 분해를 제공하지 않아 여전히 `daily` N+1을 쓴다(아래 참고).
+- ~~**후속(P1, 백엔드 확장 후보)**: 계좌×기간 단위로 `realized_pnl_daily_aggregates`를 종목 구분 없이 합산해 반환하는 신규 read-only endpoint~~ → **구현 완료.** `GET /performance/realized-pnl/summary?account_id=&start_date=&end_date=[&instrument_id=]`(`src/agent_trading/api/routes/realized_pnl.py`). `RealizedPnlDailyAggregateRepository.list_by_account()`를 최소 추가해 종목별 `daily` 반복 호출 없이 단일 조회로 계좌 전체 종목의 일자 집계를 가져온다. **Admin UI 전환 완료.** `RealizedPnlView.tsx`가 요약 카드/종목별 탭(+recompute 배지)을 이 endpoint 단일 호출로 채운다(계좌 전체·단일 종목 공통 경로). 종목 "전체"의 종목별 `daily` N+1은 이 두 화면 요소에서는 제거됐다.
+
+탭 A(일자별)의 남은 N+1은 별도 endpoint `GET /performance/realized-pnl/daily-summary?account_id=&start_date=&end_date=`로 **백엔드 구현 완료**했다(`summary`와 계약을 공유하지 않는 추가 endpoint — `summary`는 종목별 groupby, `daily-summary`는 날짜별 groupby로 역할이 분리돼 있다). 신규 repository 메서드는 필요 없었다 — `summary`가 이미 쓰는 `RealizedPnlDailyAggregateRepository.list_by_account()`를 그대로 재사용한다. **Admin UI 탭 A의 전환은 아직 미착수**(후속) — 현재 탭 A는 여전히 종목별 `daily` 반복 호출 후 프런트에서 날짜별 합산하는 기존 경로를 쓴다.
 - 사용자가 특정 종목을 선택한 뒤의 상세 조회(체결별 실현손익)는 이미 `events`가 정확히 그 형태(종목 1개 + 기간 필터)를 지원하므로 갭이 없다.
 
 ### 종목 후보 목록에 "전체매도로 포지션이 0인 종목"이 빠지지 않는가 (확인 완료)
@@ -151,7 +153,8 @@ HTS 실현손익 화면의 전형적인 1차 화면 — "계좌 전체, 이번 �
 | 화면 요소 | Endpoint | Authoritative source | 비고 |
 |---|---|---|---|
 | 종목별 all-time 상태(참고) | `GET /performance/realized-pnl/positions` | `position_cost_basis_state` + `realized_pnl_daily_aggregates` 합산 | 기간 필터 없음 — 요약 영역의 `recompute_required` 배지 및 탭 B의 종목/심볼 마스터 목록으로만 사용 |
-| 요약 영역의 실현손익 합계/매도 건수, 탭 A/B의 같은 두 컬럼 | `GET /performance/realized-pnl/daily` | `realized_pnl_daily_aggregates` | 종목 `전체`면 종목별로 개별 호출 후 프런트 합산(N+1, 위 갭 분석 참고) |
+| 요약 영역의 실현손익 합계/매도 건수, 탭 B의 같은 두 컬럼 | `GET /performance/realized-pnl/summary` | `realized_pnl_daily_aggregates` | 종목 전체/단일 종목 공통, 단일 호출(연동 완료) |
+| 탭 A(일자별)의 실현손익 합계/매도 건수 등 | `GET /performance/realized-pnl/daily`(단일 종목) 또는 `GET /performance/realized-pnl/daily-summary`(종목 전체, 백엔드만 구현 완료·Admin UI 전환 미착수) | `realized_pnl_daily_aggregates` | 종목 전체 화면 전환 전까지는 여전히 종목별 `daily` 반복 호출 후 프런트 합산(N+1) |
 | 요약 영역의 매도금액/비용 합계, 탭 A/B의 매수금액·매도금액·비용, 탭 C 전체 | `GET /performance/realized-pnl/events` | `realized_pnl_events` | 종목 1개 필수, 기간 전체 페이지네이션 필요(위 "신규 API 갭" 절) |
 | 요약 영역 경고 배지 + 드릴다운 | `GET /performance/realized-pnl/recompute-queue` | `realized_pnl_recompute_queue` | **연동 완료.** 배지의 "상세 보기" 클릭 시에만 지연 호출해 종목/`reason_code`/`requested_at`을 인라인 확장 테이블로 보여준다(모달 아님, `RealizedPnlView.tsx`). 종목명은 별도 호출 없이 `positions`로 이미 받아둔 `instrumentOptions`에서 재사용한다. |
 

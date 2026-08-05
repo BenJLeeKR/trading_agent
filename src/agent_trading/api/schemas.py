@@ -2217,6 +2217,23 @@ class RealizedPnlDailyResponse(BaseModel):
     daily: list[RealizedPnlDailyAggregateView]
 
 
+class RealizedPnlDailySummaryResponse(BaseModel):
+    """``GET /performance/realized-pnl/daily-summary`` 응답 — Admin UI 탭 A(일자별)의
+
+    종목 "전체" N+1 제거용. ``realized_pnl_daily_aggregates``(계좌의 모든 종목,
+    조회 기간)를 ``trade_date``별로 단순 합산한 값이다 — 새 손익 계산식이
+    아니다. 종목별 groupby는 ``/performance/realized-pnl/summary``가,
+    날짜별 groupby는 이 endpoint가 담당한다(역할 분리, 계약 변경 없음).
+    """
+
+    model_config = ConfigDict(from_attributes=True)
+
+    account_id: UUID
+    start_date: date
+    end_date: date
+    daily: list[RealizedPnlDailyAggregateView]
+
+
 class RealizedPnlRecomputeQueueItemView(BaseModel):
     """``GET /performance/realized-pnl/recompute-queue`` 한 행 — pending 재계산 큐 항목.
 
