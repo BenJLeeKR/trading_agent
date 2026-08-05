@@ -213,7 +213,7 @@ const mockRecomputeQueueWithItem: RealizedPnlRecomputeQueueResponse = {
       recompute_queue_id: "queue-1",
       account_id: ACCOUNT_ID,
       instrument_id: INSTRUMENT_B,
-      reason_code: "out_of_order_fill",
+      reason_code: "out_of_order_fill_detected",
       triggering_fill_event_id: "fill-99",
       requested_at: "2026-08-02T03:00:00Z",
     },
@@ -225,6 +225,33 @@ const mockRecomputeQueueEmpty: RealizedPnlRecomputeQueueResponse = {
   instrument_id: null,
   limit: 100,
   items: [],
+};
+
+const mockRecomputeQueueSingleInstrument: RealizedPnlRecomputeQueueResponse = {
+  account_id: ACCOUNT_ID,
+  instrument_id: INSTRUMENT_A,
+  limit: 100,
+  items: [
+    {
+      recompute_queue_id: "queue-2",
+      account_id: ACCOUNT_ID,
+      instrument_id: INSTRUMENT_A,
+      reason_code: "ledger_write_failed",
+      triggering_fill_event_id: "fill-42",
+      requested_at: "2026-08-03T05:00:00Z",
+    },
+  ],
+};
+
+// 단일 종목 조회에서도 recompute 배너가 뜨는 시나리오 검증용 — 그 종목만
+// recompute_required=true.
+const mockSummarySingleInstrumentRecompute: RealizedPnlSummaryResponse = {
+  ...mockSummarySingleInstrument,
+  recompute_pending_count: 1,
+  by_instrument: mockSummarySingleInstrument.by_instrument.map((row) => ({
+    ...row,
+    recompute_required: true,
+  })),
 };
 
 const mockEventsSinglePage: RealizedPnlEventsResponse = {
@@ -413,7 +440,7 @@ describe("RealizedPnlView — 재계산 대기 드릴다운", () => {
     await waitFor(() => expect(screen.getByText("재계산 대기중 — 1개 종목")).toBeInTheDocument());
   }
 
-  it("상세 보기를 누르면 pending 큐 항목(종목/사유/등록시각)이 펼쳐진다", async () => {
+  it("상세 보기를 누르면 pending 큐 항목이 사람이 읽기 쉬운 사유 라벨(+원본 코드)과 함께 펼쳐진다", async () => {
     mockAccountLoading();
     vi.spyOn(apiClient, "getRealizedPnlPositions").mockResolvedValue(mockPositions);
     vi.spyOn(apiClient, "getRealizedPnlSummary").mockResolvedValue(mockSummaryAllInstruments);
@@ -427,16 +454,24 @@ describe("RealizedPnlView — 재계산 대기 드릴다운", () => {
     await queryAllInstruments();
     expect(getDailyMock).not.toHaveBeenCalled();
 
-    expect(screen.queryByText("out_of_order_fill")).not.toBeInTheDocument();
+    expect(screen.queryByText("역순 체결 감지")).not.toBeInTheDocument();
 
+    // 종목 전체 조회에서는 "상세 보기" 버튼에 대기 종목 수가 함께 표시된다.
     await act(async () => {
-      fireEvent.click(screen.getByRole("button", { name: "상세 보기" }));
+      fireEvent.click(screen.getByRole("button", { name: "상세 보기(1개 종목)" }));
     });
+
+    // 종목 전체 조회 문맥 안내 문구.
+    expect(
+      screen.getByText(/계좌 전체 종목 중 재계산 대기 중인 항목입니다/),
+    ).toBeInTheDocument();
 
     await waitFor(() => {
-      expect(screen.getByText("out_of_order_fill")).toBeInTheDocument();
+      expect(screen.getByText("역순 체결 감지")).toBeInTheDocument();
     });
-    const queueRow = screen.getByText("out_of_order_fill").closest("tr");
+    // 원본 reason_code는 숨기지 않고 라벨 옆에 보조 텍스트로 계속 노출한다.
+    expect(screen.getByText("(out_of_order_fill_detected)")).toBeInTheDocument();
+    const queueRow = screen.getByText("역순 체결 감지").closest("tr");
     expect(queueRow).not.toBeNull();
     expect(queueRow!.textContent).toContain("000660");
     expect(getQueueMock).toHaveBeenCalledWith(ACCOUNT_ID, { instrumentId: undefined });
@@ -444,10 +479,81 @@ describe("RealizedPnlView — 재계산 대기 드릴다운", () => {
     await act(async () => {
       fireEvent.click(screen.getByRole("button", { name: "닫기" }));
     });
-    expect(screen.queryByText("out_of_order_fill")).not.toBeInTheDocument();
+    expect(screen.queryByText("역순 체결 감지")).not.toBeInTheDocument();
   });
 
-  it("pending 큐가 비어 있으면 빈 상태 문구를 보여준다", async () => {
+  it("큐 항목 행을 클릭하면 그 종목의 체결별 탭으로 드릴다운된다(다음 액션)", async () => {
+    mockAccountLoading();
+    vi.spyOn(apiClient, "getRealizedPnlPositions").mockResolvedValue(mockPositions);
+    vi.spyOn(apiClient, "getRealizedPnlSummary").mockResolvedValue(mockSummaryAllInstruments);
+    vi.spyOn(apiClient, "getRealizedPnlDaily").mockResolvedValue(makeDailyResponse(INSTRUMENT_B));
+    vi.spyOn(apiClient, "getRealizedPnlDailySummary").mockResolvedValue(mockDailySummaryAllInstruments);
+    vi.spyOn(apiClient, "getRealizedPnlRecomputeQueue").mockResolvedValue(mockRecomputeQueueWithItem);
+    vi.spyOn(apiClient, "getRealizedPnlEvents").mockResolvedValue(mockEventsSinglePage);
+
+    render(<RealizedPnlView />);
+    await queryAllInstruments();
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "상세 보기(1개 종목)" }));
+    });
+    await waitFor(() => {
+      expect(screen.getByText("역순 체결 감지")).toBeInTheDocument();
+    });
+
+    const queueRow = screen.getByText("역순 체결 감지").closest("tr");
+    await act(async () => {
+      fireEvent.click(queueRow!);
+    });
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: /체결별 \(000660\)/ })).toBeInTheDocument();
+    });
+    expect(apiClient.getRealizedPnlEvents).toHaveBeenCalledWith(
+      ACCOUNT_ID,
+      INSTRUMENT_B,
+      expect.objectContaining({ limit: 200 }),
+    );
+  });
+
+  it("단일 종목 조회에서는 안내 문구와 버튼 라벨이 '현재 선택한 종목' 기준으로 표시된다", async () => {
+    mockAccountLoading();
+    vi.spyOn(apiClient, "getRealizedPnlPositions").mockResolvedValue(mockPositions);
+    vi.spyOn(apiClient, "getRealizedPnlSummary").mockResolvedValue(mockSummarySingleInstrumentRecompute);
+    vi.spyOn(apiClient, "getRealizedPnlDaily").mockResolvedValue(makeDailyResponse(INSTRUMENT_A));
+    vi.spyOn(apiClient, "getRealizedPnlEvents").mockResolvedValue(mockEventsSinglePage);
+    const getQueueMock = vi
+      .spyOn(apiClient, "getRealizedPnlRecomputeQueue")
+      .mockResolvedValue(mockRecomputeQueueSingleInstrument);
+
+    render(<RealizedPnlView />);
+    await selectAccount();
+    await waitFor(() => {
+      expect(screen.getByRole("option", { name: /005930/ })).toBeInTheDocument();
+    });
+    await act(async () => {
+      fireEvent.change(screen.getByLabelText(/종목/), { target: { value: INSTRUMENT_A } });
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "조회" }));
+    });
+    await waitFor(() => expect(screen.getByText("재계산 대기중 — 1개 종목")).toBeInTheDocument());
+
+    // 단일 종목 조회에서는 종목 수를 덧붙이지 않고 "상세 보기"만 표시한다.
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "상세 보기" }));
+    });
+
+    expect(
+      screen.getByText(/현재 선택한 종목\(005930\) 기준 재계산 대기 항목입니다/),
+    ).toBeInTheDocument();
+    await waitFor(() => {
+      expect(screen.getByText("원장 기록 실패")).toBeInTheDocument();
+    });
+    expect(getQueueMock).toHaveBeenCalledWith(ACCOUNT_ID, { instrumentId: INSTRUMENT_A });
+  });
+
+  it("pending 큐가 비어 있으면 운영 의미가 드러나는 빈 상태 문구를 보여준다", async () => {
     mockAccountLoading();
     vi.spyOn(apiClient, "getRealizedPnlPositions").mockResolvedValue(mockPositions);
     vi.spyOn(apiClient, "getRealizedPnlSummary").mockResolvedValue(mockSummaryAllInstruments);
@@ -460,15 +566,17 @@ describe("RealizedPnlView — 재계산 대기 드릴다운", () => {
     expect(getDailyMock).not.toHaveBeenCalled();
 
     await act(async () => {
-      fireEvent.click(screen.getByRole("button", { name: "상세 보기" }));
+      fireEvent.click(screen.getByRole("button", { name: "상세 보기(1개 종목)" }));
     });
 
     await waitFor(() => {
-      expect(screen.getByText("재계산 대기 항목이 없습니다.")).toBeInTheDocument();
+      expect(
+        screen.getByText(/요약 배지의 대기 종목 수와 차이가 있다면 방금 처리가 완료됐을 수 있습니다/),
+      ).toBeInTheDocument();
     });
   });
 
-  it("큐 조회가 실패하면 드릴다운 영역에만 오류를 표시한다", async () => {
+  it("큐 조회가 실패하면 드릴다운 영역에만, 요약 정보는 정상임을 알리는 오류 문구를 표시한다", async () => {
     mockAccountLoading();
     vi.spyOn(apiClient, "getRealizedPnlPositions").mockResolvedValue(mockPositions);
     vi.spyOn(apiClient, "getRealizedPnlSummary").mockResolvedValue(mockSummaryAllInstruments);
@@ -483,11 +591,13 @@ describe("RealizedPnlView — 재계산 대기 드릴다운", () => {
     expect(getDailyMock).not.toHaveBeenCalled();
 
     await act(async () => {
-      fireEvent.click(screen.getByRole("button", { name: "상세 보기" }));
+      fireEvent.click(screen.getByRole("button", { name: "상세 보기(1개 종목)" }));
     });
 
     await waitFor(() => {
-      expect(screen.getByText("재계산 대기 큐 조회 실패")).toBeInTheDocument();
+      expect(
+        screen.getByText(/재계산 대기 상세 조회 실패\(요약 정보는 정상입니다\) — 재계산 대기 큐 조회 실패/),
+      ).toBeInTheDocument();
     });
     // 요약 카드는 여전히 정상 표시된다 — 큐 조회 실패가 전체 화면을 무너뜨리지 않는다.
     expect(screen.getByText("+130,000원", { exact: false })).toBeInTheDocument();
