@@ -8,6 +8,7 @@ import type {
   RealizedPnlPositionView,
   RealizedPnlSummaryResponse,
   RealizedPnlDailyResponse,
+  RealizedPnlDailySummaryResponse,
   RealizedPnlEventsResponse,
   RealizedPnlEventView,
   RealizedPnlRecomputeQueueResponse,
@@ -152,6 +153,35 @@ function makeDailyResponse(instrumentId: string): RealizedPnlDailyResponse {
   };
 }
 
+// 탭 A(일자별) — 종목 "전체" 조회는 이제 daily-summary 단일 호출로 채운다
+// (종목별 daily fan-out 없음). 값은 mockSummaryAllInstruments의 전체 합계와
+// 굳이 일치시키지 않는다 — 탭 A는 날짜별 분해이고 이 테스트는 데이터 소스
+// 전환(호출 경로) 자체를 검증하는 것이 목적이다.
+// summary 응답(mockSummaryAllInstruments)과 값을 겹치지 않게 해 두 API 호출이
+// 서로 다른 endpoint에서 온 값임을 텍스트 매칭으로도 구분할 수 있게 한다.
+const mockDailySummaryAllInstruments: RealizedPnlDailySummaryResponse = {
+  account_id: ACCOUNT_ID,
+  start_date: "2026-07-01",
+  end_date: "2026-08-05",
+  daily: [
+    {
+      trade_date: "2026-08-01",
+      realized_pnl_net_sum: 77000,
+      sell_event_count: 3,
+      buy_amount_sum: 400000,
+      sell_amount_sum: 477000,
+      fee_tax_sum: 4000,
+    },
+  ],
+};
+
+const mockDailySummaryEmpty: RealizedPnlDailySummaryResponse = {
+  account_id: ACCOUNT_ID,
+  start_date: "2026-07-01",
+  end_date: "2026-08-05",
+  daily: [],
+};
+
 function makeEvent(overrides?: Partial<RealizedPnlEventView>): RealizedPnlEventView {
   return {
     realized_pnl_event_id: "evt-1",
@@ -260,9 +290,10 @@ describe("RealizedPnlView — 종목 전체 조회", () => {
     mockAccountLoading();
     vi.spyOn(apiClient, "getRealizedPnlPositions").mockResolvedValue(mockPositions);
     vi.spyOn(apiClient, "getRealizedPnlSummary").mockResolvedValue(mockSummaryAllInstruments);
-    vi.spyOn(apiClient, "getRealizedPnlDaily").mockImplementation((_account, instrumentId) =>
-      Promise.resolve(makeDailyResponse(instrumentId)),
-    );
+    const getDailyMock = vi.spyOn(apiClient, "getRealizedPnlDaily");
+    const getDailySummaryMock = vi
+      .spyOn(apiClient, "getRealizedPnlDailySummary")
+      .mockResolvedValue(mockDailySummaryAllInstruments);
 
     render(<RealizedPnlView />);
     await selectAccount();
@@ -289,6 +320,15 @@ describe("RealizedPnlView — 종목 전체 조회", () => {
       screen.getByText("이 종목들의 실현손익 값은 재계산 대기 중이라 변경될 수 있습니다."),
     ).toBeInTheDocument();
 
+    // 탭 A(일자별)는 기본 활성 탭이고 daily-summary 단일 호출로 채워진다 —
+    // 종목별 daily fan-out(N+1)은 더 이상 호출되지 않는다.
+    expect(screen.getByText("2026-08-01")).toBeInTheDocument();
+    expect(getDailySummaryMock).toHaveBeenCalledWith(
+      ACCOUNT_ID,
+      expect.objectContaining({ startDate: expect.any(String), endDate: expect.any(String) }),
+    );
+    expect(getDailyMock).not.toHaveBeenCalled();
+
     // 종목별 탭 — summary.by_instrument 그대로.
     fireEvent.click(screen.getByRole("button", { name: "종목별" }));
     expect(screen.getByText("005930")).toBeInTheDocument();
@@ -302,9 +342,8 @@ describe("RealizedPnlView — 종목 전체 조회", () => {
     mockAccountLoading();
     vi.spyOn(apiClient, "getRealizedPnlPositions").mockResolvedValue(mockPositions);
     vi.spyOn(apiClient, "getRealizedPnlSummary").mockResolvedValue(mockSummaryNoRecompute);
-    vi.spyOn(apiClient, "getRealizedPnlDaily").mockImplementation((_account, instrumentId) =>
-      Promise.resolve(makeDailyResponse(instrumentId)),
-    );
+    const getDailyMock = vi.spyOn(apiClient, "getRealizedPnlDaily");
+    vi.spyOn(apiClient, "getRealizedPnlDailySummary").mockResolvedValue(mockDailySummaryAllInstruments);
 
     render(<RealizedPnlView />);
     await selectAccount();
@@ -319,15 +358,15 @@ describe("RealizedPnlView — 종목 전체 조회", () => {
       expect(screen.getByText("+130,000원", { exact: false })).toBeInTheDocument();
     });
     expect(screen.queryByText(/재계산 대기중/)).not.toBeInTheDocument();
+    expect(getDailyMock).not.toHaveBeenCalled();
   });
 
   it("clicking a by-instrument row drills down into that instrument's 체결별 tab", async () => {
     mockAccountLoading();
     vi.spyOn(apiClient, "getRealizedPnlPositions").mockResolvedValue(mockPositions);
     vi.spyOn(apiClient, "getRealizedPnlSummary").mockResolvedValue(mockSummaryAllInstruments);
-    vi.spyOn(apiClient, "getRealizedPnlDaily").mockImplementation((_account, instrumentId) =>
-      Promise.resolve(makeDailyResponse(instrumentId)),
-    );
+    const getDailyMock = vi.spyOn(apiClient, "getRealizedPnlDaily");
+    vi.spyOn(apiClient, "getRealizedPnlDailySummary").mockResolvedValue(mockDailySummaryAllInstruments);
     vi.spyOn(apiClient, "getRealizedPnlEvents").mockResolvedValue(mockEventsSinglePage);
 
     render(<RealizedPnlView />);
@@ -355,6 +394,7 @@ describe("RealizedPnlView — 종목 전체 조회", () => {
       INSTRUMENT_A,
       expect.objectContaining({ limit: 200 }),
     );
+    expect(getDailyMock).not.toHaveBeenCalled();
   });
 });
 
@@ -377,15 +417,15 @@ describe("RealizedPnlView — 재계산 대기 드릴다운", () => {
     mockAccountLoading();
     vi.spyOn(apiClient, "getRealizedPnlPositions").mockResolvedValue(mockPositions);
     vi.spyOn(apiClient, "getRealizedPnlSummary").mockResolvedValue(mockSummaryAllInstruments);
-    vi.spyOn(apiClient, "getRealizedPnlDaily").mockImplementation((_account, instrumentId) =>
-      Promise.resolve(makeDailyResponse(instrumentId)),
-    );
+    const getDailyMock = vi.spyOn(apiClient, "getRealizedPnlDaily");
+    vi.spyOn(apiClient, "getRealizedPnlDailySummary").mockResolvedValue(mockDailySummaryAllInstruments);
     const getQueueMock = vi
       .spyOn(apiClient, "getRealizedPnlRecomputeQueue")
       .mockResolvedValue(mockRecomputeQueueWithItem);
 
     render(<RealizedPnlView />);
     await queryAllInstruments();
+    expect(getDailyMock).not.toHaveBeenCalled();
 
     expect(screen.queryByText("out_of_order_fill")).not.toBeInTheDocument();
 
@@ -411,13 +451,13 @@ describe("RealizedPnlView — 재계산 대기 드릴다운", () => {
     mockAccountLoading();
     vi.spyOn(apiClient, "getRealizedPnlPositions").mockResolvedValue(mockPositions);
     vi.spyOn(apiClient, "getRealizedPnlSummary").mockResolvedValue(mockSummaryAllInstruments);
-    vi.spyOn(apiClient, "getRealizedPnlDaily").mockImplementation((_account, instrumentId) =>
-      Promise.resolve(makeDailyResponse(instrumentId)),
-    );
+    const getDailyMock = vi.spyOn(apiClient, "getRealizedPnlDaily");
+    vi.spyOn(apiClient, "getRealizedPnlDailySummary").mockResolvedValue(mockDailySummaryAllInstruments);
     vi.spyOn(apiClient, "getRealizedPnlRecomputeQueue").mockResolvedValue(mockRecomputeQueueEmpty);
 
     render(<RealizedPnlView />);
     await queryAllInstruments();
+    expect(getDailyMock).not.toHaveBeenCalled();
 
     await act(async () => {
       fireEvent.click(screen.getByRole("button", { name: "상세 보기" }));
@@ -432,15 +472,15 @@ describe("RealizedPnlView — 재계산 대기 드릴다운", () => {
     mockAccountLoading();
     vi.spyOn(apiClient, "getRealizedPnlPositions").mockResolvedValue(mockPositions);
     vi.spyOn(apiClient, "getRealizedPnlSummary").mockResolvedValue(mockSummaryAllInstruments);
-    vi.spyOn(apiClient, "getRealizedPnlDaily").mockImplementation((_account, instrumentId) =>
-      Promise.resolve(makeDailyResponse(instrumentId)),
-    );
+    const getDailyMock = vi.spyOn(apiClient, "getRealizedPnlDaily");
+    vi.spyOn(apiClient, "getRealizedPnlDailySummary").mockResolvedValue(mockDailySummaryAllInstruments);
     vi.spyOn(apiClient, "getRealizedPnlRecomputeQueue").mockRejectedValue(
       new Error("재계산 대기 큐 조회 실패"),
     );
 
     render(<RealizedPnlView />);
     await queryAllInstruments();
+    expect(getDailyMock).not.toHaveBeenCalled();
 
     await act(async () => {
       fireEvent.click(screen.getByRole("button", { name: "상세 보기" }));
@@ -547,7 +587,7 @@ describe("RealizedPnlView — 오류 상태", () => {
     vi.spyOn(apiClient, "getRealizedPnlSummary").mockRejectedValue(
       new Error("summary 조회 실패"),
     );
-    vi.spyOn(apiClient, "getRealizedPnlDaily").mockResolvedValue(makeDailyResponse(INSTRUMENT_A));
+    vi.spyOn(apiClient, "getRealizedPnlDailySummary").mockResolvedValue(mockDailySummaryEmpty);
 
     render(<RealizedPnlView />);
     await selectAccount();
@@ -597,7 +637,7 @@ describe("RealizedPnlView — 빈 상태", () => {
     mockAccountLoading();
     vi.spyOn(apiClient, "getRealizedPnlPositions").mockResolvedValue([]);
     vi.spyOn(apiClient, "getRealizedPnlSummary").mockResolvedValue(mockSummaryEmpty);
-    vi.spyOn(apiClient, "getRealizedPnlDaily").mockResolvedValue(makeDailyResponse(INSTRUMENT_A));
+    vi.spyOn(apiClient, "getRealizedPnlDailySummary").mockResolvedValue(mockDailySummaryEmpty);
 
     render(<RealizedPnlView />);
     await selectAccount();
@@ -621,6 +661,9 @@ describe("RealizedPnlView — 기간 프리셋", () => {
     const getSummaryMock = vi
       .spyOn(apiClient, "getRealizedPnlSummary")
       .mockResolvedValue(mockSummaryEmpty);
+    const getDailySummaryMock = vi
+      .spyOn(apiClient, "getRealizedPnlDailySummary")
+      .mockResolvedValue(mockDailySummaryEmpty);
 
     render(<RealizedPnlView />);
     await selectAccount();
@@ -635,5 +678,11 @@ describe("RealizedPnlView — 기간 프리셋", () => {
     });
     const [, options] = getSummaryMock.mock.calls[0];
     expect(options.startDate).toBe(options.endDate);
+
+    // 탭 A(일자별)도 같은 프리셋 날짜로 daily-summary를 호출한다.
+    expect(getDailySummaryMock).toHaveBeenCalled();
+    const [, dailySummaryOptions] = getDailySummaryMock.mock.calls[0];
+    expect(dailySummaryOptions.startDate).toBe(options.startDate);
+    expect(dailySummaryOptions.endDate).toBe(options.endDate);
   });
 });

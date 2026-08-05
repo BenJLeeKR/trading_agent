@@ -366,6 +366,25 @@ export async function getRealizedPnlEvents(
 }
 
 /**
+ * 계좌 전체(모든 종목) 기간 **일자별** 요약 — 탭 A(일자별)의 종목 "전체" N+1 제거용
+ * 단일 호출. 단일 종목 조회는 여전히 `getRealizedPnlDaily()`를 쓴다(이 endpoint에는
+ * `instrument_id` 파라미터가 없다 — `daily-summary`는 항상 계좌 전체를 대상으로 한다).
+ */
+export async function getRealizedPnlDailySummary(
+  accountId: string,
+  options: { startDate: string; endDate: string }
+): Promise<import("../types/api").RealizedPnlDailySummaryResponse> {
+  const params = new URLSearchParams({
+    account_id: accountId,
+    start_date: options.startDate,
+    end_date: options.endDate,
+  });
+  return request<import("../types/api").RealizedPnlDailySummaryResponse>(
+    `/performance/realized-pnl/daily-summary?${params.toString()}`
+  );
+}
+
+/**
  * 미해결(`resolved_at IS NULL`) 재계산 큐 항목 — "재계산 대기" 배너의 드릴다운용.
  * `accountId`/`instrumentId`를 지정하면 그 범위로 애플리케이션 레벨 필터링된다
  * (계산 없음, `RealizedPnlRecomputeQueueRepository.list_pending()`이 계좌 필터를

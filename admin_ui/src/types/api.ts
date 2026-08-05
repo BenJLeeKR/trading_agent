@@ -244,6 +244,16 @@ export interface RealizedPnlEventsResponse {
   events: RealizedPnlEventView[];
 }
 
+// GET /performance/realized-pnl/daily-summary — 탭 A(일자별)의 종목 "전체" N+1 제거용.
+// summary와 마찬가지로 realized_pnl_daily_aggregates에 이미 저장된 값의 단순 합산이다
+// (계산 없음) — summary는 종목별로, 이 응답은 날짜별로 묶는다.
+export interface RealizedPnlDailySummaryResponse {
+  account_id: string;
+  start_date: string;
+  end_date: string;
+  daily: RealizedPnlDailyAggregateView[];
+}
+
 // GET /performance/realized-pnl/summary — 요약 카드/종목별 탭용 단일 호출 조회.
 // realized_pnl_daily_aggregates에 이미 저장된 값의 단순 합산이다(계산 없음).
 export interface RealizedPnlSummaryInstrumentView {

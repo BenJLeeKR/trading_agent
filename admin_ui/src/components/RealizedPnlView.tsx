@@ -15,6 +15,7 @@ import {
   getAccounts,
   getRealizedPnlPositions,
   getRealizedPnlDaily,
+  getRealizedPnlDailySummary,
   getRealizedPnlEvents,
   getRealizedPnlSummary,
   getRealizedPnlRecomputeQueue,
@@ -52,36 +53,6 @@ const PERIOD_PRESETS: { label: string; start: () => string }[] = [
   { label: "3개월", start: () => kstDateMonthsAgo(3) },
   { label: "올해", start: () => kstYearStart() },
 ];
-
-/* ───────────────────────────────────────────
- * 집계 helper — 전부 단순 합산/곱셈이다(도메인 계산 아님, 설계서 "구현 원칙" 참고).
- * ─────────────────────────────────────────── */
-
-interface DailyTotals {
-  sell_event_count: number;
-  buy_amount_sum: number;
-  sell_amount_sum: number;
-  fee_tax_sum: number;
-  realized_pnl_net_sum: number;
-}
-
-function emptyTotals(): DailyTotals {
-  return { sell_event_count: 0, buy_amount_sum: 0, sell_amount_sum: 0, fee_tax_sum: 0, realized_pnl_net_sum: 0 };
-}
-
-function addTotals(a: DailyTotals, b: RealizedPnlDailyAggregateView): DailyTotals {
-  return {
-    sell_event_count: a.sell_event_count + b.sell_event_count,
-    buy_amount_sum: a.buy_amount_sum + b.buy_amount_sum,
-    sell_amount_sum: a.sell_amount_sum + b.sell_amount_sum,
-    fee_tax_sum: a.fee_tax_sum + b.fee_tax_sum,
-    realized_pnl_net_sum: a.realized_pnl_net_sum + b.realized_pnl_net_sum,
-  };
-}
-
-interface DailyRow extends DailyTotals {
-  trade_date: string;
-}
 
 function accountLabel(a: AccountSummary): string {
   return [a.account_code, a.account_alias, a.account_masked].filter(Boolean).join(" · ") || a.account_id;
@@ -164,11 +135,12 @@ export default function RealizedPnlView() {
   // (계좌 전체든 단일 종목이든 동일 경로 — 아래 "먼저 판단" 주석 참고).
   const [summaryData, setSummaryData] = useState<RealizedPnlSummaryResponse | null>(null);
 
-  // 탭 A(일자별)만을 위한 계좌×종목별 daily aggregate — instrument_id -> rows.
-  // summary는 날짜별 분해를 제공하지 않으므로(설계서상 의도적 범위 제외) 이
-  // 탭만 여전히 daily를 쓴다. "전체"면 후보 종목마다 개별 daily 호출(N+1)이
-  // 남아 있다 — 요약 카드/종목별 탭에서는 이미 제거됐고, 탭 A에서만 남는다.
-  const [dailyByInstrument, setDailyByInstrument] = useState<Record<string, RealizedPnlDailyAggregateView[]>>({});
+  // 탭 A(일자별) 전용 날짜별 행 — summary는 날짜별 분해를 제공하지 않으므로
+  // (설계서상 의도적 범위 제외) 이 탭만 별도 조회가 필요하다. 종목 "전체"면
+  // daily-summary(계좌 전체, 날짜별 단일 호출)를, 단일 종목이면 기존 daily를
+  // 그대로 쓴다 — 둘 다 이미 날짜별로 정렬된 행을 반환하므로 프런트에서
+  // 다시 합산/재그룹할 필요가 없다(N+1은 "전체" 경로에서 제거됨).
+  const [dailyRows, setDailyRows] = useState<RealizedPnlDailyAggregateView[]>([]);
 
   const [events, setEvents] = useState<RealizedPnlEventView[]>([]);
   const [eventsLoading, setEventsLoading] = useState(false);
@@ -236,27 +208,21 @@ export default function RealizedPnlView() {
 
     try {
       // 요약 카드 + 종목별 탭 + recompute 배지는 계좌 전체든 단일 종목이든
-      // 동일하게 summary 단일 호출로 채운다(아래 "판단" 참고). 탭 A(일자별)만
-      // summary가 제공하지 않는 날짜별 분해가 필요해 daily를 그대로 쓴다 —
-      // "전체"면 후보 종목마다 개별 daily 호출(N+1)이 이 탭에만 남는다.
-      const targetInstruments = instrumentId
-        ? instrumentOptions.filter((p) => p.instrument_id === instrumentId)
-        : instrumentOptions;
+      // 동일하게 summary 단일 호출로 채운다(아래 "판단" 참고). 탭 A(일자별)는
+      // summary가 제공하지 않는 날짜별 분해가 필요해 별도 조회를 쓴다 —
+      // 종목 "전체"면 daily-summary(단일 호출, N+1 제거), 단일 종목이면
+      // 그 종목 하나만 조회하는 기존 daily(원래도 N+1이 아니었음)를 쓴다.
+      const dailyPromise = instrumentId
+        ? getRealizedPnlDaily(accountId, instrumentId, { startDate, endDate }).then((r) => r.daily)
+        : getRealizedPnlDailySummary(accountId, { startDate, endDate }).then((r) => r.daily);
 
-      const [summaryRes, dailyResults] = await Promise.all([
+      const [summaryRes, dailyResultRows] = await Promise.all([
         getRealizedPnlSummary(accountId, { startDate, endDate, instrumentId: instrumentId || undefined }),
-        Promise.all(
-          targetInstruments.map((p) => getRealizedPnlDaily(accountId, p.instrument_id, { startDate, endDate }))
-        ),
+        dailyPromise,
       ]);
 
       setSummaryData(summaryRes);
-
-      const byInstrument: Record<string, RealizedPnlDailyAggregateView[]> = {};
-      targetInstruments.forEach((p, idx) => {
-        byInstrument[p.instrument_id] = dailyResults[idx].daily;
-      });
-      setDailyByInstrument(byInstrument);
+      setDailyRows(dailyResultRows);
       setActiveTab(instrumentId ? "events" : "daily");
 
       if (instrumentId) {
@@ -277,21 +243,7 @@ export default function RealizedPnlView() {
     fetchEvents(row.instrument_id);
   }
 
-  // ── 탭 A(일자별) 집계 — sum()뿐, 도메인 계산 없음. 요약 카드/탭 B는 이제
-  // summaryData를 그대로 쓴다(아래 JSX에서 직접 참조, 별도 집계 불필요). ──
-  const dailyRows: DailyRow[] = useMemo(() => {
-    const byDate = new Map<string, DailyTotals>();
-    Object.values(dailyByInstrument).forEach((rows) => {
-      rows.forEach((row) => {
-        byDate.set(row.trade_date, addTotals(byDate.get(row.trade_date) ?? emptyTotals(), row));
-      });
-    });
-    return Array.from(byDate.entries())
-      .map(([trade_date, totals]) => ({ trade_date, ...totals }))
-      .sort((a, b) => a.trade_date.localeCompare(b.trade_date));
-  }, [dailyByInstrument]);
-
-  const dailyColumns: Column<DailyRow>[] = [
+  const dailyColumns: Column<RealizedPnlDailyAggregateView>[] = [
     { key: "trade_date", header: "날짜" },
     { key: "sell_event_count", header: "매도 건수", align: "right", render: (r) => r.sell_event_count.toLocaleString() },
     { key: "buy_amount_sum", header: "매수금액", align: "right", render: (r) => formatKrw(r.buy_amount_sum) },
