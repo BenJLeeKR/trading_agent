@@ -244,6 +244,34 @@ export interface RealizedPnlEventsResponse {
   events: RealizedPnlEventView[];
 }
 
+// GET /performance/realized-pnl/summary — 요약 카드/종목별 탭용 단일 호출 조회.
+// realized_pnl_daily_aggregates에 이미 저장된 값의 단순 합산이다(계산 없음).
+export interface RealizedPnlSummaryInstrumentView {
+  instrument_id: string;
+  symbol: string | null;
+  instrument_name: string | null;
+  realized_pnl_net_sum: number;
+  sell_event_count: number;
+  buy_amount_sum: number;
+  sell_amount_sum: number;
+  fee_tax_sum: number;
+  recompute_required: boolean;
+}
+
+export interface RealizedPnlSummaryResponse {
+  account_id: string;
+  instrument_id: string | null;
+  start_date: string;
+  end_date: string;
+  realized_pnl_net_sum: number;
+  sell_event_count: number;
+  buy_amount_sum: number;
+  sell_amount_sum: number;
+  fee_tax_sum: number;
+  recompute_pending_count: number;
+  by_instrument: RealizedPnlSummaryInstrumentView[];
+}
+
 export interface CashBalanceSnapshotView {
   cash_balance_snapshot_id: string;
   account_id: string;
