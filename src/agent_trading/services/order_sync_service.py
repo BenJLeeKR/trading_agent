@@ -25,6 +25,7 @@ from agent_trading.repositories.container import RepositoryContainer
 from agent_trading.repositories.exceptions import is_postgres_error
 from agent_trading.repositories.filters import OrderQuery
 from agent_trading.services.order_manager import OrderManager
+from agent_trading.services.realized_pnl_ledger_service import RealizedPnlLedgerService
 
 logger = logging.getLogger(__name__)
 
@@ -146,6 +147,25 @@ class TruthProbeReason(str, Enum):
 
 
 @dataclass(slots=True)
+class _RealizedPnlSyncCounters:
+    """``_sync_fills()`` 1회 호출 동안의 realized PnL ledger 반영 결과 집계.
+
+    ``fills_synced``/``fills_skipped``(기존 fill dedup 카운트)와는 별개다 —
+    이 카운터는 fill 저장이 성공한 **신규** fill에 대해서만 증가하며,
+    ``RealizedPnlLedgerService.apply_fill()``의 결과(또는 예외)를 반영한다.
+    """
+
+    applied: int = 0
+    skipped_duplicate: int = 0
+    recompute_required: int = 0
+    failed: int = 0
+
+    @property
+    def total(self) -> int:
+        return self.applied + self.skipped_duplicate + self.recompute_required + self.failed
+
+
+@dataclass(slots=True)
 class OrderSyncService:
     """Post-submit order status/fill sync service.
 
@@ -173,6 +193,12 @@ class OrderSyncService:
 
     # 주문당 KIS inquiry 1회 제한 (order_request_id_str → True)
     _kis_inquiry_seen: dict[str, bool] = field(default_factory=dict)
+
+    # ── realized PnL ledger 반영 훅 ──────────────────────────────────
+    # 신규 fill이 저장된 직후 호출된다(_sync_fills 참고). None이면
+    # 첫 사용 시 self.repos로 지연 생성한다. 테스트에서 fake/spy를
+    # 주입할 수 있도록 공개 필드로 둔다.
+    realized_pnl_ledger_service: RealizedPnlLedgerService | None = None
 
     # ------------------------------------------------------------------
     # Backfill API (position-delta based EXPIRED SELL recovery)
@@ -1460,10 +1486,24 @@ class OrderSyncService:
         2. Composite key ``(broker_order_id, fill_timestamp, fill_price,
            fill_quantity)`` — fallback for fills without a broker fill ID.
 
+        realized PnL ledger 반영
+        ------------------------
+        신규로 저장된(=dedup에서 살아남은) fill마다
+        ``RealizedPnlLedgerService.apply_fill()``을 호출한다(REST 기반
+        ``_sync_fills()`` 경로 — websocket 체결 통보 경로는 전제하지 않는다).
+        이 호출은 자체 예외 처리로 격리되어 있어, ledger 반영이 실패해도
+        fill 저장 자체(``fill_events.add()``)의 성공 여부에는 영향을 주지
+        않는다 — "fill 저장 성공 후 ledger 실패"는 조용히 성공으로
+        보이지 않고 로그(``_apply_realized_pnl_ledger_hook()``)로 관측
+        가능하게 남는다. 이미 dedup되어 저장을 건너뛴 fill(위 두 분기의
+        ``continue``)에는 이 훅을 호출하지 않는다.
+
         Returns
         -------
         tuple[int, int]
-            (fills_synced, fills_skipped)
+            (fills_synced, fills_skipped) — 기존 시그니처를 그대로 유지한다.
+            realized PnL ledger 반영 결과는 이 메서드 안에서 로그로만
+            노출된다(``_RealizedPnlSyncCounters`` 요약 로그).
         """
         try:
             from_ts: str | None = None
@@ -1507,6 +1547,7 @@ class OrderSyncService:
 
         synced = 0
         skipped = 0
+        realized_pnl_counters = _RealizedPnlSyncCounters()
         for fill in fill_events:
             # Normalise broker_fill_id: empty string → None
             broker_fill_id: str | None = fill.broker_fill_id or None
@@ -1548,7 +1589,84 @@ class OrderSyncService:
                 )
             synced += 1
 
+            # fill 저장 성공 직후에만 호출한다 — 위 두 dedup continue 분기를
+            # 통과한 신규 fill에만 도달한다.
+            await self._apply_realized_pnl_ledger_hook(entity, realized_pnl_counters)
+
+        if realized_pnl_counters.total:
+            logger.info(
+                "realized PnL ledger sync summary: broker_order=%s applied=%d "
+                "skipped_duplicate=%d recompute_required=%d failed=%d",
+                broker_order.broker_order_id,
+                realized_pnl_counters.applied,
+                realized_pnl_counters.skipped_duplicate,
+                realized_pnl_counters.recompute_required,
+                realized_pnl_counters.failed,
+            )
+
         return synced, skipped
+
+    def _get_realized_pnl_ledger_service(self) -> RealizedPnlLedgerService:
+        """``realized_pnl_ledger_service``를 지연 생성해 반환한다.
+
+        테스트에서는 이 필드에 fake/spy를 직접 주입할 수 있다
+        (``sync_service.realized_pnl_ledger_service = ...``).
+        """
+        if self.realized_pnl_ledger_service is None:
+            self.realized_pnl_ledger_service = RealizedPnlLedgerService(self.repos)
+        return self.realized_pnl_ledger_service
+
+    async def _apply_realized_pnl_ledger_hook(
+        self,
+        fill_event: FillEventEntity,
+        counters: _RealizedPnlSyncCounters,
+    ) -> None:
+        """신규 저장된 fill 1건을 realized PnL ledger에 반영한다.
+
+        계산/저장 책임은 전부 ``RealizedPnlLedgerService.apply_fill()``에
+        있다 — 여기서는 그 결과(또는 예외)를 fill 저장 성공 여부와 분리해
+        관측 가능하게 만드는 것만 한다. 예외를 여기서 삼키는 것은 "조용히
+        성공 처리"가 아니다 — ``counters.failed``와 ``logger.error()``로
+        운영에서 반드시 드러난다.
+        """
+        service = self._get_realized_pnl_ledger_service()
+        try:
+            result = await service.apply_fill(fill_event)
+        except Exception as exc:  # noqa: BLE001 — ledger 훅 실패는 fill 저장과 분리해 관측만 한다
+            counters.failed += 1
+            logger.error(
+                "realized PnL ledger 반영 실패(fill 저장은 유지됨): "
+                "fill_event_id=%s broker_order_id=%s error=%s",
+                fill_event.fill_event_id, fill_event.broker_order_id, exc,
+                exc_info=True,
+            )
+            return
+
+        if result.status == "applied":
+            counters.applied += 1
+        elif result.status == "skipped_duplicate":
+            counters.skipped_duplicate += 1
+        elif result.status == "recompute_required":
+            counters.recompute_required += 1
+            reason = (
+                result.recompute_queue_item.reason_code
+                if result.recompute_queue_item is not None
+                else "unknown"
+            )
+            logger.warning(
+                "realized PnL ledger recompute_required: fill_event_id=%s "
+                "broker_order_id=%s reason=%s",
+                fill_event.fill_event_id, fill_event.broker_order_id, reason,
+            )
+        else:
+            # ApplyFillResult.status에 새 값이 추가됐는데 여기서 아직
+            # 분류하지 못한 경우 — 조용히 넘기지 않고 카운트/로그로 드러낸다.
+            counters.failed += 1
+            logger.error(
+                "realized PnL ledger 반영 결과가 알려지지 않은 status다: "
+                "fill_event_id=%s status=%s",
+                fill_event.fill_event_id, result.status,
+            )
 
     async def _update_last_synced_at(
         self,

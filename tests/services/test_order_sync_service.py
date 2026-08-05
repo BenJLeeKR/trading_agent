@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Sequence
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
@@ -135,17 +136,26 @@ def _make_order(
     *,
     status: OrderStatus = OrderStatus.SUBMITTED,
     client_order_id: str = "SYNC-TEST-001",
+    account_id: UUID | None = None,
+    instrument_id: UUID | None = None,
+    side: OrderSide = OrderSide.BUY,
 ) -> OrderRequestEntity:
-    """Create and persist an order with the given status."""
+    """Create and persist an order with the given status.
+
+    ``account_id``/``instrument_id``/``side``는 realized PnL ledger 훅
+    테스트처럼 같은 계좌×종목에 대해 BUY/SELL을 여러 건 만들어야 하는
+    경우를 위한 선택적 override다 — 기본값(각각 새 UUID, BUY)은 기존
+    호출부의 동작을 그대로 유지한다.
+    """
     now = datetime.now(timezone.utc)
     order = OrderRequestEntity(
         order_request_id=uuid4(),
-        account_id=uuid4(),
-        instrument_id=uuid4(),
+        account_id=account_id or uuid4(),
+        instrument_id=instrument_id or uuid4(),
         client_order_id=client_order_id,
-        idempotency_key="idem-sync-001",
-        correlation_id="corr-sync-001",
-        side=OrderSide.BUY,
+        idempotency_key=f"idem-{uuid4().hex[:8]}",
+        correlation_id=f"corr-{uuid4().hex[:8]}",
+        side=side,
         order_type=OrderType.LIMIT,
         time_in_force=TimeInForce.DAY,
         requested_price=Decimal("50000"),
@@ -7328,3 +7338,242 @@ class TestFetchKisCurrentPositionQty:
 
         assert result == Decimal("10")
         broker.get_positions.assert_awaited_once_with("test-account-ref")
+
+
+# ═════════════════════════════════════════════════════════════════════
+# Test: realized PnL ledger 반영 훅 (_sync_fills → RealizedPnlLedgerService)
+# ═════════════════════════════════════════════════════════════════════
+
+
+class _RaisingRealizedPnlLedgerService:
+    """``apply_fill()``이 항상 예외를 던지는 fake — 훅의 실패 격리 검증용."""
+
+    def __init__(self) -> None:
+        self.call_count = 0
+
+    async def apply_fill(self, fill_event: FillEventEntity) -> None:
+        self.call_count += 1
+        raise RuntimeError("simulated realized PnL ledger failure")
+
+
+def _make_fill(
+    *,
+    broker_native_order_id: str,
+    quantity: str = "5",
+    price: str = "50000",
+    broker_fill_id: str | None = "CCLD-RPNL-001",
+    fill_timestamp: datetime | None = None,
+) -> FillEvent:
+    return FillEvent(
+        broker_name=BrokerName.KOREA_INVESTMENT,
+        broker_order_id=broker_native_order_id,
+        symbol="005930",
+        side=OrderSide.BUY,
+        fill_quantity=Decimal(quantity),
+        fill_price=Decimal(price),
+        fill_timestamp=fill_timestamp or datetime.now(timezone.utc),
+        broker_fill_id=broker_fill_id,
+        fee=Decimal("0"),
+        tax=Decimal("0"),
+    )
+
+
+class TestRealizedPnlLedgerHook:
+    """``_sync_fills()``가 신규 fill 저장 직후 ``RealizedPnlLedgerService``를
+    호출하는지, 그리고 그 결과/실패가 fill 저장과 분리돼 관측 가능한지 검증한다.
+    """
+
+    async def test_new_fill_invokes_ledger_service_and_updates_state(
+        self,
+        sync_service: OrderSyncService,
+        repos: RepositoryContainer,
+    ) -> None:
+        """신규 BUY fill 저장 → ledger 훅이 호출되어 position_cost_basis_state가 갱신된다."""
+        account_id = uuid4()
+        instrument_id = uuid4()
+        order = _make_order(
+            repos, status=OrderStatus.ACKNOWLEDGED, client_order_id="RPNL-001",
+            account_id=account_id, instrument_id=instrument_id, side=OrderSide.BUY,
+        )
+        broker_order = _make_broker_order(repos, order, broker_status="acknowledged")
+        fill = _make_fill(
+            broker_native_order_id=broker_order.broker_native_order_id,
+            quantity="10", price="50000",
+        )
+        broker = _StubBroker(status=OrderStatus.PARTIALLY_FILLED, fills=[fill])
+
+        result = await sync_service.sync_order_post_submit(
+            account_ref="test-account",
+            broker=broker,  # type: ignore[arg-type]
+            broker_order_id=broker_order.broker_order_id,
+        )
+
+        assert result.fills_synced == 1  # 기존 fill dedup 카운트는 그대로 유지
+
+        state = await repos.position_cost_basis_states.get(account_id, instrument_id)
+        assert state is not None
+        assert state.quantity == Decimal("10")
+        assert state.average_cost == Decimal("50000")
+
+        runs = await repos.realized_pnl_computation_runs.list_runs()
+        assert len(runs) == 1
+        assert runs[0].status == "completed"
+        assert runs[0].fills_applied == 1
+
+    async def test_deduplicated_fill_does_not_reinvoke_ledger_service(
+        self,
+        sync_service: OrderSyncService,
+        repos: RepositoryContainer,
+    ) -> None:
+        """이미 저장된(dedup되는) fill을 다시 받으면 ledger 훅이 다시 호출되지 않는다."""
+        account_id = uuid4()
+        instrument_id = uuid4()
+        order = _make_order(
+            repos, status=OrderStatus.ACKNOWLEDGED, client_order_id="RPNL-002",
+            account_id=account_id, instrument_id=instrument_id, side=OrderSide.BUY,
+        )
+        broker_order = _make_broker_order(repos, order, broker_status="acknowledged")
+        fill = _make_fill(
+            broker_native_order_id=broker_order.broker_native_order_id,
+            quantity="10", price="50000",
+        )
+        broker = _StubBroker(status=OrderStatus.PARTIALLY_FILLED, fills=[fill])
+
+        first = await sync_service.sync_order_post_submit(
+            account_ref="test-account",
+            broker=broker,  # type: ignore[arg-type]
+            broker_order_id=broker_order.broker_order_id,
+        )
+        second = await sync_service.sync_order_post_submit(
+            account_ref="test-account",
+            broker=broker,  # type: ignore[arg-type]
+            broker_order_id=broker_order.broker_order_id,
+        )
+
+        assert first.fills_synced == 1
+        assert second.fills_synced == 0, "동일 broker_fill_id는 dedup되어야 한다"
+
+        # ledger 훅이 두 번째 호출에서 다시 불렸다면 computation_run이 2개가 된다.
+        runs = await repos.realized_pnl_computation_runs.list_runs()
+        assert len(runs) == 1, "dedup된 fill에는 ledger 훅이 다시 호출되면 안 된다"
+
+        state = await repos.position_cost_basis_states.get(account_id, instrument_id)
+        assert state.quantity == Decimal("10"), "중복 반영으로 수량이 두 번 늘면 안 된다"
+
+    async def test_recompute_required_result_is_logged_and_recorded(
+        self,
+        sync_service: OrderSyncService,
+        repos: RepositoryContainer,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """보유 수량을 초과하는 SELL fill → recompute_required로 처리되고 로그에 남는다."""
+        account_id = uuid4()
+        instrument_id = uuid4()
+
+        buy_order = _make_order(
+            repos, status=OrderStatus.ACKNOWLEDGED, client_order_id="RPNL-003-BUY",
+            account_id=account_id, instrument_id=instrument_id, side=OrderSide.BUY,
+        )
+        buy_broker_order = _make_broker_order(
+            repos, buy_order, broker_native_order_id="BRK-RPNL-003-BUY", broker_status="acknowledged",
+        )
+        buy_fill = _make_fill(
+            broker_native_order_id=buy_broker_order.broker_native_order_id,
+            quantity="5", price="50000", broker_fill_id="CCLD-RPNL-003-BUY",
+        )
+        buy_broker = _StubBroker(status=OrderStatus.PARTIALLY_FILLED, fills=[buy_fill])
+        await sync_service.sync_order_post_submit(
+            account_ref="test-account", broker=buy_broker, broker_order_id=buy_broker_order.broker_order_id,  # type: ignore[arg-type]
+        )
+
+        sell_order = _make_order(
+            repos, status=OrderStatus.ACKNOWLEDGED, client_order_id="RPNL-003-SELL",
+            account_id=account_id, instrument_id=instrument_id, side=OrderSide.SELL,
+        )
+        sell_broker_order = _make_broker_order(
+            repos, sell_order, broker_native_order_id="BRK-RPNL-003-SELL", broker_status="acknowledged",
+        )
+        oversell_fill = _make_fill(
+            broker_native_order_id=sell_broker_order.broker_native_order_id,
+            quantity="999", price="60000", broker_fill_id="CCLD-RPNL-003-SELL",
+        )
+        sell_broker = _StubBroker(status=OrderStatus.PARTIALLY_FILLED, fills=[oversell_fill])
+
+        caplog.set_level(logging.WARNING, logger="agent_trading.services.order_sync_service")
+        await sync_service.sync_order_post_submit(
+            account_ref="test-account", broker=sell_broker, broker_order_id=sell_broker_order.broker_order_id,  # type: ignore[arg-type]
+        )
+
+        pending = await repos.realized_pnl_recompute_queue.list_pending()
+        assert len(pending) == 1
+        assert pending[0].reason_code == "ledger_write_failed"
+
+        state = await repos.position_cost_basis_states.get(account_id, instrument_id)
+        assert state.recompute_required is True
+        assert state.quantity == Decimal("5"), "실패한 반영은 기존 수량을 바꾸지 않아야 한다"
+
+        assert any("recompute_required" in record.message for record in caplog.records)
+
+    async def test_ledger_exception_does_not_break_fill_persistence(
+        self,
+        sync_service: OrderSyncService,
+        repos: RepositoryContainer,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """ledger 훅에서 예외가 나도 fill 저장(및 sync_order_post_submit 자체)은 성공해야 한다."""
+        account_id = uuid4()
+        instrument_id = uuid4()
+        order = _make_order(
+            repos, status=OrderStatus.ACKNOWLEDGED, client_order_id="RPNL-004",
+            account_id=account_id, instrument_id=instrument_id, side=OrderSide.BUY,
+        )
+        broker_order = _make_broker_order(repos, order, broker_status="acknowledged")
+        fill = _make_fill(
+            broker_native_order_id=broker_order.broker_native_order_id,
+            quantity="10", price="50000",
+        )
+        broker = _StubBroker(status=OrderStatus.PARTIALLY_FILLED, fills=[fill])
+
+        fake_service = _RaisingRealizedPnlLedgerService()
+        sync_service.realized_pnl_ledger_service = fake_service  # type: ignore[assignment]
+
+        caplog.set_level(logging.ERROR, logger="agent_trading.services.order_sync_service")
+        result = await sync_service.sync_order_post_submit(
+            account_ref="test-account",
+            broker=broker,  # type: ignore[arg-type]
+            broker_order_id=broker_order.broker_order_id,
+        )
+
+        # fill 저장 자체는 ledger 훅 실패와 무관하게 성공해야 한다.
+        assert result.fills_synced == 1
+        stored_fills = await repos.fill_events.list_by_broker_order(broker_order.broker_order_id)
+        assert len(stored_fills) == 1
+
+        assert fake_service.call_count == 1
+        assert any(
+            "realized PnL ledger 반영 실패" in record.message for record in caplog.records
+        )
+
+    async def test_existing_fill_dedup_behavior_is_unaffected(
+        self,
+        sync_service: OrderSyncService,
+        repos: RepositoryContainer,
+    ) -> None:
+        """ledger 훅 추가 후에도 기존 broker_fill_id dedup 동작 자체는 그대로다."""
+        order = _make_order(repos, status=OrderStatus.ACKNOWLEDGED, client_order_id="RPNL-005")
+        broker_order = _make_broker_order(repos, order, broker_status="acknowledged")
+        fill = _make_fill(
+            broker_native_order_id=broker_order.broker_native_order_id,
+            quantity="5", price="50000", broker_fill_id="CCLD-RPNL-005",
+        )
+        broker = _StubBroker(status=OrderStatus.PARTIALLY_FILLED, fills=[fill])
+
+        r1 = await sync_service.sync_order_post_submit(
+            account_ref="test-account", broker=broker, broker_order_id=broker_order.broker_order_id,  # type: ignore[arg-type]
+        )
+        r2 = await sync_service.sync_order_post_submit(
+            account_ref="test-account", broker=broker, broker_order_id=broker_order.broker_order_id,  # type: ignore[arg-type]
+        )
+
+        assert r1.fills_synced == 1 and r1.fills_skipped == 0
+        assert r2.fills_synced == 0 and r2.fills_skipped >= 1
