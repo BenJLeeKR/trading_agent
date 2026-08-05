@@ -181,6 +181,69 @@ export interface PositionSnapshotView {
   instrument_name: string | null;
 }
 
+// ── Realized PnL ledger (design/realized_pnl_screen_spec.md) ──
+// GET /performance/realized-pnl/positions — 계좌×종목 realized PnL 종목 누계 + 현재 상태.
+export interface RealizedPnlPositionView {
+  account_id: string;
+  instrument_id: string;
+  symbol: string | null;
+  instrument_name: string | null;
+  position_quantity: number;
+  average_cost: number;
+  recompute_required: boolean;
+  recompute_reason: string | null;
+  /** all-time 누계(기간 필터 없음) — realized_pnl_daily_aggregates 전체 합산. */
+  realized_pnl_net_cumulative: number;
+  updated_at: string | null;
+}
+
+// GET /performance/realized-pnl/daily 한 행 — 일자별 aggregate.
+// buy_amount_sum/sell_amount_sum/fee_tax_sum은 UI용 파생 합계 캐시다(새 손익 계산식 아님).
+export interface RealizedPnlDailyAggregateView {
+  trade_date: string;
+  realized_pnl_net_sum: number;
+  sell_event_count: number;
+  buy_amount_sum: number;
+  sell_amount_sum: number;
+  fee_tax_sum: number;
+}
+
+export interface RealizedPnlDailyResponse {
+  account_id: string;
+  instrument_id: string;
+  start_date: string | null;
+  end_date: string | null;
+  daily: RealizedPnlDailyAggregateView[];
+}
+
+// GET /performance/realized-pnl/events 한 행 — 체결별 realized PnL event.
+export interface RealizedPnlEventView {
+  realized_pnl_event_id: string;
+  account_id: string;
+  instrument_id: string;
+  fill_event_id: string;
+  broker_order_id: string;
+  order_request_id: string;
+  sell_quantity: number;
+  sell_price: number;
+  avg_cost_basis_before: number;
+  fee: number;
+  tax: number;
+  fee_tax_source: string;
+  realized_pnl_gross: number;
+  realized_pnl_net: number;
+  position_quantity_after: number;
+  fill_timestamp: string;
+}
+
+export interface RealizedPnlEventsResponse {
+  account_id: string;
+  instrument_id: string;
+  limit: number;
+  before: string | null;
+  events: RealizedPnlEventView[];
+}
+
 export interface CashBalanceSnapshotView {
   cash_balance_snapshot_id: string;
   account_id: string;

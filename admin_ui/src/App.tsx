@@ -9,6 +9,7 @@ import OrderDetail from "./components/OrderDetail";
 import SubmissionAttemptsView from "./components/SubmissionAttemptsView";
 import ReconciliationView from "./components/ReconciliationView";
 import AccountsView from "./components/AccountsView";
+import RealizedPnlView from "./components/RealizedPnlView";
 import DecisionsView from "./components/DecisionsView";
 import AgentRunsView from "./components/AgentRunsView";
 import OperationsDashboardView from "./components/OperationsDashboardView";
@@ -56,6 +57,7 @@ export default function App() {
             <Route path="orders/:orderId/submission-attempts" element={<SubmissionAttemptsView />} />
             <Route path="reconciliation" element={<ReconciliationView />} />
             <Route path="accounts" element={<AccountsView />} />
+            <Route path="accounts/realized-pnl" element={<RealizedPnlView />} />
             <Route path="fills" element={<FillHistoryView />} />
             <Route path="decisions" element={<DecisionsView />} />
             <Route path="agent-runs" element={<AgentRunsView />} />

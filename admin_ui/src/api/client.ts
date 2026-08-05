@@ -313,6 +313,58 @@ export async function getPositions(
   );
 }
 
+// ── Realized PnL ledger (design/realized_pnl_screen_spec.md) ──
+// 계산 없이 저장된 값만 읽는 read-only endpoint 3종.
+
+/**
+ * 계좌×종목 realized PnL 종목 누계 + 현재 상태.
+ * `instrumentId`를 생략하면 계좌가 가진 모든 계좌×종목 상태를 반환한다.
+ */
+export async function getRealizedPnlPositions(
+  accountId: string,
+  instrumentId?: string
+): Promise<import("../types/api").RealizedPnlPositionView[]> {
+  const params = new URLSearchParams({ account_id: accountId });
+  if (instrumentId) params.set("instrument_id", instrumentId);
+  return request<import("../types/api").RealizedPnlPositionView[]>(
+    `/performance/realized-pnl/positions?${params.toString()}`
+  );
+}
+
+/** 일자별 realized PnL aggregate(계산 없음, 저장된 값 그대로). */
+export async function getRealizedPnlDaily(
+  accountId: string,
+  instrumentId: string,
+  options?: { startDate?: string; endDate?: string }
+): Promise<import("../types/api").RealizedPnlDailyResponse> {
+  const params = new URLSearchParams({
+    account_id: accountId,
+    instrument_id: instrumentId,
+  });
+  if (options?.startDate) params.set("start_date", options.startDate);
+  if (options?.endDate) params.set("end_date", options.endDate);
+  return request<import("../types/api").RealizedPnlDailyResponse>(
+    `/performance/realized-pnl/daily?${params.toString()}`
+  );
+}
+
+/** 체결별 realized PnL event(최신순). `before`로 커서 기반 추가 조회("더 보기"). */
+export async function getRealizedPnlEvents(
+  accountId: string,
+  instrumentId: string,
+  options?: { before?: string; limit?: number }
+): Promise<import("../types/api").RealizedPnlEventsResponse> {
+  const params = new URLSearchParams({
+    account_id: accountId,
+    instrument_id: instrumentId,
+  });
+  if (options?.before) params.set("before", options.before);
+  if (options?.limit) params.set("limit", String(options.limit));
+  return request<import("../types/api").RealizedPnlEventsResponse>(
+    `/performance/realized-pnl/events?${params.toString()}`
+  );
+}
+
 export async function getTradingUniversePreview(
   accountId: string,
   options?: {
