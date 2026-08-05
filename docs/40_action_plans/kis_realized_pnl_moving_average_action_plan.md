@@ -101,7 +101,7 @@ total += fill_price * fill_quantity * multiplier - fee - tax
 | 4 | recompute/replay 복구 서비스 + queue 처리 | **핵심 구현 완료 + 운영 경로 연결 완료**(`realized_pnl_recompute_service.py`, `scripts/run_realized_pnl_recompute_worker.py`) — 대규모 backfill CLI는 미착수 |
 | 5 | 조회 API | **구현 완료**(`src/agent_trading/api/routes/realized_pnl.py`, read-only) |
 | 5b | Admin UI 선행 백엔드 확장(daily aggregate 매수금액/매도금액/비용 합계) | **구현 완료**(`db/migrations/0055_...sql`, `realized_pnl_ledger_service.py`/`realized_pnl_recompute_service.py`/`realized_pnl.py` 응답 확장) — `design/realized_pnl_screen_spec.md`의 P0-선행 항목 |
-| 6 | 화면/문서 정리 | **Admin UI 실현손익 화면 P0 + summary endpoint + Admin UI의 summary 전환까지 구현 완료** — 요약 카드/종목별 탭의 종목 "전체" N+1은 제거됐고, 탭 A(일자별)만 여전히 `daily` N+1을 쓴다(설계상 summary가 날짜별 분해를 제공하지 않기 때문). 기존 `performance_summary.py`/`paper_performance_metrics.md` 정리는 미착수(후속) |
+| 6 | 화면/문서 정리 | **Admin UI 실현손익 화면 P0 + summary endpoint + Admin UI의 summary 전환 + `RealizedPnlView` 컴포넌트 테스트까지 구현 완료**(`admin_ui/src/__tests__/realizedPnl.test.tsx`, 10개 시나리오) — 요약 카드/종목별 탭의 종목 "전체" N+1은 제거됐고, 탭 A(일자별)만 여전히 `daily` N+1을 쓴다(설계상 summary가 날짜별 분해를 제공하지 않기 때문). 기존 `performance_summary.py`/`paper_performance_metrics.md` 정리는 미착수(후속) |
 
 ### 마이그레이션 설계 메모 — 왜 이 구성이 최소 안전선인가
 
@@ -250,6 +250,14 @@ total += fill_price * fill_quantity * multiplier - fee - tax
 - **제거된 N+1**: 이전에는 종목 "전체" 조회 시의 `daily` fan-out 결과가 요약 카드·종목별 탭·탭 A 세 곳 모두에 쓰였다. 이제 요약 카드와 종목별 탭은 `summary` 단일 호출로 대체됐고, `daily` fan-out은 탭 A 전용으로만 남았다 — 세 용도 중 두 곳에서 N+1이 제거됐다.
 - **유지한 endpoint**: `positions`(종목 후보 드롭다운, all-time 전체 종목 목록 — `summary`는 기간 파라미터가 필수라 조회 전 전체 종목 후보를 보여주는 용도로 쓸 수 없다), `daily`(탭 A), `events`(탭 C, `before`/`limit` 커서 "더 보기" 그대로).
 - UI 구조/스타일/내비게이션/로딩·빈·오류 상태 패턴은 바꾸지 않았다 — `types/api.ts`에 `RealizedPnlSummaryResponse`/`RealizedPnlSummaryInstrumentView` 타입, `api/client.ts`에 `getRealizedPnlSummary()`만 추가했다.
+
+### 이번 단계(`RealizedPnlView` 컴포넌트 테스트 추가)의 완료 기준
+
+- **판단(기존 파일에 추가할지, 전용 파일을 새로 만들지)**: **전용 파일(`admin_ui/src/__tests__/realizedPnl.test.tsx`)을 새로 만든다.** 이 저장소는 주요 화면마다 전용 테스트 파일을 두는 관례를 이미 따르고 있다(`accounts.test.tsx` ↔ `AccountsView`, `fillHistory.test.tsx` ↔ `FillHistoryView`, `orderTrackingView.test.tsx` ↔ `OrderTrackingView` 등) — `RealizedPnlView`를 다루는 기존 파일이 없어 그 관례를 그대로 따랐다.
+- 10개 시나리오: 계좌 미선택(안내문구+조회 버튼 비활성) / 종목 전체 조회 성공(요약 카드 4개, 종목별 탭, recompute 배너 노출·비노출, 행 클릭 드릴다운) / 단일 종목 조회(체결별 탭 전환, 더 보기 조건부 노출 2건) / 오류 상태(summary 실패, events 실패 — 서로 다른 에러 state로 분리됨을 확인) / 빈 상태 / 기간 프리셋.
+- 모든 API 호출은 `api/client.ts`의 `getRealizedPnlPositions`/`getRealizedPnlSummary`/`getRealizedPnlDaily`/`getRealizedPnlEvents`를 `vi.spyOn`으로 모킹했다 — 실제 네트워크 호출 없음.
+- **환경 제약(중요)**: 이 호스트의 `node`(v18.19.1)가 프로젝트 고정 버전(v20.20.2)보다 낮아 `admin-test-one`/전체 vitest 실행이 `jsdom`의 `html-encoding-sniffer → @exodus/bytes` ESM 의존성 체인에서 `ERR_REQUIRE_ESM`으로 전부 실패한다(기존 `accounts.test.tsx` 등 이미 병합된 테스트도 동일하게 실패 — 이번 변경과 무관한 호스트 환경 문제). 대체 검증으로 `docker run --rm -v admin_ui:/app node:20.20.2-slim npx vitest run ...`(프로젝트 고정 Node 버전 컨테이너)를 사용해 실제로 10/10 통과를 확인했다.
+- **부수 발견(수정하지 않음)**: 위 대체 검증 도중 이미 병합된 `accounts.test.tsx`의 `fetches clients and displays account list` 1건이 무관한 이유로 실패하는 것을 발견했다("내부 데이터베이스 계좌 메타데이터" 텍스트를 찾지 못함 — `AccountsView` 표시 문구와 테스트 기대 문구가 어긋난 것으로 보임). 이번 PR의 diff와 완전히 무관하고 `AccountsView`/`accounts.test.tsx`를 건드리지 않았으므로 고치지 않았다 — 별도 후속 과제로 남긴다.
 
 ## 10. 추가 보정사항 / 유지해야 할 원칙 / 완료 후 보고 가이드
 
