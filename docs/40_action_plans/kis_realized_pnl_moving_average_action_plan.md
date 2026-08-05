@@ -101,7 +101,7 @@ total += fill_price * fill_quantity * multiplier - fee - tax
 | 4 | recompute/replay 복구 서비스 + queue 처리 | **핵심 구현 완료 + 운영 경로 연결 완료**(`realized_pnl_recompute_service.py`, `scripts/run_realized_pnl_recompute_worker.py`) — 대규모 backfill CLI는 미착수 |
 | 5 | 조회 API | **구현 완료**(`src/agent_trading/api/routes/realized_pnl.py`, read-only) |
 | 5b | Admin UI 선행 백엔드 확장(daily aggregate 매수금액/매도금액/비용 합계) | **구현 완료**(`db/migrations/0055_...sql`, `realized_pnl_ledger_service.py`/`realized_pnl_recompute_service.py`/`realized_pnl.py` 응답 확장) — `design/realized_pnl_screen_spec.md`의 P0-선행 항목 |
-| 6 | 화면/문서 정리 | **Admin UI 실현손익 화면 P0 + summary endpoint + Admin UI의 summary 전환 + `RealizedPnlView` 컴포넌트 테스트 + recompute-queue 드릴다운까지 구현 완료**(`admin_ui/src/__tests__/realizedPnl.test.tsx`, 13개 시나리오) — 요약 카드/종목별 탭의 종목 "전체" N+1은 제거됐다. 탭 A(일자별) N+1 제거용 `daily-summary` endpoint는 **백엔드 구현 완료**, **Admin UI 전환은 미착수**(후속) — 그 전까지 탭 A는 여전히 `daily` N+1을 쓴다. 차트(P1)는 보류. 기존 `performance_summary.py`/`paper_performance_metrics.md` 정리는 미착수(후속) |
+| 6 | 화면/문서 정리 | **Admin UI 실현손익 화면 P0 + summary endpoint + Admin UI의 summary 전환 + `RealizedPnlView` 컴포넌트 테스트 + recompute-queue 드릴다운 + 탭 A(일자별)의 daily-summary 전환까지 구현 완료**(`admin_ui/src/__tests__/realizedPnl.test.tsx`, 13개 시나리오) — 요약 카드/종목별 탭/탭 A 모두 종목 "전체" N+1이 제거됐다(탭 A는 종목 전체 시 `daily-summary`, 단일 종목 시 기존 `daily`). 차트(P1)는 보류. 기존 `performance_summary.py`/`paper_performance_metrics.md` 정리는 미착수(후속) |
 
 ### 마이그레이션 설계 메모 — 왜 이 구성이 최소 안전선인가
 
@@ -279,6 +279,16 @@ total += fill_price * fill_quantity * multiplier - fee - tax
 - **범위를 넓히지 않은 부분**: `instrument_id` 파라미터는 추가하지 않았다 — 단일 종목의 일자별 조회는 기존 `/daily`가 이미 담당하고 있고, 이번 endpoint가 풀어야 하는 N+1은 "종목 전체" 경로에서만 발생하기 때문이다.
 - 테스트 4개 추가(`test_daily_summary_aggregates_across_instruments_by_date`/`test_daily_summary_date_range_filters_out_of_range_rows`/`test_daily_summary_empty_for_unknown_account`/`test_daily_summary_invalid_date_range`) — 계좌 전체 종목 날짜별 합산, 기간 필터, 빈 상태, 잘못된 날짜 범위.
 - **Admin UI 전환은 이번 단계에 포함하지 않는다** — `RealizedPnlView.tsx`의 탭 A는 여전히 종목별 `daily` fan-out을 쓴다(후속). 차트(P1)는 계속 보류.
+
+### 이번 단계(Admin UI 탭 A(일자별)를 `daily-summary`로 전환)의 완료 기준
+
+- **판단(전체만 전환 vs 단일 종목까지 통합)**: **종목 "전체"일 때만 `daily-summary`로 바꾸고, 단일 종목은 기존 `daily`를 그대로 유지했다.** `daily-summary`는 계좌 전체를 대상으로 날짜별 합계만 반환하며 종목별 분해를 제공하지 않는다 — 단일 종목 조회에는 애초에 맞는 응답 shape가 아니다. 기존 `daily`가 이미 "계좌×단일 종목" 조회에 정확히 맞는 계약이라 통합할 이유가 없고, API 계약을 바꾸지 않은 채 화면 쪽 분기만 추가하는 것이 가장 단순하다.
+- `RealizedPnlView.tsx`의 `handleQuery()`에서 `dailyPromise`를 `instrumentId` 유무로 분기한다: 있으면 `getRealizedPnlDaily(accountId, instrumentId, {...})`, 없으면 `getRealizedPnlDailySummary(accountId, {...})`. 종목 "전체"에서 `instrumentOptions`를 순회하며 종목마다 `daily`를 호출하던 fan-out(`Promise.all(targetInstruments.map(...))`)은 완전히 제거했다.
+- 탭 A 전용 상태를 `dailyByInstrument: Record<instrument_id, rows[]>` + `useMemo`로 날짜별 재합산하던 구조에서 `dailyRows: RealizedPnlDailyAggregateView[]` 단일 state로 단순화했다 — 두 endpoint 모두 이미 날짜별로 정렬된 합계 행을 반환하므로 프런트에서 다시 합산/재그룹할 필요가 없어졌다(`DailyTotals`/`emptyTotals`/`addTotals`/`DailyRow` 헬퍼 전부 삭제). N+1 제거가 코드 단순화로도 드러난다.
+- 탭 A의 컬럼/표시 방식은 그대로 유지했다 — `dailyColumns`는 필드명이 동일한 `RealizedPnlDailyAggregateView`를 그대로 쓴다.
+- 요약 카드/종목별 탭/체결별 탭/recompute-queue 드릴다운은 변경하지 않았다. 차트는 계속 보류.
+- `types/api.ts`에 `RealizedPnlDailySummaryResponse` 타입, `api/client.ts`에 `getRealizedPnlDailySummary()` 헬퍼를 추가했다(둘 다 최소 추가).
+- `realizedPnl.test.tsx`의 기존 "종목 전체" 계열 시나리오(요약 카드/종목별 탭 렌더링, recompute 배너, 행 클릭 드릴다운, recompute-queue 드릴다운 3건, 오류 상태 1건, 빈 상태, 기간 프리셋)를 `getRealizedPnlDailySummary` mock으로 갱신하고, 각각에 `expect(getRealizedPnlDaily).not.toHaveBeenCalled()` 검증을 추가해 N+1이 실제로 제거됐음을 테스트로 고정했다. "단일 종목 조회"/"오류 상태"(events 실패) 시나리오는 기존 `getRealizedPnlDaily` mock을 그대로 유지했다(변경 없음).
 
 ## 10. 추가 보정사항 / 유지해야 할 원칙 / 완료 후 보고 가이드
 
