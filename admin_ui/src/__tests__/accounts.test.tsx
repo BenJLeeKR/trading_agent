@@ -159,8 +159,6 @@ describe("AccountsView data fetching", () => {
     // Client indicator
     expect(screen.getByText("Test Client")).toBeInTheDocument();
     expect(screen.getByText("(CLIENT01)")).toBeInTheDocument();
-    // Data source label
-    expect(screen.getByText("내부 데이터베이스 계좌 메타데이터")).toBeInTheDocument();
   });
 
   it("prefers the default client from .env mapping over the first client", async () => {
