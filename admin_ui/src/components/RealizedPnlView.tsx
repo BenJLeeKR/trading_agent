@@ -7,6 +7,7 @@ import type {
   RealizedPnlEventView,
   RealizedPnlSummaryResponse,
   RealizedPnlSummaryInstrumentView,
+  RealizedPnlRecomputeQueueItemView,
 } from "../types/api";
 import {
   getClients,
@@ -16,6 +17,7 @@ import {
   getRealizedPnlDaily,
   getRealizedPnlEvents,
   getRealizedPnlSummary,
+  getRealizedPnlRecomputeQueue,
 } from "../api/client";
 import { DataTable } from "./common/DataTable";
 import type { Column } from "./common/DataTable";
@@ -173,6 +175,12 @@ export default function RealizedPnlView() {
   const [eventsHasMore, setEventsHasMore] = useState(false);
   const [eventsError, setEventsError] = useState<string | null>(null);
 
+  // ── 재계산 대기 배너 드릴다운 — "상세 보기" 클릭 시에만 조회(불필요한 호출 회피).
+  const [recomputeQueueExpanded, setRecomputeQueueExpanded] = useState(false);
+  const [recomputeQueueLoading, setRecomputeQueueLoading] = useState(false);
+  const [recomputeQueueError, setRecomputeQueueError] = useState<string | null>(null);
+  const [recomputeQueueItems, setRecomputeQueueItems] = useState<RealizedPnlRecomputeQueueItemView[] | null>(null);
+
   const selectedAccount = useMemo(
     () => accounts.find((a) => a.account_id === accountId) ?? null,
     [accounts, accountId]
@@ -195,6 +203,26 @@ export default function RealizedPnlView() {
     }
   }
 
+  async function toggleRecomputeQueue() {
+    if (recomputeQueueExpanded) {
+      setRecomputeQueueExpanded(false);
+      return;
+    }
+    setRecomputeQueueExpanded(true);
+    setRecomputeQueueLoading(true);
+    setRecomputeQueueError(null);
+    try {
+      const res = await getRealizedPnlRecomputeQueue(accountId, {
+        instrumentId: instrumentId || undefined,
+      });
+      setRecomputeQueueItems(res.items);
+    } catch (err: unknown) {
+      setRecomputeQueueError(err instanceof Error ? err.message : "재계산 대기 목록을 불러오지 못했습니다");
+    } finally {
+      setRecomputeQueueLoading(false);
+    }
+  }
+
   async function handleQuery() {
     if (!accountId) return;
     setQueryLoading(true);
@@ -202,6 +230,9 @@ export default function RealizedPnlView() {
     setHasQueried(true);
     setEvents([]);
     setEventsHasMore(false);
+    setRecomputeQueueExpanded(false);
+    setRecomputeQueueItems(null);
+    setRecomputeQueueError(null);
 
     try {
       // 요약 카드 + 종목별 탭 + recompute 배지는 계좌 전체든 단일 종목이든
@@ -306,6 +337,22 @@ export default function RealizedPnlView() {
       header: "실현손익(순)",
       align: "right",
       render: (r) => <span className={pnlClass(r.realized_pnl_net)}>{formatSignedKrw(r.realized_pnl_net)}</span>,
+    },
+  ];
+
+  function resolveInstrumentLabel(iid: string): string {
+    const p = instrumentOptions.find((o) => o.instrument_id === iid);
+    if (!p) return iid;
+    return [p.symbol, p.instrument_name].filter(Boolean).join(" · ") || iid;
+  }
+
+  const recomputeQueueColumns: Column<RealizedPnlRecomputeQueueItemView>[] = [
+    { key: "instrument_id", header: "종목", render: (r) => resolveInstrumentLabel(r.instrument_id) },
+    { key: "reason_code", header: "사유", render: (r) => r.reason_code },
+    {
+      key: "requested_at",
+      header: "큐 등록 시각",
+      render: (r) => (r.requested_at ? formatKstDateTime(r.requested_at) : "—"),
     },
   ];
 
@@ -453,11 +500,37 @@ export default function RealizedPnlView() {
               </div>
 
               {(summaryData?.recompute_pending_count ?? 0) > 0 && (
-                <WarningBanner
-                  variant="warning"
-                  title={`재계산 대기중 — ${summaryData?.recompute_pending_count}개 종목`}
-                  message="이 종목들의 실현손익 값은 재계산 대기 중이라 변경될 수 있습니다."
-                />
+                <div className="space-y-2">
+                  <WarningBanner
+                    variant="warning"
+                    title={`재계산 대기중 — ${summaryData?.recompute_pending_count}개 종목`}
+                    message="이 종목들의 실현손익 값은 재계산 대기 중이라 변경될 수 있습니다."
+                  />
+                  <button
+                    type="button"
+                    onClick={toggleRecomputeQueue}
+                    className="h-8 px-3 rounded border border-[#fbbf24] text-xs font-medium text-[#92400e] hover:bg-[#fef3c7] transition-colors"
+                  >
+                    {recomputeQueueExpanded ? "닫기" : "상세 보기"}
+                  </button>
+
+                  {recomputeQueueExpanded && (
+                    <>
+                      {recomputeQueueError && (
+                        <ErrorBanner message={recomputeQueueError} onDismiss={() => setRecomputeQueueError(null)} />
+                      )}
+                      {!recomputeQueueError && (
+                        <DataTable
+                          columns={recomputeQueueColumns}
+                          data={recomputeQueueItems ?? []}
+                          idKey="recompute_queue_id"
+                          isLoading={recomputeQueueLoading}
+                          emptyMessage="재계산 대기 항목이 없습니다."
+                        />
+                      )}
+                    </>
+                  )}
+                </div>
               )}
 
               {/* 3. 탭 구조 */}
