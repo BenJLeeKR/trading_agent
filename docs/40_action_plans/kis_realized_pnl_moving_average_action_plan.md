@@ -62,13 +62,14 @@ total += fill_price * fill_quantity * multiplier - fee - tax
   - idempotency 한계: SELL은 `fill_event_id` UNIQUE 조회로 완전 방어, BUY는 "가장 최근 적용 fill과의 일치"만 방어(상세 설계 문서 6절). 이 한계는 훅 연결 이후에도 그대로 유지된다.
 - 검증 명령: `bash scripts/harness/run.sh accept backend-runtime`, 모킹된 broker 기반 통합 테스트.
 
-### 4단계 — 백필(backfill) / recompute 복구 — 핵심 replay는 구현 완료, 대규모 backfill CLI는 미착수
+### 4단계 — 백필(backfill) / recompute 복구 — 핵심 replay 및 운영 경로 연결 완료, 대규모 backfill CLI는 미착수
 
 - 왜: 이동평균은 계좌×종목별 전체 히스토리를 시간순으로 처음부터 replay해야 정확하므로(중간 지점 재계산 불가), 과거분 재계산은 신규 체결 반영과 독립된 별도 작업으로 분리한다.
 - 산출물: `realized_pnl_computation_runs(run_type='backfill_replay')` 단위 계좌×종목 replay.
   - **구현 완료**: [`src/agent_trading/services/realized_pnl_recompute_service.py`](../../src/agent_trading/services/realized_pnl_recompute_service.py)의 `RealizedPnlRecomputeService`. `recompute_account_instrument(account_id, instrument_id)`가 해당 계좌×종목의 fill 히스토리를 정렬해 `replay_fills()`로 재계산하고 저장소에 반영하며, `process_pending_queue()`가 `realized_pnl_recompute_queue` pending 항목을 계좌×종목 단위로 coalesce해 이를 반복 호출한다(단위 테스트: [`tests/services/test_realized_pnl_recompute_service.py`](../../tests/services/test_realized_pnl_recompute_service.py)).
-  - **미착수**: `process_pending_queue()`를 주기적으로 부르는 스케줄러 연결, "전체 계좌×종목을 처음부터 순회하는" 대규모 backfill CLI(현재는 이미 `recompute_queue`에 등록된 대상만 처리한다).
-- 검증 명령: 소수 계좌 dry-run → 사용자 승인 → 전체 실행. 실제 DB에 대한 배치 실행 자체는 `AGENTS.md` 검증 부하 제한에 따라 **사용자 명시 승인 필요**(이번 PR은 in-memory repository 테스트로만 검증했다).
+  - **운영 경로 연결도 완료**: [`scripts/run_realized_pnl_recompute_worker.py`](../../scripts/run_realized_pnl_recompute_worker.py)가 `process_pending_queue()`를 주기 호출하는 독립 장기 실행 워커다(`reconciliation-worker`와 동일한 패턴, `docker-compose.yml`의 `realized-pnl-recompute-worker` 서비스로 배포). 계산/replay 로직 자체는 이 연결 작업에서 수정하지 않았다(단위 테스트: [`tests/scripts/test_run_realized_pnl_recompute_worker.py`](../../tests/scripts/test_run_realized_pnl_recompute_worker.py)).
+  - **미착수**: "전체 계좌×종목을 처음부터 순회하는" 대규모 backfill CLI(현재는 이미 `recompute_queue`에 등록된 대상만 처리한다), API, Admin UI.
+- 검증 명령: 소수 계좌 dry-run → 사용자 승인 → 전체 실행. 실제 DB에 대한 배치 실행 자체는 `AGENTS.md` 검증 부하 제한에 따라 **사용자 명시 승인 필요**(recompute 서비스 자체 및 워커 연결 모두 in-memory repository/모킹 테스트로만 검증했다).
 
 ### 5단계 — 조회 API — 후속 확장
 
@@ -90,7 +91,7 @@ total += fill_price * fill_quantity * multiplier - fee - tax
 | 1 | 계산 엔진 + 단위 테스트 | **구현 완료**(`realized_pnl_engine.py`, 저장소 미연결) |
 | 2 | 신규 마이그레이션(초안)/엔티티/repository | **마이그레이션 초안만 작성 완료**(0053/0054, 미실행) — entity/repository는 미착수 |
 | 3 | 실시간 반영 훅 + 복구 계약 | **구현 완료**(`realized_pnl_ledger_service.py` + `order_sync_service._sync_fills()` 훅 연결) |
-| 4 | recompute/replay 복구 서비스 + queue 처리 | **핵심 구현 완료**(`realized_pnl_recompute_service.py`) — 스케줄러 연결/대규모 backfill CLI는 미착수 |
+| 4 | recompute/replay 복구 서비스 + queue 처리 | **핵심 구현 완료 + 운영 경로 연결 완료**(`realized_pnl_recompute_service.py`, `scripts/run_realized_pnl_recompute_worker.py`) — 대규모 backfill CLI는 미착수 |
 | 5 | 조회 API | 미착수(후속) |
 | 6 | 화면/문서 정리 | 미착수(후속) |
 
@@ -187,6 +188,16 @@ total += fill_price * fill_quantity * multiplier - fee - tax
 - `tests/services/test_realized_pnl_recompute_service.py`가 정렬 후 replay, out-of-order 상태 해제, queue 부분 resolve(다른 계좌×종목은 그대로 유지), coalesce, collect 단계 실패 시 관측, idempotent 재실행, daily aggregate 절대값 재구성을 in-memory repository 기반으로 커버한다.
 - `RealizedPnlEventRepository.upsert()`(recompute 전용, 실시간 경로는 여전히 `add()`만 사용)를 최소 범위로 추가했다 — 이는 "정정은 UPDATE/DELETE 없이 supersede 행 append로"라는 당초 설계를 재검토하게 만든 실제 구현상의 발견이며, 상세 설계 문서 7.3절에 그 경위를 반영했다.
 - 스케줄러 연결, 대규모 backfill CLI, API, Admin UI, `performance_summary.py` 교체는 이번 단계에 포함하지 않는다.
+
+### 이번 단계(4단계 후속 — recompute 운영 경로 연결)의 완료 기준
+
+- recompute/replay 계산 로직(`RealizedPnlRecomputeService`, `realized_pnl_engine.replay_fills()`) 자체는 재구현하지 않는다 — 이번 단계는 그 서비스를 실제로 호출하는 운영 경로를 연결하는 것으로 한정한다.
+- `scripts/run_realized_pnl_recompute_worker.py`: `reconciliation-worker`와 동일한 "독립 장기 실행 워커가 자체 polling 루프로 pending 큐를 소비" 패턴을 따른다(선택 근거: recompute는 거래 시간대에 종속되지 않는 데이터 품질 유지보수 작업이라 `run_ops_scheduler.py`의 거래시간대 종속 subprocess-cadence 태스크와 성격이 다르고, 이미 같은 문제(pending 큐 소비)를 검증된 형태로 풀고 있는 `reconciliation-worker` 패턴을 복제하는 쪽이 4000줄 규모의 `run_ops_scheduler.py`에 새 태스크를 끼워넣는 것보다 회귀 위험이 낮다).
+- 매 사이클 `RealizedPnlRecomputeService.process_pending_queue(limit=...)`를 1회 호출한다(기본 limit=100, `REALIZED_PNL_RECOMPUTE_WORKER_QUEUE_LIMIT`로 조정). 계좌×종목 단위 실패는 서비스 자체가 흡수해 격리하므로(`recompute_account_instrument()`가 예외를 삼켜 `status="failed"` run으로 기록) 한 계좌×종목의 실패가 워커 전체 사이클을 중단시키지 않는다.
+- 사이클마다 `recompute_processed_count`/`recompute_completed_count`/`recompute_failed_count`/`recompute_queue_resolved_count`를 구조화 로그로 남기고, 실패한 계좌×종목은 `account_id`/`instrument_id`/`computation_run_id`/실패 사유(summary)를 `WARNING` 레벨로 별도 기록한다 — "조용히 돌아가는 배치"가 되지 않도록 한다.
+- `docker-compose.yml`에 `realized-pnl-recompute-worker` 서비스를 `reconciliation-worker`와 동일한 형태(빌드/네트워크/재시작 정책)로 추가했다. 기본 interval은 300초(신규 fill 반영 경로인 `post_submit`의 30초보다 여유 있게, 관측 전용 백필 경로인 `fill_sync`의 600초보다는 조금 짧게 설정 — recompute는 out-of-order 등으로 잘못된 상태가 노출되는 시간을 줄이는 목적이 있어 완전히 후순위로 두지 않았다).
+- `tests/scripts/test_run_realized_pnl_recompute_worker.py`가 (1) 워커가 실제로 `process_pending_queue()`를 호출하는지, (2) pending 없음 케이스, (3) 성공/실패 혼재 시 집계, (4) `limit` 전달, (5) 실패 로그 기록을 모킹된 서비스 기준으로 커버한다.
+- 대규모 backfill CLI, API, Admin UI는 이번 단계에 포함하지 않는다. **Admin UI 단계로 넘어가기 직전에는 별도로 사용자에게 알린다.**
 
 ## 10. 추가 보정사항 / 유지해야 할 원칙 / 완료 후 보고 가이드
 

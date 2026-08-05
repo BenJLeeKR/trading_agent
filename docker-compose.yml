@@ -481,6 +481,47 @@ services:
     networks:
       - shared_net  # 추가됨
 
+  # ---- Realized PnL Recompute Worker ---------------------------------------
+  # Long-lived worker that consumes realized_pnl_recompute_queue pending
+  # items (out-of-order fill 등으로 recompute_required=True가 된 계좌×종목).
+  # 계산/replay 로직은 새로 만들지 않고 이미 구현된
+  # RealizedPnlRecomputeService.process_pending_queue()를 그대로 호출한다
+  # (docs/00_foundational_design/detailed_design/12_realized_pnl_moving_average_ledger.md 참고).
+  realized-pnl-recompute-worker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: agent_trading-app:latest
+    container_name: agent_trading-realized-pnl-recompute-worker
+    command: ["python3", "/app/scripts/run_realized_pnl_recompute_worker.py"]
+    restart: unless-stopped
+#    depends_on:
+#      db:
+#        condition: service_healthy
+    environment:
+      TZ: "Asia/Seoul"
+      PYTHONPATH: "/app/src:/app/scripts"
+      DATABASE_URL: "postgresql://${DATABASE_USER:-trading}:${DATABASE_PASSWORD:-trading}@trading_db:5432/${DATABASE_NAME:-trading}"
+      DATABASE_HOST: "trading_db"
+      DATABASE_PORT: "5432"
+      DATABASE_NAME: "${DATABASE_NAME:-trading}"
+      DATABASE_USER: "${DATABASE_USER:-trading}"
+      DATABASE_PASSWORD: "${DATABASE_PASSWORD:-trading}"
+      DATABASE_SCHEMA: "${DATABASE_SCHEMA:-trading}"
+      # Worker Specific
+      REALIZED_PNL_RECOMPUTE_WORKER_INTERVAL_SECONDS: "${REALIZED_PNL_RECOMPUTE_WORKER_INTERVAL_SECONDS:-300}"
+      REALIZED_PNL_RECOMPUTE_WORKER_QUEUE_LIMIT: "${REALIZED_PNL_RECOMPUTE_WORKER_QUEUE_LIMIT:-100}"
+    volumes:
+      - ./scripts:/app/scripts
+      - ./src:/app/src
+    cap_add:
+      - NET_ADMIN
+    security_opt:
+      - seccomp:unconfined
+      - apparmor:unconfined
+    networks:
+      - shared_net  # 추가됨
+
 # 파일 최하단에 네트워크 추가
 networks:
   shared_net:
