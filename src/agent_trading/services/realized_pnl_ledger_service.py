@@ -459,6 +459,17 @@ class RealizedPnlLedgerService:
         existing = existing_rows[0] if existing_rows else None
         new_sum = (existing.realized_pnl_net_sum if existing else Decimal("0")) + event.realized_pnl_net
         new_count = (existing.sell_event_count if existing else 0) + 1
+        # UI용 파생 합계 캐시(도메인 계산 아님, entities.py RealizedPnlDailyAggregateEntity
+        # docstring 참고) — 새 이벤트분만 기존 합계에 더한다(증분).
+        new_buy_amount_sum = (
+            existing.buy_amount_sum if existing else Decimal("0")
+        ) + event.sell_quantity * event.avg_cost_basis_before
+        new_sell_amount_sum = (
+            existing.sell_amount_sum if existing else Decimal("0")
+        ) + event.sell_quantity * event.sell_price
+        new_fee_tax_sum = (
+            existing.fee_tax_sum if existing else Decimal("0")
+        ) + event.fee + event.tax
         aggregate = RealizedPnlDailyAggregateEntity(
             account_id=event.account_id,
             instrument_id=event.instrument_id,
@@ -466,6 +477,9 @@ class RealizedPnlLedgerService:
             realized_pnl_net_sum=new_sum,
             sell_event_count=new_count,
             computation_run_id=event.computation_run_id,
+            buy_amount_sum=new_buy_amount_sum,
+            sell_amount_sum=new_sell_amount_sum,
+            fee_tax_sum=new_fee_tax_sum,
         )
         return await self._repos.realized_pnl_daily_aggregates.upsert(aggregate)
 

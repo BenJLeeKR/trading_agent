@@ -187,11 +187,13 @@ HTS 실현손익 화면의 전형적인 1차 화면 — "계좌 전체, 이번 �
 
 ## 구현 범위
 
-### P0-선행 (프런트 P0와 병행 또는 그보다 먼저 — 백엔드)
+### P0-선행 (프런트 P0와 병행 또는 그보다 먼저 — 백엔드) — **구현 완료**
 
-- `realized_pnl_daily_aggregates`에 매수금액/매도금액/비용 합계 컬럼 추가(신규 migration) + 계산 엔진 반영(`RealizedPnlLedgerService`의 실시간 갱신 경로, `RealizedPnlRecomputeService._rebuild_daily_aggregates`).
-- **이 항목을 P1에서 끌어올린 이유**: 종목 선택 기본값이 "전체"라 이 화면은 열릴 때마다 기본으로 "종목 수 × `events` 전량 페이지네이션" 경로를 탄다 — 드문 경로의 최적화가 아니라 기본 경로의 비용 문제다. 백엔드 컬럼 추가 없이 프런트만 먼저 배포하면, **모든 방문자가 기본 상태에서 매번 무거운 조회를 겪는다.**
-- 이 작업이 끝나면 탭 A/B는 `daily` 호출만으로 완성되고, 아래 P0의 "events 전량 페이지네이션" 항목은 필요 없어진다.
+- ~~`realized_pnl_daily_aggregates`에 매수금액/매도금액/비용 합계 컬럼 추가(신규 migration) + 계산 엔진 반영~~ → 완료. `db/migrations/0055_add_realized_pnl_daily_aggregate_amount_sums.sql`로 `buy_amount_sum`/`sell_amount_sum`/`fee_tax_sum` 3개 컬럼을 추가했고, `RealizedPnlLedgerService._update_daily_aggregate()`(실시간 증분)와 `RealizedPnlRecomputeService._rebuild_daily_aggregates()`(절대값 재구성) 양쪽에서 채운다. `GET /performance/realized-pnl/daily` 응답에도 그대로 노출된다. 상세 근거는 [`12_realized_pnl_moving_average_ledger.md`](../docs/00_foundational_design/detailed_design/12_realized_pnl_moving_average_ledger.md) 4.3절과 [`kis_realized_pnl_moving_average_action_plan.md`](../docs/40_action_plans/kis_realized_pnl_moving_average_action_plan.md)의 "5b단계" 참고.
+- **이 항목을 P1에서 끌어올린 이유**(그대로 유지): 종목 선택 기본값이 "전체"라 이 화면은 열릴 때마다 기본으로 "종목 수 × `events` 전량 페이지네이션" 경로를 탄다 — 드문 경로의 최적화가 아니라 기본 경로의 비용 문제였다.
+- 이제 탭 A/B는 `daily` 호출만으로 완성 가능하다 — 아래 P0의 "events 전량 페이지네이션" 임시 조치 항목은 더 이상 필요 없다(프런트 구현 시 `daily` 응답의 새 필드를 그대로 쓰면 된다).
+- **주의**: 0055 migration 시점 이전에 쌓인 과거 데이터는 recompute를 거치기 전까지 새 3개 필드가 0으로 보일 수 있다 — 프런트 구현 시 이 값이 "실제로 0"인지 "아직 recompute 전"인지 구분할 필요가 있으면 `recompute_required` 배지(이미 있음)를 함께 참고하도록 안내한다.
+- `positions`(all-time 종목 누계) endpoint는 이번 확장에 포함하지 않았다 — 화면에서 매수금액/매도금액/비용은 항상 기간 필터가 있는 요약/탭 A/탭 B에서만 쓰이기 때문이다.
 
 ### P0 (이번 화면의 최소 완성 기준 — 프런트)
 
