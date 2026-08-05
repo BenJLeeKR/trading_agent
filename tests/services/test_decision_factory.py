@@ -251,6 +251,84 @@ def test_build_trade_decision_entity_stores_candidate_vs_final_downgraded() -> N
     assert entity.decision_json["deterministic_trigger"]["eligibility_reasons"] == []
 
 
+def test_build_trade_decision_entity_uses_deterministic_fallback_when_summary_empty() -> None:
+    trigger = DeterministicTriggerAssessment(
+        trigger_version="deterministic_trigger_v1",
+        primary_candidate="WATCH",
+        candidate_set=("WATCH",),
+        watch_candidate=True,
+        buy_candidate=False,
+        sell_candidate=False,
+        reduce_candidate=False,
+        candidate_confidence=0.55,
+        entry_score=0.55,
+        exit_score=0.10,
+        watch_score=0.55,
+        reason_codes=("trigger_watch_candidate",),
+        thresholds={"watch_candidate_threshold": 0.45},
+        metadata={},
+    )
+    entity = build_trade_decision_entity(
+        decision_context_id=uuid4(),
+        request=_make_request(),
+        assembled_context=_make_context(trigger),
+        agent_bundle=AgentExecutionBundle(
+            composer_output=FinalDecisionComposerOutput(
+                decision_type="HOLD",
+                side="",
+                confidence=0.4,
+                summary="",
+            ),
+            ai_inputs=AIDecisionInputs(
+                no_material_events=True,
+                detected_event_count=0,
+            ),
+        ),
+    )
+
+    assert entity is not None
+    assert entity.rationale_summary is not None
+    assert entity.rationale_summary.startswith("[결정론적 코멘트]")
+    assert "WATCH" in entity.rationale_summary
+    assert "suppressed" in entity.rationale_summary
+    assert "최신 관련 이벤트 없음" in entity.rationale_summary
+
+
+def test_build_trade_decision_entity_keeps_ai_summary_when_present() -> None:
+    trigger = DeterministicTriggerAssessment(
+        trigger_version="deterministic_trigger_v1",
+        primary_candidate="BUY_CANDIDATE",
+        candidate_set=("BUY_CANDIDATE",),
+        watch_candidate=False,
+        buy_candidate=True,
+        sell_candidate=False,
+        reduce_candidate=False,
+        candidate_confidence=0.82,
+        entry_score=0.82,
+        exit_score=0.14,
+        watch_score=0.2,
+        reason_codes=("trigger_buy_candidate",),
+        thresholds={"buy_candidate_threshold": 0.65},
+        metadata={},
+    )
+    entity = build_trade_decision_entity(
+        decision_context_id=uuid4(),
+        request=_make_request(),
+        assembled_context=_make_context(trigger),
+        agent_bundle=AgentExecutionBundle(
+            composer_output=FinalDecisionComposerOutput(
+                decision_type="BUY",
+                side="BUY",
+                confidence=0.9,
+                summary="AI가 작성한 매수 근거 요약입니다.",
+            ),
+        ),
+    )
+
+    assert entity is not None
+    assert entity.rationale_summary == "AI가 작성한 매수 근거 요약입니다."
+
+
 def test_build_trade_decision_entity_stores_ai_call_path_skip_metadata() -> None:
     trigger = DeterministicTriggerAssessment(
         trigger_version="deterministic_trigger_v1",

@@ -33,6 +33,7 @@ from agent_trading.services.common_types import (
     dataclass_to_dict,  # noqa: F401  (moved from decision_orchestrator in Phase 4 Subtask 3/5)
 )
 from agent_trading.services.common_types import AgentExecutionBundle
+from agent_trading.services.common_types import AIDecisionInputs
 from agent_trading.services.holding_profile_policy import (
     derive_holding_profile_policy,
     serialize_holding_profile_policy,
@@ -184,7 +185,12 @@ def build_trade_decision_entity(
         calculation_version="decision_orchestrator.v1",
         agent_version_json=dict(ai_inputs.schema_versions),
         rationale_summary=validate_or_normalize_korean(
-            composer_output.summary or None
+            composer_output.summary
+            or _build_deterministic_fallback_summary(
+                candidate_vs_final=candidate_vs_final,
+                ai_inputs=ai_inputs,
+                decision_type=composer_output.decision_type,
+            )
         ),
         decision_json={
             "decision_type": composer_output.decision_type,
@@ -449,6 +455,41 @@ def build_trade_decision_entity(
         },
     )
     return decision
+
+
+def _build_deterministic_fallback_summary(
+    *,
+    candidate_vs_final: dict[str, object] | None,
+    ai_inputs: AIDecisionInputs,
+    decision_type: str,
+) -> str:
+    """AI 응답의 ``summary``가 비어 있을 때 쓰는 결정론적 대체 코멘트.
+
+    LLM을 다시 호출하지 않고, 이미 계산된 candidate_vs_final/ai_inputs 값만으로
+    한 줄을 조립한다. 접두어로 AI 생성 요약과 구분한다.
+    """
+    parts: list[str] = []
+    if candidate_vs_final is not None:
+        primary_candidate = candidate_vs_final.get("primary_candidate")
+        alignment_status = candidate_vs_final.get("alignment_status")
+        if primary_candidate and alignment_status == "matched":
+            parts.append(f"{primary_candidate} 후보와 최종 판단({decision_type}) 일치")
+        elif primary_candidate and alignment_status in {"suppressed", "downgraded"}:
+            parts.append(f"{primary_candidate} 후보에서 {decision_type}로 {alignment_status}")
+        elif primary_candidate:
+            parts.append(f"{primary_candidate} 후보 → 최종 {decision_type}")
+    if not parts:
+        parts.append(f"최종 판단: {decision_type}")
+
+    if ai_inputs.no_material_events:
+        parts.append("최신 관련 이벤트 없음")
+    elif ai_inputs.detected_event_count:
+        parts.append(f"이벤트 {ai_inputs.detected_event_count}건 감지")
+
+    if not ai_inputs.expected_value_gate_passed and ai_inputs.expected_value_gate_reason_codes:
+        parts.append("EV 게이트 미달")
+
+    return "[결정론적 코멘트] " + ", ".join(parts)
 
 
 def _build_candidate_vs_final_summary(
