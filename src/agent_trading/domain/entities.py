@@ -512,6 +512,17 @@ class RealizedPnlDailyAggregateEntity:
     ``trading.realized_pnl_daily_aggregates``에 대응한다. PK는
     ``(account_id, instrument_id, trade_date)``다. ``realized_pnl_events``에서
     언제든 재생성 가능한 파생 데이터이며 진실의 원천이 아니다.
+
+    ``buy_amount_sum``/``sell_amount_sum``/``fee_tax_sum``은 Admin UI
+    실현손익 화면(design/realized_pnl_screen_spec.md)을 위한 **UI용 파생
+    합계 캐시**다 — 새로운 손익 계산식이 아니라 ``realized_pnl_events``의
+    기존 필드(``sell_quantity``/``sell_price``/``avg_cost_basis_before``/
+    ``fee``/``tax``)를 그대로 합산한 값이다.
+
+    - ``buy_amount_sum``  = Σ(sell_quantity × avg_cost_basis_before) — 그
+      매도분의 원가 총액(이동평균법 기준).
+    - ``sell_amount_sum`` = Σ(sell_quantity × sell_price).
+    - ``fee_tax_sum``     = Σ(fee + tax).
     """
 
     account_id: UUID
@@ -520,6 +531,9 @@ class RealizedPnlDailyAggregateEntity:
     realized_pnl_net_sum: Decimal
     sell_event_count: int
     computation_run_id: UUID
+    buy_amount_sum: Decimal = Decimal("0")
+    sell_amount_sum: Decimal = Decimal("0")
+    fee_tax_sum: Decimal = Decimal("0")
     updated_at: datetime | None = None
 
 

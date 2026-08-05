@@ -29,12 +29,16 @@ class PostgresRealizedPnlDailyAggregateRepository:
             """
             INSERT INTO trading.realized_pnl_daily_aggregates
                 (account_id, instrument_id, trade_date,
-                 realized_pnl_net_sum, sell_event_count, computation_run_id, updated_at)
-            VALUES ($1, $2, $3, $4, $5, $6, NOW())
+                 realized_pnl_net_sum, sell_event_count, computation_run_id,
+                 buy_amount_sum, sell_amount_sum, fee_tax_sum, updated_at)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW())
             ON CONFLICT (account_id, instrument_id, trade_date) DO UPDATE SET
                 realized_pnl_net_sum = EXCLUDED.realized_pnl_net_sum,
                 sell_event_count = EXCLUDED.sell_event_count,
                 computation_run_id = EXCLUDED.computation_run_id,
+                buy_amount_sum = EXCLUDED.buy_amount_sum,
+                sell_amount_sum = EXCLUDED.sell_amount_sum,
+                fee_tax_sum = EXCLUDED.fee_tax_sum,
                 updated_at = NOW()
             RETURNING *
             """,
@@ -44,6 +48,9 @@ class PostgresRealizedPnlDailyAggregateRepository:
             aggregate.realized_pnl_net_sum,
             aggregate.sell_event_count,
             aggregate.computation_run_id,
+            aggregate.buy_amount_sum,
+            aggregate.sell_amount_sum,
+            aggregate.fee_tax_sum,
         )
         return row_to_entity(row, RealizedPnlDailyAggregateEntity)
 

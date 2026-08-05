@@ -196,6 +196,7 @@ async def test_recompute_replays_multiple_fills_in_correct_order(
     sell_fill = await _seed_order_and_fill(
         repos, account_id=account_id, instrument_id=instrument_id, side=OrderSide.SELL,
         quantity=Decimal("4"), price=Decimal("150"),
+        fill_fee=Decimal("3"), fill_tax=Decimal("2"),
         fill_timestamp=_BASE_TS + timedelta(seconds=1),
     )
     buy_fill = await _seed_order_and_fill(
@@ -226,6 +227,11 @@ async def test_recompute_replays_multiple_fills_in_correct_order(
     assert len(aggregates) == 1
     assert aggregates[0].realized_pnl_net_sum == Decimal("200")
     assert aggregates[0].sell_event_count == 1
+    # UI용 파생 합계 캐시(entities.py RealizedPnlDailyAggregateEntity 참고) —
+    # 절대값 재구성이라 events 전체에서 다시 합산된다.
+    assert aggregates[0].buy_amount_sum == Decimal("400")  # 4*100
+    assert aggregates[0].sell_amount_sum == Decimal("600")  # 4*150
+    assert aggregates[0].fee_tax_sum == Decimal("5")  # 3+2
 
 
 # ======================================================================
@@ -442,6 +448,8 @@ async def test_recompute_overwrites_phantom_daily_aggregate(
         RealizedPnlDailyAggregateEntity(
             account_id=account_id, instrument_id=instrument_id, trade_date=trade_date,
             realized_pnl_net_sum=Decimal("999999"), sell_event_count=999,
+            buy_amount_sum=Decimal("999999"), sell_amount_sum=Decimal("999999"),
+            fee_tax_sum=Decimal("999999"),
             computation_run_id=uuid4(),
         )
     )
@@ -454,3 +462,7 @@ async def test_recompute_overwrites_phantom_daily_aggregate(
     assert len(aggregates) == 1
     assert aggregates[0].realized_pnl_net_sum == Decimal("200")  # (150-100)*4, phantom 값이 아님
     assert aggregates[0].sell_event_count == 1
+    # UI용 파생 합계 캐시도 절대값 재구성이라 phantom 값이 남지 않는다.
+    assert aggregates[0].buy_amount_sum == Decimal("400")  # 4*100
+    assert aggregates[0].sell_amount_sum == Decimal("600")  # 4*150
+    assert aggregates[0].fee_tax_sum == Decimal("0")

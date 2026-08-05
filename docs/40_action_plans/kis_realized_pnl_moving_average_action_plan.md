@@ -100,6 +100,7 @@ total += fill_price * fill_quantity * multiplier - fee - tax
 | 3 | 실시간 반영 훅 + 복구 계약 | **구현 완료**(`realized_pnl_ledger_service.py` + `order_sync_service._sync_fills()` 훅 연결) |
 | 4 | recompute/replay 복구 서비스 + queue 처리 | **핵심 구현 완료 + 운영 경로 연결 완료**(`realized_pnl_recompute_service.py`, `scripts/run_realized_pnl_recompute_worker.py`) — 대규모 backfill CLI는 미착수 |
 | 5 | 조회 API | **구현 완료**(`src/agent_trading/api/routes/realized_pnl.py`, read-only) |
+| 5b | Admin UI 선행 백엔드 확장(daily aggregate 매수금액/매도금액/비용 합계) | **구현 완료**(`db/migrations/0055_...sql`, `realized_pnl_ledger_service.py`/`realized_pnl_recompute_service.py`/`realized_pnl.py` 응답 확장) — `design/realized_pnl_screen_spec.md`의 P0-선행 항목 |
 | 6 | 화면/문서 정리 | 미착수(후속) — Admin UI는 화면 설계서 선행 필요, 시작 전 사용자에게 먼저 알린다 |
 
 ### 마이그레이션 설계 메모 — 왜 이 구성이 최소 안전선인가
@@ -216,6 +217,18 @@ total += fill_price * fill_quantity * multiplier - fee - tax
 - `recompute_required` 상태는 `positions` endpoint의 같은 필드로 바로 볼 수 있고, `recompute-queue` endpoint는 "왜/언제 큐에 들어갔는지"(`reason_code`/`requested_at`)를 보는 별도 경로로 분리했다.
 - `broker_fill_snapshots`는 이번 endpoint들의 조회 대상이 아니다 — 여전히 대사(reconciliation) 전용이다.
 - Admin UI, `performance_summary.py` 교체, 신규 migration, backfill CLI 확장은 이번 단계에 포함하지 않는다. **Admin UI는 화면 설계서 작성이 먼저 필요하며, 그 단계로 넘어가기 전에는 사용자에게 먼저 알린다.**
+
+### 이번 단계(5b단계 — Admin UI 선행 백엔드 확장: daily aggregate 매수금액/매도금액/비용 합계)의 완료 기준
+
+- 왜: `design/realized_pnl_screen_spec.md`가 종목 선택 기본값을 "전체"로 확정하면서, 화면을 열 때마다(예외가 아니라 기본 경로로) `realized_pnl_events` 전량 페이지네이션이 필요해지는 문제를 발견했다. 이 단계는 그 값을 `realized_pnl_daily_aggregates`에 미리 저장해 가벼운 `daily` 호출만으로 화면이 완성되게 만드는 선행 작업이다.
+- **계산 엔진(`realized_pnl_engine.py`)의 실현손익 산식은 바꾸지 않는다** — 새 컬럼은 이미 저장된 `realized_pnl_events` 필드(`sell_quantity`/`sell_price`/`avg_cost_basis_before`/`fee`/`tax`)를 그대로 합산한 **UI용 파생 합계 캐시**다.
+- migration(`db/migrations/0055_add_realized_pnl_daily_aggregate_amount_sums.sql`): `buy_amount_sum`/`sell_amount_sum`/`fee_tax_sum` 3개 컬럼을 `ALTER TABLE ... ADD COLUMN IF NOT EXISTS ... NOT NULL DEFAULT 0`으로 추가했다 — PostgreSQL 11+에서 상수 DEFAULT를 둔 컬럼 추가는 테이블 재작성이 없는 메타데이터 전용 변경이라 비파괴적이다. 별도 backfill 스크립트는 만들지 않는다 — migration 시점 이전 행은 0으로 남고, 실제 값은 해당 계좌×종목의 recompute(`RealizedPnlRecomputeService.recompute_account_instrument()`)를 거쳐야 채워진다(신규 fill은 실시간 반영 경로가 즉시 채운다).
+- 실시간 반영(`RealizedPnlLedgerService._update_daily_aggregate()`): 기존 `realized_pnl_net_sum`/`sell_event_count` 증분 갱신과 같은 자리에서 `buy_amount_sum += sell_quantity × avg_cost_basis_before`, `sell_amount_sum += sell_quantity × sell_price`, `fee_tax_sum += fee + tax`를 함께 증분한다.
+- recompute 절대값 재구성(`RealizedPnlRecomputeService._rebuild_daily_aggregates()`): 날짜별로 그룹핑한 `events` 전체에서 3개 합계를 매번 처음부터 다시 계산한다(증분이 아니다) — 기존 phantom aggregate 덮어쓰기 원칙(7절)과 동일하게, 활동이 없는 날짜를 0으로 되돌리지는 않는다는 기존 한계도 그대로 유지한다.
+- API 노출: 별도 summary endpoint를 만들지 않고 기존 `GET /performance/realized-pnl/daily` 응답(`RealizedPnlDailyAggregateView`)에 3개 필드를 그대로 추가했다 — route 코드 자체는 이미 `model_validate()`로 엔티티를 그대로 View에 매핑하므로 수정이 필요 없었다.
+- `positions` endpoint(all-time 종목 누계)는 이번 단계에서 확장하지 않는다 — 화면 설계서 확정 결과, 매수금액/매도금액/비용은 전부 **기간 필터가 있는** 요약 카드/탭 A/탭 B에서만 쓰이고 `positions`의 all-time `realized_pnl_net_cumulative`는 `recompute_required` 배지·종목 마스터 목록 용도로만 남기 때문이다. all-time cumulative 매수금액/매도금액/비용에 대한 실제 UI 수요가 확인되면 별도로 재검토한다.
+- 단위 테스트: `tests/services/test_realized_pnl_ledger_service.py`(실시간 증분 갱신 확인 2건 확장 + fee_tax_sum 신규 테스트), `tests/services/test_realized_pnl_recompute_service.py`(절대값 재구성 확인 확장 + phantom 값 덮어쓰기 확장), `tests/api/test_inspection.py`의 `TestRealizedPnl.test_daily_list_with_date_range`(API 응답 필드 노출 확인).
+- Admin UI 화면 구현, 화면 컴포넌트, `performance_summary.py` 교체, 대규모 backfill CLI, 워커/스케줄러 구조 변경, 계산 엔진 산식 변경, 매매 의미론/리스크 정책 변경은 이번 단계에 포함하지 않는다. **Admin UI는 여전히 화면 설계서만 있는 상태이며, 실제 구현을 시작하기 전에는 사용자에게 먼저 알린다.**
 
 ## 10. 추가 보정사항 / 유지해야 할 원칙 / 완료 후 보고 가이드
 

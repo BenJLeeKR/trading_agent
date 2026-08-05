@@ -2084,13 +2084,19 @@ class TestRealizedPnl:
         asyncio.run(repos.realized_pnl_events.add(event))
         return event
 
-    def _seed_daily(self, repos, *, account_id, instrument_id, trade_date, net_sum, count):
+    def _seed_daily(
+        self, repos, *, account_id, instrument_id, trade_date, net_sum, count,
+        buy_amount="0", sell_amount="0", fee_tax="0",
+    ):
         agg = RealizedPnlDailyAggregateEntity(
             account_id=account_id,
             instrument_id=instrument_id,
             trade_date=trade_date,
             realized_pnl_net_sum=Decimal(net_sum),
             sell_event_count=count,
+            buy_amount_sum=Decimal(buy_amount),
+            sell_amount_sum=Decimal(sell_amount),
+            fee_tax_sum=Decimal(fee_tax),
             computation_run_id=uuid4(),
         )
         asyncio.run(repos.realized_pnl_daily_aggregates.upsert(agg))
@@ -2235,6 +2241,7 @@ class TestRealizedPnl:
         self._seed_daily(
             repos, account_id=account_id, instrument_id=instrument_id,
             trade_date=date(2026, 8, 5), net_sum="200", count=1,
+            buy_amount="1400", sell_amount="1600", fee_tax="40",
         )
         self._seed_daily(
             repos, account_id=account_id, instrument_id=instrument_id,
@@ -2250,6 +2257,11 @@ class TestRealizedPnl:
         data = response.json()
         assert len(data["daily"]) == 1
         assert data["daily"][0]["trade_date"] == "2026-08-05"
+        # UI용 파생 합계 캐시(entities.py RealizedPnlDailyAggregateEntity 참고)가
+        # 그대로 API 응답에 노출되는지 확인한다.
+        assert Decimal(str(data["daily"][0]["buy_amount_sum"])) == Decimal("1400")
+        assert Decimal(str(data["daily"][0]["sell_amount_sum"])) == Decimal("1600")
+        assert Decimal(str(data["daily"][0]["fee_tax_sum"])) == Decimal("40")
         assert Decimal(str(data["daily"][0]["realized_pnl_net_sum"])) == Decimal("200")
 
     def test_daily_invalid_date_range(self) -> None:
