@@ -71,11 +71,18 @@ total += fill_price * fill_quantity * multiplier - fee - tax
   - **미착수**: "전체 계좌×종목을 처음부터 순회하는" 대규모 backfill CLI(현재는 이미 `recompute_queue`에 등록된 대상만 처리한다), API, Admin UI.
 - 검증 명령: 소수 계좌 dry-run → 사용자 승인 → 전체 실행. 실제 DB에 대한 배치 실행 자체는 `AGENTS.md` 검증 부하 제한에 따라 **사용자 명시 승인 필요**(recompute 서비스 자체 및 워커 연결 모두 in-memory repository/모킹 테스트로만 검증했다).
 
-### 5단계 — 조회 API — 후속 확장
+### 5단계 — 조회 API — 구현 완료(read-only)
 
 - 왜: "계산 엔진"과 "조회 API"를 분리해야 한다는 요구사항에 따라 API는 ledger를 읽기만 한다.
-- 산출물: 종목별 누계/체결별/일자별 read 엔드포인트(`src/agent_trading/api/routes/`, Inspection API 계층).
-- 검증 명령: `bash scripts/harness/run.sh accept backend-runtime`, API 계약 테스트.
+- 산출물: [`src/agent_trading/api/routes/realized_pnl.py`](../../src/agent_trading/api/routes/realized_pnl.py)에 4개 read-only endpoint를 추가했다.
+  - `GET /performance/realized-pnl/positions` — `account_id`(필수) + `instrument_id`(선택, 생략 시 계좌 전체). authoritative source: `position_cost_basis_state`(수량/평균단가/`recompute_required`/`recompute_reason`) + `realized_pnl_daily_aggregates` 합산(`realized_pnl_net_cumulative`).
+  - `GET /performance/realized-pnl/events` — `account_id`+`instrument_id`(둘 다 필수) + `before`/`limit`(선택). authoritative source: `realized_pnl_events`.
+  - `GET /performance/realized-pnl/daily` — `account_id`+`instrument_id`(둘 다 필수) + `start_date`/`end_date`(선택). authoritative source: `realized_pnl_daily_aggregates`.
+  - `GET /performance/realized-pnl/recompute-queue` — `account_id`/`instrument_id`(둘 다 선택 필터). authoritative source: `realized_pnl_recompute_queue`의 미해결(`resolved_at IS NULL`) 항목.
+  - `PositionCostBasisStateRepository.list_by_account()`를 최소 범위로 추가했다(`positions` endpoint가 `instrument_id` 없이 계좌 전체를 나열하려면 필요 — 신규 migration은 없다, 기존 테이블에 대한 조회 메서드 추가뿐).
+  - 계산은 전혀 하지 않는다 — `realized_pnl_engine.py`/`realized_pnl_ledger_service.py`/`realized_pnl_recompute_service.py`의 계산 로직을 재구현하지 않았고, `performance_summary.py`의 기존 현금흐름 근사도 교체하지 않았다.
+- 단위 테스트: `tests/api/test_inspection.py`의 `TestRealizedPnl`(positions/events/daily/recompute-queue 각각 정상 조회·필터·빈 결과·잘못된 UUID/날짜 케이스).
+- 검증 명령: `bash scripts/harness/run.sh accept backend-runtime`, API 계약 테스트. 이번 PR의 실제 실행 결과와 환경 제약은 완료 보고 참고(호스트에 `fastapi`/`pydantic`이 없어 `accept backend-file`/`accept backend-runtime`은 stale docker mount 제약과 겹쳐 완전한 실행 검증을 하지 못했다).
 
 ### 6단계 — 운영 화면/기존 지표 정리 — 후속 확장
 
@@ -92,8 +99,8 @@ total += fill_price * fill_quantity * multiplier - fee - tax
 | 2 | 신규 마이그레이션(초안)/엔티티/repository | **마이그레이션 초안만 작성 완료**(0053/0054, 미실행) — entity/repository는 미착수 |
 | 3 | 실시간 반영 훅 + 복구 계약 | **구현 완료**(`realized_pnl_ledger_service.py` + `order_sync_service._sync_fills()` 훅 연결) |
 | 4 | recompute/replay 복구 서비스 + queue 처리 | **핵심 구현 완료 + 운영 경로 연결 완료**(`realized_pnl_recompute_service.py`, `scripts/run_realized_pnl_recompute_worker.py`) — 대규모 backfill CLI는 미착수 |
-| 5 | 조회 API | 미착수(후속) |
-| 6 | 화면/문서 정리 | 미착수(후속) |
+| 5 | 조회 API | **구현 완료**(`src/agent_trading/api/routes/realized_pnl.py`, read-only) |
+| 6 | 화면/문서 정리 | 미착수(후속) — Admin UI는 화면 설계서 선행 필요, 시작 전 사용자에게 먼저 알린다 |
 
 ### 마이그레이션 설계 메모 — 왜 이 구성이 최소 안전선인가
 
@@ -198,6 +205,17 @@ total += fill_price * fill_quantity * multiplier - fee - tax
 - `docker-compose.yml`에 `realized-pnl-recompute-worker` 서비스를 `reconciliation-worker`와 동일한 형태(빌드/네트워크/재시작 정책)로 추가했다. 기본 interval은 300초(신규 fill 반영 경로인 `post_submit`의 30초보다 여유 있게, 관측 전용 백필 경로인 `fill_sync`의 600초보다는 조금 짧게 설정 — recompute는 out-of-order 등으로 잘못된 상태가 노출되는 시간을 줄이는 목적이 있어 완전히 후순위로 두지 않았다).
 - `tests/scripts/test_run_realized_pnl_recompute_worker.py`가 (1) 워커가 실제로 `process_pending_queue()`를 호출하는지, (2) pending 없음 케이스, (3) 성공/실패 혼재 시 집계, (4) `limit` 전달, (5) 실패 로그 기록을 모킹된 서비스 기준으로 커버한다.
 - 대규모 backfill CLI, API, Admin UI는 이번 단계에 포함하지 않는다. **Admin UI 단계로 넘어가기 직전에는 별도로 사용자에게 알린다.**
+
+### 이번 단계(5단계 — 조회 API)의 완료 기준
+
+- 계산 로직은 재구현하지 않는다 — `src/agent_trading/api/routes/realized_pnl.py`의 4개 endpoint는 route가 직접 `RepositoryContainer`를 통해 저장된 값을 읽고, 종목 누계만 `sum()`으로 합산한다(이동평균/실현손익 계산이 아니다).
+- 레이어 판단: 별도 read 전용 service를 두지 않고 `positions.py`(`GET /positions`)와 동일하게 route에서 `Depends(get_repos)`로 repository를 직접 조회한다 — 이 4개 endpoint는 순수 조회+필터+합산뿐이라 서비스 계층을 추가하면 오히려 불필요한 간접화가 된다.
+- 종목 누계 산정 방식: 체결 상세=`realized_pnl_events`, 일자 요약=`realized_pnl_daily_aggregates`를 각각 authoritative source로 그대로 노출한다. 종목 누계(`realized_pnl_net_cumulative`)는 `realized_pnl_daily_aggregates`(해당 계좌×종목 전체 날짜)의 `realized_pnl_net_sum`을 합산한 값을 authoritative로 채택한다 — `realized_pnl_events`를 매번 전부 훑어 합산하는 대신, 이미 그 목적으로 설계된 파생 캐시를 재사용한다.
+- pagination/필터: event 목록은 `limit`(기본 200, 최대 1000) + `before`, daily aggregate는 `start_date`/`end_date` 선택 필터를 그대로 지원한다(기존 repository 메서드 시그니처와 1:1 대응).
+- `PositionCostBasisStateRepository.list_by_account()`를 최소 범위로 추가했다 — `positions` endpoint가 `instrument_id` 없이 계좌 전체를 나열하려는 요구를 기존 메서드(`get(account_id, instrument_id)`, `list_recompute_required()`)로는 충족할 수 없어서다. 신규 migration은 없다.
+- `recompute_required` 상태는 `positions` endpoint의 같은 필드로 바로 볼 수 있고, `recompute-queue` endpoint는 "왜/언제 큐에 들어갔는지"(`reason_code`/`requested_at`)를 보는 별도 경로로 분리했다.
+- `broker_fill_snapshots`는 이번 endpoint들의 조회 대상이 아니다 — 여전히 대사(reconciliation) 전용이다.
+- Admin UI, `performance_summary.py` 교체, 신규 migration, backfill CLI 확장은 이번 단계에 포함하지 않는다. **Admin UI는 화면 설계서 작성이 먼저 필요하며, 그 단계로 넘어가기 전에는 사용자에게 먼저 알린다.**
 
 ## 10. 추가 보정사항 / 유지해야 할 원칙 / 완료 후 보고 가이드
 

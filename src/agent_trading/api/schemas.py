@@ -2121,6 +2121,120 @@ class RealtimeQuoteDailyPriceResponse(BaseModel):
     generated_at: datetime
 
 
+class RealizedPnlPositionView(BaseModel):
+    """``GET /performance/realized-pnl/positions`` 한 행 — 계좌×종목 realized PnL 종목 누계.
+
+    .. note::
+
+       계산은 하지 않는다. ``position_quantity``/``average_cost``/
+       ``recompute_required``/``recompute_reason``은 저장된
+       ``position_cost_basis_state``를 그대로 읽은 값이고,
+       ``realized_pnl_net_cumulative``는 ``realized_pnl_daily_aggregates``
+       (해당 계좌×종목의 모든 날짜)의 ``realized_pnl_net_sum``을 단순
+       합산한 값이다 — authoritative source는 ``realized_pnl_daily_aggregates``다
+       (``realized_pnl_events``에서 언제든 재생성 가능한 파생 캐시이며,
+       이 값 자체를 다시 계산하지 않는다).
+    """
+
+    model_config = ConfigDict(from_attributes=True)
+
+    account_id: UUID
+    instrument_id: UUID
+    symbol: str | None = None
+    instrument_name: str | None = None
+    position_quantity: Decimal
+    average_cost: Decimal
+    recompute_required: bool
+    recompute_reason: str | None = None
+    realized_pnl_net_cumulative: Decimal
+    updated_at: datetime | None = None
+
+
+class RealizedPnlEventView(BaseModel):
+    """``GET /performance/realized-pnl/events`` 한 행 — 체결별 realized PnL event.
+
+    ``trading.realized_pnl_events``를 그대로 읽은 값이다(계산 없음).
+    """
+
+    model_config = ConfigDict(from_attributes=True)
+
+    realized_pnl_event_id: UUID
+    account_id: UUID
+    instrument_id: UUID
+    fill_event_id: UUID
+    broker_order_id: UUID
+    order_request_id: UUID
+    sell_quantity: Decimal
+    sell_price: Decimal
+    avg_cost_basis_before: Decimal
+    fee: Decimal
+    tax: Decimal
+    fee_tax_source: str
+    realized_pnl_gross: Decimal
+    realized_pnl_net: Decimal
+    position_quantity_after: Decimal
+    fill_timestamp: datetime
+
+
+class RealizedPnlEventsResponse(BaseModel):
+    """``GET /performance/realized-pnl/events`` 응답 — 조회 조건 echo + 목록."""
+
+    account_id: UUID
+    instrument_id: UUID
+    limit: int
+    before: datetime | None = None
+    events: list[RealizedPnlEventView]
+
+
+class RealizedPnlDailyAggregateView(BaseModel):
+    """``GET /performance/realized-pnl/daily`` 한 행 — 일자별 realized PnL aggregate.
+
+    ``trading.realized_pnl_daily_aggregates``를 그대로 읽은 값이다(계산 없음).
+    """
+
+    model_config = ConfigDict(from_attributes=True)
+
+    trade_date: date
+    realized_pnl_net_sum: Decimal
+    sell_event_count: int
+
+
+class RealizedPnlDailyResponse(BaseModel):
+    """``GET /performance/realized-pnl/daily`` 응답 — 조회 조건 echo + 목록."""
+
+    account_id: UUID
+    instrument_id: UUID
+    start_date: date | None = None
+    end_date: date | None = None
+    daily: list[RealizedPnlDailyAggregateView]
+
+
+class RealizedPnlRecomputeQueueItemView(BaseModel):
+    """``GET /performance/realized-pnl/recompute-queue`` 한 행 — pending 재계산 큐 항목.
+
+    ``trading.realized_pnl_recompute_queue``의 미해결(``resolved_at IS NULL``)
+    항목을 그대로 읽은 값이다(계산·해소 없음, 조회 전용).
+    """
+
+    model_config = ConfigDict(from_attributes=True)
+
+    recompute_queue_id: UUID
+    account_id: UUID
+    instrument_id: UUID
+    reason_code: str
+    triggering_fill_event_id: UUID | None = None
+    requested_at: datetime | None = None
+
+
+class RealizedPnlRecomputeQueueResponse(BaseModel):
+    """``GET /performance/realized-pnl/recompute-queue`` 응답 — 조회 조건 echo + 목록."""
+
+    account_id: UUID | None = None
+    instrument_id: UUID | None = None
+    limit: int
+    items: list[RealizedPnlRecomputeQueueItemView]
+
+
 # Rebuild models to resolve forward references under ``from __future__ import annotations``.
 # The ``_types_namespace`` provides the necessary type mappings that are otherwise
 # evaluated lazily as strings under PEP 563.
