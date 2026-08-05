@@ -5,7 +5,8 @@
 > - entity/repository 계층(4절)은 구현 완료([`domain/entities.py`](../../../src/agent_trading/domain/entities.py), [`repositories/contracts.py`](../../../src/agent_trading/repositories/contracts.py) 등).
 > - **계산 엔진(3.2절)은 순수 함수로 구현 완료** — [`src/agent_trading/services/realized_pnl_engine.py`](../../../src/agent_trading/services/realized_pnl_engine.py) (`apply_fill_to_cost_basis()`, `replay_fills()`). 단위 테스트는 [`tests/services/test_realized_pnl_engine.py`](../../../tests/services/test_realized_pnl_engine.py).
 > - **repository write orchestration(8절)도 구현 완료** — [`src/agent_trading/services/realized_pnl_ledger_service.py`](../../../src/agent_trading/services/realized_pnl_ledger_service.py)의 `RealizedPnlLedgerService.apply_fill()`. `fill_events` → `NormalizedFill` 정규화(join 포함), state 조회, 계산 엔진 호출, state/event/일자집계 저장, idempotency, out-of-order·실패 시 recompute_queue/recompute_required 처리까지 담당한다. 단위 테스트는 [`tests/services/test_realized_pnl_ledger_service.py`](../../../tests/services/test_realized_pnl_ledger_service.py).
-> - **아직 연결되지 않음**: `order_sync_service._sync_fills()`가 저장 성공 후 `RealizedPnlLedgerService.apply_fill()`을 실제로 호출하는 훅, backfill 러너(`replay_fills()`를 사용하는 배치), API, Admin UI. `RealizedPnlLedgerService`는 독립적으로 호출 가능한 상태로 존재하지만, 아직 어떤 runtime 진입점도 이를 부르지 않는다.
+> - **runtime ingestion 훅 연결도 구현 완료** — [`order_sync_service.py`](../../../src/agent_trading/services/order_sync_service.py)의 `_sync_fills()`가 REST 기반(`get_fills()`) 신규 fill을 `fill_events`에 저장한 **직후**(dedup을 통과한 fill에만) `RealizedPnlLedgerService.apply_fill()`을 호출한다. 훅 실패는 fill 저장 성공과 분리되어 로그(`applied`/`skipped_duplicate`/`recompute_required`/`failed` 집계)로 관측 가능하다. 단위 테스트는 `tests/services/test_order_sync_service.py`의 `TestRealizedPnlLedgerHook`.
+> - **아직 연결되지 않음**: backfill 러너(`replay_fills()`를 사용하는 배치), `recompute_queue`/`recompute_required` 소진 배치, API, Admin UI.
 > - **idempotency 현재 보장 범위**: SELL은 `realized_pnl_events.fill_event_id` UNIQUE 조회로 완전히 감지된다. BUY는 `position_cost_basis_state.last_applied_fill_event_id`와의 일치만 확인하므로 "가장 최근에 적용된 fill과 정확히 같은 재적용"만 막는다 — 그보다 이전 BUY fill의 non-adjacent 중복 재적용은 이번 구현에서 막히지 않는다(6절/서비스 docstring에 명시).
 >
 > 구현 순서와 단계 분리는 [`kis_realized_pnl_moving_average_action_plan.md`](../../40_action_plans/kis_realized_pnl_moving_average_action_plan.md)를 따른다.
@@ -332,7 +333,6 @@ ORDER BY fill_timestamp ASC, broker_fill_id ASC NULLS LAST, created_at ASC, fill
 
 ## 12. 향후 확장 범위
 
-- `order_sync_service._sync_fills()`가 fill 저장 성공 후 `RealizedPnlLedgerService.apply_fill()`을 실제로 호출하는 훅 — orchestration 서비스 자체는 구현됐지만 아직 어떤 runtime 진입점도 이를 부르지 않는다.
 - `recompute_queue`/`recompute_required` 항목을 실제로 소진하는 배치(수동 트리거 또는 스케줄러) — 지금은 등록만 되고 자동으로 해소되지 않는다.
 - 백필 러너 — 계좌×종목별 전체 fill 히스토리를 정렬해 `replay_fills()`에 전달하고 결과를 저장(순수 함수는 이미 있지만 저장 orchestration은 `apply_fill()`과 다른 형태로 새로 작성해야 한다 — 단일 fill 저장이 아니라 배치 upsert).
 - BUY fill의 non-adjacent 중복 재적용을 막는 fill 단위 적용 이력(별도 apply-log 또는 적용된 fill_event_id 집합) — 현재는 "가장 최근에 적용된 fill"만 dedup 앵커로 쓴다(6절).
