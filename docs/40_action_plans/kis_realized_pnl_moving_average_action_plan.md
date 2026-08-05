@@ -101,7 +101,7 @@ total += fill_price * fill_quantity * multiplier - fee - tax
 | 4 | recompute/replay 복구 서비스 + queue 처리 | **핵심 구현 완료 + 운영 경로 연결 완료**(`realized_pnl_recompute_service.py`, `scripts/run_realized_pnl_recompute_worker.py`) — 대규모 backfill CLI는 미착수 |
 | 5 | 조회 API | **구현 완료**(`src/agent_trading/api/routes/realized_pnl.py`, read-only) |
 | 5b | Admin UI 선행 백엔드 확장(daily aggregate 매수금액/매도금액/비용 합계) | **구현 완료**(`db/migrations/0055_...sql`, `realized_pnl_ledger_service.py`/`realized_pnl_recompute_service.py`/`realized_pnl.py` 응답 확장) — `design/realized_pnl_screen_spec.md`의 P0-선행 항목 |
-| 6 | 화면/문서 정리 | **Admin UI 실현손익 화면 P0 + summary endpoint + Admin UI의 summary 전환 + `RealizedPnlView` 컴포넌트 테스트 + recompute-queue 드릴다운 + 탭 A(일자별)의 daily-summary 전환까지 구현 완료**(`admin_ui/src/__tests__/realizedPnl.test.tsx`, 13개 시나리오) — 요약 카드/종목별 탭/탭 A 모두 종목 "전체" N+1이 제거됐다(탭 A는 종목 전체 시 `daily-summary`, 단일 종목 시 기존 `daily`). 차트(P1)는 보류. 기존 `performance_summary.py`/`paper_performance_metrics.md` 정리는 미착수(후속) |
+| 6 | 화면/문서 정리 | **Admin UI 실현손익 화면 P0 + summary endpoint + Admin UI의 summary 전환 + `RealizedPnlView` 컴포넌트 테스트 + recompute-queue 드릴다운(+가독성 개선) + 탭 A(일자별)의 daily-summary 전환까지 구현 완료**(`admin_ui/src/__tests__/realizedPnl.test.tsx`, 15개 시나리오) — 요약 카드/종목별 탭/탭 A 모두 종목 "전체" N+1이 제거됐다(탭 A는 종목 전체 시 `daily-summary`, 단일 종목 시 기존 `daily`). 차트(P1)는 보류. 기존 `performance_summary.py`/`paper_performance_metrics.md` 정리는 미착수(후속) |
 
 ### 마이그레이션 설계 메모 — 왜 이 구성이 최소 안전선인가
 
@@ -289,6 +289,17 @@ total += fill_price * fill_quantity * multiplier - fee - tax
 - 요약 카드/종목별 탭/체결별 탭/recompute-queue 드릴다운은 변경하지 않았다. 차트는 계속 보류.
 - `types/api.ts`에 `RealizedPnlDailySummaryResponse` 타입, `api/client.ts`에 `getRealizedPnlDailySummary()` 헬퍼를 추가했다(둘 다 최소 추가).
 - `realizedPnl.test.tsx`의 기존 "종목 전체" 계열 시나리오(요약 카드/종목별 탭 렌더링, recompute 배너, 행 클릭 드릴다운, recompute-queue 드릴다운 3건, 오류 상태 1건, 빈 상태, 기간 프리셋)를 `getRealizedPnlDailySummary` mock으로 갱신하고, 각각에 `expect(getRealizedPnlDaily).not.toHaveBeenCalled()` 검증을 추가해 N+1이 실제로 제거됐음을 테스트로 고정했다. "단일 종목 조회"/"오류 상태"(events 실패) 시나리오는 기존 `getRealizedPnlDaily` mock을 그대로 유지했다(변경 없음).
+
+### 이번 단계(recompute-queue drill-down UX 개선)의 완료 기준
+
+- **판단(DataTable 유지 vs 카드/배지형 전환)**: **기존 `DataTable` 기반 인라인 확장 구조를 유지한 채 컬럼/문구만 개선했다.** 이 화면은 이미 배너(`WarningBanner`)+`DataTable` 패턴만 일관되게 쓰고 있고, 이번 요청도 "기능 재설계가 아니라 가독성 개선"으로 범위를 명시했으므로 새 컴포넌트 유형을 들이는 것은 과한 범위 확장이다.
+- **`reason_code` 표시 정책**: `RECOMPUTE_REASON_LABELS` 매핑(`out_of_order_fill_detected` → "역순 체결 감지", `ledger_write_failed` → "원장 기록 실패" — `realized_pnl_ledger_service.py`의 `_record_recompute()` 호출부에서 실제 쓰이는 두 값)으로 사람이 읽기 쉬운 라벨을 우선 노출하고, 원본 코드는 항상 라벨 옆에 보조 텍스트(작게, 회색)로 병기한다. 매핑에 없는 값은 원본 코드를 그대로 보여준다 — `RealizedPnlRecomputeQueueEntity`의 `reason_code`가 도메인 계층에서 의도적으로 열린 문자열로 유지되고 있어(entities.py 문서 참고) 매핑을 닫힌 enum처럼 강제하지 않았다.
+- **전체 vs 단일 종목 UX 차이**: "상세 보기" 버튼 라벨은 종목 전체 조회일 때만 대기 종목 수를 덧붙인다(`상세 보기(N개 종목)`) — 단일 종목은 이미 배너 제목에 종목 수(0/1)가 드러나 중복이라 그대로 `상세 보기`만 쓴다. 드릴다운 상단에 조회 범위별 안내 문구를 추가했다: 전체는 "계좌 전체 종목 중 재계산 대기 중인 항목입니다. 종목을 눌러 조회 조건을 그 종목으로 좁히면...", 단일 종목은 "현재 선택한 종목(symbol) 기준 재계산 대기 항목입니다...".
+- **"다음 액션" 유도**: 종목 전체 조회에서는 큐 항목 행 클릭 시 그 종목의 체결별 탭으로 드릴다운된다(기존 종목별 탭 행 클릭과 동일한 `drillDownToInstrument()` 경로로 통합 — 중복 로직 없음). 단일 종목 조회에서는 이미 그 종목으로 좁혀져 있으므로 행 클릭을 비활성화했다(`onRowClick={undefined}`).
+- **빈 상태 문구 개선**: "재계산 대기 항목이 없습니다"에서 "재계산 대기 항목을 찾지 못했습니다. 요약 배지의 대기 종목 수와 차이가 있다면 방금 처리가 완료됐을 수 있습니다 — 조회를 다시 실행해 확인하세요"로 바꿔, 배너의 pending count>0인데 큐가 비어 보이는 경우(레이스 컨디션으로 그 사이 처리가 끝난 경우)의 운영 의미를 드러낸다.
+- **오류 상태 문구 개선**: 원본 오류 메시지 앞에 "재계산 대기 상세 조회 실패(요약 정보는 정상입니다) — "를 붙여, 이 오류가 드릴다운 상세 조회에만 한정되고 요약 카드/배지는 영향받지 않았음을 명시한다.
+- 새 백엔드 작업, 도메인 계산, 차트/새 탭/새 페이지/모달은 추가하지 않았다. 기존 `summary`/`daily`/`daily-summary`/`events`/`recompute-queue` 호출 구조도 그대로다.
+- `realizedPnl.test.tsx`에 시나리오 2개를 추가했다(15개로 증가): 큐 항목 행 클릭 시 체결별 탭 드릴다운, 단일 종목 조회에서 안내 문구/버튼 라벨/`instrumentId` 필터가 다르게 적용되는지. 기존 3개 시나리오도 새 라벨/문구에 맞춰 갱신했다(원본 `reason_code`를 실제 백엔드 값 `out_of_order_fill_detected`로 fixture도 함께 정정).
 
 ## 10. 추가 보정사항 / 유지해야 할 원칙 / 완료 후 보고 가이드
 

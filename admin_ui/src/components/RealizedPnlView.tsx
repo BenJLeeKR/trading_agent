@@ -54,6 +54,24 @@ const PERIOD_PRESETS: { label: string; start: () => string }[] = [
   { label: "올해", start: () => kstYearStart() },
 ];
 
+/* ───────────────────────────────────────────
+ * recompute-queue reason_code → 사람이 읽기 쉬운 라벨.
+ * 원본 코드는 숨기지 않는다 — 표에서 라벨 옆 보조 텍스트로 항상 같이 노출한다
+ * (운영 디버깅 시 실제 코드값이 필요할 수 있음, realized_pnl_ledger_service.py
+ * `_record_recompute()` 호출부 참고). 알려지지 않은 코드는 그대로 표시한다 —
+ * 이 코드는 도메인 계층에서 의도적으로 "닫힌 enum이 아닌 str"로 유지되고
+ * 있어(entities.py의 RealizedPnlRecomputeQueueEntity 문서 참고) 새 값이
+ * 늘어날 수 있다.
+ * ─────────────────────────────────────────── */
+const RECOMPUTE_REASON_LABELS: Record<string, string> = {
+  out_of_order_fill_detected: "역순 체결 감지",
+  ledger_write_failed: "원장 기록 실패",
+};
+
+function recomputeReasonLabel(reasonCode: string): string {
+  return RECOMPUTE_REASON_LABELS[reasonCode] ?? reasonCode;
+}
+
 function accountLabel(a: AccountSummary): string {
   return [a.account_code, a.account_alias, a.account_masked].filter(Boolean).join(" · ") || a.account_id;
 }
@@ -189,7 +207,8 @@ export default function RealizedPnlView() {
       });
       setRecomputeQueueItems(res.items);
     } catch (err: unknown) {
-      setRecomputeQueueError(err instanceof Error ? err.message : "재계산 대기 목록을 불러오지 못했습니다");
+      const detail = err instanceof Error ? err.message : "알 수 없는 오류";
+      setRecomputeQueueError(`재계산 대기 상세 조회 실패(요약 정보는 정상입니다) — ${detail}`);
     } finally {
       setRecomputeQueueLoading(false);
     }
@@ -235,12 +254,18 @@ export default function RealizedPnlView() {
     }
   }
 
-  function handleSelectInstrumentRow(row: RealizedPnlSummaryInstrumentView) {
-    setInstrumentId(row.instrument_id);
+  // 종목별 탭 행 클릭, recompute-queue 드릴다운 행 클릭 모두 이 경로로
+  // 그 종목의 체결별 탭으로 좁혀 들어간다 — "다음 액션"을 일관되게 유도한다.
+  function drillDownToInstrument(targetInstrumentId: string) {
+    setInstrumentId(targetInstrumentId);
     setActiveTab("events");
     setEvents([]);
     setEventsHasMore(false);
-    fetchEvents(row.instrument_id);
+    fetchEvents(targetInstrumentId);
+  }
+
+  function handleSelectInstrumentRow(row: RealizedPnlSummaryInstrumentView) {
+    drillDownToInstrument(row.instrument_id);
   }
 
   const dailyColumns: Column<RealizedPnlDailyAggregateView>[] = [
@@ -299,11 +324,26 @@ export default function RealizedPnlView() {
   }
 
   const recomputeQueueColumns: Column<RealizedPnlRecomputeQueueItemView>[] = [
-    { key: "instrument_id", header: "종목", render: (r) => resolveInstrumentLabel(r.instrument_id) },
-    { key: "reason_code", header: "사유", render: (r) => r.reason_code },
+    {
+      key: "instrument_id",
+      header: "종목",
+      render: (r) => (
+        <span title={r.instrument_id}>{resolveInstrumentLabel(r.instrument_id)}</span>
+      ),
+    },
+    {
+      key: "reason_code",
+      header: "사유",
+      render: (r) => (
+        <span className="inline-flex items-baseline gap-1.5">
+          <span>{recomputeReasonLabel(r.reason_code)}</span>
+          <span className="text-xs text-[#94a3b8]">({r.reason_code})</span>
+        </span>
+      ),
+    },
     {
       key: "requested_at",
-      header: "큐 등록 시각",
+      header: "대기 시작(KST)",
       render: (r) => (r.requested_at ? formatKstDateTime(r.requested_at) : "—"),
     },
   ];
@@ -463,7 +503,11 @@ export default function RealizedPnlView() {
                     onClick={toggleRecomputeQueue}
                     className="h-8 px-3 rounded border border-[#fbbf24] text-xs font-medium text-[#92400e] hover:bg-[#fef3c7] transition-colors"
                   >
-                    {recomputeQueueExpanded ? "닫기" : "상세 보기"}
+                    {recomputeQueueExpanded
+                      ? "닫기"
+                      : instrumentId
+                        ? "상세 보기"
+                        : `상세 보기(${summaryData?.recompute_pending_count}개 종목)`}
                   </button>
 
                   {recomputeQueueExpanded && (
@@ -472,13 +516,23 @@ export default function RealizedPnlView() {
                         <ErrorBanner message={recomputeQueueError} onDismiss={() => setRecomputeQueueError(null)} />
                       )}
                       {!recomputeQueueError && (
-                        <DataTable
-                          columns={recomputeQueueColumns}
-                          data={recomputeQueueItems ?? []}
-                          idKey="recompute_queue_id"
-                          isLoading={recomputeQueueLoading}
-                          emptyMessage="재계산 대기 항목이 없습니다."
-                        />
+                        <>
+                          <p className="text-xs text-[#64748b] px-1">
+                            {instrumentId
+                              ? `현재 선택한 종목(${selectedInstrumentLabel}) 기준 재계산 대기 항목입니다. 각 항목의 "사유"를 확인해 언제부터, 왜 대기 중인지 파악한 뒤 필요 시 재계산 배치/운영 로그를 점검하세요.`
+                              : "계좌 전체 종목 중 재계산 대기 중인 항목입니다. 종목을 눌러 조회 조건을 그 종목으로 좁히면 체결별 탭에서 상세 원인을 이어서 확인할 수 있습니다."}
+                          </p>
+                          <DataTable
+                            columns={recomputeQueueColumns}
+                            data={recomputeQueueItems ?? []}
+                            idKey="recompute_queue_id"
+                            isLoading={recomputeQueueLoading}
+                            onRowClick={
+                              instrumentId ? undefined : (row) => drillDownToInstrument(row.instrument_id)
+                            }
+                            emptyMessage="재계산 대기 항목을 찾지 못했습니다. 요약 배지의 대기 종목 수와 차이가 있다면 방금 처리가 완료됐을 수 있습니다 — 조회를 다시 실행해 확인하세요."
+                          />
+                        </>
                       )}
                     </>
                   )}
