@@ -2350,6 +2350,129 @@ class TestRealizedPnl:
         assert response.status_code == 200
         assert response.json()["items"] == []
 
+    def test_summary_all_instruments_aggregates_by_instrument_and_total(self) -> None:
+        """종목 전체 요약 — daily aggregate를 종목별/전체로 단순 합산한다(N+1 없이 단일 조회)."""
+        repos, app = self._build()
+        account_id = uuid4()
+        instrument_a = uuid4()
+        instrument_b = uuid4()
+
+        asyncio.run(
+            repos.instruments.add(
+                InstrumentEntity(
+                    instrument_id=instrument_a, symbol="005930", market_code="KRX",
+                    asset_class="equity", currency="KRW", name="삼성전자",
+                )
+            )
+        )
+        asyncio.run(
+            repos.instruments.add(
+                InstrumentEntity(
+                    instrument_id=instrument_b, symbol="000660", market_code="KRX",
+                    asset_class="equity", currency="KRW", name="SK하이닉스",
+                )
+            )
+        )
+        self._seed_state(
+            repos, account_id=account_id, instrument_id=instrument_a,
+            recompute_required=True, recompute_reason="out_of_order_fill",
+        )
+        self._seed_state(repos, account_id=account_id, instrument_id=instrument_b)
+
+        self._seed_daily(
+            repos, account_id=account_id, instrument_id=instrument_a,
+            trade_date=date(2026, 8, 1), net_sum="100", count=1,
+            buy_amount="1000", sell_amount="1100", fee_tax="10",
+        )
+        self._seed_daily(
+            repos, account_id=account_id, instrument_id=instrument_a,
+            trade_date=date(2026, 8, 3), net_sum="50", count=1,
+            buy_amount="500", sell_amount="550", fee_tax="5",
+        )
+        self._seed_daily(
+            repos, account_id=account_id, instrument_id=instrument_b,
+            trade_date=date(2026, 8, 2), net_sum="-20", count=1,
+            buy_amount="200", sell_amount="180", fee_tax="3",
+        )
+        # 기간 밖 — 합계에 포함되면 안 된다.
+        self._seed_daily(
+            repos, account_id=account_id, instrument_id=instrument_a,
+            trade_date=date(2026, 7, 1), net_sum="99999", count=99,
+            buy_amount="99999", sell_amount="99999", fee_tax="99999",
+        )
+
+        with TestClient(app) as client:
+            response = client.get(
+                f"/performance/realized-pnl/summary?account_id={account_id}"
+                "&start_date=2026-08-01&end_date=2026-08-31"
+            )
+        assert response.status_code == 200
+        data = response.json()
+        assert data["account_id"] == str(account_id)
+        assert data["instrument_id"] is None
+        # 전체 합계: (100+50) + (-20) = 130, 건수 3, 매수 1700, 매도 1830, 비용 18
+        assert Decimal(str(data["realized_pnl_net_sum"])) == Decimal("130")
+        assert data["sell_event_count"] == 3
+        assert Decimal(str(data["buy_amount_sum"])) == Decimal("1700")
+        assert Decimal(str(data["sell_amount_sum"])) == Decimal("1830")
+        assert Decimal(str(data["fee_tax_sum"])) == Decimal("18")
+        assert data["recompute_pending_count"] == 1
+
+        by_instrument = {row["instrument_id"]: row for row in data["by_instrument"]}
+        assert len(by_instrument) == 2
+        row_a = by_instrument[str(instrument_a)]
+        assert row_a["symbol"] == "005930"
+        assert Decimal(str(row_a["realized_pnl_net_sum"])) == Decimal("150")
+        assert row_a["sell_event_count"] == 2
+        assert row_a["recompute_required"] is True
+        row_b = by_instrument[str(instrument_b)]
+        assert row_b["recompute_required"] is False
+        assert Decimal(str(row_b["realized_pnl_net_sum"])) == Decimal("-20")
+
+    def test_summary_single_instrument_scopes_to_that_instrument(self) -> None:
+        """instrument_id를 주면 활동이 없어도 그 종목 1건만 by_instrument에 노출한다."""
+        repos, app = self._build()
+        account_id = uuid4()
+        instrument_id = uuid4()
+        self._seed_state(repos, account_id=account_id, instrument_id=instrument_id, recompute_required=True)
+
+        with TestClient(app) as client:
+            response = client.get(
+                f"/performance/realized-pnl/summary?account_id={account_id}"
+                f"&instrument_id={instrument_id}&start_date=2026-08-01&end_date=2026-08-31"
+            )
+        assert response.status_code == 200
+        data = response.json()
+        assert data["instrument_id"] == str(instrument_id)
+        assert data["sell_event_count"] == 0
+        assert len(data["by_instrument"]) == 1
+        assert data["by_instrument"][0]["instrument_id"] == str(instrument_id)
+        assert data["by_instrument"][0]["recompute_required"] is True
+        assert data["recompute_pending_count"] == 1
+
+    def test_summary_empty_for_unknown_account(self) -> None:
+        """활동이 전혀 없으면 빈 by_instrument + 0 합계를 반환한다(오류가 아니다)."""
+        _repos, app = self._build()
+        with TestClient(app) as client:
+            response = client.get(
+                f"/performance/realized-pnl/summary?account_id={uuid4()}"
+                "&start_date=2026-08-01&end_date=2026-08-31"
+            )
+        assert response.status_code == 200
+        data = response.json()
+        assert data["by_instrument"] == []
+        assert Decimal(str(data["realized_pnl_net_sum"])) == Decimal("0")
+        assert data["recompute_pending_count"] == 0
+
+    def test_summary_invalid_date_range(self) -> None:
+        _repos, app = self._build()
+        with TestClient(app) as client:
+            response = client.get(
+                f"/performance/realized-pnl/summary?account_id={uuid4()}"
+                "&start_date=2026-08-10&end_date=2026-08-01"
+            )
+        assert response.status_code == 400
+
 
 class TestClients:
     """Client inspection endpoints."""

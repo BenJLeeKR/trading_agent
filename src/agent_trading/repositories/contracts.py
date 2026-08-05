@@ -874,6 +874,22 @@ class RealizedPnlDailyAggregateRepository(Protocol):
         """``trade_date`` 오름차순으로 반환한다."""
         ...
 
+    async def list_by_account(
+        self,
+        account_id: UUID,
+        *,
+        start_date: date | None = None,
+        end_date: date | None = None,
+    ) -> Sequence[RealizedPnlDailyAggregateEntity]:
+        """계좌의 모든 종목에 대한 일자 집계를 종목 필터 없이 단일 조회로 반환한다.
+
+        ``GET /performance/realized-pnl/summary``(종목 "전체" 조회)가
+        종목마다 :meth:`list_by_account_and_instrument`를 반복 호출하는
+        N+1을 피하기 위한 전용 경로다. 정렬 순서는 보장하지 않는다 —
+        호출자가 ``instrument_id``/``trade_date``별로 다시 묶어야 한다.
+        """
+        ...
+
 
 class RealizedPnlComputationRunRepository(Protocol):
     """실현 손익 ledger 실시간 반영/백필 실행 이력 저장소."""

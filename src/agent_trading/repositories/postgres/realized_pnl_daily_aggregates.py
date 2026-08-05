@@ -80,3 +80,29 @@ class PostgresRealizedPnlDailyAggregateRepository:
             *params,
         )
         return tuple(row_to_entity(row, RealizedPnlDailyAggregateEntity) for row in rows)
+
+    async def list_by_account(
+        self,
+        account_id: UUID,
+        *,
+        start_date: date | None = None,
+        end_date: date | None = None,
+    ) -> Sequence[RealizedPnlDailyAggregateEntity]:
+        conditions = ["account_id = $1"]
+        params: list[object] = [account_id]
+        idx = 2
+        if start_date is not None:
+            conditions.append(f"trade_date >= ${idx}")
+            params.append(start_date)
+            idx += 1
+        if end_date is not None:
+            conditions.append(f"trade_date <= ${idx}")
+            params.append(end_date)
+            idx += 1
+        where_clause = " AND ".join(conditions)
+        rows = await self._tx.connection.fetch(
+            f"SELECT * FROM trading.realized_pnl_daily_aggregates "
+            f"WHERE {where_clause} ORDER BY instrument_id ASC, trade_date ASC",
+            *params,
+        )
+        return tuple(row_to_entity(row, RealizedPnlDailyAggregateEntity) for row in rows)

@@ -225,7 +225,8 @@ async def test_recompute_replays_multiple_fills_in_correct_order(
         account_id, instrument_id
     )
     assert len(aggregates) == 1
-    assert aggregates[0].realized_pnl_net_sum == Decimal("200")
+    # net = gross - fee - tax = 200 - 3 - 2 = 195.
+    assert aggregates[0].realized_pnl_net_sum == Decimal("195")
     assert aggregates[0].sell_event_count == 1
     # UI용 파생 합계 캐시(entities.py RealizedPnlDailyAggregateEntity 참고) —
     # 절대값 재구성이라 events 전체에서 다시 합산된다.

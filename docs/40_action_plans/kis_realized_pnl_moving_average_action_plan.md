@@ -101,7 +101,7 @@ total += fill_price * fill_quantity * multiplier - fee - tax
 | 4 | recompute/replay 복구 서비스 + queue 처리 | **핵심 구현 완료 + 운영 경로 연결 완료**(`realized_pnl_recompute_service.py`, `scripts/run_realized_pnl_recompute_worker.py`) — 대규모 backfill CLI는 미착수 |
 | 5 | 조회 API | **구현 완료**(`src/agent_trading/api/routes/realized_pnl.py`, read-only) |
 | 5b | Admin UI 선행 백엔드 확장(daily aggregate 매수금액/매도금액/비용 합계) | **구현 완료**(`db/migrations/0055_...sql`, `realized_pnl_ledger_service.py`/`realized_pnl_recompute_service.py`/`realized_pnl.py` 응답 확장) — `design/realized_pnl_screen_spec.md`의 P0-선행 항목 |
-| 6 | 화면/문서 정리 | **Admin UI 실현손익 화면 P0 구현 완료**(`admin_ui/src/components/RealizedPnlView.tsx`, `design/realized_pnl_screen_spec.md` P0 항목) — 기존 `performance_summary.py`/`paper_performance_metrics.md` 정리는 미착수(후속) |
+| 6 | 화면/문서 정리 | **Admin UI 실현손익 화면 P0 구현 완료**(`admin_ui/src/components/RealizedPnlView.tsx`) + **summary endpoint 구현 완료**(`GET /performance/realized-pnl/summary`, N+1 제거용) — Admin UI를 그 endpoint로 전환하는 작업과 기존 `performance_summary.py`/`paper_performance_metrics.md` 정리는 미착수(후속) |
 
 ### 마이그레이션 설계 메모 — 왜 이 구성이 최소 안전선인가
 
@@ -229,6 +229,18 @@ total += fill_price * fill_quantity * multiplier - fee - tax
 - `positions` endpoint(all-time 종목 누계)는 이번 단계에서 확장하지 않는다 — 화면 설계서 확정 결과, 매수금액/매도금액/비용은 전부 **기간 필터가 있는** 요약 카드/탭 A/탭 B에서만 쓰이고 `positions`의 all-time `realized_pnl_net_cumulative`는 `recompute_required` 배지·종목 마스터 목록 용도로만 남기 때문이다. all-time cumulative 매수금액/매도금액/비용에 대한 실제 UI 수요가 확인되면 별도로 재검토한다.
 - 단위 테스트: `tests/services/test_realized_pnl_ledger_service.py`(실시간 증분 갱신 확인 2건 확장 + fee_tax_sum 신규 테스트), `tests/services/test_realized_pnl_recompute_service.py`(절대값 재구성 확인 확장 + phantom 값 덮어쓰기 확장), `tests/api/test_inspection.py`의 `TestRealizedPnl.test_daily_list_with_date_range`(API 응답 필드 노출 확인).
 - Admin UI 화면 구현, 화면 컴포넌트, `performance_summary.py` 교체, 대규모 backfill CLI, 워커/스케줄러 구조 변경, 계산 엔진 산식 변경, 매매 의미론/리스크 정책 변경은 이번 단계에 포함하지 않는다. **Admin UI는 여전히 화면 설계서만 있는 상태이며, 실제 구현을 시작하기 전에는 사용자에게 먼저 알린다.**
+
+### 이번 단계(realized-pnl summary endpoint — Admin UI N+1 제거)의 완료 기준
+
+- 왜: Admin UI 실현손익 화면(P0, 이미 병합)이 종목 "전체" 조회 시 `positions`로 종목 후보를 받고 종목마다 `daily`를 개별 호출해 프런트에서 합산하는 N+1 구조를 그대로 쓰고 있었다. 이 단계는 그 N+1을 백엔드 단일 조회로 대체하는 read-only summary endpoint를 추가한다 — 프런트 최적화가 아니라 백엔드 API 추가다.
+- **새 계산 엔진 로직을 추가하지 않는다** — `GET /performance/realized-pnl/summary`가 하는 산술은 `realized_pnl_daily_aggregates`의 5개 저장 필드(`realized_pnl_net_sum`/`sell_event_count`/`buy_amount_sum`/`sell_amount_sum`/`fee_tax_sum`)를 종목별로, 다시 전체로 더하는 것뿐이다.
+- **판단 1 (daily_aggregates + position_cost_basis_state만으로 충분한가)**: 저장된 값 자체는 충분했지만, 종목 필터 없이 계좌 전체를 한 번에 조회하는 repository 메서드가 없어 **추가가 필요했다**(판단 2로 이어짐).
+- **판단 2 (추가 repository 메서드 필요 여부)**: `RealizedPnlDailyAggregateRepository.list_by_account(account_id, *, start_date=, end_date=)`를 최소 추가했다 — 기존 `list_by_account_and_instrument()`에서 `instrument_id` 조건만 뺀 것과 동치이며, `PositionCostBasisStateRepository.list_by_account()`(5단계에서 이미 추가)와 동일한 명명 관례를 따른다. `recompute_required`는 그 기존 메서드(단일 종목은 `get()`, 전체는 `list_by_account()`)만으로 충분해 추가 확장이 필요 없었다.
+- **판단 3 (postgres/memory 둘 다 구현 필요 여부)**: 필요하다 — 이 저장소의 Repository Protocol 관례상 Protocol 시그니처 변경은 항상 `memory.py`(in-memory)와 `postgres/*.py`(실제 DB) 양쪽 구현을 함께 요구한다(`accept db-structure`가 이 대응을 강제 검증). 신규 migration은 없다 — PK(`account_id, instrument_id, trade_date`)의 선두 컬럼이 `account_id`라 `instrument_id` 없이 걸어도 인덱스를 그대로 활용한다.
+- 응답 구조: `account_id`/`instrument_id`(echo, 전체 조회면 `null`)/`start_date`/`end_date`/전체 합계 5개 필드/`recompute_pending_count`/`by_instrument`(종목별 같은 5개 필드 + `symbol`/`instrument_name`/`recompute_required`). 단일 종목(`instrument_id` 지정) 조회는 활동이 0건이어도 그 종목 1건을 항상 노출하고, 종목 "전체" 조회는 활동이 있었던 종목만 나열한다(기존 빈 상태 원칙과 동일).
+- 기존 `positions`/`daily`/`events`/`recompute-queue` 4개 endpoint는 계약을 바꾸지 않고 그대로 유지했다 — 이번 endpoint는 **추가만** 한다.
+- **부수 발견(버그 수정)**: `accept backend-file`을 실제 컨테이너에서 재검증하다가 `tests/services/test_realized_pnl_recompute_service.py::test_recompute_replays_multiple_fills_in_correct_order`가 5b단계 PR에서 fee/tax를 추가하면서 `realized_pnl_net_sum` 기대값을 200(gross)에서 195(net = gross - fee - tax)로 갱신하지 않은 채 병합된 것을 발견해 함께 고쳤다 — 계산 엔진/서비스 로직은 그대로이며 테스트 기대값만 수정했다.
+- Admin UI를 이 endpoint로 전환하는 작업은 이번 단계에 포함하지 않는다 — API만 추가하고, 화면은 여전히 기존 N+1 경로를 쓴다(후속).
 
 ## 10. 추가 보정사항 / 유지해야 할 원칙 / 완료 후 보고 가이드
 
