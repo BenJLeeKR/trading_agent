@@ -118,7 +118,6 @@ from agent_trading.domain.entities import (
     FillEventEntity,
     RealizedPnlComputationRunEntity,
     RealizedPnlDailyAggregateEntity,
-    RealizedPnlRecomputeQueueEntity,
 )
 from agent_trading.domain.enums import RealizedPnlComputationRunType
 from agent_trading.repositories.container import RepositoryContainer
