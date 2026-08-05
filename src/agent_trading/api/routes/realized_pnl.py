@@ -46,6 +46,8 @@ from agent_trading.api.schemas import (
     RealizedPnlPositionView,
     RealizedPnlRecomputeQueueItemView,
     RealizedPnlRecomputeQueueResponse,
+    RealizedPnlSummaryInstrumentView,
+    RealizedPnlSummaryResponse,
 )
 from agent_trading.repositories.container import RepositoryContainer
 
@@ -230,6 +232,136 @@ async def list_realized_pnl_daily(
         start_date=sd,
         end_date=ed,
         daily=[RealizedPnlDailyAggregateView.model_validate(r) for r in rows],
+    )
+
+
+@router.get(
+    "/performance/realized-pnl/summary",
+    response_model=RealizedPnlSummaryResponse,
+)
+async def get_realized_pnl_summary(
+    account_id: str = Query(..., description="Account UUID"),
+    start_date: str = Query(..., description="Start date (YYYY-MM-DD)"),
+    end_date: str = Query(..., description="End date (YYYY-MM-DD)"),
+    instrument_id: str | None = Query(
+        None, description="Optional instrument UUID — omit to summarize every instrument"
+    ),
+    repos: RepositoryContainer = Depends(get_repos),
+) -> RealizedPnlSummaryResponse:
+    """계좌(전체 종목 또는 단일 종목) 기간 요약 — Admin UI 실현손익 화면의
+
+    요약 카드 + 종목별 탭을 위한 단일 호출 조회다. ``instrument_id``를
+    생략하면 ``realized_pnl_daily_aggregates.list_by_account()``로 계좌의
+    모든 종목을 **한 번의 조회**로 가져온 뒤 종목별로 그룹핑해 합산한다 —
+    종목마다 개별 ``daily`` 호출을 반복하던 프런트의 N+1을 없애기 위한
+    endpoint다(``design/realized_pnl_screen_spec.md`` P1 항목).
+
+    계산은 하지 않는다 — 여기서 하는 산술은 ``realized_pnl_daily_aggregates``
+    에 이미 저장된 5개 합계 필드(``realized_pnl_net_sum``/``sell_event_count``/
+    ``buy_amount_sum``/``sell_amount_sum``/``fee_tax_sum``)를 종목별로,
+    다시 전체로 더하는 것뿐이다. 이동평균 원가나 실현손익 자체를 다시
+    산출하지 않는다 — 그 값은 항상 ``realized_pnl_engine.py``가 계산해
+    저장한 값을 그대로 읽는다.
+
+    ``recompute_required``는 ``position_cost_basis_state``를 그대로 읽는다
+    (``PositionCostBasisStateRepository`` 확장 없이 기존
+    ``get()``/``list_by_account()``만 사용).
+    """
+    request_path = "/performance/realized-pnl/summary"
+    aid = _parse_uuid(account_id, field="account_id", request_path=request_path)
+    sd = _parse_date(start_date, field="start_date", request_path=request_path)
+    ed = _parse_date(end_date, field="end_date", request_path=request_path)
+
+    if sd > ed:
+        raise build_http_exception(
+            status_code=400,
+            error_code="invalid_date_range",
+            message="start_date must be on or before end_date",
+            field="start_date,end_date",
+            expected="start_date <= end_date",
+            request_path=request_path,
+            next_action="check date range",
+        )
+
+    grouped: dict[UUID, list] = {}
+    recompute_by_instrument: dict[UUID, bool] = {}
+    target_instrument_id: UUID | None = None
+
+    if instrument_id is not None:
+        iid = _parse_uuid(instrument_id, field="instrument_id", request_path=request_path)
+        target_instrument_id = iid
+        rows = await repos.realized_pnl_daily_aggregates.list_by_account_and_instrument(
+            aid, iid, start_date=sd, end_date=ed
+        )
+        # 단일 종목 조회는 활동이 전혀 없어도(0건) by_instrument에 그 종목을
+        # 항상 노출한다 — 사용자가 명시적으로 그 종목을 지정했기 때문이다.
+        grouped[iid] = list(rows)
+        state = await repos.position_cost_basis_states.get(aid, iid)
+        recompute_by_instrument[iid] = state.recompute_required if state is not None else False
+    else:
+        rows = await repos.realized_pnl_daily_aggregates.list_by_account(
+            aid, start_date=sd, end_date=ed
+        )
+        for row in rows:
+            grouped.setdefault(row.instrument_id, []).append(row)
+        # 종목 "전체"는 활동이 없는 종목까지 나열하지 않는다(빈 상태 원칙 —
+        # daily aggregate 자체가 활동이 있는 날에만 생성되므로 grouped에
+        # 없는 종목은 이 기간에 실현손익 활동이 없었던 것이다).
+        states = await repos.position_cost_basis_states.list_by_account(aid)
+        recompute_by_instrument = {s.instrument_id: s.recompute_required for s in states}
+
+    by_instrument: list[RealizedPnlSummaryInstrumentView] = []
+    total_net = Decimal("0")
+    total_count = 0
+    total_buy = Decimal("0")
+    total_sell = Decimal("0")
+    total_fee_tax = Decimal("0")
+    recompute_pending_count = 0
+
+    for iid_key in sorted(grouped, key=str):
+        agg_rows = grouped[iid_key]
+        net = sum((r.realized_pnl_net_sum for r in agg_rows), Decimal("0"))
+        count = sum(r.sell_event_count for r in agg_rows)
+        buy = sum((r.buy_amount_sum for r in agg_rows), Decimal("0"))
+        sell = sum((r.sell_amount_sum for r in agg_rows), Decimal("0"))
+        fee_tax = sum((r.fee_tax_sum for r in agg_rows), Decimal("0"))
+        recompute_required = recompute_by_instrument.get(iid_key, False)
+
+        inst = await repos.instruments.get(iid_key)
+        by_instrument.append(
+            RealizedPnlSummaryInstrumentView(
+                instrument_id=iid_key,
+                symbol=inst.symbol if inst is not None else None,
+                instrument_name=inst.name if inst is not None else None,
+                realized_pnl_net_sum=net,
+                sell_event_count=count,
+                buy_amount_sum=buy,
+                sell_amount_sum=sell,
+                fee_tax_sum=fee_tax,
+                recompute_required=recompute_required,
+            )
+        )
+
+        total_net += net
+        total_count += count
+        total_buy += buy
+        total_sell += sell
+        total_fee_tax += fee_tax
+        if recompute_required:
+            recompute_pending_count += 1
+
+    return RealizedPnlSummaryResponse(
+        account_id=aid,
+        instrument_id=target_instrument_id,
+        start_date=sd,
+        end_date=ed,
+        realized_pnl_net_sum=total_net,
+        sell_event_count=total_count,
+        buy_amount_sum=total_buy,
+        sell_amount_sum=total_sell,
+        fee_tax_sum=total_fee_tax,
+        recompute_pending_count=recompute_pending_count,
+        by_instrument=by_instrument,
     )
 
 

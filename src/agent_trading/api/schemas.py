@@ -2243,6 +2243,50 @@ class RealizedPnlRecomputeQueueResponse(BaseModel):
     items: list[RealizedPnlRecomputeQueueItemView]
 
 
+class RealizedPnlSummaryInstrumentView(BaseModel):
+    """``GET /performance/realized-pnl/summary``의 종목별 한 행.
+
+    ``realized_pnl_daily_aggregates``(해당 종목, 조회 기간)의 5개 합계
+    필드를 그대로 더한 값이다 — 새 손익 계산식이 아니다.
+    ``recompute_required``는 ``position_cost_basis_state``를 그대로 읽은 값.
+    """
+
+    model_config = ConfigDict(from_attributes=True)
+
+    instrument_id: UUID
+    symbol: str | None = None
+    instrument_name: str | None = None
+    realized_pnl_net_sum: Decimal
+    sell_event_count: int
+    buy_amount_sum: Decimal
+    sell_amount_sum: Decimal
+    fee_tax_sum: Decimal
+    recompute_required: bool
+
+
+class RealizedPnlSummaryResponse(BaseModel):
+    """``GET /performance/realized-pnl/summary`` 응답 — Admin UI 실현손익 화면의
+
+    요약 카드 + 종목별 탭을 위한 단일 호출 조회. ``instrument_id``를 생략하면
+    계좌 전체(모든 종목)를 대상으로 하고, 지정하면 그 종목 하나로 좁힌다.
+    최상위 합계 필드는 ``by_instrument``의 단순 합산이다 — 계산이 아니다.
+    """
+
+    model_config = ConfigDict(from_attributes=True)
+
+    account_id: UUID
+    instrument_id: UUID | None = None
+    start_date: date
+    end_date: date
+    realized_pnl_net_sum: Decimal
+    sell_event_count: int
+    buy_amount_sum: Decimal
+    sell_amount_sum: Decimal
+    fee_tax_sum: Decimal
+    recompute_pending_count: int
+    by_instrument: list[RealizedPnlSummaryInstrumentView]
+
+
 # Rebuild models to resolve forward references under ``from __future__ import annotations``.
 # The ``_types_namespace`` provides the necessary type mappings that are otherwise
 # evaluated lazily as strings under PEP 563.

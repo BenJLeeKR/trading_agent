@@ -47,7 +47,7 @@ HTS 실현손익 화면의 전형적인 1차 화면 — "계좌 전체, 이번 �
 **해결 방안 (이번 화면 설계에 반영)**:
 
 - **1차(P0, 신규 백엔드 불필요)**: `positions`(`instrument_id` 생략)로 종목 후보 목록을 먼저 얻고, 선택된 기간에 대해 종목별로 `daily`를 개별 호출해 프런트에서 합산한다. N+1 호출이지만 이 저장소의 다른 read 경로(`positions.py`의 종목명 조회, recompute 서비스의 fill 수집)도 같은 N+1 패턴을 이미 쓰고 있어 새로운 패턴은 아니다. 계좌당 종목 수가 크지 않은 운영 콘솔이라는 전제에서 실무적으로 감당 가능하다고 판단한다.
-- **후속(P1, 백엔드 확장 후보)**: 계좌×기간 단위로 `realized_pnl_daily_aggregates`를 종목 구분 없이 합산해 반환하는 신규 read-only endpoint(예: `GET /performance/realized-pnl/summary?account_id=&start_date=&end_date=`)를 추가하면 N+1을 없앨 수 있다. **이번 화면 설계서에는 요구사항으로 포함하되, 실제 백엔드 구현은 별도 승인 후 진행한다** — 이 문서 자체는 설계 단계이므로 코드 변경을 하지 않는다.
+- ~~**후속(P1, 백엔드 확장 후보)**: 계좌×기간 단위로 `realized_pnl_daily_aggregates`를 종목 구분 없이 합산해 반환하는 신규 read-only endpoint~~ → **구현 완료.** `GET /performance/realized-pnl/summary?account_id=&start_date=&end_date=[&instrument_id=]`(`src/agent_trading/api/routes/realized_pnl.py`). `RealizedPnlDailyAggregateRepository.list_by_account()`를 최소 추가해 종목별 `daily` 반복 호출 없이 단일 조회로 계좌 전체 종목의 일자 집계를 가져온다. **Admin UI는 아직 이 endpoint로 전환되지 않았다** — 프런트는 여전히 기존 N+1 경로를 쓴다(화면 전환은 별도 후속 작업).
 - 사용자가 특정 종목을 선택한 뒤의 상세 조회(체결별 실현손익)는 이미 `events`가 정확히 그 형태(종목 1개 + 기간 필터)를 지원하므로 갭이 없다.
 
 ### 종목 후보 목록에 "전체매도로 포지션이 0인 종목"이 빠지지 않는가 (확인 완료)
@@ -209,7 +209,7 @@ HTS 실현손익 화면의 전형적인 1차 화면 — "계좌 전체, 이번 �
 
 ### P1 (후속)
 
-- 신규 백엔드 요약 API(`GET /performance/realized-pnl/summary`)로 종목 "전체" 조회의 N+1(호출 수) 자체를 제거 — P0-선행(컬럼 추가)이 "호출당 비용"을 줄이는 것과는 별개로, "호출 수"를 줄이는 추가 최적화.
+- ~~신규 백엔드 요약 API(`GET /performance/realized-pnl/summary`)로 종목 "전체" 조회의 N+1(호출 수) 자체를 제거~~ → **백엔드 구현 완료.** 남은 것은 `RealizedPnlView.tsx`를 이 endpoint로 전환하는 프런트 작업뿐이다.
 - 일자별/종목별 차트(꺾은선/막대) — `near_real_ops_monitoring_ui_spec.md`의 "chart-heavy 화면 지양" 원칙에 따라 우선순위는 낮게 둔다.
 
 ## 구현 원칙
