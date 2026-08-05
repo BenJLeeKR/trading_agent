@@ -804,6 +804,23 @@ class RealizedPnlEventRepository(Protocol):
     async def add(self, event: RealizedPnlEventEntity) -> RealizedPnlEventEntity:
         ...
 
+    async def upsert(self, event: RealizedPnlEventEntity) -> RealizedPnlEventEntity:
+        """``fill_event_id`` 기준으로 upsert한다(recompute/replay 전용).
+
+        ``realized_pnl_event_id``는 ``fill_event_id``로부터 결정론적으로
+        파생되므로(``realized_pnl_engine._derive_realized_pnl_event_id``),
+        같은 fill을 다시 계산해 upsert해도 새 행이 생기지 않고 같은 행의
+        계산값(``sell_quantity``/``sell_price``/``avg_cost_basis_before``/
+        ``fee``/``tax``/``fee_tax_source``/``realized_pnl_gross``/
+        ``realized_pnl_net``/``position_quantity_after``/``computation_run_id``)
+        만 다시 쓴다. ``created_at``/``superseded_by_event_id``는 건드리지
+        않는다. 실시간 반영 경로(``RealizedPnlLedgerService.apply_fill``)는
+        여전히 ``add()``만 사용한다 — 이 메서드는 out-of-order 등으로
+        과거에 잘못 계산된 값을 replay로 다시 정확하게 쓰는 recompute
+        경로 전용이다.
+        """
+        ...
+
     async def get_by_fill_event_id(
         self, fill_event_id: UUID
     ) -> RealizedPnlEventEntity | None:

@@ -71,6 +71,7 @@ __all__ = [
     "RealizedPnlOrchestrationError",
     "UnresolvedFillLineageError",
     "build_normalized_fill",
+    "to_kst_trade_date",
     "RealizedPnlLedgerService",
 ]
 
@@ -181,7 +182,7 @@ def build_normalized_fill(
     )
 
 
-def _to_kst_trade_date(fill_timestamp: datetime) -> date:
+def to_kst_trade_date(fill_timestamp: datetime) -> date:
     """``realized_pnl_daily_aggregates.trade_date`` 산정 규칙.
 
     ``fill_history_sync.py``의 ``_KST`` 상수와 동일한 정책(KST 기준 날짜)을
@@ -448,7 +449,7 @@ class RealizedPnlLedgerService:
     async def _update_daily_aggregate(
         self, event: RealizedPnlEventEntity
     ) -> RealizedPnlDailyAggregateEntity:
-        trade_date = _to_kst_trade_date(event.fill_timestamp)
+        trade_date = to_kst_trade_date(event.fill_timestamp)
         existing_rows = await self._repos.realized_pnl_daily_aggregates.list_by_account_and_instrument(
             event.account_id,
             event.instrument_id,

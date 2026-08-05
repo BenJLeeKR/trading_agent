@@ -1034,6 +1034,29 @@ class InMemoryRealizedPnlEventRepository:
         self._by_fill_event_id[event.fill_event_id] = event.realized_pnl_event_id
         return event
 
+    async def upsert(self, event: RealizedPnlEventEntity) -> RealizedPnlEventEntity:
+        existing_id = self._by_fill_event_id.get(event.fill_event_id)
+        if existing_id is not None:
+            existing = self._items[existing_id]
+            updated = replace(
+                existing,
+                sell_quantity=event.sell_quantity,
+                sell_price=event.sell_price,
+                avg_cost_basis_before=event.avg_cost_basis_before,
+                fee=event.fee,
+                tax=event.tax,
+                fee_tax_source=event.fee_tax_source,
+                realized_pnl_gross=event.realized_pnl_gross,
+                realized_pnl_net=event.realized_pnl_net,
+                position_quantity_after=event.position_quantity_after,
+                computation_run_id=event.computation_run_id,
+            )
+            self._items[existing_id] = updated
+            return updated
+        self._items[event.realized_pnl_event_id] = event
+        self._by_fill_event_id[event.fill_event_id] = event.realized_pnl_event_id
+        return event
+
     async def get_by_fill_event_id(
         self, fill_event_id: UUID
     ) -> RealizedPnlEventEntity | None:

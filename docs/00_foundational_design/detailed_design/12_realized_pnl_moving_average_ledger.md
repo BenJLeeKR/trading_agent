@@ -6,8 +6,9 @@
 > - **계산 엔진(3.2절)은 순수 함수로 구현 완료** — [`src/agent_trading/services/realized_pnl_engine.py`](../../../src/agent_trading/services/realized_pnl_engine.py) (`apply_fill_to_cost_basis()`, `replay_fills()`). 단위 테스트는 [`tests/services/test_realized_pnl_engine.py`](../../../tests/services/test_realized_pnl_engine.py).
 > - **repository write orchestration(8절)도 구현 완료** — [`src/agent_trading/services/realized_pnl_ledger_service.py`](../../../src/agent_trading/services/realized_pnl_ledger_service.py)의 `RealizedPnlLedgerService.apply_fill()`. `fill_events` → `NormalizedFill` 정규화(join 포함), state 조회, 계산 엔진 호출, state/event/일자집계 저장, idempotency, out-of-order·실패 시 recompute_queue/recompute_required 처리까지 담당한다. 단위 테스트는 [`tests/services/test_realized_pnl_ledger_service.py`](../../../tests/services/test_realized_pnl_ledger_service.py).
 > - **runtime ingestion 훅 연결도 구현 완료** — [`order_sync_service.py`](../../../src/agent_trading/services/order_sync_service.py)의 `_sync_fills()`가 REST 기반(`get_fills()`) 신규 fill을 `fill_events`에 저장한 **직후**(dedup을 통과한 fill에만) `RealizedPnlLedgerService.apply_fill()`을 호출한다. 훅 실패는 fill 저장 성공과 분리되어 로그(`applied`/`skipped_duplicate`/`recompute_required`/`failed` 집계)로 관측 가능하다. 단위 테스트는 `tests/services/test_order_sync_service.py`의 `TestRealizedPnlLedgerHook`.
-> - **아직 연결되지 않음**: backfill 러너(`replay_fills()`를 사용하는 배치), `recompute_queue`/`recompute_required` 소진 배치, API, Admin UI.
-> - **idempotency 현재 보장 범위**: SELL은 `realized_pnl_events.fill_event_id` UNIQUE 조회로 완전히 감지된다. BUY는 `position_cost_basis_state.last_applied_fill_event_id`와의 일치만 확인하므로 "가장 최근에 적용된 fill과 정확히 같은 재적용"만 막는다 — 그보다 이전 BUY fill의 non-adjacent 중복 재적용은 이번 구현에서 막히지 않는다(6절/서비스 docstring에 명시).
+> - **recompute/replay 복구 경로도 구현 완료** — [`src/agent_trading/services/realized_pnl_recompute_service.py`](../../../src/agent_trading/services/realized_pnl_recompute_service.py)의 `RealizedPnlRecomputeService`. `recompute_account_instrument()`가 계좌×종목의 전체 fill 히스토리를 5절 tie-break로 정렬해 `replay_fills()`로 처음부터 재계산하고, `realized_pnl_events`/`realized_pnl_daily_aggregates`를 upsert로 authoritative하게 다시 쓴 뒤 `recompute_required`를 해제하고 관련 `recompute_queue` 항목을 resolve한다. `process_pending_queue()`는 pending 항목을 계좌×종목 단위로 coalesce해 이 메서드를 반복 호출하는 배치 진입점이다. 단위 테스트는 [`tests/services/test_realized_pnl_recompute_service.py`](../../../tests/services/test_realized_pnl_recompute_service.py). **정정 방식이 당초 설계(7.3절 "supersede 행 append")에서 실제 구현 중에 변경됐다** — 아래 7.3절 갱신 참고.
+> - **아직 연결되지 않음**: `process_pending_queue()`를 주기적으로 호출하는 스케줄러/운영 자동화, 대규모 backfill CLI(수천 계좌×종목 순회), API, Admin UI.
+> - **idempotency 현재 보장 범위**: SELL은 `realized_pnl_events.fill_event_id` UNIQUE 조회로 완전히 감지된다. BUY는 `position_cost_basis_state.last_applied_fill_event_id`와의 일치만 확인하므로 "가장 최근에 적용된 fill과 정확히 같은 재적용"만 막는다 — 그보다 이전 BUY fill의 non-adjacent 중복 재적용은 실시간 반영 경로(`RealizedPnlLedgerService.apply_fill`)에서는 여전히 막히지 않는다. **다만 recompute/replay 경로는 이 한계를 물려받지 않는다** — replay는 반복 호출이 아니라 `fill_events` 테이블의 distinct 행을 정렬해 정확히 한 번씩만 훑으므로, 과거 incremental 반영이 실수로 잘못 누적했더라도 replay는 그 잘못된 상태를 신뢰하지 않고 원본 fill부터 다시 계산해 사실상의 안전망이 된다(자세한 설명은 `realized_pnl_recompute_service.py` 모듈 docstring).
 >
 > 구현 순서와 단계 분리는 [`kis_realized_pnl_moving_average_action_plan.md`](../../40_action_plans/kis_realized_pnl_moving_average_action_plan.md)를 따른다.
 > **범위**: 국내주식(KIS) 계좌의 종목별 이동평균 매입원가 기반 실현 손익. FIFO는 2절에서 비교만 하고 이번 설계는 이동평균으로 확정한다.
@@ -171,11 +172,11 @@ PK: `(account_id, instrument_id)`.
 | `realized_pnl_net` | NUMERIC(20,8) | `gross - fee - tax` |
 | `position_quantity_after` | NUMERIC(24,8) | 이 이벤트 반영 후 잔량(0 = 완전 청산) |
 | `computation_run_id` | UUID FK `realized_pnl_computation_runs` | |
-| `superseded_by_event_id` | UUID FK `realized_pnl_events`, nullable, self-ref | 정정 시 무효화 마킹(7절) |
+| `superseded_by_event_id` | UUID FK `realized_pnl_events`, nullable, self-ref | 예약 필드 — recompute/replay 경로는 upsert로 정정하므로 이 필드를 채우지 않는다(7.3절 갱신 참고). 현재 어떤 writer도 이 필드를 채우지 않는다 |
 | `fill_timestamp` | TIMESTAMPTZ | |
 | `created_at` | TIMESTAMPTZ | |
 
-**append-only 원칙**: 이 테이블은 UPDATE/DELETE하지 않는다. 정정이 필요하면 `superseded_by_event_id`를 채운 보정 행을 추가로 append한다(7.3절).
+**append-only 원칙(실시간 반영 경로 기준)**: `RealizedPnlLedgerService.apply_fill()`은 이 테이블에 `add()`만 쓴다 — 같은 fill을 두 번 다른 행으로 기록하지 않는다. 정정(out-of-order 등으로 계산값이 틀린 경우)은 recompute/replay 경로가 같은 identity(`realized_pnl_event_id`, `fill_event_id`로부터 결정론적으로 파생)를 유지한 `upsert()`로 계산값만 다시 쓴다 — `superseded_by_event_id`를 채운 별도 보정 행을 추가하는 방식은 `fill_event_id` UNIQUE 제약과 충돌해 채택하지 않았다. 자세한 내용은 7.3절.
 
 ### 4.3 `realized_pnl_daily_aggregates`
 
@@ -276,9 +277,15 @@ ORDER BY fill_timestamp ASC, broker_fill_id ASC NULLS LAST, created_at ASC, fill
 
 5절/6절의 다층 방어로 처리된다. 중복이 감지되면 `computation_run.fills_skipped_duplicate`를 증가시키고 조용히 넘어간다(이것은 정상 동작이며 장애가 아니다).
 
-### 7.3 정정(correction)
+### 7.3 정정(correction) — **[갱신] 실제 구현에서 확인된 제약으로 방식이 바뀜**
 
-체결 자체가 취소되는 경우는 실무상 드물지만, 오수신 필드나 KIS 응답 정정은 발생할 수 있다. **UPDATE/DELETE를 사용하지 않는다.** 원본 `realized_pnl_event`에 `superseded_by_event_id`를 채우고, 올바른 값을 반영한 보정 행을 새로 append한다(음수 realized_pnl로 원본을 상쇄한 뒤 정정값을 다시 append하는 2단계 방식, 회계상의 취소선 방식과 동일). 이렇게 해야 "무엇이 언제 왜 바뀌었는지"가 원장에서 영구히 조회 가능하다.
+> 이 절은 당초 "superseded_by_event_id를 채운 보정 행 append" 방식으로 설계됐으나, recompute/replay 서비스를 실제로 구현하는 과정에서 그 방식이 `realized_pnl_events.fill_event_id` UNIQUE 제약과 근본적으로 충돌한다는 것이 확인됐다(같은 fill_event_id로 두 번째 행을 append할 수 없다). 아래는 실제 구현된 방식이다.
+
+체결 자체가 취소되는 경우는 실무상 드물지만, out-of-order로 뒤늦게 도착한 fill 때문에 그 이후 모든 `realized_pnl_event`의 계산값이 이미 틀린 경우는 실제로 발생한다(7.1절). **정정은 UPDATE/DELETE 대신, 같은 fill의 identity를 유지한 upsert로 이루어진다.** `realized_pnl_event_id`가 `fill_event_id`로부터 결정론적으로 파생되므로(6절), recompute가 같은 fill을 다시 계산해도 항상 같은 `realized_pnl_event_id`가 나온다 — 이 identity를 그대로 유지한 채 계산값(`sell_quantity`/`sell_price`/`avg_cost_basis_before`/`fee`/`tax`/`realized_pnl_gross`/`realized_pnl_net`/`position_quantity_after`/`computation_run_id`)만 다시 쓴다(`RealizedPnlEventRepository.upsert()`, `INSERT ... ON CONFLICT (fill_event_id) DO UPDATE`). `created_at`은 최초 생성 시각으로 보존된다.
+
+**"append-only"의 의미가 재정의됐다**: 이 저장소는 "같은 fill을 두 번 다른 행으로 기록하지 않는다"(fill_event_id당 정확히 1행)는 뜻으로 유지되지만, "그 1행의 계산값을 절대 다시 쓰지 않는다"는 뜻은 아니다. 실시간 반영 경로(`RealizedPnlLedgerService.apply_fill`)는 여전히 `add()`만 사용해 append-only를 지킨다 — 값을 다시 쓰는 upsert는 recompute/replay 경로만 쓴다. `superseded_by_event_id` 필드는 이 recompute 경로에서는 사용하지 않는다(값을 그 자리에서 바로 고치므로 "다른 행이 원본을 대체한다"는 개념 자체가 필요 없다) — 다만 필드 자체는 남겨 두어, 향후 운영자가 수동으로 별도 identity의 정정 행을 넣어야 하는 경우(예: 계산 로직 밖의 순수 데이터 오류)를 위해 예약해 둔다.
+
+"무엇이 언제 왜 바뀌었는지"의 추적은 `realized_pnl_events` 행 자체가 아니라 `realized_pnl_computation_runs`(어떤 run이 이 값을 마지막으로 썼는지, `computation_run_id`로 역추적 가능)와 애플리케이션 로그로 남긴다 — 개별 이벤트 행의 "이전 값"은 보존되지 않는다는 뜻이며, 이는 당초 설계보다 감사 추적성이 약화된 지점이다(알려진 트레이드오프).
 
 ## 8. 장애 시 복구 계약
 
@@ -333,10 +340,11 @@ ORDER BY fill_timestamp ASC, broker_fill_id ASC NULLS LAST, created_at ASC, fill
 
 ## 12. 향후 확장 범위
 
-- `recompute_queue`/`recompute_required` 항목을 실제로 소진하는 배치(수동 트리거 또는 스케줄러) — 지금은 등록만 되고 자동으로 해소되지 않는다.
-- 백필 러너 — 계좌×종목별 전체 fill 히스토리를 정렬해 `replay_fills()`에 전달하고 결과를 저장(순수 함수는 이미 있지만 저장 orchestration은 `apply_fill()`과 다른 형태로 새로 작성해야 한다 — 단일 fill 저장이 아니라 배치 upsert).
-- BUY fill의 non-adjacent 중복 재적용을 막는 fill 단위 적용 이력(별도 apply-log 또는 적용된 fill_event_id 집합) — 현재는 "가장 최근에 적용된 fill"만 dedup 앵커로 쓴다(6절).
-- 과거 체결 백필(전체 replay) 및 실행 결과 검증 절차.
+- `process_pending_queue()`를 주기적으로 호출하는 스케줄러/운영 자동화 연결 — 메서드 자체는 구현됐지만 아직 어떤 스케줄러/cron도 이를 부르지 않는다.
+- 대규모 backfill CLI — 이번 recompute 서비스는 `recompute_queue`에 이미 등록된(또는 명시적으로 지정된) 계좌×종목 단위로만 동작한다. "전체 계좌×종목을 순회하며 최초 백필"하는 별도 CLI/러너는 아직 없다.
+- BUY fill의 non-adjacent 중복 재적용을 막는 fill 단위 적용 이력(별도 apply-log 또는 적용된 fill_event_id 집합) — 실시간 반영 경로(`RealizedPnlLedgerService.apply_fill`)는 여전히 "가장 최근에 적용된 fill"만 dedup 앵커로 쓴다(6절). recompute/replay 경로는 이 문제에 영향받지 않는다(위 상단 상태 배너 참고).
+- `OrderQuery`에 `instrument_id` 필터 추가 검토 — 현재 recompute의 fill 수집은 계좌 전체 주문을 가져온 뒤 애플리케이션에서 종목으로 거른다(`realized_pnl_recompute_service.py` 모듈 docstring "알려진 한계").
+- daily aggregate phantom 값(활동이 전혀 없는 날짜에 남은 잘못된 합계) 감사/정리 도구.
 - 종목별 누계/체결별/일자별 조회 API 구현.
 - admin_ui 노출 화면.
 - `broker_fill_snapshots`와의 정식 대사 리포트 및 임계값 정책.

@@ -62,11 +62,13 @@ total += fill_price * fill_quantity * multiplier - fee - tax
   - idempotency 한계: SELL은 `fill_event_id` UNIQUE 조회로 완전 방어, BUY는 "가장 최근 적용 fill과의 일치"만 방어(상세 설계 문서 6절). 이 한계는 훅 연결 이후에도 그대로 유지된다.
 - 검증 명령: `bash scripts/harness/run.sh accept backend-runtime`, 모킹된 broker 기반 통합 테스트.
 
-### 4단계 — 백필(backfill) — 후속 확장, 1차 범위 아님
+### 4단계 — 백필(backfill) / recompute 복구 — 핵심 replay는 구현 완료, 대규모 backfill CLI는 미착수
 
-- 왜: 이동평균은 계좌×종목별 전체 히스토리를 시간순으로 처음부터 replay해야 정확하므로(중간 지점 재계산 불가), 과거분 백필은 신규 체결 반영과 독립된 별도 작업으로 분리한다.
-- 산출물: `realized_pnl_computation_runs(run_type='backfill_replay')` 단위 배치 replay, 처리 계좌 수/이벤트 수/이상 건수 요약.
-- 검증 명령: 소수 계좌 dry-run → 사용자 승인 → 전체 실행. 배치 실행 자체가 DB 쓰기이므로 `AGENTS.md` 검증 부하 제한에 따라 **사용자 명시 승인 필요**.
+- 왜: 이동평균은 계좌×종목별 전체 히스토리를 시간순으로 처음부터 replay해야 정확하므로(중간 지점 재계산 불가), 과거분 재계산은 신규 체결 반영과 독립된 별도 작업으로 분리한다.
+- 산출물: `realized_pnl_computation_runs(run_type='backfill_replay')` 단위 계좌×종목 replay.
+  - **구현 완료**: [`src/agent_trading/services/realized_pnl_recompute_service.py`](../../src/agent_trading/services/realized_pnl_recompute_service.py)의 `RealizedPnlRecomputeService`. `recompute_account_instrument(account_id, instrument_id)`가 해당 계좌×종목의 fill 히스토리를 정렬해 `replay_fills()`로 재계산하고 저장소에 반영하며, `process_pending_queue()`가 `realized_pnl_recompute_queue` pending 항목을 계좌×종목 단위로 coalesce해 이를 반복 호출한다(단위 테스트: [`tests/services/test_realized_pnl_recompute_service.py`](../../tests/services/test_realized_pnl_recompute_service.py)).
+  - **미착수**: `process_pending_queue()`를 주기적으로 부르는 스케줄러 연결, "전체 계좌×종목을 처음부터 순회하는" 대규모 backfill CLI(현재는 이미 `recompute_queue`에 등록된 대상만 처리한다).
+- 검증 명령: 소수 계좌 dry-run → 사용자 승인 → 전체 실행. 실제 DB에 대한 배치 실행 자체는 `AGENTS.md` 검증 부하 제한에 따라 **사용자 명시 승인 필요**(이번 PR은 in-memory repository 테스트로만 검증했다).
 
 ### 5단계 — 조회 API — 후속 확장
 
@@ -88,7 +90,7 @@ total += fill_price * fill_quantity * multiplier - fee - tax
 | 1 | 계산 엔진 + 단위 테스트 | **구현 완료**(`realized_pnl_engine.py`, 저장소 미연결) |
 | 2 | 신규 마이그레이션(초안)/엔티티/repository | **마이그레이션 초안만 작성 완료**(0053/0054, 미실행) — entity/repository는 미착수 |
 | 3 | 실시간 반영 훅 + 복구 계약 | **구현 완료**(`realized_pnl_ledger_service.py` + `order_sync_service._sync_fills()` 훅 연결) |
-| 4 | 백필 배치 + 실행 요약 | 미착수(후속) |
+| 4 | recompute/replay 복구 서비스 + queue 처리 | **핵심 구현 완료**(`realized_pnl_recompute_service.py`) — 스케줄러 연결/대규모 backfill CLI는 미착수 |
 | 5 | 조회 API | 미착수(후속) |
 | 6 | 화면/문서 정리 | 미착수(후속) |
 
@@ -178,6 +180,13 @@ total += fill_price * fill_quantity * multiplier - fee - tax
 - `tests/services/test_order_sync_service.py`의 `TestRealizedPnlLedgerHook`이 신규 fill 반영/dedup 시 재호출 안 됨/`recompute_required` 로깅/예외 격리/기존 dedup 동작 무변화를 in-memory repository 기반으로 커버한다.
 - `RealizedPnlLedgerService`/`realized_pnl_engine.py`의 계산 로직 자체는 이번 단계에서 재구현하지 않는다.
 - backfill 러너, `recompute_queue` 소진 배치, API, Admin UI는 이번 단계에 포함하지 않는다.
+
+### 이번 단계(4단계 — recompute/replay 복구 서비스)의 완료 기준
+
+- `src/agent_trading/services/realized_pnl_recompute_service.py`의 `RealizedPnlRecomputeService.recompute_account_instrument()`가 계산은 전부 `replay_fills()`에 위임하고, fill 수집·정렬·저장(upsert)·queue resolve·`recompute_required` 해제를 담당한다. `process_pending_queue()`가 같은 계좌×종목의 pending을 coalesce해 중복 replay를 피한다.
+- `tests/services/test_realized_pnl_recompute_service.py`가 정렬 후 replay, out-of-order 상태 해제, queue 부분 resolve(다른 계좌×종목은 그대로 유지), coalesce, collect 단계 실패 시 관측, idempotent 재실행, daily aggregate 절대값 재구성을 in-memory repository 기반으로 커버한다.
+- `RealizedPnlEventRepository.upsert()`(recompute 전용, 실시간 경로는 여전히 `add()`만 사용)를 최소 범위로 추가했다 — 이는 "정정은 UPDATE/DELETE 없이 supersede 행 append로"라는 당초 설계를 재검토하게 만든 실제 구현상의 발견이며, 상세 설계 문서 7.3절에 그 경위를 반영했다.
+- 스케줄러 연결, 대규모 backfill CLI, API, Admin UI, `performance_summary.py` 교체는 이번 단계에 포함하지 않는다.
 
 ## 10. 추가 보정사항 / 유지해야 할 원칙 / 완료 후 보고 가이드
 
