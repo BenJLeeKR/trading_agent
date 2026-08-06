@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Sequence
 from datetime import date, datetime
 from decimal import Decimal
 from uuid import UUID
@@ -8,7 +9,7 @@ from uuid import UUID
 from agent_trading.db.row_mapper import row_to_entity
 from agent_trading.db.transaction import TransactionManager
 from agent_trading.domain.entities import TradeDecisionEntity
-from agent_trading.repositories.contracts import TradeDecisionRow
+from agent_trading.repositories.contracts import CoreEligibilitySample, TradeDecisionRow
 
 
 class PostgresTradeDecisionRepository:
@@ -424,3 +425,50 @@ class PostgresTradeDecisionRepository:
         if row is None:
             return None
         return row_to_entity(row, TradeDecisionEntity)
+
+    async def list_recent_core_eligibility_reasons(
+        self,
+        account_id: UUID,
+        symbols: Sequence[str],
+        business_date_from: date,
+        business_date_to: date,
+    ) -> Sequence[CoreEligibilitySample]:
+        if not symbols:
+            return ()
+        rows = await self._tx.connection.fetch(
+            """
+            SELECT
+                td.symbol,
+                td.created_at,
+                td.decision_json->'deterministic_trigger'->'eligibility_reasons'
+                    AS eligibility_reasons
+            FROM trading.trade_decisions td
+            JOIN trading.decision_contexts dc
+                ON dc.decision_context_id = td.decision_context_id
+            WHERE dc.account_id = $1
+              AND td.source_type = 'core'
+              AND td.symbol = ANY($2::text[])
+              AND (td.created_at AT TIME ZONE 'Asia/Seoul')::date >= $3
+              AND (td.created_at AT TIME ZONE 'Asia/Seoul')::date <= $4
+            ORDER BY td.created_at ASC
+            """,
+            account_id,
+            list(symbols),
+            business_date_from,
+            business_date_to,
+        )
+        samples: list[CoreEligibilitySample] = []
+        for row in rows:
+            reasons = row["eligibility_reasons"]
+            if isinstance(reasons, str):
+                reasons = json.loads(reasons)
+            reasons = reasons or []
+            last_reason = reasons[-1] if reasons else None
+            samples.append(
+                CoreEligibilitySample(
+                    symbol=row["symbol"],
+                    created_at=row["created_at"],
+                    last_eligibility_reason=last_reason,
+                )
+            )
+        return samples

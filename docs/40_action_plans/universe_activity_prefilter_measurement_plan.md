@@ -591,6 +591,37 @@ freeze는 `business_date` 단위로 하루 1회만 materialize되므로(§상단
 
 **A3(및 병행 A5)는 바로 shadow-only 코드 구현으로 넘어갈 근거가 충분하다.** 규칙 정의가 단순하고(streak 계산은 이미 `analyze_core_relative_activity_repeat_gap.py`가 유사 개념을 다루고 있어 코드화가 어렵지 않다), 결함이 없으며, 강등 후보 규모가 6종목/10일로 작아 초기 리스크가 낮다. 다만 **shadow 단계에서는 로그만 남기고 실제 compose 결과는 바꾸지 않아야 한다** — soft/hard 단계로의 전환은 이번 시뮬레이션 범위 밖이며 추가 실측(더 긴 기간, 다른 계정)을 거쳐야 한다.
 
+## `core` 동적 강등 A3/A5 shadow-only 관측 구현(2026-08-06 KST, 착수)
+
+위 시뮬레이션에서 결함이 없다고 확인된 A3(streak≥3)/A5(최근 5영업일 중 차단일수≥3)를 운영 코드에 **관측 로직으로만** 추가했다. **실제 exclusion/soft demotion은 아직 아니다** — universe 선정 결과(`compose()`/`compose_with_diagnostics()`의 반환 종목 목록·순서·source_type·cap)는 이 구현 전후로 완전히 동일하다.
+
+### 구현 위치
+
+`UniverseSelectionService.compose_with_diagnostics()`의 **Step 6(market overlay)과 Step 7(`_apply_exclusions`) 사이에 Step 6.5**로 `_evaluate_core_activity_demotion_shadow()`를 추가했다 — 이전 설계 검토(§`core` 동적 강등 레이어 설계 검토)가 권장한 위치 그대로다. 이 시점에는 Step 2/3(`held_position`/`reconciliation_overlay` override)이 이미 반영돼 있어, `source_type == CORE`로 여전히 남아 있는 심볼만 대상으로 판정한다 — `event_overlay`/`market_overlay`/`manual`로 override된 심볼은 자동으로 제외된다.
+
+### 데이터 접근
+
+`TradeDecisionRepository`에 `list_recent_core_eligibility_reasons(account_id, symbols, business_date_from, business_date_to)`를 신규로 추가했다(Postgres/in-memory 양쪽 구현). `source_type='core'` decision의 최종 `eligibility_reasons` 표본을 읽기만 하는 순수 SELECT 경로다 — 쓰기/마이그레이션 없음.
+
+### 어디에 기록되는가
+
+`MarketOverlayDiagnostics`에 `core_demotion_shadow_evaluated: bool`, `core_demotion_shadow_signals: tuple[CoreActivityDemotionShadowSignal, ...]` 필드를 추가했다(기존 UNIV-3 shadow 필드들과 같은 컨벤션). 각 신호에는 `symbol`, `matched_rules`(`"A3"`/`"A5"`), `streak`, `appearance_count_in_window`, `blocked_count_in_window`, `last_blocked_business_date`, `evaluation_date`가 담긴다. 강등 후보가 있으면 `logger.info()`로도 남긴다.
+
+### compose 결과 불변 보장
+
+- shadow 계산 함수는 `seen` 딕셔너리를 **읽기만** 하고 수정하지 않는다 — 반환값은 `MarketOverlayDiagnostics`에만 (`dataclasses.replace`로) 첨부된다.
+- shadow 계산이 예외를 던져도 `try/except`로 감싸 compose 자체는 계속 진행된다(로그만 남기고 신호는 빈 튜플로 처리).
+- `_apply_exclusions()`, `_apply_cap()`, 우선순위 정렬(Step 8) 등 실제 선정 로직은 전혀 건드리지 않았다.
+- `accept backend-file src/agent_trading/services/universe_selection.py`가 매칭한 기존 테스트(`tests/services/test_universe_selection.py`, `tests/scripts/test_evaluate_market_overlay_runtime_validation.py`)가 이 변경 후에도 그대로 통과해, 기존 compose 시나리오의 결과가 바뀌지 않았음을 확인했다.
+
+### 다음 단계
+
+**아직 soft demotion으로 넘어가지 않는다.** 이번 shadow 관측을 실제 운영 데이터에서 일정 기간(예: 최소 몇 주) 쌓은 뒤, 강등 후보 수/오탐 패턴이 이전 시뮬레이션과 일치하는지 확인하고 나서 soft demotion(정렬 우선순위만 낮추는 단계) 전환 여부를 판단한다.
+
+### 아직 검증하지 못한 가정
+
+- Postgres 구현(`list_recent_core_eligibility_reasons`)에 대응하는 통합 테스트(`tests/repositories/test_postgres_trade_decisions.py`)는 이 환경에서 DB 인증 실패(`InvalidPasswordError`)로 실행하지 못했다 — 이는 이번 변경과 무관한 기존 환경 제약(호스트에서 라이브 DB 접속 자격 증명 불일치)이며, 사용자 승인 없이 DB 접속 설정을 바꾸지 않았다. 이 read-only SELECT 경로 자체가 실제 운영 DB에서 올바르게 동작하는지는 다음 실제 배포/운영 관측으로 재확인이 필요하다.
+
 ## 해석 기준
 
 - `low_average_volume` 또는 `low_turnover` 비중이 높으면 universe 사전 필터 강화 후보로 본다.

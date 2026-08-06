@@ -23,7 +23,8 @@ from __future__ import annotations
 import logging
 import re
 import time
-from datetime import datetime, timezone
+from dataclasses import replace
+from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 from typing import TYPE_CHECKING, Sequence
 from uuid import UUID
@@ -31,6 +32,7 @@ from zoneinfo import ZoneInfo
 
 from agent_trading.domain.enums import OrderSide, OrderStatus, TimeInForce
 from agent_trading.repositories.container import RepositoryContainer
+from agent_trading.repositories.contracts import CoreEligibilitySample
 from agent_trading.repositories.filters import OrderQuery
 from agent_trading.services.core_universe_seed import (
     APPROVED_CORE_UNIVERSE_SYMBOLS,
@@ -55,6 +57,7 @@ from agent_trading.services.universe_selection_types import (
     INCLUSION_REASON_TRADE_STRENGTH,
     INCLUSION_REASON_VOLUME_SURGE,
     CompositionContext,
+    CoreActivityDemotionShadowSignal,
     LiquidityFilterResult,
     MarketDataSnapshot,
     MarketOverlayDiagnostics,
@@ -291,6 +294,49 @@ def _extract_bar_volume(bar: object) -> float | None:
         return float(str(val).replace(",", "").strip())
     except (ValueError, TypeError):
         return None
+
+
+def _reduce_core_eligibility_samples_to_daily_status(
+    samples: Sequence[CoreEligibilitySample],
+) -> dict[str, dict[date, str]]:
+    """UNIV-5 shadow: 원시 표본을 종목별 거래일 단위 상태로 축약한다.
+
+    같은 거래일에 여러 decision이 있어도, 그 날 **한 번이라도**
+    ``eligibility_low_relative_activity``로 최종 차단된 적이 있으면 그
+    날은 ``"blocked"``로 취급한다(day-level dedup — 반복 평가로 인한
+    행 개수 부풀림을 피한다).
+    """
+    by_symbol_day: dict[str, dict[date, str]] = {}
+    for sample in samples:
+        business_date = sample.created_at.astimezone(_KST).date()
+        day_status = by_symbol_day.setdefault(sample.symbol, {})
+        is_blocked = sample.last_eligibility_reason == "eligibility_low_relative_activity"
+        current = day_status.get(business_date)
+        if current == "blocked":
+            continue
+        day_status[business_date] = "blocked" if is_blocked else current or "passed"
+    return by_symbol_day
+
+
+def _consecutive_blocked_streak_shadow(
+    day_status: dict[date, str],
+    calendar: list[date],
+    as_of_index: int,
+) -> int:
+    """``as_of_index``에서 거슬러 올라가며 연속 ``blocked``인 일수를 센다.
+
+    ``analyze_core_relative_activity_repeat_gap.py``/
+    ``simulate_core_demotion_rules.py``의 동일 개념(streak)과 정의를
+    맞췄다 — 등장하지 않은 날이나 통과한 날을 만나면 즉시 멈춘다.
+    """
+    streak = 0
+    idx = as_of_index
+    while idx >= 0:
+        if day_status.get(calendar[idx]) != "blocked":
+            break
+        streak += 1
+        idx -= 1
+    return streak
 
 
 def _calc_momentum_shadow_signal(
@@ -1044,6 +1090,20 @@ class UniverseSelectionService:
         # Step 6: Market-Driven Overlay (P2 minimum)
         market_overlay_diagnostics = await self._add_market_overlay(seen, ctx)
         _mark("6_market_overlay")
+
+        # Step 6.5: UNIV-5 shadow — core 반복 활동성 부족 차단 강등 후보 관측
+        # (선정 결과에는 영향 없음, 실패해도 compose 자체는 계속된다).
+        try:
+            demotion_signals = await self._evaluate_core_activity_demotion_shadow(seen, ctx)
+        except Exception:  # noqa: BLE001 — shadow 관측 실패가 compose를 막으면 안 됨
+            logger.exception("core activity demotion shadow evaluation failed; skipping")
+            demotion_signals = ()
+        market_overlay_diagnostics = replace(
+            market_overlay_diagnostics,
+            core_demotion_shadow_evaluated=True,
+            core_demotion_shadow_signals=demotion_signals,
+        )
+        _mark("6_5_core_demotion_shadow")
 
         # Step 7: Exclusion Rules (Liquidity Filter)
         candidates = await self._apply_exclusions(seen)
@@ -1804,6 +1864,109 @@ class UniverseSelectionService:
             "momentum_shadow_evaluated": True,
             "momentum_shadow_signals": tuple(signals),
         }
+
+    async def _evaluate_core_activity_demotion_shadow(
+        self,
+        seen: dict[str, SelectedSymbol],
+        ctx: CompositionContext,
+    ) -> tuple[CoreActivityDemotionShadowSignal, ...]:
+        """UNIV-5 shadow: `core` 반복 활동성 부족 차단 강등(demotion) 후보 관측.
+
+        ``docs/40_action_plans/universe_activity_prefilter_measurement_plan.md``
+        의 "`core` 동적 강등 규칙 후보 shadow-only 시뮬레이션" 결과에서 결함이
+        없다고 확인된 A3(``streak>=3``)/A5(최근 5영업일 중 차단일수>=3)를
+        운영 코드에 관측 로직으로만 옮긴다.
+
+        **계약**: 이 함수는 ``seen``을 읽기만 하고 절대 수정하지 않는다.
+        반환값은 순수 관측 신호이며, 호출부(``compose_with_diagnostics``)는
+        이 결과를 강등/제외/우선순위 조정 어디에도 반영하지 않는다 — 오직
+        ``MarketOverlayDiagnostics``에 부가 정보로만 첨부한다.
+
+        Step 1~6(held/reconciliation/event/market/manual override 포함)이
+        모두 반영된 뒤 호출되므로, 여기서 ``source_type == CORE``로 남아
+        있는 심볼은 다른 경로로 override되지 않은 "순수 core" 심볼만이다.
+        """
+        core_symbols = [
+            symbol
+            for symbol, selected in seen.items()
+            if selected.source_type == SourceType.CORE
+        ]
+        if not core_symbols:
+            return ()
+
+        now_kst = datetime.now(_KST)
+        evaluation_date = now_kst.date()
+        # 5영업일 룩백에는 주말/공휴일이 섞이므로 여유 있게 15일치를 당겨온다.
+        lookback_start = evaluation_date - timedelta(days=15)
+
+        samples = await self._repos.trade_decisions.list_recent_core_eligibility_reasons(
+            ctx.account_id,
+            core_symbols,
+            lookback_start,
+            evaluation_date,
+        )
+        if not samples:
+            return ()
+
+        by_symbol_day = _reduce_core_eligibility_samples_to_daily_status(samples)
+        calendar = sorted({d for day_status in by_symbol_day.values() for d in day_status})
+        if evaluation_date not in calendar:
+            # 오늘자 decision이 아직 하나도 없으면(예: 장 시작 직후) 평가할
+            # 근거가 없다 — 조용히 건너뛴다(에러 아님).
+            return ()
+
+        eval_idx = calendar.index(evaluation_date)
+        signals: list[CoreActivityDemotionShadowSignal] = []
+
+        for symbol in core_symbols:
+            day_status = by_symbol_day.get(symbol)
+            if not day_status or day_status.get(evaluation_date) is None:
+                continue
+
+            streak = _consecutive_blocked_streak_shadow(day_status, calendar, eval_idx)
+            window_days = calendar[max(0, eval_idx - 4) : eval_idx + 1]
+            appeared_in_window = sum(1 for d in window_days if d in day_status)
+            blocked_in_window = sum(
+                1 for d in window_days if day_status.get(d) == "blocked"
+            )
+
+            matched_rules: list[str] = []
+            if streak >= 3:
+                matched_rules.append("A3")
+            if blocked_in_window >= 3:
+                matched_rules.append("A5")
+            if not matched_rules:
+                continue
+
+            last_blocked_date = next(
+                (d for d in reversed(window_days) if day_status.get(d) == "blocked"),
+                None,
+            )
+            signals.append(
+                CoreActivityDemotionShadowSignal(
+                    symbol=symbol,
+                    matched_rules=tuple(matched_rules),
+                    streak=streak,
+                    appearance_count_in_window=appeared_in_window,
+                    blocked_count_in_window=blocked_in_window,
+                    last_blocked_business_date=(
+                        last_blocked_date.isoformat() if last_blocked_date else None
+                    ),
+                    evaluation_date=evaluation_date.isoformat(),
+                )
+            )
+
+        if signals:
+            logger.info(
+                "core 활동성 부족 반복 차단 강등(demotion) shadow 후보(UNIV-5, "
+                "선정 미반영): %s",
+                [
+                    (s.symbol, s.matched_rules, s.streak, s.blocked_count_in_window)
+                    for s in signals
+                ],
+            )
+
+        return tuple(signals)
 
     async def _apply_exclusions(
         self,

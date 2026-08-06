@@ -288,6 +288,39 @@ class MomentumShadowSignal:
 
 
 @dataclass(slots=True, frozen=True)
+class CoreActivityDemotionShadowSignal:
+    """UNIV-5: `core` 반복 활동성 부족 차단 shadow 강등(demotion) 후보 신호.
+
+    ``docs/40_action_plans/universe_activity_prefilter_measurement_plan.md``의
+    "`core` 동적 강등 규칙 후보 shadow-only 시뮬레이션" 결과를 바탕으로,
+    최근 ``eligibility_low_relative_activity`` 반복 차단 이력이 규칙
+    A3(``streak>=3``) 또는 A5(``최근 5영업일 중 차단일수>=3``)에 해당하는
+    `core` 종목을 관측만 한다. **선정 결과(포함 여부/우선순위/source_type/
+    cap)에는 어떤 영향도 주지 않는다** — 순수 관측용 신호다.
+    """
+
+    symbol: str
+    matched_rules: tuple[str, ...]
+    """``("A3",)``, ``("A5",)``, ``("A3", "A5")`` 중 하나."""
+
+    streak: int
+    """평가일 기준 연속 차단일수(``eligibility_low_relative_activity`` 최종
+    사유가 연속으로 발생한 거래일 수)."""
+
+    appearance_count_in_window: int
+    """A5 판정에 쓰인 최근 5영업일 창에서 core로 등장한 일수."""
+
+    blocked_count_in_window: int
+    """같은 창에서 ``eligibility_low_relative_activity``로 최종 차단된 일수."""
+
+    last_blocked_business_date: str | None
+    """가장 최근에 차단이 확인된 거래일(ISO 날짜 문자열)."""
+
+    evaluation_date: str
+    """이 shadow 판정을 계산한 기준일(compose 실행일, ISO 날짜 문자열)."""
+
+
+@dataclass(slots=True, frozen=True)
 class MarketOverlayDiagnostics:
     """Operational diagnostics for market-driven overlay composition."""
 
@@ -323,6 +356,17 @@ class MarketOverlayDiagnostics:
     # 영향을 주지 않는 순수 관측용 필드다.
     momentum_shadow_evaluated: bool = False
     momentum_shadow_signals: tuple[MomentumShadowSignal, ...] = ()
+
+    # ── UNIV-5 shadow: core 반복 활동성 부족 차단 강등(demotion) 후보
+    # (2026-08-06) ───────────────────────────────────────────────────────
+    # 정적 core seed는 그대로 유지한다. Step 1~6(held/reconciliation/event/
+    # market/manual override 포함)이 모두 반영된 뒤, 그 시점에도 여전히
+    # source_type=core로 남아 있는 심볼만 대상으로 관측한다. 강등 후보로
+    # 판정돼도 이번 단계에서는 universe에서 제거하지 않는다 — 로그/
+    # diagnostics에만 남기는 순수 관측용이다(soft/hard 전환은 다음 턴 이후
+    # 별도 판단).
+    core_demotion_shadow_evaluated: bool = False
+    core_demotion_shadow_signals: tuple[CoreActivityDemotionShadowSignal, ...] = ()
 
 
 # ── Default fallback ────────────────────────────────────────────────────────
