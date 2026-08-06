@@ -2362,6 +2362,12 @@ deterministic 기준 `BUY_CANDIDATE`가 됐을 것"이라는 판단을 한 단�
 있었는지를 counterfactual로 분석했다. 새 AI 호출 없음, 코드 변경
 없음, DB write 없음.
 
+**저장 경로 재확인**: 이 절의 qualitative 비교에 쓴 `risk_opinion`/
+`evidence_strength`는 `trade_decisions.decision_json`의 **top-level
+키**를 read-only로 다시 조회해 확인한 값만 사용했다. 오늘 표본에서는
+`decision_json.agent_signals`/`decision_json.risk_assessment` 하위 경로는
+비어 있었으므로, 그 경로를 사실값으로 사용하지 않았다.
+
 **비교군**: 2026-08-05(수) 오늘 실제 `buy_candidate=true`였던 factual
 표본은 `035420`(`entry_score=0.6503`, core, 54사이클)과 `181710`
 (`entry_score=0.6872`, core, 54사이클) 2종목뿐이다. `event_overlay`

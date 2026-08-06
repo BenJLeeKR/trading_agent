@@ -9411,6 +9411,19 @@ score>=0.65` 기준, `eligibility_passed` 미필터)을 오늘 표본에 그대�
 구성원)이 시간이 지나며 달라진 결과다. 상세: `buy_path_variable_
 gate_matrix.md` §13.2.13.
 
+**[2026-08-06 KST 보조 분석 추가]** 다만 이 재검증은 어디까지나
+`buy_candidate` 경계 영향 확인이 목적이었고, 실제 주문 단계까지의 영향은
+별도로 봐야 한다. 같은 날 factual `buy_candidate=true` 비교군
+(`035420`/`181710`)도 대부분 downstream에서 `WATCH`/`HOLD`로 내려갔고
+하루 전체 `order_request`가 0건이었다. 따라서 `073240`은 allocation과
+무관한 activity 게이트로 제외가 확정이고, `008930`/`051900`/`078930`은
+deterministic `BUY_CANDIDATE` 복원 개연성은 높지만 실제 `order_request`
+까지 갔을 가능성은 낮았던 것으로 좁혀 읽는 것이 맞다. 이 보조 분석은
+정본 결론(B: allocation 제거가 `buy_candidate` 경계에는 실제 영향) 을
+대체하지 않고, 해석 범위를 과장하지 않기 위한 보완으로만 남긴다. 질적
+신호 비교에 쓴 `risk_opinion`/`evidence_strength`는 `trade_decisions.
+decision_json` top-level 키를 read-only로 재확인한 값만 사용했다.
+
 ### 35.3 어제 문서의 "운영 재실측 남음" 항목 판정
 
 - **관측 A(PR #119)**: 이번 턴으로 닫을 수 **없다**. 재현에 필요한
