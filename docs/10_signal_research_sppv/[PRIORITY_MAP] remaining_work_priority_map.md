@@ -10752,7 +10752,15 @@ agent 설계 문서 기준으로도 순서는 다음이 맞다.
      정직한 결론이다. **다음 1순위(신규)**: downstream 차단군 vs
      통과군의 사후 성과(counterfactual PnL 포함) 비교, `risk_
      opinion`/`evidence_strength` 대신 override를 실제로 설명하는
-     필드가 있는지 탐색. +
+     필드가 있는지 탐색. **[2026-08-06 재갱신] `eligibility_low_
+     relative_activity`(활동성 부족) 게이트도 같은 원칙으로 백테스트
+     포함 재검증 완료**(`buy_path_variable_gate_matrix.md` §13.4.4,
+     `[BACKLOG] backlog.md`) — 차단 비중 급증(8~11%→53~54%)만으로
+     "과잉 차단"이라 쓰지 않고, 종가 기준 사후 성과(T+1/T+2)를
+     전체 population과 경계 구간(`entry_score>=0.60`)으로 나눠
+     비교했다. 전체 population은 통과군 우위 유지, 경계 구간은
+     표본 n=1~2로 방향이 뒤집혀 결론 불가. **판정: 미확정**(층위
+     분리 유지, allocation 트랙과 동일한 결론 강도). +
      [1-B순위] **D안 순수 효과 재측정** — S5로 stale bias가 사라진 뒤
      §137.5의 2.13배(상한)를 다시 측정 +
      [1-B순위] `strategy_alignment` 제거의 **게이트 영향 재관측** —

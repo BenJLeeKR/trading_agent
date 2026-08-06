@@ -2690,7 +2690,11 @@ blocked`(hard, `max(...)<1.20`, topk override 시 `1.10`, `core`+
 **(2) 중복 판정**: entry_score soft bonus vs eligibility 1.10 hard
 gate는 R2의 `risk_off` 패턴과 같은 논리로 **정당한 역할 분리**다 —
 이력 6,345건 차단 중 309건(2종목)은 `entry_score≥0.65`였던 실제
-결정적 사례라 살아있는 게이트임을 확인했다. 반면 **eligibility
+결정적 사례라 살아있는 게이트임을 확인했다. **주의**: 여기서 "살아
+있는 게이트"는 "구조적으로 실제 차단이 발생하는 코드"라는 뜻이며,
+"사후 성과 기준으로 이 차단이 적정하다"는 뜻은 **아니다** — 후자는
+§13.4.4에서 별도로 실측했고 그 결론은 "미확정"이다. 두 질문을
+혼동하지 않는다. 반면 **eligibility
 1.10 hard gate와 authoritative gate 1.20 hard gate는 과잉 중복에
 가깝다** — 같은 원신호를 서로 다른 threshold로 두 번 하드 게이팅
 하는데, authoritative gate 쪽은 이력 13,312건 전체에서 이 사유로
