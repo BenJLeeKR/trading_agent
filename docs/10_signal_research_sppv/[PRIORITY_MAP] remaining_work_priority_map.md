@@ -101,9 +101,11 @@
 
 1순위(④+종합 퍼널 표) → 1-B순위(② 활동성 표본 축적) → 2순위(③ downstream 재분해 + 가상 진입가 방법론). ①(allocation)은 §13.2.13/§13.2.14로 이미 "미확정" 판정까지 마쳤고 추가 표본 축적을 기다리는 상태라 이번 로드맵에서는 별도 1순위로 올리지 않는다 — 자연 누적을 계속 관찰한다.
 
-### ⑤ 참고: churn-control 계층(보유 이후 단계)은 이 로드맵과 별개로 "평가 불가" 상태
+### ⑤ churn-control 설계(§6 EV 게이트 + §7~§10 보유기간 정책)의 이중 판정 — 하위 구현 부합, 시스템 목적 괴리 큼
 
-**[2026-08-06 KST 추가]** `[DESIGN] expected_return_holding_horizon_and_churn_control_refactor.md`(진입 후 churn 감소·좋은 가설 오래 보유 설계) 검토 결과, 코드 구현(`holding_profile_policy.py`/`reverse_trade_hysteresis.py`/`pre_ai_gate.py`)은 설계와 상당히 일치하나, 이 계층은 `held_position`(매수 체결 이후)에서만 작동한다. ①~④ 병목으로 2026-08-03 이후 매수 체결이 0건이라 `held_position` 경로 자체가 0건, `symbol_trade_states`에 `held_active` 상태가 0건이다 — **이 계층은 실패한 것이 아니라 평가할 입력(보유 포지션)이 최근에 없었다.** ①~④가 완화돼 실제 체결이 재개되면 재확인이 필요하다. 상세는 `[BACKLOG] backlog.md` 해당 항목.
+**[2026-08-06 KST 추가]** `[DESIGN] expected_return_holding_horizon_and_churn_control_refactor.md`(진입 후 churn 감소·좋은 가설 오래 보유 설계) 검토 결과, 코드 구현(`holding_profile_policy.py`/`reverse_trade_hysteresis.py`/`pre_ai_gate.py`)은 설계와 상당히 일치하나, 이 보유 측 계층(§7~§10)은 `held_position`(매수 체결 이후)에서만 작동한다. ①~④ 병목으로 2026-08-03 이후 매수 체결이 0건이라 `held_position` 경로 자체가 0건, `symbol_trade_states`에 `held_active` 상태가 0건이다.
+
+**[2026-08-06 KST 재갱신, 판정 이중화]** 초판은 "이 계층은 실패한 것이 아니라 평가할 입력이 없었다"는 소극적 판정에 머물렀으나, `Expected Value Gate`(§6)가 이 설계 자신의 진입 측 컴포넌트이고 §17에서 최종 `buy`/`approve`의 86.5%(37건 중 32건)를 차단한 실체라는 점을 재확인해 판정을 이중화한다. **하위 구현(§7~§10)은 설계와 부합** — 이 판정은 유지. **시스템 전체 운영 목적 부합성은 정정** — 원래 목적("좋은 가설은 진입시키고 보유 후 churn만 억제")과 달리, 이 설계 자신의 진입 측 절반(§6)이 다른 상류 병목(②③)과 결합해 신규 진입 자체를 거의 전부 억제하고 있어(4일간 `order_request` 제출 0건) **시스템 차원의 괴리가 크다.** 상세는 `[BACKLOG] backlog.md` 해당 항목.
 
 ## 수정 이력
 
