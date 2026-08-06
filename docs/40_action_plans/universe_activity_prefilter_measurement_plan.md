@@ -424,6 +424,106 @@
 
 **최소 계측이 다음 단계로 적합하다(설계안 작성은 아직 이르다).** 코드 구조는 명확히 확인됐으나, "실제로 그 인덱스 편입 테이블이 마지막으로 언제 갱신됐는지"와 "그 갱신 주기가 반복 차단 패턴과 어떻게 맞물리는지"를 확인하지 않고 바로 코드 수정안(예: core 선정에 활동성 사전 필터 추가, 반복 차단 이력 기반 강등 규칙)을 설계하면 근거가 절반만 채워진 상태가 된다. 다음 턴에서 `instrument_index_memberships` 테이블의 실제 최신 반영 시각을 read-only로 확인하는 것을 권장한다.
 
+## `core` 동적 강등(demotion) 레이어 설계 검토(2026-08-06 KST)
+
+바로 위 절이 제안한 "다음 단계"는 `instrument_index_memberships` 최신화 시각 확인이었다. 이번 작업은 그 방향을 명시적으로 대체한다 — **membership 자동화/최신화는 이번 설계의 대상이 아니다.** 정적 core seed(`APPROVED_CORE_UNIVERSE_SYMBOLS` + `instrument_index_memberships` + metadata override)는 그대로 유지하는 것을 전제로 하고, 그 위에 **운영 시점에 반복 차단 종목을 일시 강등하는 동적 보정 레이어**를 어떻게 설계할지만 다룬다. 이번 절은 **설계 검토이며 구현은 하지 않았다** — 코드 변경 없음.
+
+### 조사한 근거
+
+`compose_with_diagnostics()`(`universe_selection.py:998-1055`)의 실제 단계 순서를 확인했다:
+
+```
+Step 1: _add_core_universe(seen, ctx)          — core seed 판정
+Step 2: _add_held_positions(seen, ctx)         — 강제 override
+Step 3: _add_reconciliation_overlay(seen, ctx) — 강제 override
+Step 4: _add_event_overlay(seen, ctx)
+Step 5: _add_manual_overlay(seen, ctx)
+Step 6: _add_market_overlay(seen, ctx)
+Step 7: _apply_exclusions(seen)                — 유동성/상태 필터(source_type 공통)
+Step 8: 우선순위 정렬
+```
+
+`held_position`/`reconciliation_overlay`는 Step 2/3에서 `seen` 딕셔너리를 override하므로, Step 1에서 `core`로 잡힌 심볼이라도 이후 단계에서 다른 source_type으로 바뀔 수 있다. 이는 강등 레이어의 적용 위치 판단에 직접 영향을 준다(아래 질문 5 참고). `self._repos.signal_feature_snapshots`는 이미 이 서비스 안에서 사용 중이다(`universe_selection.py:783`, freshness 계층 판정용) — 즉 signal snapshot 조회는 기존 의존성을 재사용할 수 있다. 반면 `trade_decisions`(차단 이력)는 `RepositoryContainer`에는 존재하지만(`repositories/container.py:62`) 이 서비스에서 아직 쓰인 적이 없다 — 종목별 최근 차단 이력을 조회하는 repository 메서드는 신규로 필요하다.
+
+### 질문 1~2 — 후보 방식 비교
+
+| 방식 | 설명가능성 | 운영단순성 | 오탐/과잉제외 위험 | 기존 구조 정합성 | 구현난이도 | 실측 문제와의 직접 연결성 |
+|---|---|---|---|---|---|---|
+| **A. 최근 차단 이력 기반**(N영업일 `eligibility_low_relative_activity` 최종 차단 횟수/비율/streak) | 매우 높음 — "실제로 N일 중 M일 이 사유로 차단됐다"는 문장 그대로 설명 가능 | 중간 — 신규 repository 조회(decision_json 파싱) 필요 | 낮음 — 실제 차단 결과 누적을 요구하므로 단발성 노이즈에 둔감 | 높음 — 뒤단 게이트의 실제 판정 결과를 그대로 재사용, 새 임계값 개념을 안 만듦 | 중간 — 신규 repo 메서드 1개 필요 | 매우 높음 — 실측에서 관측한 "반복 차단"을 정의 그대로 입력값으로 씀 |
+| **B. 최신 signal/activity snapshot 기반**(현재 `relative_activity`/`average_volume_20d` 값 직접 재사용) | 중간 — "오늘 시점 activity가 낮다"는 설명은 되지만, 왜 지금 강등하는지(과거 이력 없이)는 약함 | 높음 — 기존 `signal_feature_snapshots` 조회 재사용, 신규 repo 불필요 | 높음 — 단일 시점 스냅샷 노이즈에 취약. `relative_activity`는 이미 문서에서 "시점 민감성이 높아 shadow-only 유지"로 명시된 지표다 — 이를 선정 단계의 직접 입력으로 승격하면 그 원칙과 긴장 관계가 생긴다 | 낮음~중간 — shadow-only 원칙과 충돌 소지 | 낮음 — 기존 조회 경로 그대로 사용 | 중간 — activity 낮음은 확인되지만 "반복"이라는 실측 핵심을 직접 담지 못함 |
+| **C. 하이브리드**(차단 이력을 주 신호로, snapshot 값을 보조 확인용으로) | 높음 | 낮음 — 두 데이터 소스를 함께 유지·정합 확인해야 함 | 낮음(A와 유사) | 중간 — 복잡도는 늘지만 원칙 위반은 없음 | 높음 — 두 경로 모두 구현 | 높음 |
+
+**결론: A(최근 차단 이력 기반)를 1차안으로 권장한다.** B는 `relative_activity`를 shadow에서 실질적 선정 입력으로 승격시켜, 문서가 반복적으로 지켜온 "시점 민감성 때문에 바로 정책화하지 않는다"는 원칙과 정면으로 부딪힌다(사용자 지시의 "뒤단 `eligibility_low_relative_activity`는 유효한 안전장치로 유지"라는 전제와도, 그 안전장치의 원재료를 앞단에 그대로 복제해 넣는 셈이라 방향이 어긋난다). A는 뒤단 게이트가 이미 내린 판정 결과(이력)만 사용하므로 새로운 판단 기준을 만드는 게 아니라 "그 판정이 반복됐는지"만 관측한다 — 원칙 훼손이 없다. C(하이브리드)는 v2 이후 보강 옵션으로 남겨둔다.
+
+### 질문 3 — 입력 변수 제안
+
+1순위로 아래 조합을 제안한다(전부 A 방식, `trade_decisions.decision_json`의 실제 차단 이력에서 유도):
+
+- **최근 N영업일 core 등장일 대비 `eligibility_low_relative_activity` 최종 차단 비율**(streak 단독보다 안정적 — 등장 자체가 적은 종목의 우연한 연속 차단을 과대평가하지 않음)
+- **연속 차단일수(streak)** — `analyze_core_relative_activity_repeat_gap.py`가 이미 유사 개념(`distinct_blocked_dates`)을 계산 중이라 재사용 가능
+- **최근 N영업일 최종 차단 횟수(절대 건수)** — 반복 평가로 인한 "행 개수 부풀림"을 그대로 쓰면 안 되므로, 반드시 **거래일(day) 또는 decision_context 단위로 dedup한 값**을 써야 한다(이전 turn에서 확인한 "분자·분모 granularity 불일치" 교훈을 그대로 적용)
+- (보조, C 하이브리드에서만) 최근 `relative_activity`/`average_volume_20d`/`average_turnover_20d` — 1차안에서는 입력으로 넣지 않는다.
+
+### 질문 4 — 1차 설계안(규칙 조합 예시)
+
+아래는 1차 설계안의 형태 예시이며, 정확한 임계값은 이번 턴에서 확정하지 않는다(실측 검증 전 확정은 시기상조):
+
+- 조건(예시): 최근 5영업일 중 core로 등장한 날 대비 `eligibility_low_relative_activity` 최종 차단 비율이 80% 이상이거나, 연속 차단일수(streak)가 3일 이상
+- 강등 방식: **하루 단위 제외(day-level exclusion)** — 강등된 날의 유니버스 compose에서만 제외하고, 다음 날 조건을 다시 평가한다(자동 영구 제외 아님)
+- 재진입 조건: 강등 다음 날에도 여전히 `core` seed 자격(allowlist/membership)은 유지되므로, 그날 다시 조건을 평가해 차단 비율/streak가 기준 밑으로 내려오면 즉시 재진입 — 별도의 "냉각 기간(cooldown)"을 두지 않는 것이 단순하다(사용자가 요청한 "정말 최소" 범위에 부합)
+
+### 질문 5 — 설계 위치
+
+| 위치 후보 | 장점 | 단점 | 권장 여부 |
+|---|---|---|---|
+| `_add_core_universe()` 직후 | core 전용 로직과 가장 가깝다 | Step 2/3(`held_position`/`reconciliation_overlay`)이 이후 override할 수 있어, 강등 여부와 무관하게 어차피 override될 심볼까지 미리 평가하는 낭비/오판 소지가 있다 | 비권장 |
+| `_apply_exclusions()` 확장 | 기존 exclusion 파이프라인 재사용 | 이 함수는 **모든 source_type에 공통 적용**되는 유동성/상태 필터다. `core`에만 적용해야 하는 이번 요구사항과 섞으면 다른 source_type에 실수로 영향을 줄 위험이 생긴다 | 비권장 |
+| 별도 `core_prefilter_service` | 완전히 독립된 모듈, 테스트 격리 용이 | 신규 서비스 하나를 배선(wiring)해야 하는 오버헤드 — "최소 범위" 요청과는 다소 어긋남 | 조건부(2차 확장 시 고려) |
+| **Step 6과 Step 7 사이에 새 Step 삽입**(`_apply_core_activity_demotion`, 가칭) | Step 1~6이 끝난 시점의 `seen`을 보고 `source_type == CORE`로 **여전히 남아있는** 심볼만 골라 강등 판단 — held/reconciliation/event/market/manual override가 이미 반영된 뒤라 다른 경로를 침범할 위험이 없다. 기존 `compose_with_diagnostics`의 단계형 구조에 자연스럽게 끼워 넣는 신규 함수 1개로 끝난다 | 신규 repository 조회(차단 이력) 1개가 필요하다 | **권장** |
+
+freeze는 `business_date` 단위로 하루 1회만 materialize되므로(§상단 "선정/유지 구조 코드 조사" 참고), 이 강등 판단도 **하루 1회, freeze materialize 시점에 한 번 평가하면 충분**하다 — decision cycle마다 재평가할 필요가 없다.
+
+### 질문 6 — 예외 정책
+
+- `held_position`/`reconciliation_overlay`: 당연히 예외(기존 정책 그대로, 이미 Step 2/3 override로 구조적으로 보장됨).
+- `event_overlay`/`market_overlay`/`manual`: 강등 대상에서 **제외**해야 한다. 이번 설계는 "`core`로서" 반복 차단되는 것을 대상으로 하며, 같은 심볼이 뉴스/이벤트 신호로 `event_overlay`나 `market_overlay`에 독립적으로 편입된다면 그건 core 강등과 무관한 별개의 근거다. Step 6 이후 `source_type == CORE`로 필터링해서 판단하면, 이 경계는 자연히 지켜진다(다른 source_type으로 override된 심볼은 애초에 대상에서 빠짐).
+- 같은 심볼이 `core`에서는 강등되고 `market_overlay`로는 여전히 들어올 수 있어야 하는가? — **그렇다.** 강등은 `core` inclusion reason에 대해서만 적용하고, symbol 전역 차단이 아니다. 이는 "activity 부족 종목을 아예 막자"가 아니라 "정적 core 슬롯을 반복 실패 종목이 계속 점유하지 않게 하자"는 이번 목적과 정확히 일치한다.
+- `manual`: 운영자가 명시적으로 넣은 watchlist는 강등 로직이 덮어써서는 안 된다 — 사람의 명시적 의도를 자동 규칙이 무시하면 신뢰가 깨진다.
+
+### 질문 7 — 로그/관측 메타데이터
+
+강등이 적용된 각 심볼에 아래를 기록해야 한다(값 이름은 예시, 최종 스키마는 구현 턴에서 확정):
+
+- `demotion_reason`(예: `"repeated_low_relative_activity"`)
+- `lookback_window_days`
+- `appearance_count_in_window` / `blocked_count_in_window` / `block_ratio_in_window`
+- `current_streak`
+- `last_blocked_business_date`
+- `last_seen_business_date`
+- `previous_source_type`(강등 전 `core`였다는 사실 자체를 기록)
+- `demotion_effective_business_date`
+- `re_entry_evaluated`(다음날 재평가에서 재진입했는지 여부, 관측용)
+- `is_shadow_only`(아래 단계적 도입안의 현재 단계가 shadow인지 실제 강등인지 구분하는 플래그)
+
+### 질문 8 / 사용자 기대 방향에 대한 비판적 검토
+
+사용자가 제시한 기본 방향(정적 seed 유지 + 강한 절대 컷 배제 + 반복 차단 이력 기반 동적 강등 + shadow → soft demotion → hard exclusion 단계적 도입)은 **현재 구조·실측과 정합적이며, 반박할 근거를 찾지 못했다.** 오히려 `src/AGENTS.md`의 "매매, 리스크, 주문 제출, 정합성, 스케줄러 경계는 명시적 근거와 테스트 없이 변경하지 않는다"는 원칙이 이 방향을 추가로 뒷받침한다 — `core` 유니버스 구성은 정확히 이 경계 안에 있고, TTL/decay 로직 자체가 이 코드베이스에 전례가 없는 신규 개념이므로, 첫 도입은 **shadow 관측(강등 후보만 로그로 기록, 실제 compose 결과에는 영향 없음) → soft demotion(강등은 하되 정렬 우선순위만 낮추고 완전 배제는 아님) → hard exclusion(day-level 완전 제외)**의 3단계로 blast radius를 점진적으로 넓히는 것이 타당하다.
+
+**추천 결론**: 이번 설계 검토만으로 바로 구현 설계안(코드 diff 레벨)으로 넘어가기에는 이르다. 아래 두 가지가 먼저 필요하다:
+1. **shadow 계측**: 위 1차 설계안의 규칙(예: "5영업일 중 80% 차단 또는 streak 3일")을 실제 최근 10영업일 데이터에 read-only로 적용해봤을 때, 실제로 몇 개 종목이 강등 후보가 되는지, 그 중 이후 며칠 안에 activity가 회복돼 재진입했을 종목이 얼마나 되는지(=오탐 가능성) 사전 확인이 필요하다 — 이건 새 정책 코드 없이 기존 두 분석 스크립트의 산출물만으로도 시뮬레이션 가능하다.
+2. 위 시뮬레이션 결과가 "강등 대상이 소수·안정적"임을 뒷받침하면, 그다음에 shadow-only 코드(로그만 남기고 compose 결과는 바꾸지 않는 버전)를 구현 대상으로 논의하는 것이 순서에 맞다.
+
+### 다음 턴 제안
+
+**shadow-only 계측 시뮬레이션(read-only, 규칙 후보 검증)이 다음 턴으로 적합하다.** 구현 프롬프트로 바로 가기에는 규칙의 임계값(5일/80%/streak 3 등)이 아직 실측으로 검증되지 않았고, 추가 실측(예: 다른 계정, 더 긴 기간)이 필요하다고 보기에는 이미 확보한 10영업일 실측만으로도 규칙 후보를 시뮬레이션하기에 충분하다.
+
+### 결정을 미뤄야 할 항목
+
+- 정확한 임계값(N일, 비율 %, streak 수) — shadow 계측 없이 확정하면 근거가 약하다.
+- 강등 지속 기간(당일만 vs 익일까지) — 재진입 조건과 함께 시뮬레이션 후 결정.
+- 하이브리드(signal snapshot 보조 입력) 도입 여부 — v1에서는 배제, v2 검토 대상으로만 남긴다.
+- 별도 서비스 분리 여부(`core_prefilter_service`) — 최소 구현(새 Step 함수)으로 시작하고, 복잡도가 커지면 그때 분리 검토.
+
 ## 해석 기준
 
 - `low_average_volume` 또는 `low_turnover` 비중이 높으면 universe 사전 필터 강화 후보로 본다.
