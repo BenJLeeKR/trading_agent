@@ -141,7 +141,7 @@ canonical data 허용 목록과 owner 기준은 [`canonical_data_contract.md`](.
 
 - [x] 운영 배포 job을 `.github/workflows/harness.yml` 안에서 `Safe harness contracts` 이후에만 실행하도록 구성했다.
 - [x] 문서-only 변경은 `deploy_required=0`, `activate_required=0`으로 판정하고, `docs/` 경로는 sync-only 허용 대상으로 분리해 운영 재기동 없이 source sync만 실행할 수 있도록 구성했다.
-- [x] 배포 재기동 전에 `docker compose run --rm migrate`를 실행하도록 구성했다.
+- [x] 배포 재기동 전에 `docker compose run --rm migrate`를 실행하도록 구성했다. **[2026-08-04 갱신, 커밋 `6fa740f8`]** 이 명령은 이후 SPPV-2.154 사고(migrate가 stale 이미지로 도는 순서 문제)로 `docker compose run --build --rm migrate`로 교체됐다 — 현재 표준은 `docs/80_harness_engineering/deploy_sync_activation_contract.md` §3.1을 따른다.
 - [x] `docker-compose` v1 명령 대신 `docker compose` v2 명령을 사용하도록 정리했다.
 - [x] 배포 재기동 뒤 `nginx-proxy`를 reload해 Docker DNS stale upstream 문제를 줄이도록 구성했다.
 

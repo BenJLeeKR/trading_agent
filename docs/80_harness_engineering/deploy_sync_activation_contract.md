@@ -24,7 +24,8 @@
 
 sync 이후 실제 런타임에 변경을 반영하는 단계다.
 
-- 포함: `docker compose run --rm migrate`, `docker compose up -d --build --remove-orphans`, `docker exec nginx-proxy nginx -s reload`
+- 포함: `docker compose run --build --rm migrate`(또는 `docker_compose_env.sh` 동등 명령), `docker compose up -d --build --remove-orphans`, `docker exec nginx-proxy nginx -s reload`
+- **[2026-08-04 갱신]** migrate 단계는 반드시 `--build`를 포함해야 한다 — 근거는 §3.1 참고. 과거 이 문서는 `run --rm migrate`(build 없음)를 기준으로 서술했으나, SPPV-2.154 사고 이후 이 계약이 현재 표준으로 갱신됐다.
 
 ## 현재 정책 요약
 
@@ -301,6 +302,8 @@ GitHub Actions 실제 run으로 다음 `2`개 결과를 확인했다.
 ### 3.1 migration 이미지 freshness
 
 `migrate` 서비스가 `profiles: [migrate]`로 분리된 compose 구조에서는, 일반 `docker compose up -d --build`가 profile-only 서비스 이미지를 재빌드하지 않을 수 있다. 따라서 `activate_runtime`의 migration 단계는 단순 `run --rm migrate`가 아니라 **반드시** 최신 소스를 반영하는 `run --build --rm migrate`(또는 동등한 freshness 보장 명령)를 사용해야 한다.
+
+**현재 상태(2026-08-04 커밋 `6fa740f8`, "하네스 migrate 이미지 freshness 계약 보정")**: 이 요구사항은 더 이상 권장 사항이 아니라 실제로 반영된 계약이다. `.github/workflows/harness.yml`의 migrate 단계와 `scripts/harness/run.sh`의 `accept ci` 정적 검사(`deploy_missing_migration_count`)가 모두 `run --build --rm migrate`(또는 `docker_compose_env.sh` 동등 명령)를 전제로 동작한다. SPPV-2.154에서 발견된 "migrate가 stale 이미지로 도는" 문제는 이 갱신으로 해소됐다 — 상세 경과는 `docs/99_meta_handover/[BACKLOG] backlog.md`(SPPV-2.154)와 `docs/10_signal_research_sppv/[DESIGN] regime_conditional_entry_signal_v1.md` §141 참고.
 
 ### 4. 장중 동작 원칙
 

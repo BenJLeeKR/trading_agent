@@ -17808,7 +17808,9 @@ freeze 실측 계획에 영향을 주지 않는다.
 그대로 재현해, 컷오프보다 뒤의 파일은 백필되지 않음을 검증) —
 `tests/db/test_migrations_run.py` 총 8 passed. 배포 워크플로 순서 문제(1번)는
 이번 재시도에서는 "빌드 먼저 → migrate"를 수동으로 실행해 우회했으나, 근본
-수정(harness.yml의 migrate/build 순서 교체)은 별도 후속 작업으로 남긴다.
+수정(harness.yml의 migrate/build 순서 교체)은 **당시** 별도 후속 작업으로
+남겼다. **[2026-08-04 갱신, 커밋 `6fa740f8`]** 이 근본 수정은 이후 반영됐다
+— 아래 참고.
 
 **[SPPV-2.154 최종 결과, 2026-07-31 17:42 KST 실측]** — PR #77 머지 후
 `docker compose build migrate && docker compose run --rm migrate` 실행 결과:
@@ -17828,11 +17830,19 @@ freeze 실측 계획에 영향을 주지 않는다.
 
 **이 이슈는 완전히 종결됐다.** `trading.trade_decisions`는 이제 컬럼 42개로
 정상화됐고, 재발 방지 장치(이력 테이블 + 컷오프 백필)가 반영돼 향후
-마이그레이션은 항상 정확히 한 번만 실행된다. 유일하게 남은 후속 과제는
-배포 워크플로 순서 문제(`docker compose run --rm migrate`가
+마이그레이션은 항상 정확히 한 번만 실행된다. **당시** 유일하게 남은 후속
+과제는 배포 워크플로 순서 문제(`docker compose run --rm migrate`가
 `docker compose up -d --build`보다 먼저 실행되는 것) — 다음에 코드와
 마이그레이션이 함께 바뀌는 배포가 있으면 다시 수동 리빌드가 필요할 수
-있다.
+있다는 것이었다.
+
+**[2026-08-04 갱신, 커밋 `6fa740f8` "하네스 migrate 이미지 freshness 계약
+보정"]** 이 후속 과제도 해소됐다 — `.github/workflows/harness.yml`의
+migrate 단계가 `docker compose run --build --rm migrate`(또는
+`docker_compose_env.sh` 동등 명령)로 갱신됐고, `accept ci`의
+`deploy_missing_migration_count` 정적 검사가 이 계약을 강제한다. 현재
+표준 계약은 `docs/80_harness_engineering/deploy_sync_activation_contract.md`
+§3.1을 따른다 — 수동 리빌드 우회는 더 이상 필요하지 않다.
 
 ## §142. S5 배치 실측 결과(SPPV-2.155, 2026-08-01 KST)
 
