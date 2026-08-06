@@ -5673,3 +5673,77 @@ read-only 분석, 코드 변경 없음)
   구성요소, `slippage_buffer_bps`/`estimated_round_trip_cost_bps`
   값의 근거 확인.
 - 상세: `buy_path_variable_gate_matrix.md` §17.
+
+### `기대수익률 중심 보유기간/Churn 제어` 설계 목적 부합성 검토 — 구현은 확인, 운영상 검증 기회 없음(2026-08-06, read-only)
+
+`[DESIGN] expected_return_holding_horizon_and_churn_control_refactor.md`
+의 원래 목적("오늘 샀는데 약한 역신호로 바로 팔지 않고, 기대값이
+살아 있으면 더 길게 보유")이 코드와 최근 운영 실측에 실제로
+부합하는지 검토했다. 코드 수정 없음.
+
+**A. 설계 목적(read-only, 문서 확인)**: `source_type`별 행동
+권한, `holding_profile`(진입 시점에 `event_probe`/`event_swing`/
+`core_swing`/`position_trade` 확정), `expected_value_gate`(비용
+차감 후 edge 강제), `symbol_trade_states` 상태기계, `reverse_
+trade_hysteresis`(비대칭 진입/청산 문턱) 4개 계층을 하나로
+묶어 "좋은 가설을 비용 감안 후에도 충분히 밀어붙일 수 있게" 만드는
+것이 목적이다. §14(체크리스트)는 전부 `[x]` 완료로 표시돼 있으나,
+§14-A는 각 항목마다 "아직 남은 것"을 명시하고, 특히 항목 8
+(성과 검증 리포트)은 "guard 추가만으로는 부족하다, 실제로 churn이
+줄고 성과가 개선됐는지 비교가 필요하다"고 스스로 명시한다 — 이
+비교는 문서 어디에도 수행된 적이 없다(read-only 확인).
+
+**B. 코드 구현 확인(read-only, 코드 추적)**: `holding_profile_
+policy.py`(`derive_holding_profile_policy()`)가 `source_type`별
+`minimum_hold_until`/`earliest_reduce_at`/`earliest_reentry_at`/
+`sell_cooldown_until`을 정확히 설계대로 산출함을 확인했다
+(`core_swing`=2시간, `event_probe`=15분 등). `reverse_trade_
+hysteresis.py`의 `evaluate_symbol_state_sell_hysteresis()`는
+`earliest_reduce_at` 창 안에서 `edge_collapse`/`downside_shock`/
+`thesis_invalidation`/`holding_profile_breach` 중 하나가 없으면
+REDUCE/EXIT를 실제로 차단하는 로직이 코드로 존재한다(설계 §14-A.3
+과 정확히 일치). `pre_ai_gate.py`에 `holding_profile_earliest_
+reduce_guard`/`holding_profile_earliest_reentry_guard`/`same_
+symbol_reentry_cooldown` 등 설계 문서가 언급한 rule code가 실제로
+정의·연결돼 있다. **구현 자체는 설계와 상당히 일치한다.**
+
+**C. 운영 실측과의 관계(read-only DB 확인, 핵심 발견)**:
+`held_position_exit_hysteresis_gate`는 `source_type='held_
+position'`일 때만 적용되는데, 2026-08-03 이후 `held_position`
+source의 `trade_decisions`는 **0건**이다. `symbol_trade_states`
+전체를 조회한 결과 `held_active`/`reduce_pending`/`flat_cooldown`
+상태는 **0건**(`flat` 71건, `entry_pending` 7건뿐)이다.
+`guardrail_evaluations`의 `holding_profile_earliest_reentry_
+guard`(579건)/`held_position_recent_risk_sell_cooldown`(72건)은
+전체 이력에서는 실제로 여러 차례 발동했으나, **마지막 발동이
+각각 2026-07-29/2026-06-24로 최근 구간(08-03 이후) 이전**이다.
+`order_submitted`(`execution_attempts`)는 전체 이력 303건인데
+**08-03 이후는 0건**이다.
+
+**D. 괴리(gap) 판정**: 설계 목적과 코드 구현 사이의 괴리는 크지
+않다 — 설계가 요구한 계층이 실제로 존재하고 과거에는 작동한
+기록도 있다. **진짜 괴리는 "코드/설계" vs "최근 운영 실측" 사이에
+있다.** 이 churn-control 계층(§7~§10, 보유 이후 단계)은 애초에
+`held_position`(즉 매수가 체결돼 실제 보유가 생긴 뒤)에서만
+작동하는데, 최근 구간의 병목(§13.2.13/§13.4.4/§15~§17에서 이미
+확인한 activity/downstream/EV 게이트 차단)이 매수 체결 자체를
+0건으로 만들어, **이 churn-control 계층이 최근 구간에서 시험될
+기회조차 없었다.** 즉 "churn-control이 실패했다"가 아니라
+"churn-control을 평가할 입력(보유 포지션)이 최근에는 아예
+발생하지 않았다"가 정확한 표현이다. 반대로, EV 게이트(§6, 이
+설계 문서 자체가 §3.1에서 요구한 "기대값이 낮으면 강등" 원칙)는
+최근 구간에서 오히려 활발히 작동하고 있다(§17) — 이는 **이
+설계의 진입 측 원칙이 의도대로 작동하는 것**이지, 원래 목적과
+무관하게 "차단이 과도해진 것"으로 단정할 근거는 아니다.
+- **판정: "구조는 목적에 대체로 부합, 운영상 최근 검증 불가."**
+  churn-control 계층이 "주문 억제"로 변질됐다는 근거는 없다 —
+  다만 지금은 그 계층이 관여할 대상(보유 포지션) 자체가 없어
+  운영상 목적 달성 여부를 판단할 수 없는 상태다.
+- **후속 검증 필요**: (1) 상류 병목(①~④)이 완화돼 실제 매수 체결이
+  다시 발생하면, `held_position` 경로에서 이 churn-control 계층이
+  실제로 예상대로 작동하는지 재확인. (2) §14-A 항목 8의 성과 검증
+  리포트(churn 감소/holding_profile별 실현성과)는 여전히 미착수 —
+  포지션이 쌓일 때 착수 후보로 남긴다.
+- 상세: `[DESIGN] expected_return_holding_horizon_and_churn_
+  control_refactor.md`, `holding_profile_policy.py`, `reverse_
+  trade_hysteresis.py`, `pre_ai_gate.py`.

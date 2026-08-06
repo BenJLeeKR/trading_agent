@@ -101,6 +101,10 @@
 
 1순위(④+종합 퍼널 표) → 1-B순위(② 활동성 표본 축적) → 2순위(③ downstream 재분해 + 가상 진입가 방법론). ①(allocation)은 §13.2.13/§13.2.14로 이미 "미확정" 판정까지 마쳤고 추가 표본 축적을 기다리는 상태라 이번 로드맵에서는 별도 1순위로 올리지 않는다 — 자연 누적을 계속 관찰한다.
 
+### ⑤ 참고: churn-control 계층(보유 이후 단계)은 이 로드맵과 별개로 "평가 불가" 상태
+
+**[2026-08-06 KST 추가]** `[DESIGN] expected_return_holding_horizon_and_churn_control_refactor.md`(진입 후 churn 감소·좋은 가설 오래 보유 설계) 검토 결과, 코드 구현(`holding_profile_policy.py`/`reverse_trade_hysteresis.py`/`pre_ai_gate.py`)은 설계와 상당히 일치하나, 이 계층은 `held_position`(매수 체결 이후)에서만 작동한다. ①~④ 병목으로 2026-08-03 이후 매수 체결이 0건이라 `held_position` 경로 자체가 0건, `symbol_trade_states`에 `held_active` 상태가 0건이다 — **이 계층은 실패한 것이 아니라 평가할 입력(보유 포지션)이 최근에 없었다.** ①~④가 완화돼 실제 체결이 재개되면 재확인이 필요하다. 상세는 `[BACKLOG] backlog.md` 해당 항목.
+
 ## 수정 이력
 
 - 작성자: Codex
