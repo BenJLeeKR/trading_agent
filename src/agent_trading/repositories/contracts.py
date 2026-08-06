@@ -174,6 +174,23 @@ class TradeDecisionRow:
     """Point-in-time decision_context anchor to ``signal_feature_snapshots``."""
 
 
+@dataclass(frozen=True, slots=True)
+class CoreEligibilitySample:
+    """UNIV-5 shadow: `core` 종목 1건의 최종 eligibility 판정 표본.
+
+    ``core`` 동적 강등(demotion) shadow 관측 전용 — day-level 집계(같은
+    거래일에 여러 decision이 있어도 그 날 1회로 취급)는 호출자
+    (``UniverseSelectionService``)가 수행한다. 이 row 자체는 원시 표본이다.
+    """
+
+    symbol: str
+    created_at: datetime
+    last_eligibility_reason: str | None
+    """``decision_json.deterministic_trigger.eligibility_reasons``의 마지막
+    원소. ``eligibility_low_relative_activity``인지 여부만 shadow 판정에
+    쓰인다."""
+
+
 class ClientRepository(Protocol):
     async def add(self, client: ClientEntity) -> ClientEntity:
         ...
@@ -610,6 +627,23 @@ class TradeDecisionRepository(Protocol):
         execution_sizing_payload: dict[str, object],
     ) -> TradeDecisionEntity | None:
         """Execution 단계의 deterministic sizing 결과를 TD에 반영한다."""
+        ...
+
+    async def list_recent_core_eligibility_reasons(
+        self,
+        account_id: UUID,
+        symbols: Sequence[str],
+        business_date_from: date,
+        business_date_to: date,
+    ) -> Sequence[CoreEligibilitySample]:
+        """UNIV-5 shadow: `core` 종목의 최근 eligibility 판정 표본을 조회한다.
+
+        ``core`` 동적 강등(demotion) shadow 관측 전용 — 순수 read 경로이며
+        universe 선정/BUY 게이트 어디에도 영향을 주지 않는다.
+        ``source_type='core'``, 주어진 ``symbols`` 목록, 날짜 범위(KST
+        기준)로 필터링한 원시 표본을 반환한다. day-level dedup·streak 계산은
+        호출자가 수행한다.
+        """
         ...
 
 class OrderRepository(Protocol):

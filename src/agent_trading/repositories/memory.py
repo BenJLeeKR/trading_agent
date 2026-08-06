@@ -59,6 +59,7 @@ from agent_trading.domain.enums import (
     RealizedPnlComputationRunType,
 )
 from agent_trading.repositories.contracts import (
+    CoreEligibilitySample,
     FillSyncHealthSummary,
     SnapshotSyncHealthSummary,
     TradeDecisionRow,
@@ -653,6 +654,40 @@ class InMemoryTradeDecisionRepository:
         )
         self._items[trade_decision_id] = updated
         return updated
+
+    async def list_recent_core_eligibility_reasons(
+        self,
+        account_id: UUID,
+        symbols: Sequence[str],
+        business_date_from: date,
+        business_date_to: date,
+    ) -> Sequence[CoreEligibilitySample]:
+        """in-memory 구현: 이 저장소는 decision_context -> account 매핑을
+        보관하지 않으므로 ``account_id``로는 필터링하지 않는다(테스트 전용
+        한계). ``source_type``/``symbols``/날짜 범위로만 필터링한다."""
+        symbol_set = set(symbols)
+        kst = timezone(timedelta(hours=9))
+        samples: list[CoreEligibilitySample] = []
+        for item in self._items.values():
+            if item.source_type != "core" or item.symbol not in symbol_set:
+                continue
+            business_date = item.created_at.astimezone(kst).date()
+            if not (business_date_from <= business_date <= business_date_to):
+                continue
+            reasons = (item.decision_json or {}).get("deterministic_trigger", {}).get(
+                "eligibility_reasons"
+            )
+            last_reason = reasons[-1] if reasons else None
+            samples.append(
+                CoreEligibilitySample(
+                    symbol=item.symbol,
+                    created_at=item.created_at,
+                    last_eligibility_reason=last_reason,
+                )
+            )
+        samples.sort(key=lambda s: s.created_at)
+        return samples
+
 
 class InMemoryOrderRepository:
     def __init__(self) -> None:
