@@ -356,6 +356,74 @@
 - **아직 가정인 부분**: "후보 유지/decay 로직이 약하다"는 코드를 직접 조사하지 않은 상태의 데이터 기반 추론이다 — 실제 코드에 decay 로직이 있는지, 있다면 왜 작동하지 않는지는 확인하지 못했다. 급등일 3건이 우연히 겹친 시장 전반의 저활동 국면인지, 아니면 다른 구조적 원인이 있는지도 확정하지 못했다.
 - **이번 분석만으로 바로 정책 구현이 가능한가**: 아니다. 코드 레벨 확인(1순위) 없이 "유지/decay 로직 보정"을 구현하면 추측에 기반한 변경이 된다. 이번 턴은 원인 분해까지가 정당한 범위다.
 
+## `core` 선정/유지 구조 코드 조사(2026-08-06 KST)
+
+위 실측에서 도출된 "1순위: `core` 선정/유지 로직 코드 조사"를 이번 턴에서 수행했다. **정책 구현은 하지 않았고, 코드 변경도 없다** — read-only 코드 조사 결과만 정리한다.
+
+### 확인한 핵심 파일
+
+- `src/agent_trading/services/universe_selection.py`(`UniverseSelectionService._add_core_universe`/`_is_core_seed_instrument`/`_index_membership_values`)
+- `src/agent_trading/services/core_universe_seed.py`(`APPROVED_CORE_UNIVERSE_SYMBOLS`)
+- `src/agent_trading/services/index_membership_staleness.py`
+- `src/agent_trading/repositories/postgres/instrument_index_memberships.py`
+- `src/agent_trading/repositories/postgres/universe_freeze_runs.py`(`get_latest`)
+- `src/agent_trading/services/deterministic_trigger_engine.py`(`_assess_buy_eligibility`)
+- `src/agent_trading/services/decision_factory.py`
+- `scripts/run_decision_loop.py`(`_load_intraday_frozen_universe_with_anchor`)
+- `scripts/import_instrument_index_membership_seed.py`, `scripts/sync_kis_instrument_master.py`(index membership 갱신 호출부)
+
+### 질문별 답(코드 근거 포함)
+
+**1. `core` 후보는 어디서 생성되는가?** `UniverseSelectionService._add_core_universe()`(`universe_selection.py:1089-1114`)가 매 `compose()` 호출마다 활성 종목을 순회하며 `_is_core_seed_instrument()`(892-902행)로 판정한다. 판정 우선순위는 (a) `instrument.metadata["core_universe"]` 명시 플래그 → (b) KOSPI segment + `_CORE_INDEX_MEMBERSHIP_CODES`(지수 편입 코드) 일치 → (c) 정적 코드 allowlist `APPROVED_CORE_UNIVERSE_SYMBOLS`(`core_universe_seed.py:17-33`, 약 80개 심볼 하드코딩). 활동성 지표(`volume_surge_ratio`/`turnover_surge_ratio`/`average_volume` 등)는 이 판정 어디에도 등장하지 않는다.
+
+**2. `core` 후보는 어떻게 유지/재사용/교체되는가?** 이중 구조다. (a) `compose()` 자체는 stateless — 매번 allowlist/membership을 재평가한다(carry-over 코드 없음). (b) 그러나 실제 decision loop는 이 결과를 직접 쓰지 않고, `scripts/run_decision_loop.py:385-439`의 `_load_intraday_frozen_universe_with_anchor()`가 `universe_freeze_runs.get_latest(business_date, freeze_purpose)`(`universe_freeze_runs.py:59-73`, `business_date` 단위 스코프)로 하루 1회 materialize된 freeze snapshot을 하루 종일 재사용한다(`freeze_reused=True`). **freeze는 매 영업일마다 새로 생성**되므로(다일 캐리오버 아님), 여러 거래일에 걸친 반복은 "freeze 재사용" 때문이 아니라 **매일 재계산되는 `compose()`가 매번 같은 정적 소스(allowlist+membership)를 다시 core로 포함**시키기 때문이다.
+
+**3. TTL/decay/eviction/refresh 규칙이 존재하는가?** **존재하지 않는다.** `universe_selection.py`/`core_universe_seed.py` 전체에서 `ttl|decay|evict|cooldown|expire` 키워드 grep 결과 0건(직접 재확인 완료). `DEFAULT_CORE_SIGNAL_FRESHNESS_MAX_AGE_DAYS`(`universe_selection.py` 부근)가 유일하게 "날짜 경과"를 다루지만, 이는 정렬 우선순위를 FRESH/STALE/MISSING 계층으로 낮추는 용도일 뿐 core 포함 여부를 바꾸지 않는다.
+
+**4. 활동성 지표는 선정 단계에서 고려되는가?** **고려되지 않는다 — 선정과 차단이 완전히 분리된 구조다.** `_is_core_seed_instrument()`와 core에 적용되는 유일한 exclusion인 `LiquidityFilterService.check()`(정지/관리종목/비활성/틱사이즈 등 정적 instrument 상태 필터) 어디에도 활동성 지표가 없다. `volume_surge_ratio`/`turnover_surge_ratio`/`average_volume_20d`는 `deterministic_trigger_engine.py:_assess_buy_eligibility()`(511-561행)에서 **처음이자 유일하게** 등장한다: `avg_daily_volume < 3000.0` → `eligibility_low_average_volume`, `estimated_average_turnover < 50_000_000.0` → `eligibility_low_turnover`, `max(volume_surge_ratio, turnover_surge_ratio) < 1.10` → `eligibility_low_relative_activity`(값 직접 재확인 완료). 이 게이트는 `source_type`(core/event_overlay/market_overlay)을 구분하지 않고 동일하게 적용된다.
+
+**5. `universe_freeze_runs`/`universe_freeze_run_items`/`universe_anchor`와의 관계.** freeze는 `business_date` 단위로 스코프되어 매일 재생성되므로, "하루 안 반복"의 원인이지 "여러 날 반복"의 원인이 아니다. `decision_json.universe_anchor`(`decision_factory.py`)는 감사/재현용 메타데이터를 그대로 복사해 기록할 뿐, core 후보 구성 로직에 어떤 피드백도 주지 않는다.
+
+### [초기 조사 결과에 대한 자체 재검증 — 중요한 정정]
+
+초기 코드 조사는 "core는 정적 Python allowlist 하나로만 결정된다"는 인상을 줬으나, **직접 재확인한 결과 이는 부정확하다.** 최근 10영업일 실측에서 반복 차단된 core 종목(`000810`/`001800`/`081660`/`021240`/`042700`/`402340`/`329180`/`196170`/`055550`/`090430`/`316140`/`004370`/`009240`/`008930`/`111770`/`023530`/`000240`/`003490`/`138040`) 중 `000810`/`001450`/`402340`/`329180`/`196170`/`055550`/`003490`/`138040` 등 절반가량만 `APPROVED_CORE_UNIVERSE_SYMBOLS`에 실제로 포함되어 있고, `001800`/`081660`/`021240`/`111770`/`042700`/`023530`/`316140`/`004370`/`009240`/`008930`/`090430`/`000240`은 이 목록에 없다 — 즉 **이들은 (b) 지수 편입(index membership) 경로로 core에 편입되고 있을 가능성이 높다.**
+
+이 경로를 추가로 확인한 결과: `instrument_index_memberships` 테이블은 자동 스케줄러가 아니라 **수동 업로드 스크립트**(`scripts/import_instrument_index_membership_seed.py`, `scripts/sync_kis_instrument_master.py`)를 통해서만 갱신된다. `src/agent_trading/services/index_membership_staleness.py`의 docstring이 명시하듯("KIS에 지수 구성종목 전체 목록 API가 확인되지 않아 자동 갱신 파이프라인 대신 ... 읽기 전용으로 감시만 한다. 주문 경로/게이트 로직에는 어떤 영향도 주지 않는다"), staleness 감시는 존재하지만 **관측 전용**이고 실제 게이트/선정 로직에 반영되지 않는다(기본 staleness 임계값은 21일).
+
+**정정된 결론**: core 선정은 하나의 정적 소스가 아니라 **정적 Python allowlist + 수동 갱신되는 DB 인덱스 편입 테이블, 두 개의 사실상 정적인 소스**로 구성된다. 두 경로 모두 활동성과 무관하고, 자동 갱신/decay 메커니즘이 없다는 점에서 핵심 결론("선정 앞단이 activity와 완전히 독립적이고 반영구적으로 유지된다")은 오히려 더 강하게 뒷받침된다 — 다만 "정적 allowlist 하나가 원인"이라는 단순화된 설명은 부정확했다.
+
+### 존재하는 규칙 vs 존재하지 않는 규칙
+
+**존재하는 규칙**
+- core 선정: 정적 allowlist(`APPROVED_CORE_UNIVERSE_SYMBOLS`) + 수동 갱신 DB 인덱스 편입 테이블(`instrument_index_memberships`) + `instrument.metadata` override
+- core에 적용되는 유일한 제외 조건: 정지/관리종목/비활성/asset_class/틱사이즈 등 정적 instrument 상태 필터
+- 정렬(우선순위) 조정: 신호 점수 기반 랭킹 + freshness 계층(FRESH/STALE/MISSING) — 포함 여부가 아니라 순서만 바꿈
+- 활동성 기반 BUY 차단: `deterministic_trigger_engine._assess_buy_eligibility()`의 3개 임계값(평균거래량/평균거래대금/상대활동성)
+- 하루 단위 universe freeze 재사용(`business_date` 스코프, 매일 재생성)
+- 인덱스 편입 데이터 staleness **관측**(21일 임계값, 게이트에 영향 없음)
+
+**존재하지 않는 규칙**
+- core 심볼에 대한 TTL/decay/자동 만료 — 없음
+- 활동성 저하 시 core에서 자동 제외(eviction) — 없음(선정 로직에 활동성 지표 참조 자체가 없음)
+- 반복 차단 이력에 따른 재평가 빈도 감소/쿨다운 — 없음
+- freeze의 여러 날 캐리오버 — 없음(매일 재생성)
+- 인덱스 편입 staleness가 게이트/선정에 미치는 영향 — 없음(관측 전용, docstring에 명시)
+
+### 반복 차단 현상을 설명하는 가장 유력한 원인(우선순위)
+
+1. **(1순위) 구조적 분리**: `core` 선정(정적 allowlist + 수동 갱신 인덱스 편입)과 활동성 게이트(`deterministic_trigger_engine`)가 완전히 독립된 레이어다. 두 소스 모두 활동성과 무관하고 피드백 루프가 없어, 저활동 상태가 되어도 선정 단계에서 걸러지지 않고 매 영업일 그대로 재선정된다.
+2. **(2순위) 정렬 로직이 저활동 core 종목을 배제하지 않고 순위만 조정**: freshness 계층 로직은 신호가 오래돼도 core에서 배제하지 않고 정렬만 뒤로 미룬다 — 활동성이 낮아도 daily cap 안에 들어와 반복 평가될 수 있다.
+3. **(3순위, 부차 요인) 하루 내 freeze 재사용으로 인한 반복 횟수 증폭**: 하루 동안 같은 스냅샷을 재사용하므로 관측되는 차단 "행" 수 자체가 증폭된다(여러 날 반복의 근본 원인은 아님).
+
+### 확인된 사실 vs 아직 추론인 부분
+
+- **확인된 사실**(코드 직접 확인·grep 재검증 완료): 선정 로직에 활동성 지표 미참조, TTL/decay 부재(grep 0건), freeze의 일 단위 재생성, 활동성 게이트의 정확한 임계값과 위치, 반복 차단 종목이 allowlist와 index membership 두 경로에 걸쳐 있다는 사실.
+- **아직 추론인 부분**: `instrument_index_memberships` 테이블에 실제로 언제 마지막 반영됐는지, 그 시점이 이번 10영업일 반복 차단과 시간적으로 어떻게 겹치는지는 DB 조회 없이는 확정할 수 없다(이번 턴은 코드 조사로 한정, DB 조회는 하지 않았다). "event_overlay/market_overlay는 후보 생성 자체가 최근 활동에 조건화되어 core와 대비된다"는 설명도 코드 구조상 타당해 보이지만 이번 턴에서 `event_overlay`/`market_overlay` 선정 로직 자체를 상세히 재조사하지는 않았다.
+
+### 다음 단계 제안
+
+**최소 계측이 다음 단계로 적합하다(설계안 작성은 아직 이르다).** 코드 구조는 명확히 확인됐으나, "실제로 그 인덱스 편입 테이블이 마지막으로 언제 갱신됐는지"와 "그 갱신 주기가 반복 차단 패턴과 어떻게 맞물리는지"를 확인하지 않고 바로 코드 수정안(예: core 선정에 활동성 사전 필터 추가, 반복 차단 이력 기반 강등 규칙)을 설계하면 근거가 절반만 채워진 상태가 된다. 다음 턴에서 `instrument_index_memberships` 테이블의 실제 최신 반영 시각을 read-only로 확인하는 것을 권장한다.
+
 ## 해석 기준
 
 - `low_average_volume` 또는 `low_turnover` 비중이 높으면 universe 사전 필터 강화 후보로 본다.
