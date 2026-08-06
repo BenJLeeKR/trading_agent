@@ -2362,11 +2362,21 @@ deterministic 기준 `BUY_CANDIDATE`가 됐을 것"이라는 판단을 한 단�
 있었는지를 counterfactual로 분석했다. 새 AI 호출 없음, 코드 변경
 없음, DB write 없음.
 
-**저장 경로 재확인**: 이 절의 qualitative 비교에 쓴 `risk_opinion`/
-`evidence_strength`는 `trade_decisions.decision_json`의 **top-level
-키**를 read-only로 다시 조회해 확인한 값만 사용했다. 오늘 표본에서는
-`decision_json.agent_signals`/`decision_json.risk_assessment` 하위 경로는
-비어 있었으므로, 그 경로를 사실값으로 사용하지 않았다.
+**저장 경로 재확인(2026-08-06 재검증)**: `risk_opinion`은
+`decision_factory.py:217`에서 `ai_inputs.risk_opinion`(AI Risk
+Agent 출력의 top-level `risk_opinion`)을 그대로 받아
+`decision_json.risk_opinion`(top-level)에 저장한다. `evidence_
+strength`는 `decision_factory.py:203`에서 `ai_inputs.evidence_
+strength`(Event Interpretation Agent 출력의 `aggregate_view.
+evidence_strength`)를 받아 `decision_json.evidence_strength`
+(top-level)에 저장한다 — 원본은 nested지만 저장 시점에 top-level로
+평탄화된다. `jsonb_path_query_array(decision_json, '$.**.risk_
+opinion')`/`'$.**.evidence_strength'`로 오늘 표본(`035420`)의
+decision_json 전체를 재귀 탐색한 결과 각각 **정확히 1개 경로만
+존재**했다(`["allow"]`/`["none"]` 형태) — 중복되거나 경쟁하는 다른
+저장 위치는 없다. 즉 이전 절에서 쓴 `decision_json->>'risk_opinion'`/
+`decision_json->>'evidence_strength'`(top-level 추출)는 저장 경로
+자체는 정확했다.
 
 **비교군**: 2026-08-05(수) 오늘 실제 `buy_candidate=true`였던 factual
 표본은 `035420`(`entry_score=0.6503`, core, 54사이클)과 `181710`
@@ -2378,12 +2388,22 @@ deterministic 기준 `BUY_CANDIDATE`가 됐을 것"이라는 판단을 한 단�
 alignment_status`가 `035420` 53/54·`181710` 54/54(100%)에서
 `downgraded`였다. `decision_type`은 `035420`이 `buy` 1건(1.9%)/
 `watch` 46건/`hold` 7건, `181710`은 `buy` 0건/`watch` 47건/`hold`
-7건이었다. 지배적 신호 조합은 `risk_opinion=review`+`evidence_
-strength=weak·moderate`(80% 이상)이며, `risk_check_passed=false`가
-전체의 85% 내외다. `035420`의 유일한 `buy` 행도 `expected_value_
-gate.passed=false`(`edge_after_cost_bps=-12.97bps`)로 `order_
-request`가 생성되지 않았다 — **오늘 전체 864행 중 `order_request`는
-0건**이다(factual).
+7건이었다(전부 factual 관측치). `035420`의 유일한 `buy` 행도
+`expected_value_gate.passed=false`(`edge_after_cost_bps=-12.97bps`)
+로 `order_request`가 생성되지 않았다 — **오늘 전체 864행 중 `order_
+request`는 0건**이다(factual).
+
+**`risk_opinion`/`evidence_strength`의 판별력 재검토(2026-08-06,
+정정)**: 앞선 서술은 "`risk_opinion=review`+`evidence_strength=
+weak·moderate` 조합이 downgrade를 지배한다"고 썼으나, `alignment_
+status`별로 다시 교차 집계한 결과 이 해석은 **근거가 약해 철회한다**.
+`035420`의 유일한 `matched`(`buy`, downgrade 안 됨) 행이 `risk_
+opinion=review`/`evidence_strength=moderate`로, **downgrade된 44개
+`watch` 행과 완전히 같은 조합**이다 — 즉 이 두 필드는 오늘 표본에서
+override 여부를 구분해주지 못한다(같은 조합이 양쪽 결과 모두에
+나타남). 저장 경로는 정확했지만, 그 값으로 "개연성이 높다/낮다"를
+판단하는 것은 표본이 약해 근거가 되지 못한다. 이하 판정은 이
+필드들에 의존하지 않고 **factual 도달률(빈도)만**으로 다시 쓴다.
 
 **4종목 실제(factual) 상태**(가정 `entry_score`는 §13.2.13의 역산
 값을 그대로 사용, factual row와 혼동하지 않도록 별도 표기):
@@ -2401,27 +2421,58 @@ request`가 생성되지 않았다 — **오늘 전체 864행 중 `order_request
 성립하지 않아 A/B/C 판정 대상이 아니다.
 
 **`008930`/`051900`/`078930`(공통)**: deterministic `BUY_CANDIDATE`
-전환 개연성은 높으나(가정 `entry_score`가 `0.65` 초과, `eligibility_
-passed=true`), 실제 AI 평가 신호(`review`+`weak·moderate`)가 비교군의
-downgrade 지배 패턴과 질적으로 일치해 downstream에서 `WATCH`/`HOLD`로
-내려갈 개연성이 높다. `buy`/`approve` 도달 개연성은 비교군 기준
-0~1.9%로 낮고, `order_request` 도달 개연성은 오늘 전체 0건(비교군의
-유일한 `buy` 행조차 EV 게이트로 차단)이라 거의 없다. **판정: A(
-`BUY_CANDIDATE`까지만 가능성 높음, 주문까지는 낮음)**.
+전환 개연성은 높다(가정 `entry_score`가 `0.65` 초과, `eligibility_
+passed=true`) — 이는 §13.2.13에서 이미 확인한 factual 재구성이다.
+`buy`/`approve`까지의 factual 도달률은 비교군 기준 0~1.9%(`035420`
+1/54, `181710` 0/54)로 낮고, `order_request` 도달률은 비교군·전체
+표본 모두 0%다. **판정: A(`BUY_CANDIDATE`까지만 가능성 높음, 주문
+까지는 낮음)** — 다만 이 판정은 "빈도가 낮다"는 factual 관측이며,
+"차단이 정당했다/과하지 않았다"는 규범적 판단까지 자동으로 포함하지
+않는다(아래 D 참고).
 
-**3종목 공통 결론**: allocation 제거가 없었더라도 `008930`/`051900`/
-`078930`이 오늘 실제 매수(`order_request`)까지 갔을 가능성은 낮다 —
-deterministic 뒤집힘 개연성은 높지만, 같은 날 실제 `BUY_CANDIDATE`
-표본의 80% 이상이 AI risk/evidence 평가로 downgrade됐고, 오늘 하루
-`order_request` 생성이 0건이라는 factual 배경이 이를 강하게 뒷받침
-한다.
+**allocation 관련 결론과 downstream 차단 결론의 분리(A/B/C/D)**:
+
+- **A. allocation 항목 자체**: §13.2.3(06-20~07-31 표본)에서는
+  allocation 제거 영향이 미미했다(C=0). 이 결론은 그 표본·시점에
+  한정된 관찰이다(§13.2.13에서 이미 정정).
+- **B. 유니버스 회전 후 재관측**: 2026-08-05 신규 유니버스 종목
+  4개 중 3개(`008930`/`051900`/`078930`)에서 allocation 제거가
+  `BUY_CANDIDATE` 경계에 실제로 영향을 준 사례가 관측됐다(§13.2.13,
+  216행/4종목 또는 162행/3종목).
+- **C. 그 사실이 주문까지 이어졌어야 한다는 뜻은 아님**: 같은 날
+  실제 `BUY_CANDIDATE`(비교군)의 `order_request` 도달률도 0%였다 —
+  "`BUY_CANDIDATE`가 됐을 것"이라는 사실만으로 "주문까지 갔어야
+  했다"고 단정할 근거는 없다.
+- **D. 그러나 그 반대(현재 downstream 차단이 과하지 않다)도 강하게
+  말할 수 없다**: 비교군 표본이 2종목·54사이클로 작고, `risk_
+  opinion`/`evidence_strength`는 위에서 확인했듯 override 여부를
+  구분해주지 못해 "차단이 근거 있게 이뤄졌다"는 설명을 뒷받침하지
+  못한다. "오늘 `order_request`가 0건이었다"는 사실은 (i) 차단이
+  정당했다는 근거로도, (ii) 시스템이 전반적으로 과도하게 보수적
+  이었다는 근거로도 **동시에 해석 가능**하며, 현재 증거만으로는 둘
+  중 하나를 확정할 수 없다.
+
+**3종목 공통 결론(강도 조정)**: allocation 제거가 없었더라도
+`008930`/`051900`/`078930`이 오늘 실제 매수(`order_request`)까지
+**갔어야 했다고 단정할 수는 없다**(C). 동시에, 현재 downstream
+차단 장치가 **과하지 않다고 단정할 수도 없다**(D) — 두 결론 모두
+비교군 표본이 작고(2종목), 유일한 구분 근거로 썼던 `risk_opinion`/
+`evidence_strength`가 실제로는 판별력이 없다는 것이 확인됐기 때문
+이다. 이번 턴에서 새로 확정된 것은 "allocation 제거의 경계 영향이
+재현 가능하다"(B)는 사실뿐이며, 그 이후 단계(주문 도달 여부, 차단의
+적정성)는 여전히 **미확인**으로 남긴다.
 
 **미확인 사항**: (1) `event_overlay` 계열(`051900`)의 실제 비교군이
 오늘 없어 `core` 비교군 패턴을 근사 적용했다. (2) AI는 프롬프트에
 `primary_candidate`를 입력받으므로, 실제로 `BUY_CANDIDATE`로 AI에
 전달됐다면 평가 자체가 달라졌을 가능성은 배제할 수 없다(새 AI 호출
-없이는 검증 불가). (3) `035420`의 유일한 `buy` 행이 유사 입력 조합의
-다른 46개 `watch` 행과 달리 override를 피한 이유는 규명하지 않았다.
+없이는 검증 불가). (3) `035420`의 유일한 `buy` 행이 다른 44개
+`watch` 행과 완전히 같은 `risk_opinion`/`evidence_strength` 조합
+임에도 override를 피한 이유는 규명하지 않았다 — 다른 필드(`opposing_
+evidence`, LLM 비결정성 등)의 영향일 수 있으나 확인하지 않았다.
+(4) downstream 차단군(`watch`/`hold`로 내려간 표본) vs 통과군(`buy`/
+`approve`까지 간 표본)의 사후 수익률(counterfactual PnL 포함) 비교는
+이번 턴에서 수행하지 않았다 — 후속 검증 과제로 남긴다.
 
 ### 13.3 R3 — `portfolio_allocation`의 역할 분리
 

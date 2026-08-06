@@ -5501,3 +5501,37 @@ read-only 분석, 코드 변경 없음)
   R2 이후 다른 리팩터링(`risk_off` 계수 등)의 계통적 영향인지는
   규명하지 않았다.
 - 상세: `buy_path_variable_gate_matrix.md` §13.2.13.
+
+### `risk_opinion`/`evidence_strength` qualitative 해석 철회 및 downstream 차단 결론 강도 조정(2026-08-06, read-only)
+
+- §13.2.14(allocation 제거 4종목 counterfactual downstream 분석)에서
+  "`risk_opinion=review`+`evidence_strength=weak·moderate` 조합이
+  downgrade를 지배한다"고 쓴 qualitative 해석을 재검증한 결과,
+  `035420`의 유일한 `matched`(비-downgrade, `buy`) 행이 downgrade된
+  44개 `watch` 행과 **완전히 같은 조합**을 보여 판별력이 없음을
+  확인했다. 저장 경로 자체는 정확했다(`decision_json` top-level
+  `risk_opinion`/`evidence_strength`, `jsonb_path_query_array`로
+  중복 경로 없음을 확인) — 문제는 경로가 아니라 이 필드로 override를
+  예측할 수 없다는 것이다.
+- 이에 따라 §13.2.14의 결론을 A/B/C/D로 분리해 재조정했다: (A)
+  §13.2.3 표본에서는 allocation 영향 미미, (B) 2026-08-05 신규
+  유니버스 종목에서는 실제 경계 영향 관측(§13.2.13), (C) 그 사실이
+  주문까지 갔어야 했다는 뜻은 아님(비교군 `order_request` 도달률도
+  0%), (D) **그렇다고 현재 downstream 차단이 과하지 않다고 단정할
+  수도 없음**(비교군 표본이 작고, 유일한 구분 근거가 판별력 없다고
+  확인됐기 때문). 사후에 수익이 난 종목이라는 사실만으로 차단이
+  틀렸다고 단정하지도 않았다 — "현재 증거만으로는 어느 쪽도 확정하기
+  어렵다"가 이번 턴의 정직한 결론이다.
+- `[DESIGN] signal_predictive_power_validation.md` §35.4에 축 2
+  착수 시 downstream 메커니즘 신뢰도를 별도 검증해야 한다는 선행
+  조건을 추가했다.
+- `sppv_regime_polarity_synthesis_and_next_direction.md`/`regime_
+  conditional_entry_signal_v1.md`는 검토했으나 이 문서들의
+  "allocation"은 SPPV 백테스트의 `portfolio_allocation` 데이터
+  공백(계좌 잔고/포지션 미확보)을 가리키는 **별개 개념**이라 이번
+  건과 무관 — 수정하지 않았다.
+- 다음 1순위(신규): downstream 차단군 vs 통과군의 사후 성과
+  (counterfactual PnL 포함) 비교, override를 실제로 설명하는 다른
+  필드 탐색.
+- 상세: `buy_path_variable_gate_matrix.md` §13.2.14(정정), `[DESIGN]
+  signal_predictive_power_validation.md` §35.4.
