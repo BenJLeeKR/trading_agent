@@ -3259,3 +3259,132 @@ bypass 등 다른 stale 정책, B/C/D안, 5-6월의 "cash도 함께 stale"이던
 72건 구간의 별도 원인 규명, `memory.py`의 `list_latest_by_account()`
 가 `DISTINCT ON` 의미를 지키지 않는 것으로 보이는 별건 불일치, 운영
 재기동 이후 실측(이번 턴은 코드 적용까지만, 실측은 다음 턴 과제).
+
+## 15. 하루 단위 `BUY` 퍼널 실측 — `order_request` 병목 위치 확인(2026-08-06 KST, read-only)
+
+`[PRIORITY_MAP] remaining_work_priority_map.md`의 "다음 검증 로드맵"
+1순위(④주문요청 미생성 + 종합 퍼널)를 실제로 집계했다. 코드 변경
+없음, DB write 없음, 새 AI/API 호출 없음.
+
+### 15.1 저장 경로 확인(추정 없이 재확인)
+
+- 전체 판단 대상: `trading.trade_decisions`(`created_at`).
+- 기본 적격성: `decision_json.deterministic_trigger.eligibility_passed`
+  (boolean), 사유는 `decision_json.deterministic_trigger.eligibility_
+  reasons`(배열, `eligibility_low_relative_activity` 포함 여부로 활동성
+  사유를 분리).
+- 매수 후보: `decision_json.deterministic_trigger.buy_candidate`
+  (boolean).
+- downstream 정합 상태: `decision_json.candidate_vs_final.alignment_
+  status`(`matched`/`upgraded`/`downgraded`/`suppressed`).
+- 최종 판정: `trade_decisions.decision_type`(`buy`/`approve`/`watch`/
+  `hold` 등).
+- EV 게이트: `decision_json.expected_value_gate.passed`(boolean).
+- AI 자체 risk/compliance 의견: `trade_decisions.risk_check_passed`/
+  `compliance_check_passed`(boolean 컬럼, decision_json이 아니라
+  테이블 top-level 컬럼) — **주의**: 이는 execution 단계의 하드
+  가드(`compliance_validator_v1`, `VaR`)와는 다른, AI Risk/Compliance
+  에이전트의 자체 의견 플래그다. 실제 execution 단계 하드 가드는
+  `trading.execution_attempts.stop_phase`/`stop_reason`에서 확인한다.
+- 주문 요청 생성: `trading.order_requests`(`trade_decision_id`로
+  `trade_decisions`와 조인, 행이 존재하면 "생성됨").
+- **실제 브로커 제출**: `trading.order_requests.submitted_at`(NULL이
+  아니면 실제 제출). "생성"과 "제출"은 다른 사건이다 — 아래에서
+  분리해서 집계한다.
+
+### 15.2 날짜별 퍼널(2026-08-03 08:50 KST ~ 2026-08-06 13:xx KST, `BUY` 경로 전체)
+
+| 날짜 | 전체 대상 | 적격성 탈락(활동성) | 적격성 탈락(기타) | 매수 후보 | downstream 하향(downgraded) | suppressed | 최종 `buy`/`approve` | EV 게이트 차단 | AI risk/compliance 의견 불일치 | `order_request` 생성 | 실제 제출(`submitted_at`) |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| 08-03 | 863 | 143 | 0 | 107 | 101 | 434 | 6 | 1 | 0 | **4** | **0** |
+| 08-04 | 918 | 756 | 54 | 0 | 0 | 133 | 0 | 0 | 0 | 0 | 0 |
+| 08-05 | 864 | 432 | 54 | 108 | 107 | 102 | 1 | 1 | 0 | 0 | 0 |
+| 08-06(진행 중) | 969 | 627 | 57 | 114 | 84 | 59 | 30 | 30 | 0 | 0 | 0 |
+| **합계** | **3,614** | **1,958** | **165** | **329** | **292** | **728** | **37** | **32** | **0** | **4** | **0** |
+
+집계는 `trade_decisions`/`order_requests`에 대한 read-only `SELECT`
+(CTE로 필드 추출 후 `date_trunc`/`GROUP BY`)로 수행했다 — 상세 쿼리는
+완료 보고에 남긴다.
+
+### 15.3 `order_request=0`건인 날의 단계별 원인(factual)
+
+- **08-04**: `buy_candidate` 자체가 **0건**이다. 적격성 탈락 918건 중
+  756건(82.4%)이 활동성 부족 — 이 날은 매수 후보 단계 이전에 이미
+  대부분 소진됐다.
+- **08-05**: `buy_candidate` 108건 중 107건이 downstream에서
+  `downgraded`됐다. 유일하게 남은 `buy` 1건(`035420`)도
+  `expected_value_gate.passed=false`(`edge_after_cost_bps=-12.97`)로
+  막혀 `order_request`가 생성되지 않았다.
+- **08-06(진행 중)**: `buy`/`approve` 30건 **전부**가 두 종목
+  (`051900`, `008930`)의 반복 평가이며, `expected_value_gate.
+  passed=false`가 **30/30**(`edge_after_cost_bps`가 각각
+  약 `-20.35`/`-14.54`~`-6.54`로 지속적 음수)로 100% 막혔다.
+  AI risk/compliance 의견 불일치는 이 기간 전체에서 **0건**으로
+  전혀 병목이 아니었다.
+
+### 15.4 `order_request`가 "생성"됐지만 "제출"은 0건인 사례(08-03, 중요)
+
+08-03의 `order_request` 4건(`001450`)은 모두 `status='validated'`,
+`submitted_at IS NULL`이다 — **row는 생성됐지만 실제 KIS 제출까지는
+가지 못했다.** `execution_attempts`로 원인을 확인한 결과, 4건 모두
+§14에서 이미 기록한 `stale_snapshot_guard`/`stale_snapshot` 인시던트
+(PR #119, 08-03 16:57 KST 병합, 이 4건은 그 **이전** 발생분)와 정확히
+일치한다 — 새로운 원인이 아니라 기존에 문서화된 인시던트의 재확인이다.
+같은 종목의 5번째 `approve`(14:57)는 `ev_passed=true`/`risk_check_
+passed=true`/`compliance_check_passed=true`였음에도 `buy_duplicate_
+guard`/`recent_active_buy_order`로 `order_request` 자체가 생성되지
+않았다 — 이미 활성 주문이 있어 중복 생성을 막은 **정상 동작**이다
+(오류가 아님).
+
+### 15.5 질문별 답변
+
+1. **`order_request=0`건인 날의 병목**: 08-04는 활동성 게이트(②),
+   08-05는 downstream 하향(③) + EV 게이트(④), 08-06은 EV 게이트(④)
+   단독. 날짜마다 지배적 병목이 다르다 — 하나로 뭉쳐 말할 수 없다.
+2. **매수 후보가 있었는데 주문요청이 0건인 날**: **있다.** 08-05
+   (매수 후보 108건 → `order_request` 0건), 08-06(매수 후보 114건 →
+   `order_request` 0건). 08-03은 "생성"은 4건 있었으나 "제출"은
+   0건이었다.
+3. **가장 지배적인 병목 단계**: 전체 판단 대상 기준으로는 활동성
+   부족(②)이 물량이 가장 크다(적격성 탈락의 92.2%). 다만 **매수
+   후보(329건)까지 좁히면**, downstream 하향(③, 292건 중 상당수)과
+   EV 게이트(④, 최종 `buy`/`approve` 37건 중 32건, 86.5%)가 실제
+   기회비용이 발생하는 지점이다. 4일 통틀어 **실제 브로커 제출은
+   0건**이다.
+4. **1-B순위(활동성)/2순위(downstream)에 주는 영향**: 08-04의 극단적
+   활동성 차단(82.4%)이 §13.4.4 활동성 표본에 새 관측치를 더한다.
+   08-05의 downstream 하향 107건은 §13.2.14 재분해 작업의 표본을
+   늘려준다. 08-06의 EV 게이트 100% 차단(2종목, 30건, 지속적 음수
+   `edge_after_cost_bps`)은 **④(EV 게이트) 자체도 별도 사후 성과
+   검증이 필요하다**는 새 시사점이다 — 이 두 종목의 알파가 실제로
+   비용을 못 넘는 것인지, EV 게이트 파라미터(왕복비용/슬리피지
+   버퍼)가 과도하게 보수적인지는 아직 미확인이다.
+
+### 15.6 해석(사실과 분리)
+
+- **factual**: 4일간 3,614건의 판단 중 `buy`/`approve`까지 간 것은
+  37건(1.0%), `order_request` 생성은 4건(0.11%), 실제 제출은
+  0건(0%)이다.
+- **해석**: 이 수치만으로 "차단이 과하다"고 단정하지 않는다 — 4일이라는
+  짧은 기간, 소수 종목(대부분 2~3종목이 반복 평가되는 구조)이라는
+  표본 한계가 있고, EV 게이트가 지속적으로 음수 `edge_after_cost_bps`
+  를 계산했다는 것은 실제로 비용을 못 넘는 신호였을 가능성도 배제할
+  수 없다. 반대로 "0건이 정상"이라고도 단정하지 않는다 — `[PRIORITY_
+  MAP]`의 공통 판단 원칙대로, 주문 0건 수렴은 기회비용 증가 가능성
+  으로 먼저 의심하고 사후 성과로 확인해야 한다.
+- **미확정**: `051900`/`008930`의 지속적 음수 edge가 실제로 타당한
+  신호(비용 대비 기대수익 부족)인지, EV 게이트 파라미터의 문제인지는
+  이번 턴에서 판별하지 않았다.
+
+### 15.7 후속 검증에 대한 연결
+
+- 이 퍼널은 `[PRIORITY_MAP]`의 4축(①allocation/②활동성/③downstream/
+  ④주문요청 미생성) 분리 관리 원칙을 실제 수치로 뒷받침한다 — ④가
+  이번 구간에서 가장 직접적인 최종 병목(37건 중 32건, 86.5%)임을
+  처음 정량화했다.
+- **신규 후속 과제(④)**: `051900`/`008930`의 지속적 음수 `edge_
+  after_cost_bps`에 대한 사후 성과(백테스트) 검증 — 이 두 종목이
+  실제로 사후 손실을 피했는지, 기회비용만 발생시켰는지 확인이
+  필요하다. 표본이 2종목뿐이라 결론을 낼 단계는 아니다.
+- 08-03의 `stale_snapshot_guard` 4건은 §14에서 이미 코드 수정이
+  완료된 인시던트의 재확인이라 새 후속 과제가 아니다.

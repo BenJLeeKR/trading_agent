@@ -5594,3 +5594,29 @@ read-only 분석, 코드 변경 없음)
 
 - **우선순위**: C(퍼널 표 신설) → A(활동성 표본 축적) → B(downstream 재분해). ①(allocation)은 이미 미확정 판정까지 마쳐 자연 누적 관찰만 계속한다.
 - 상세: `[PRIORITY_MAP] remaining_work_priority_map.md`(다음 검증 로드맵), `buy_path_variable_gate_matrix.md` §13.2.13/§13.2.14/§13.4.4.
+
+### C 항목(주문요청 0건 퍼널 분해) 실측 완료 — EV 게이트가 최종 병목으로 새로 확인(2026-08-06, read-only)
+
+- 2026-08-03~08-06(진행 중) 4일간 `trade_decisions` 3,614건을
+  전체 대상 → 적격성 탈락(활동성/기타) → 매수 후보 → downstream
+  하향 → 최종 `buy`/`approve` → EV 게이트 차단 → `order_request`
+  생성 → 실제 제출(`submitted_at`)로 하루 단위 집계했다.
+- **핵심 수치**: `buy`/`approve` 37건(1.0%), `order_request` 생성
+  4건(0.11%), **실제 브로커 제출 0건(0%)**. 날짜별 지배적 병목이
+  다름 — 08-04 활동성 부족(②), 08-05 downstream+EV(③+④), 08-06
+  EV 게이트 단독(④, 2종목 30건 전부 지속적 음수 `edge_after_cost_
+  bps`).
+- **"생성"과 "제출"의 구분이 중요**: 08-03의 `order_request` 4건은
+  전부 `status='validated'`, `submitted_at IS NULL`로 실제 제출은
+  안 됐다 — 원인은 §14에 이미 문서화된 `stale_snapshot_guard`
+  인시던트(PR #119 이전 발생분)와 정확히 일치, 새 원인이 아니다.
+  같은 종목의 또 다른 시도 1건은 `buy_duplicate_guard`로 정상
+  차단(오류 아님).
+- **AI risk/compliance 자체 의견 불일치는 이 기간 0건** — 전혀
+  병목이 아니었다(execution 단계 하드 가드 `compliance_
+  validator_v1`/`VaR`도 이 기간 발동 이력 없음).
+- **판정: 미확정.** "차단이 과하다"도 "0건이 정상이다"도 이번
+  실측만으로 단정하지 않는다. 신규 후속 과제: `051900`/`008930`
+  의 지속적 음수 edge가 실제로 타당한 신호인지, EV 게이트 파라미터
+  문제인지 사후 성과로 확인 필요(표본 2종목뿐, 결론 단계 아님).
+- 상세: `buy_path_variable_gate_matrix.md` §15.
