@@ -5449,3 +5449,31 @@ read-only 분석, 코드 변경 없음)
   이후 `suppressed`/`downgraded` vs `matched` 표본의 forward
   return 1차 실측으로 진행한다.
 - 상세: `[DESIGN] signal_predictive_power_validation.md` §34.
+
+### `SPPV-3` 착수 전제 관측 2건(PR #119 재현, R2 allocation 제거) — 2026-08-05 장후 실측(read-only)
+
+- 관측 A(`stale_snapshot_guard` PR #119 재현): **미확인 유지**.
+  병합(2026-08-03 16:57 KST) 이후 지금까지 이 단계에 도달한 시도가
+  0건이다. 오늘(2026-08-05) 유일한 `buy` 판정(`035420`)도 EV 게이트
+  미달(`edge_after_cost_bps=-12.97bps<10.00bps`)로 `translation`
+  단계에서 멈춰 `order_request` 자체가 생성되지 않았다. `001450`의
+  마지막 4개 `order_request`는 전부 병합 이전(08-03 13:59~15:03
+  KST) 생성분으로 `stale_snapshot_guard`에서 정지된 채 `validated`
+  로 멈춰 있고, 이후 신규 시도가 없어 재현 사례로 쓸 수 없다.
+  부수 발견(범위 밖): 이 케이스의 `stop_reason`이 `decision_watch`
+  로 저장돼 있으나 실제 `decision_type`은 `BUY`였다 —
+  `translation.py`의 skip 분기가 `HOLD`가 아니면 항상
+  `DECISION_WATCH`로 라벨링하는 구조적 오분류(코드 수정은 이번 턴
+  범위 밖).
+- 관측 B(R2 allocation 제거 §13.2.5 운영 재실측): **닫힘, 판정
+  정정**. `buy_candidate`(0.65) 게이트는 3개 종목(`008930`/
+  `051900`/`078930`)이 오늘 전 사이클(46~54회)에서 allocation
+  제거분(pct=3 기준 `+0.03`)만큼 `entry_score`가 `0.65`에 못 미쳐
+  하루 종일 `WATCH`에 머무는 실제 영향이 확인됐다 — §13.2.3의
+  "판정 A(영향 미미)"를 정정한다. `risk_off_exception_eligible`
+  (authoritative 하드 게이트, `0.28`)은 오늘 표본 전체(864건)에서
+  뒤집힘 후보가 0건으로, 예상대로 영향이 없음을 확인했다.
+- `buy_path_refactor_pre_roadmap_schedule.md` §8.2/§8.5의 R2 관련
+  체크리스트를 이번 실측 결과로 갱신했다(운영 재실측/이동폭 재집계
+  항목 완료 처리, 판정 정정 이력 기록).
+- 상세: `[DESIGN] signal_predictive_power_validation.md` §35.
