@@ -2474,6 +2474,11 @@ evidence`, LLM 비결정성 등)의 영향일 수 있으나 확인하지 않았�
 `approve`까지 간 표본)의 사후 수익률(counterfactual PnL 포함) 비교는
 이번 턴에서 수행하지 않았다 — 후속 검증 과제로 남긴다.
 
+**후속 검증 로드맵**: 이 축(③, downstream 하향)의 다음 작업 순서는
+`[PRIORITY_MAP] remaining_work_priority_map.md`의 "다음 검증
+로드맵"(B항)에 정리했다 — qualitative 필드 재사용 금지, guard/EV/
+risk/compliance 단계별 구조적 재분해로 전환한다.
+
 ### 13.3 R3 — `portfolio_allocation`의 역할 분리
 
 - 범위:
@@ -2943,6 +2948,12 @@ clpr`(종가)를 `raw_payload_json.clpr_chng_dt`(종가 기준일)로 색인한
 활동성 서지로 나타나지 않은 것이 이 종목만의 특성인지, 최근 편입
 종목군 전반의 패턴인지는 규명하지 않았다. (3) T+5/T+20은 최소
 5~20 거래일치 데이터가 더 쌓여야 계산 가능하다.
+
+**후속 검증 로드맵**: 이 축(②)의 다음 작업 순서·판정 기준은
+`[PRIORITY_MAP] remaining_work_priority_map.md`의 "다음 검증
+로드맵"에 정리했다(A항). ①allocation/③downstream/④주문요청
+미생성과 분리해서 계속 관리한다 — 이 문서에는 상세 실측만 남기고
+로드맵은 복붙하지 않는다.
 
 ### 13.5 R5 — 하류 contract 정리
 

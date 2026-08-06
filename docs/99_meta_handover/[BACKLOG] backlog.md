@@ -5568,3 +5568,29 @@ read-only 분석, 코드 변경 없음)
   뒷받침되지는 않는다(해당 horizon 자체가 아직 없음). R2 allocation
   관련 기존 결론(§13.2.13/§13.2.14)과는 별개 축이라 충돌하지 않는다.
 - 상세: `buy_path_variable_gate_matrix.md` §13.4.4.
+
+### `BUY` 경로 차단 장치 후속 검증 로드맵 — A/B/C/D 축 분리 정리(2026-08-06, 문서 정리 전용)
+
+이 항목은 새 실측이 아니라 **후속 검증 작업의 순서와 판정 기준을 정리**한 것이다. 상세는 `[PRIORITY_MAP] remaining_work_priority_map.md`의 "다음 검증 로드맵" 절, 실행은 아래 개별 항목으로 분리해 추적한다.
+
+**A. 활동성 부족 게이트(②) — 경계 구간 표본 축적**
+- 모집단 분리 유지: 전체 population / `[0.60,0.65)` / `entry_score>=0.65` / chronic 100% 차단 종목군.
+- 추적 대상: `009420`(급등 후 낮은 활동성, T+1 미도착), `180640`(유일한 계산 사례), `073240`/`078930`/`035420`/`051900`/`008930`.
+- horizon: 현재 T+1/T+2, 거래일 누적 시 T+5까지 확장.
+- 가격 공백 처리: `instrument_status_snapshots` 공백 시 `signal_feature_snapshots` 파생 종가로 대체(`009420`으로 재현성 검증됨), 둘 다 없으면 "관측 불가"로 별도 카운트(조용히 제외하지 않음).
+- 판정 갱신: 경계 구간 표본 n>=10 전에는 "미확정" 유지.
+
+**B. downstream 하향(③) — 구조적 단계별 재분해**
+- `risk_opinion`/`evidence_strength` qualitative 근거 재사용 금지(판별력 부족 확인, §13.2.14).
+- `override_applied`/`reason_codes`/`expected_value_gate.passed`/`risk_check_passed` 조합으로 실제 어느 단계가 하향시켰는지 재분해.
+- 같은 날 실제 `buy_candidate=true` 비교군의 사이클을 단계별 분해표로 만듦.
+- 사후 성과 연결에는 "가상 진입가" 방법론 확정이 선행 필요(§34.5, 아직 미확정).
+
+**C. 주문요청 0건(④) — 하루 단위 퍼널 분해 표(다음 1순위)**
+- 전체 판단 대상 수 → 기본 적격성 탈락 수(사유별) → 매수 후보 수 → downstream 하향 수 → 최종 `buy`/`approve` 수 → EV/risk/compliance 차단 수 → `order_request` 생성 수.
+- 이 표가 있어야 "차단이 과한지", "주문 0건이 정상인지"를 정량적으로 말할 수 있다 — 근거 문서(`buy_path_variable_gate_matrix.md`)에 날짜별로 누적.
+
+**D. 4축 분리 관리 원칙**: ①allocation(점수 계산 단계)/②활동성 부족(적격성 단계)/③downstream 하향(매수 후보 이후)/④주문요청 미생성(EV/risk/compliance 단계)을 하나의 "막힘"으로 뭉치지 않는다 — 서로 다른 코드 지점, 서로 다른 근거 강도.
+
+- **우선순위**: C(퍼널 표 신설) → A(활동성 표본 축적) → B(downstream 재분해). ①(allocation)은 이미 미확정 판정까지 마쳐 자연 누적 관찰만 계속한다.
+- 상세: `[PRIORITY_MAP] remaining_work_priority_map.md`(다음 검증 로드맵), `buy_path_variable_gate_matrix.md` §13.2.13/§13.2.14/§13.4.4.
