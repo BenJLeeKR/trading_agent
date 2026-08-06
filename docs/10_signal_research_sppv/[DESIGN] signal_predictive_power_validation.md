@@ -9297,3 +9297,128 @@ BUY 경로 6개 파일을 코드 기준으로 확인한 결과다.
 3. **선행 관측/정의가 더 필요한 부분**: 가상 진입가 기준 확정,
    R5 마감 이후 population의 자연 누적(현재 24~55건대로 아직
    작음).
+
+## 35. `SPPV-3` 착수 전제 관측 2건(PR #119 재현, R2 allocation 제거) — 2026-08-05 장후 실측(read-only)
+
+이 절은 §28/§29/§30.5가 "SPPV-3 검증 축이 아니라 착수 전제"로 분류한
+2개 관측 항목을 2026-08-05(수) 장후(EOD) 데이터로 닫는다. 코드 수정
+없음, DB write/`.env`/컨테이너 재기동/외부 API 호출 없음, read-only
+조회만 수행했다.
+
+### 35.1 관측 A — `stale_snapshot_guard`(PR #119, zero-position false-stale 수정) 재현 확인
+
+**장중(00:00~10:00) vs 장후(EOD, 00:00~24:00) 누적 비교**
+
+| 지표 | 장중 | 장후(EOD) |
+|---|---|---|
+| `trade_decisions.decision_type='buy'` | 0건 | **1건**(`035420`, 14:22:36 KST) |
+| `execution_attempts.stop_phase='stale_snapshot_guard'` | 0건 | **0건** |
+| `order_requests` 신규 생성 | 0건 | **0건** |
+| `order_submission_attempts` 신규 생성 | 0건 | **0건** |
+| `execution_attempts` 전체 정지 위치 | `sizing/decision_watch` 11, `sizing/decision_hold` 90 | `sizing/decision_watch` 737, `sizing/decision_hold` 126, `translation/decision_watch` 1 |
+
+오늘 유일한 `buy` 판정(`035420`, `entry_score=0.6503`)도 `stale_
+snapshot_guard`에 도달하지 못했다 — `expected_value_gate.passed=
+false`(`edge_after_cost_bps=-12.97bps < minimum_required_edge_bps=
+10.00bps`)로 `translation.py`의 `_has_required_expected_value_
+anchor()`가 `False`를 반환해 `build_submit_order_request_from_
+decision()`이 `None`을 반환했고, `order_request` 자체가 생성되지
+않았다(EV 게이트가 정당하게 차단한 것으로 보임, 이 자체는 이번
+관측의 범위가 아니다).
+
+**부수 발견(범위 밖 버그, 기록만)**: 이 케이스의 `execution_
+attempts.stop_reason`이 `decision_watch`로 저장돼 있다
+(`execution_service.py:2481-2485`) — 그러나 실제 `decision_type`은
+`BUY`였다. `translation.py`의 Phase 2 skip 분기가 `_dt == "HOLD"`
+가 아니면 항상 `DECISION_WATCH`로 라벨링하는 구조라, "WATCH라서
+멈춤"과 "BUY인데 다른 이유(EV 게이트 등)로 멈춤"을 stop_reason만
+보고는 구분할 수 없다. 코드 수정은 이번 턴 범위 밖이라 진행하지
+않았고, 사실만 기록한다.
+
+**`001450` 체인 닫기**: `001450`의 마지막 4개 `order_request`(전부
+2026-08-03 13:59~15:03 KST, PR #119 병합(16:57 KST) **이전** 생성)는
+전부 `execution_attempts.stop_phase='stale_snapshot_guard'`/
+`stop_reason='stale_snapshot'`에서 정지된 채 `status='validated'`로
+멈춰 있고, `order_submission_attempts`는 0건(브로커 제출 자체가
+없었음)이다. 2026-08-04/08-05 이틀간 `001450`에 대한 신규
+`trade_decisions`가 **0건** — 즉 이 종목은 수정 이후 재시도 자체가
+없어 "수정 후에도 재현되는지"를 이 종목으로는 검증할 수 없는
+상태로 그대로 남아 있다.
+
+**판정: PR #119 효과 = 미확인**. `stale_snapshot_guard` 단계에
+도달한 시도가 병합 이후 지금까지(2026-08-03 16:57 KST ~ 2026-08-05
+장후) **단 한 건도 없어** 확인도 반박도 불가능하다. 원인은 수정의
+정합성 문제가 아니라, BUY 신호 자체가 그 단계까지 도달할 만큼
+충분히 발생하지 않고 있기 때문으로 보인다(§35.2와 무관하지 않음 —
+`buy_candidate` 판정 자체가 드물다).
+
+### 35.2 관측 B — R2 allocation 제거(§13.2.5) 이후 운영 재실측
+
+**장중 vs 장후 누적 비교**
+
+| 지표 | 장중 | 장후(EOD) |
+|---|---|---|
+| 전체 표본 수 | 101 | 864 |
+| `buy_candidate=true` | 12 | 108 |
+| `risk_off_exception_eligible=true` | 0 | 0 |
+| **순수 allocation 제거로만 `buy_candidate` 뒤집힌 표본**(추정) | 20건(종목 확인 전) | **162건, 3종목**(`008930`/`051900`/`078930`) |
+| `risk_off_exception_eligible` 경계(`0.28`) 뒤집힘 후보 | — | **0건** |
+
+**방법론**: `max_new_capital_pct`(오늘 관측값 3 또는 4)로부터 구
+공식의 `entry_score` = 현재값 + `min(0.10, pct/100)`을 역산하고,
+`buy_candidate`(현재 `false`) 여부가 이 역산값 기준으로는 `entry_
+score>=0.65`를 충족하는 표본을 찾았다. `risk_off_exception_
+eligible`은 게이트 원식(`raw_ranking_score = 0.55*entry_score +
+0.10*allocation_bonus_like >= ranking_min_score(0.28)`)이 `decision_
+json.deterministic_trigger.metadata.core_risk_off_experiment`에
+그대로 저장돼 있어 같은 방식으로 역산했다.
+
+**핵심 발견(§13.2.3의 "판정 A: 영향 미미" 기대와 다름)**: `008930`
+(`entry_score=0.6342`), `051900`(`0.6387`), `078930`(`0.6417`) 3개
+종목이 오늘 전 사이클(각 46~54회)에서 `entry_score`가 `0.65`에
+`0.01~0.03`만큼 못 미치는 상태로 **고정**돼 있고, 이 격차는 `pct=3`
+구간의 구 공식 보너스(`+0.03`)와 정확히 일치한다 — 즉 이 3개
+종목은 **allocation 제거가 없었다면 오늘 하루 종일 `buy_candidate=
+true`(→ `primary_candidate=BUY_CANDIDATE`)였을 것**이다. 실제로는
+`primary_candidate=WATCH`로 하루 종일 유지됐다(`decision_type`은
+대부분 `watch`, 일부 `hold`). §13.2.3은 2026-08-02 이전 3거래일/1개월
+표본에서 이런 사례를 0건으로 확인했으나, **오늘 표본에서는 재현
+가능한 사례가 존재한다** — 과거 측정 창과 현재 population이 다름을
+보여준다.
+
+반면 `risk_off_exception_eligible`(authoritative 하드 게이트,
+`0.28` 경계)은 오늘 표본 전체에서 뒤집힘 후보가 **0건**이다 —
+§13.2.5가 대수적으로 추정한 이동폭(`0.55*0.04=0.022`)이 실제로도
+경계 근처 표본을 만들지 않았다. 이 축은 예상과 부합한다.
+
+**판정: allocation 제거 운영 영향 = 반박(부분적)**. `buy_candidate`
+(`0.65`) 게이트 기준으로는 "제거해도 영향 미미"라는 §13.2.3의 기존
+판정 A가 오늘 데이터로 반박된다 — 실제로 3개 종목이 매 사이클
+`BUY_CANDIDATE` 대신 `WATCH`에 머무는 재현 가능한 영향이 확인됐다.
+다만 `risk_off_exception_eligible`(authoritative 하드 게이트) 축은
+예상대로 영향이 없음을 확인했다 — 두 게이트를 하나의 라벨로 합치지
+않고 분리해서 보고한다.
+
+### 35.3 어제 문서의 "운영 재실측 남음" 항목 판정
+
+- **관측 A(PR #119)**: 이번 턴으로 닫을 수 **없다**. 재현에 필요한
+  최소 조건(`stale_snapshot_guard` 단계에 도달하는 시도)이 아직
+  한 번도 발생하지 않아, "미확인" 상태를 유지한 채 다음 관측 턴으로
+  넘긴다. `001450`은 더 이상 이 관측의 유효한 재현 사례가 아니다
+  (신규 시도 없음) — 다른 종목의 신규 BUY 시도가 그 단계까지
+  도달할 때까지 대기가 필요하다.
+- **관측 B(R2 allocation 제거)**: 이번 턴으로 **닫는다.** 다만 종료
+  판정은 §13.2.3의 "영향 미미"가 아니라 "`buy_candidate` 게이트에는
+  실제 영향 있음(3종목 재현), `risk_off_exception_eligible` 게이트
+  에는 영향 없음"으로 **정정**해 종료한다. `buy_path_refactor_pre_
+  roadmap_schedule.md` §8.2 체크리스트도 이 절 기준으로 갱신한다.
+
+### 35.4 SPPV-3 착수 가능 여부에 대한 영향
+
+관측 A가 계속 미확인이어도 SPPV-3 축 4(funnel 전환 기여도)는 이미
+"선행 관측 필요"로 분류돼 있어(§30.6) 이번 턴 결과가 그 분류를
+바꾸지 않는다. 관측 B가 닫히면서 축 2(정리된 gate 통과 후 성과)의
+population 정의에 "`buy_candidate`가 R2 이전 공식과 다르게 산출된
+표본"이라는 사실이 추가되지만, 이는 축 2가 이미 전제하는 "정리된
+현재 공식 기준"과 일치하므로 축 2 착수 가능 여부 자체는 바뀌지
+않는다.

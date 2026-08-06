@@ -10723,7 +10723,21 @@ agent 설계 문서 기준으로도 순서는 다음이 맞다.
      확인했으나(R5 마감 이후 표본 24~55건대), forward return 비교를
      위한 가상 진입가 방법론 확정이 선행돼야 한다. **다음 1순위:
      가상 진입가 방법론 확정 후 `suppressed`/`downgraded` vs
-     `matched` 1차 실측** +
+     `matched` 1차 실측**. **[2026-08-05 재갱신] 착수 전제 관측
+     2건을 2026-08-05(수) 장후 데이터로 닫음**(`[DESIGN] signal_
+     predictive_power_validation.md` §35, read-only) — (1) PR
+     #119(`stale_snapshot_guard` zero-position false-stale 수정)
+     재현은 **미확인 유지**: 병합(08-03 16:57 KST) 이후 지금까지
+     `stale_snapshot_guard` 단계에 도달한 시도가 0건(오늘 유일한
+     `buy` 판정 1건도 EV 게이트 미달로 `translation` 단계에서
+     멈춤), `001450`도 신규 시도 없어 재현 사례로 못 씀. (2) R2
+     allocation 제거(§13.2.5) 운영 재실측은 **닫힘, 판정 정정**:
+     `buy_candidate`(0.65) 게이트는 3개 종목(008930/051900/078930)
+     이 allocation 제거만으로 매 사이클 WATCH에 머무는 실제 영향이
+     확인돼 §13.2.3의 "판정 A(영향 미미)"를 정정했고,
+     `risk_off_exception_eligible`(0.28 하드 게이트)은 예상대로
+     영향 0건으로 확인됐다. **다음 1순위는 변경 없음**(가상 진입가
+     방법론 확정) — 이번 갱신은 착수 전제 2건의 상태 정리다. +
      [1-B순위] **D안 순수 효과 재측정** — S5로 stale bias가 사라진 뒤
      §137.5의 2.13배(상한)를 다시 측정 +
      [1-B순위] `strategy_alignment` 제거의 **게이트 영향 재관측** —
