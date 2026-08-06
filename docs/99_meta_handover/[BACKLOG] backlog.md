@@ -5645,3 +5645,31 @@ read-only 분석, 코드 변경 없음)
   `051900`처럼 실제 매수 후보 문턱까지 도달한 표본의 차단 타당성은
   사후 성과 없이는 판단하지 않는다.
 - 상세: `buy_path_variable_gate_matrix.md` §16.
+
+### `2026-08-06` EV 게이트 차단 30건 입력값 분해 — 하방추정+비용 가정의 조합으로 확인(2026-08-06, read-only)
+
+- §16이 확정한 ④(EV 게이트) 후속 과제를 30건 전부 행 단위로
+  분해했다. 상세는 `buy_path_variable_gate_matrix.md` §17.
+- 실질적으로 **3개 고유 패턴**뿐이다 — `051900` 7건은 모든 입력값이
+  완전 동일(2시간 넘게 불변), `008930` 23건은 `expected_downside_
+  bps`(44.00/52.00)와 `risk_check_passed`(t/f)만 두 상태로 오가고
+  나머지는 불변.
+- **30건 전부 `alignment_status=matched`** — downstream(③)에서
+  이미 하향된 것이 아니라 EV 게이트(④)에서 처음 막혔다. ③과 ④가
+  이 표본에서는 서로 섞이지 않고 분리된다.
+- **음수 원인**: "알파 부족"이 아니다(`expected_return_bps`
+  65.46/65.65로 낮지 않음). `expected_downside_bps`가 기대수익의
+  70~85%를 소진하고, 남은 얇은 마진(9.65~21.46bps)을 비용/슬리피지
+  가정(28~30bps)이 넘어서는 **조합**이 직접 원인이다. 최소 요구치
+  대비 16.5~30bps 부족해 "임계값에 근소 미달"도 아니다.
+- `051900`은 비용 차감 **이전**에도 이미 `net_expected_value_bps`
+  (9.65)가 최소 요구치(10.00) 미달이라 `008930`(13.46/21.46, 차감
+  전에는 요건 충족)보다 더 근본적으로 얇은 마진이었다.
+- `decision_type`(buy/approve)은 EV 게이트 입력값과 무관 — 같은
+  `edge_after_cost_bps` 값 안에 buy/approve가 함께 섞여 있다.
+  이를 가르는 필드는 이번 턴에서 특정하지 않았다(미확정).
+- **판정: 미확정, 일반화 금지.** 표본이 2종목·30건뿐이다.
+  후속(코드 read-only 추적): `expected_downside_bps` 계산
+  구성요소, `slippage_buffer_bps`/`estimated_round_trip_cost_bps`
+  값의 근거 확인.
+- 상세: `buy_path_variable_gate_matrix.md` §17.

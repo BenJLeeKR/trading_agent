@@ -64,6 +64,8 @@
 
 **실측 결과 요약**(상세는 `buy_path_variable_gate_matrix.md` §15): 2026-08-03~08-06(진행 중) 4일간 3,614건 판단 중 `buy`/`approve`는 37건(1.0%), `order_request` 생성은 4건(0.11%), **실제 브로커 제출은 0건(0%)**이었다. 날짜별 지배적 병목이 서로 다르다 — 08-04는 활동성 부족(②), 08-05는 downstream 하향(③)+EV 게이트(④), 08-06은 EV 게이트(④) 단독(2종목, 30건 전부 지속적 음수 `edge_after_cost_bps`). 08-03의 `order_request` 4건은 이미 §14에 문서화된 `stale_snapshot_guard` 인시던트(PR #119 이전)의 재확인이었다. **판정: 미확정** — 표본이 짧고 소수 종목 반복이라 강한 결론은 유보하되, ④(EV 게이트)의 지속적 음수 edge가 새 후속 검증 과제로 추가됐다.
 
+**[2026-08-06 KST 재갱신] ④(EV 게이트) 30건 공통 입력값 분해 완료**(`buy_path_variable_gate_matrix.md` §17) — 30건 모두 `alignment_status=matched`(downstream 개입 없음, ③과 분리됨), `entry_score`/`preferred_strategy`/`max_new_capital_pct` 완전 불변. 음수 원인은 "알파 부족"이 아니라(`expected_return_bps` 65bps대로 낮지 않음) **하방추정치(기대수익의 70~85% 소진) + 비용/슬리피지 가정(28~30bps)의 조합**으로 확인됐다. 최소 요구치 대비 16.5~30bps 부족해 "임계값에 근소 미달"로도 볼 수 없다. **다음 확인 포인트(코드 read-only 추적)**: `expected_downside_bps` 계산 구성요소, `slippage_buffer_bps`/`estimated_round_trip_cost_bps` 값의 근거. 표본이 2종목뿐이라 일반화하지 않는다.
+
 작업 내용(다음 착수 턴에서 read-only로 실행):
 
 1. 2026-08-03 이후 매 거래일 단위로 아래 퍼널을 집계한다.

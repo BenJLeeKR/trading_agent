@@ -3493,3 +3493,139 @@ passed_path`/`alignment_status_path`가 모두 예상한 값으로 나옴).
 `001450`/`181710`을 우선 표본으로) 작업의 구체적 대상 목록을
 좁혀준다. ④(EV 게이트) 후속 과제의 대상도 `008930`/`051900`으로
 그대로 유지된다 — 이번 턴에서 새로 추가된 대상은 없다.
+
+## 17. `2026-08-06` EV 게이트 차단 30건 — 입력값 구조 분해(2026-08-06 KST, read-only)
+
+§16이 확정한 ④(EV 게이트) 후속 과제(`008930`/`051900`의 지속적
+음수 `edge_after_cost_bps`가 알파 부족인지, 비용 가정 문제인지,
+임계값 문제인지)를 30건 전부에 대해 입력값 단위로 분해했다. "EV
+게이트가 막았다"에서 멈추지 않고 **무엇이 음수를 만들었는지**를
+확인하는 것이 목적이다 — 이번 턴에서 EV 게이트의 과잉/정상 여부는
+판정하지 않는다. 코드 변경 없음.
+
+### 17.1 저장 경로 확인(추정 없이 재확인)
+
+샘플 row로 재확인한 결과 모든 필드가 `decision_json.expected_
+value_gate`의 **top-level**에 있다(추가 nesting 없음): `passed`,
+`edge_after_cost_bps`, `expected_return_bps`, `expected_downside_
+bps`, `net_expected_value_bps`, `minimum_required_edge_bps`,
+`estimated_round_trip_cost_bps`, `slippage_buffer_bps`, `ev_gate_
+near_miss_deficit_bps`/`ev_gate_near_miss_threshold_bps`/`ev_gate_
+near_miss_override_applied`. 계산식도 값으로 직접 재확인했다 —
+`net_expected_value_bps = expected_return_bps - expected_downside_
+bps`, `edge_after_cost_bps = net_expected_value_bps - estimated_
+round_trip_cost_bps - slippage_buffer_bps`(예: `65.46-52.00=13.46`,
+`13.46-8.00-20.00=-14.54`, 정확히 일치). 관련 상위 필드는
+`decision_json.deterministic_trigger.entry_score`, `decision_json.
+strategy_selection.preferred_strategy`, `decision_json.portfolio_
+allocation.max_new_capital_pct`, `decision_json.candidate_vs_final.
+alignment_status`, `decision_json.risk_flags`(top-level), `trading.
+trade_decisions.risk_check_passed`(테이블 컬럼)다.
+
+### 17.2 30건 행 단위 표(고유 패턴 기준으로 압축, 전체 원본은 조회 명령 참고)
+
+| symbol | decision_type | 건수 | `edge_after_cost_bps` | `expected_return_bps` | `expected_downside_bps` | `net_expected_value_bps` | 왕복비용 | 슬리피지 버퍼 | 최소 요구 edge | `risk_check_passed` |
+|---|---|---|---|---|---|---|---|---|---|---|
+| `008930` | approve(14)+buy(1) | 15 | -14.54 | 65.46 | 52.00 | 13.46 | 8.00 | 20.00 | 10.00 | false |
+| `008930` | approve | 7 | -6.54 | 65.46 | 44.00 | 21.46 | 8.00 | 20.00 | 10.00 | true |
+| `051900` | approve(1)+buy(6) | 7 | -20.35 | 65.65 | 56.00 | 9.65 | 8.00 | 22.00 | 10.00 | false |
+
+`ev_gate_near_miss_deficit_bps`/`threshold_bps`는 30건 전부 `null`,
+`ev_gate_near_miss_override_applied`는 30건 전부 `false`다 — near-miss
+완화 경로가 발동할 만큼 근소한 차이가 아니라는 뜻이다(가장 근접한
+경우도 최소 요구치 대비 `16.54bps` 부족, §17.4 참고).
+
+### 17.3 종목별 요약
+
+| symbol | 건수 | `edge` 평균/최소/최대 | `expected_return_bps` 평균 | `expected_downside_bps` 평균 | 왕복비용 평균 | 슬리피지 버퍼 평균 | 고유 `edge` 값 수 |
+|---|---|---|---|---|---|---|---|
+| `008930` | 23 | -12.11 / -14.54 / -6.54 | 65.46(불변) | 49.57 | 8.00(불변) | 20.00(불변) | 2 |
+| `051900` | 7 | -20.35 / -20.35 / -20.35 | 65.65(불변) | 56.00(불변) | 8.00(불변) | 22.00(불변) | **1(완전 불변)** |
+
+- `entry_score`(`008930`=0.6546, `051900`=0.6565), `preferred_
+  strategy`(둘 다 `event_continuation`), `max_new_capital_pct`
+  (둘 다 `3.0`)는 30건 전부 완전히 동일하다.
+- `alignment_status`는 **30건 전부 `matched`** — downstream(③)에서
+  이미 하향된 것이 아니라, EV 게이트(④)에서 처음 막혔다는 뜻이다.
+  ③과 ④가 이 30건에서는 서로 섞이지 않고 분리돼 있다.
+- `risk_flags`는 태그 표현(예: `risk_off`/`risk_off_tone`,
+  `event_overlay`/`event_overlay_positive`)이 사이클마다 조금씩
+  달라지지만, `high_volatility`/`risk_off`(계열)/`event_overlay`
+  (계열)는 30건 모두 공통이다.
+
+### 17.4 패턴 분류
+
+| 패턴 | 대상 | 설명 |
+|---|---|---|
+| A. 반복 동일 입력(완전 불변) | `051900` 7건 | `edge_after_cost_bps`를 포함한 모든 수치가 7건 동일 — 두 시간 넘게 입력값이 전혀 변하지 않았다. |
+| B. 이산적 2-상태 반복 | `008930` 23건 | `expected_downside_bps`(44.00/52.00)와 `risk_check_passed`(true/false)가 함께 두 상태로만 오간다 — 나머지는 전부 불변. |
+| C. 최소 요구치 대비 소폭 미달 여부 | 둘 다 아님 | `008930` 최선의 경우도 `10bps` 요구치에 `16.54bps` 부족, `051900`은 `30bps` 부족 — "임계값에 근소하게 못 미친 것"으로 볼 수 없는 큰 격차다. |
+| D. 기대수익 자체는 낮지 않음, 하방/비용이 그것을 삼킴 | 둘 다 | `expected_return_bps`(65.46/65.65)는 낮지 않다. `expected_downside_bps`가 그 70~85%를 이미 소진하고, 남은 얇은 마진(9.65~21.46bps)을 왕복비용+슬리피지(28~30bps)가 넘어선다. |
+
+### 17.5 질문별 답변
+
+1. **30건은 몇 개의 고유 패턴인가**: 실질적으로 **3개**다 — `008930`의
+   두 상태(다운사이드 44/52)와 `051900`의 한 상태.
+2. **`edge_after_cost_bps` 음수의 직접 원인**: **기대수익 부족이
+   아니라, 하방추정치가 기대수익의 대부분을 소진한 뒤 남은 얇은
+   마진을 비용(왕복비용+슬리피지)이 넘어서는 조합**이다. 최소 요구
+   임계(10bps) 자체는 변경한 적이 없으니 "임계값이 높아서"라고
+   단정할 근거는 이번 턴 데이터만으로는 약하다 — 다만 비용
+   가정(20~22bps 슬리피지 버퍼)이 상당히 크다는 점은 사실로
+   확인된다.
+3. **`051900`과 `008930`은 같은 이유로 막히는가**: **유사하지만
+   완전히 같지는 않다.** 둘 다 "높은 기대수익 - 큰 하방 - 두꺼운
+   비용" 구조는 같지만, `051900`은 `net_expected_value_bps`
+   자체가 비용 차감 **이전에도 이미 최소 요구치(10bps)에 못
+   미친다**(9.65<10.00)는 점에서 `008930`(13.46/21.46, 비용
+   차감 전에는 요건을 충족)보다 더 근본적으로 얇은 마진이다. 또한
+   슬리피지 버퍼가 `051900`이 `2bps` 더 크다.
+4. **`buy`/`approve` 차이가 EV 입력값 패턴과 관련 있는가**: **없다.**
+   같은 `edge_after_cost_bps` 값 안에 `buy`와 `approve`가 함께
+   섞여 있다(예: `008930` -14.54 그룹에 `approve` 14건 + `buy`
+   1건). `decision_type`(buy/approve) 구분은 EV 게이트 계산과
+   무관한 다른 필드에서 결정되는 것으로 보인다 — 이번 턴에서는
+   그 필드를 특정하지 않았다(미확정).
+5. **"알파 부족"/"비용 가정"/"임계값 문제" 중 현재 데이터로 어디까지
+   말할 수 있는가**: "알파 부족"이라고 부르기는 어렵다(기대수익
+   자체는 65bps대로 낮지 않다). "비용 가정 영향"과 "하방추정 크기"의
+   **조합**이 직접 원인이라는 것까지는 factual하게 말할 수 있다.
+   "임계값 문제"(10bps가 너무 높다)는 이번 데이터만으로 판단할
+   근거가 부족하다 — 두 종목 모두 격차가 16.5~30bps로 커서, 임계값을
+   소폭 낮추는 것만으로는 통과하지 못한다.
+
+### 17.6 사실 / 해석 / 미확정
+
+- **factual**: 30건 모두 `alignment_status=matched`(downstream
+  개입 없음), `entry_score`/`preferred_strategy`/`max_new_capital_
+  pct`가 완전 불변, `051900`은 전 항목 완전 불변, `008930`은
+  `expected_downside_bps`/`risk_check_passed`만 두 상태로 변동.
+  두 종목 모두 최소 요구치 대비 16.5bps 이상 부족.
+- **해석(조심스럽게 구분)**: 기대수익(`expected_return_bps`)
+  자체는 두 종목 모두 60bps대로 특별히 낮지 않다 — "알파 신호가
+  아예 없다"는 근거는 약하다. 반면 하방추정치가 기대수익의
+  70~85%를 소진하는 비중이 크고, 비용/슬리피지 가정(28~30bps)도
+  남은 마진을 넘어설 만큼 크다 — 이 두 요소의 조합이 직접 원인일
+  가능성이 데이터로 뒷받침된다. 다만 표본이 2종목뿐이라 **일반화하지
+  않는다**.
+- **미확정**: (1) `expected_downside_bps`의 계산 구성요소
+  (`risk_score`/ATR 등)가 실제로 어떻게 산출되는지는 이번 턴에서
+  코드 추적하지 않았다. (2) `decision_type`(buy/approve)을 가르는
+  필드는 특정하지 않았다. (3) 슬리피지 버퍼(20~22bps)/왕복비용
+  (8bps) 가정이 실제 시장 상황 대비 과도한지 적정한지는 이번
+  데이터만으로 판단할 수 없다 — 사후 성과(§15.7/§16.7에서 이미
+  제기한 후속 과제)와 별개로, 비용 가정 자체의 근거 문서화 여부도
+  확인이 필요하다.
+
+### 17.7 후속 검증 연결
+
+- 이 분해는 `[PRIORITY_MAP]`의 ④(EV 게이트) 후속 과제를 "왜
+  음수인가"까지 한 단계 더 좁혔다. 다음 단계로 제안하는 것은
+  코드 변경이 아니라 **읽기 전용 확인**이다: (a) `expected_
+  downside_bps` 계산식의 실제 구성요소를 코드로 추적, (b) `slippage_
+  buffer_bps`/`estimated_round_trip_cost_bps` 값이 어디서 오는
+  상수/파라미터인지 확인, (c) 이 값들이 실제 시장 데이터(체결
+  slippage 이력 등)와 비교 가능한지 탐색.
+- 표본이 2종목·30건(대부분 같은 두 종목의 반복)뿐이라 이번 턴
+  결론은 이 2종목에 한정된다 — 다른 EV 게이트 차단 사례가 쌓이면
+  재검증이 필요하다.
