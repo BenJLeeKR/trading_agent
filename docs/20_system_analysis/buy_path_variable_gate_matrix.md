@@ -2354,6 +2354,69 @@ C가 계속 0인지는 별도 실측이 필요하다"(미확인 사항 2번)고 
 (core 선정 로직)과 이런 boundary-dependent 종목이 편입되는 빈도의
 상관관계는 별도 조사가 필요하다.
 
+#### 13.2.14 R2 — `008930`/`051900`/`073240`/`078930` counterfactual downstream 개연성 분석(2026-08-06 KST, read-only)
+
+**목적**: §13.2.13에서 확인한 4종목의 "allocation 제거가 없었으면
+deterministic 기준 `BUY_CANDIDATE`가 됐을 것"이라는 판단을 한 단계
+더 진행해, 실제로 `buy`/`approve`/`order_request`까지 갔을 개연성이
+있었는지를 counterfactual로 분석했다. 새 AI 호출 없음, 코드 변경
+없음, DB write 없음.
+
+**비교군**: 2026-08-05(수) 오늘 실제 `buy_candidate=true`였던 factual
+표본은 `035420`(`entry_score=0.6503`, core, 54사이클)과 `181710`
+(`entry_score=0.6872`, core, 54사이클) 2종목뿐이다. `event_overlay`
+비교군은 오늘 확보되지 않아 근사로만 사용한다(미확인 사항).
+
+**비교군 downstream 분해**: 두 종목 모두 `eligibility_passed`/
+`buy_candidate`는 전 사이클 `true`였으나, `candidate_vs_final.
+alignment_status`가 `035420` 53/54·`181710` 54/54(100%)에서
+`downgraded`였다. `decision_type`은 `035420`이 `buy` 1건(1.9%)/
+`watch` 46건/`hold` 7건, `181710`은 `buy` 0건/`watch` 47건/`hold`
+7건이었다. 지배적 신호 조합은 `risk_opinion=review`+`evidence_
+strength=weak·moderate`(80% 이상)이며, `risk_check_passed=false`가
+전체의 85% 내외다. `035420`의 유일한 `buy` 행도 `expected_value_
+gate.passed=false`(`edge_after_cost_bps=-12.97bps`)로 `order_
+request`가 생성되지 않았다 — **오늘 전체 864행 중 `order_request`는
+0건**이다(factual).
+
+**4종목 실제(factual) 상태**(가정 `entry_score`는 §13.2.13의 역산
+값을 그대로 사용, factual row와 혼동하지 않도록 별도 표기):
+
+| symbol | 현재(factual) `entry_score` | 가정(counterfactual) `entry_score` | `eligibility_passed` | `source_type` | 지배 신호 조합(비중) |
+|---|---|---|---|---|---|
+| `008930` | 0.6342 | 0.6642(가정) | true | core | `review`/`moderate` 85% |
+| `051900` | 0.6387 | 0.6687(가정) | true | event_overlay | `review`/`moderate` 85% |
+| `073240` | 0.6347 | 0.6647(가정) | **false**(`low_relative_activity`) | event_overlay | `review`/`moderate` 85% |
+| `078930` | 0.6417 | 0.6717(가정) | true | core | `review`/`weak` 83% |
+
+**`073240`**: `eligibility_passed=false`가 allocation과 무관한 별도
+하드 게이트(activity)이므로, allocation 제거 여부와 상관없이
+`buy_candidate`가 될 수 없다(확정) — counterfactual 전제 자체가
+성립하지 않아 A/B/C 판정 대상이 아니다.
+
+**`008930`/`051900`/`078930`(공통)**: deterministic `BUY_CANDIDATE`
+전환 개연성은 높으나(가정 `entry_score`가 `0.65` 초과, `eligibility_
+passed=true`), 실제 AI 평가 신호(`review`+`weak·moderate`)가 비교군의
+downgrade 지배 패턴과 질적으로 일치해 downstream에서 `WATCH`/`HOLD`로
+내려갈 개연성이 높다. `buy`/`approve` 도달 개연성은 비교군 기준
+0~1.9%로 낮고, `order_request` 도달 개연성은 오늘 전체 0건(비교군의
+유일한 `buy` 행조차 EV 게이트로 차단)이라 거의 없다. **판정: A(
+`BUY_CANDIDATE`까지만 가능성 높음, 주문까지는 낮음)**.
+
+**3종목 공통 결론**: allocation 제거가 없었더라도 `008930`/`051900`/
+`078930`이 오늘 실제 매수(`order_request`)까지 갔을 가능성은 낮다 —
+deterministic 뒤집힘 개연성은 높지만, 같은 날 실제 `BUY_CANDIDATE`
+표본의 80% 이상이 AI risk/evidence 평가로 downgrade됐고, 오늘 하루
+`order_request` 생성이 0건이라는 factual 배경이 이를 강하게 뒷받침
+한다.
+
+**미확인 사항**: (1) `event_overlay` 계열(`051900`)의 실제 비교군이
+오늘 없어 `core` 비교군 패턴을 근사 적용했다. (2) AI는 프롬프트에
+`primary_candidate`를 입력받으므로, 실제로 `BUY_CANDIDATE`로 AI에
+전달됐다면 평가 자체가 달라졌을 가능성은 배제할 수 없다(새 AI 호출
+없이는 검증 불가). (3) `035420`의 유일한 `buy` 행이 유사 입력 조합의
+다른 46개 `watch` 행과 달리 override를 피한 이유는 규명하지 않았다.
+
 ### 13.3 R3 — `portfolio_allocation`의 역할 분리
 
 - 범위:
