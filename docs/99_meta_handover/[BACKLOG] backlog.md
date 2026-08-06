@@ -2127,7 +2127,10 @@
   **SPPV-2.153 배포 후속 — 0051이 실행되지 않은 사고 수정.** 두 가지 원인이
   겹쳤다: (1) 배포 워크플로가 `docker compose run --rm migrate`를
   `docker compose up -d --build`보다 먼저 실행해 migrate가 항상 stale
-  이미지로 도는 순서 문제(별도 후속 과제로 남김), (2) 이미지 재빌드 후
+  이미지로 도는 순서 문제(**당시에는** 별도 후속 과제로 남김 — 2026-08-04
+  커밋 `6fa740f8`로 `run --build --rm migrate`가 표준 계약으로 반영되며
+  해소, 아래 SPPV-2.154 최종 결과 뒤에 남겨둔 "별도 트랙" 표현도 이 갱신
+  이후로는 해소된 것으로 읽는다), (2) 이미지 재빌드 후
   재시도했을 때 `_bootstrap_ledger_if_needed`가 백필 시점에 존재하던 파일
   전체(51개)를 백필하면서 **0051 자신까지 포함**시켜, 실행 없이 "적용됨"으로
   기록된 더 심각한 자체 버그. attnum은 그대로 1600으로 남아있음을 실측 확인.
@@ -2147,7 +2150,14 @@
   `attnum` **1600→42**(완전 리셋), 행 수 72,809 유지, FK 6개(outgoing 3 +
   incoming 3) 전부 정상 재연결, 자식 테이블 행 수 동일, 고아 행 0건.
   **이슈 완전 종결.** 유일한 후속 과제는 배포 워크플로 순서 문제
-  (migrate가 build보다 먼저 실행됨) — 별도 트랙.
+  (migrate가 build보다 먼저 실행됨) — 별도 트랙. **[2026-08-04 갱신,
+  커밋 `6fa740f8` "하네스 migrate 이미지 freshness 계약 보정"]** 이
+  후속 과제는 해소됐다 — `docker compose run --build --rm migrate`
+  (또는 `docker_compose_env.sh` 동등 명령)가 `.github/workflows/
+  harness.yml`과 `accept ci`(`deploy_missing_migration_count`)의
+  현재 표준 계약으로 반영됐다. 상세는
+  `docs/80_harness_engineering/deploy_sync_activation_contract.md`
+  §3.1 참고.
 
 - 2026-08-01 KST(SPPV-2.155, 신규 KIS 호출 0건, 완료 — 코드 미수정):
   **S5 배치 실측 완료 — stale bias 사실상 완전 해소 확인.** 07-31 20:10
