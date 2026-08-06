@@ -44,12 +44,12 @@
 
 목표: 날짜/실행 시점/유니버스/차단 사유를 한 테이블로 복원할 수 있는 read-only 분석 입력을 만든다.
 
-- [ ] 최근 `20~30` 거래일의 대상 실행 집합을 확정한다.
-- [ ] 실행 시점을 `pre_open`, `open_30m`, `intraday`, `after_close` 버킷으로 분류한다.
-- [ ] 실행 단위별 유니버스 종목과 `source_type`을 복원한다.
-- [ ] 실행 단위별 `pre-AI` 차단 사유를 복원한다.
-- [ ] 실행 단위별 signal feature 지표를 조인한다.
-- [ ] market overlay 활성/비활성 여부를 분리 기록한다.
+- [x] 최근 `20~30` 거래일의 대상 실행 집합을 확정한다. **[2026-08-06 실측]** `2026-06-19~2026-08-06`(34거래일), `Entrypoint Paper` 계정, run 2105건.
+- [x] 실행 시점을 `pre_open`, `open_30m`, `intraday`, `after_close` 버킷으로 분류한다.
+- [x] 실행 단위별 유니버스 종목과 `source_type`을 복원한다.
+- [x] 실행 단위별 `pre-AI` 차단 사유를 복원한다.
+- [x] 실행 단위별 signal feature 지표를 조인한다.
+- [x] market overlay 활성/비활성 여부를 분리 기록한다.
 
 완료 기준:
 
@@ -60,12 +60,12 @@
 
 목표: 현행 로직에서 `활동성 부족` 차단이 얼마나 자주, 어떤 이유로, 어떤 source에서 발생하는지 정량화한다.
 
-- [ ] 실행 단위별 `universe_count`를 계산한다.
-- [ ] 실행 단위별 `new_buy_candidate_count`를 계산한다.
-- [ ] 실행 단위별 `pre_ai_activity_block_count`와 비율을 계산한다.
-- [ ] `eligibility_low_average_volume`, `eligibility_low_turnover`, `eligibility_low_relative_activity` 사유별 건수를 계산한다.
-- [ ] `source_type`별 차단 비율을 계산한다.
-- [ ] 시간대별 차단 비율을 계산한다.
+- [x] 실행 단위별 `universe_count`를 계산한다.
+- [x] 실행 단위별 `new_buy_candidate_count`를 계산한다.
+- [x] 실행 단위별 `pre_ai_activity_block_count`와 비율을 계산한다.
+- [x] `eligibility_low_average_volume`, `eligibility_low_turnover`, `eligibility_low_relative_activity` 사유별 건수를 계산한다.
+- [x] `source_type`별 차단 비율을 계산한다.
+- [x] 시간대별 차단 비율을 계산한다.
 
 완료 기준:
 
@@ -76,12 +76,12 @@
 
 목표: 어떤 사전 필터를 universe 단계로 당길 때 차단 감소 대비 후보 손실이 가장 작은지 비교한다.
 
-- [ ] 가설 A: `average_volume_20d >= 3000` 하한을 시뮬레이션한다.
-- [ ] 가설 B: `average_turnover_20d >= 50_000_000` 하한을 시뮬레이션한다.
-- [ ] 가설 C: A+B 동시 적용을 시뮬레이션한다.
-- [ ] 가설 D: C를 `source_type=core`에만 적용하는 예외 정책을 시뮬레이션한다.
-- [ ] 가설 E: `relative_activity >= 1.10`를 shadow-only로 측정한다.
-- [ ] 각 가설의 차단 감소량과 후보 손실률을 비교한다.
+- [x] 가설 A: `average_volume_20d >= 3000` 하한을 시뮬레이션한다.
+- [x] 가설 B: `average_turnover_20d >= 50_000_000` 하한을 시뮬레이션한다.
+- [x] 가설 C: A+B 동시 적용을 시뮬레이션한다.
+- [x] 가설 D: C를 `source_type=core`에만 적용하는 예외 정책을 시뮬레이션한다.
+- [x] 가설 E: `relative_activity >= 1.10`를 shadow-only로 측정한다.
+- [x] 각 가설의 차단 감소량과 후보 손실률을 비교한다.
 
 완료 기준:
 
@@ -92,15 +92,60 @@
 
 목표: 바로 구현할 후보와 shadow-only 유지 후보를 구분한다.
 
-- [ ] `core` 중심 예외 정책이 필요한지 판단한다.
-- [ ] `held_position`, `reconciliation_overlay`, `event_overlay`, `manual` 예외 유지 여부를 정리한다.
-- [ ] `relative_activity`를 universe에 바로 반영하지 않을 근거를 정리한다.
-- [ ] 1순위 권고안과 보류안을 구분한다.
+- [x] `core` 중심 예외 정책이 필요한지 판단한다. **[2026-08-06 실측 결론]** 불필요 — 가설 D(core 한정)도 가설 C(전체)와 동일한 효율(0.3155)로, core 한정이 결과를 개선하지 못한다.
+- [x] `held_position`, `reconciliation_overlay`, `event_overlay`, `manual` 예외 유지 여부를 정리한다. **[결론]** 그대로 유지. 이번 실측은 `EXEMPT_SOURCE_TYPES`(`held_position`/`reconciliation_overlay`) 예외를 깨지 않았고, 그럴 근거도 발견되지 않았다.
+- [x] `relative_activity`를 universe에 바로 반영하지 않을 근거를 정리한다. **[결론]** shadow-only 유지가 옳다 — 아래 실측 결과 참고(fail_rate 77.3%가 실제 차단율 18.7%와 크게 어긋남, 시점 민감성 확인).
+- [x] 1순위 권고안과 보류안을 구분한다. **[결론]** 1순위 권고안 없음 — 전 가설이 보류 또는 기각(아래 실측 결과 참고).
 
 완료 기준:
 
 - `권장안`, `보류안`, `기각안`이 각각 최소 1개 이상 정리된다.
 - 왜 그 판단을 했는지 차단 감소량/손실률 근거가 붙는다.
+
+## 실측 결과(2026-08-06 KST, 34거래일)
+
+### 실행 개요
+
+- 컨테이너: `agent_trading-app-1`
+- 명령: `python3 scripts/analysis/analyze_universe_activity_gap.py --date-from 2026-06-19 --date-to 2026-08-06 --account-alias 'Entrypoint Paper' --output-json /tmp/uag_full/summary.json --output-csv-dir /tmp/uag_full/csv`
+- 날짜 범위: `2026-06-19`~`2026-08-06`(34거래일), 계정 `Entrypoint Paper`
+- 파생 실행 단위(run) `2105`건, decision 행 `42245`건 — 무겁거나 비정상적인 징후 없이 정상 완료됐다.
+
+### baseline
+
+- `universe_count=42245`, `new_buy_candidate_count=40984`, `pre_ai_activity_block_count=7653`(**18.67%**)
+- 사유 분포: `eligibility_low_relative_activity` `7599`건(차단의 **99.3%**), `eligibility_low_average_volume` `54`건(0.7%), `eligibility_low_turnover` `0`건(34거래일 전체에서 단 한 번도 발생하지 않음)
+- `source_type`별 차단율: `market_overlay` **42.27%**(최고) > `core` 20.15% > `event_overlay` 15.95% > `reconciliation_overlay` 0%(예외 유지, 예상대로)
+- 시간대별 차단율: `pre_open` 19.04%, `open_30m` 20.35%, `intraday` 18.54%, `after_close` 17.65% — 시간대 간 큰 편차 없음
+- `market_overlay_enabled` 추정 run `550`건 vs 비활성 `1555`건 — 활성 run의 차단율(14.59%)이 비활성 run(20.65%)보다 낮음(활성 시점이 오히려 활동성이 더 커서 차단이 덜 걸리는 방향)
+- **일별 편차가 매우 크다**: `daily_summary.csv` 기준 차단율이 `0%`(2026-07-30)~`88.24%`(2026-08-04) 사이로 요동친다. `2026-07-30`을 표본 조회해 원인을 확인했다 — 그날은 `eligibility_low_*` 활동성 사유가 아니라 `eligibility_risk_off_block`/`eligibility_negative_overall_floor` 같은 레짐(risk_off) 관련 사유가 차단을 지배했고, 활동성 사유는 그날 단 한 건도 마지막 차단 사유로 기록되지 않았다. 즉 **활동성 게이트가 꺼진 것이 아니라, 그날은 다른 게이트가 먼저/더 많이 차단한 것**이며 스크립트의 `is_pre_ai_activity_blocked`(마지막 사유가 활동성 3종인지 판정)는 이를 올바르게 반영하고 있다. 이 편차는 활동성 사전 필터 논의와는 별개로, baseline 차단율이 레짐 조건에 크게 좌우된다는 사실을 보여준다.
+
+### 가설 A/B/C/D/E 비교
+
+| 가설 | 적용 모수 | universe 제외 | 차단 감소 | 후보 손실 | 손실률 | 효율 점수 | 결측 feature |
+|---|---|---|---|---|---|---|---|
+| A(평균거래량<3000 제외) | 37878 | 221 | 53 | 168 | 0.44% | **0.3155** | 862(2.28%) |
+| B(평균거래대금<50M 제외) | 37878 | 0 | 0 | 0 | 0% | (해당없음) | 862(2.28%) |
+| C(A or B) | 37878 | 221 | 53 | 168 | 0.44% | **0.3155** | 862(2.28%) |
+| D(C, core 한정) | 26015 | 221 | 53 | 168 | 0.65% | **0.3155** | 284(1.09%) |
+| E(relative_activity<1.10, shadow) | 37972(측정 37099) | — | — | — | — | fail_rate **77.26%** | — |
+
+### 권장안 / 보류안 / 기각안
+
+- **권장안: 없음.** 어떤 가설도 `efficiency_score >= 3.0`(스크립트가 임시로 쓰는 권장 임계값 — 차단 감소가 후보 손실의 3배 이상) 기준을 충족하지 못했다.
+- **보류안**: A, C, D — 효율 점수 `0.3155`는 권장 임계값의 약 `1/10`에 불과하다. 즉 이 절대 임계값(`average_volume_20d>=3000`)으로 유니버스를 앞단에서 걸러내면, 실제로 차단되던 종목 `53`건을 줄이는 대신 **차단되지 않았을(=멀쩡했을 수 있는) 후보 `168`건을 함께 잃는다** — 손실이 이득의 약 `3.2`배다. `core` 한정(D)도 개선되지 않는다.
+- **기각안**: B — `average_turnover_20d>=50,000,000` 임계값은 34거래일 전체에서 단 한 건도 걸러내지 못했다(제외 `0`건). 이 임계값은 현재 데이터 분포에서 사실상 항상 통과되는 비유효 조건이다.
+- **관찰(정책 미반영, shadow 유지)**: E의 `relative_activity` fail_rate(`77.26%`)가 실제 `pre_ai_activity_block_rate`(`18.67%`)보다 4배 이상 높다. 두 수치가 정확히 대응해야 한다는 가정을 세웠다면 이 가정은 **깨졌다** — production의 `eligibility_low_relative_activity` 판정은 `relative_activity>=1.10`만으로 결정되지 않고(다른 상위 게이트가 먼저 통과/차단을 가르거나, reasons 리스트의 다른 앞선 항목이 먼저 최종 사유를 결정하는 구조 등), 단순 shadow 지표 하나로 그대로 대체할 수 없다. 이는 계획 문서가 원래 `relative_activity`를 "시점 민감성이 높아 바로 정책에 반영하지 않는다"고 잡아둔 판단이 옳았음을 실측으로 재확인한 결과다 — shadow-only를 그대로 유지한다.
+
+### 구조적 한계와 미확인 가정
+
+- baseline 차단율의 일별 편차(0%~88%)는 활동성 사전 필터와 무관한 레짐(risk_off 등) 게이트의 영향을 크게 받는다 — 이 34일 평균 하나로 "전형적인" 날을 대표한다고 보기는 어렵다.
+- `market_overlay_enabled`는 여전히 결과 기반 추정치(저장된 플래그 아님) — §상단 구조 확인 결과 참고.
+- 이번 실측은 `Entrypoint Paper` 계정 1개 기준이다. 다른 계정이 있다면 별도 실측이 필요하다.
+
+### 결론
+
+**Path A(분석 유지) — 이번 턴에서는 유니버스 선정 로직에 정책 구현을 넣지 않는다.** 34거래일 실측 결과, 절대 임계값 기반 사전 필터(A/B/C/D) 전부가 권장 효율 기준에 크게 못 미쳤고, 실제 차단을 지배하는 `relative_activity` 신호는 여전히 shadow 지표와 실제 차단 판정이 크게 어긋나 하드 필터로 쓸 근거가 없다. 억지로 구현하기보다, 이 결과를 근거로 "현재 절대 임계값 사전 필터는 유니버스 슬롯 재배분에 유효하지 않다"는 부정적 결론을 문서화하는 것이 이번 실측의 정당한 결과다.
 
 ## 실측 질문
 
