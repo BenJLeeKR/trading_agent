@@ -44,6 +44,7 @@ from agent_trading.services.instrument_profile import (
 )
 from agent_trading.services.universe_selection_types import (
     CORE_RANKING_MODE_SIGNAL_SCORE,
+    CORE_SIGNAL_TIER_DEMOTED,
     CORE_SIGNAL_TIER_FRESH,
     CORE_SIGNAL_TIER_MISSING,
     CORE_SIGNAL_TIER_STALE,
@@ -867,6 +868,7 @@ class UniverseSelectionService:
         self,
         candidates: list[SelectedSymbol],
         max_age_days: int | None = None,
+        demoted_symbols: frozenset[str] = frozenset(),
     ) -> dict[str, int]:
         """core 후보의 D안 정렬 순위(0-based)를 계산한다.
 
@@ -882,6 +884,13 @@ class UniverseSelectionService:
         stale snapshot을 "실패"로 처리해 전체를 막지 않고 계층으로 **하향**
         시키는 것이 계약이다 — 배치가 일부 실패해도 유니버스 구성 자체는
         계속 진행되어야 하기 때문이다.
+
+        ``demoted_symbols``(UNIV-5 soft demotion, 2026-08-07): 이 집합에 있는
+        심볼은 위 freshness 계층 판정 결과와 무관하게 ``CORE_SIGNAL_TIER_
+        DEMOTED``(MISSING보다 더 아래)를 부여받는다 — 완전 배제가 아니라
+        core 내부 정렬 최하위일 뿐이며, 같은 tier 안에서는 여전히
+        ``overall_score`` 내림차순으로 2차 정렬된다. 빈 집합(기본값)이면
+        이 함수는 이전과 100% 동일하게 동작한다.
         """
         scores = self._core_signal_score_cache or {}
         now_kst = datetime.now(_KST)
@@ -891,9 +900,12 @@ class UniverseSelectionService:
 
         def _key(symbol: str) -> tuple[int, float, str]:
             entry = scores.get(symbol)
+            score = 0.0 if entry is None else entry[0]
+            if symbol in demoted_symbols:
+                return (CORE_SIGNAL_TIER_DEMOTED, -score, symbol)
             if entry is None:
                 return (CORE_SIGNAL_TIER_MISSING, 0.0, symbol)
-            score, snapshot_at = entry
+            snapshot_at = entry[1]
             tier = self._core_signal_tier(snapshot_at, max_age_days, now_kst=now_kst)
             return (tier, -score, symbol)
 
@@ -1115,9 +1127,20 @@ class UniverseSelectionService:
             # 2차 키는 CORE가 아닌 항목에 대해 항상 0이므로, Python의 안정
             # 정렬 특성상 held/reconciliation/event/market/manual overlay의
             # 기존 상대 순서는 그대로 보존된다.
+            #
+            # UNIV-5 soft demotion(2026-08-07): Step 6.5에서 이미 계산한
+            # demotion_signals를 그대로 재사용한다(중복 조회/판단 없음) — A3가
+            # 매칭된(demotion_applied=True) 심볼만 core 내부 정렬 최하위로
+            # 내린다. demotion_signals가 비어 있으면(shadow 실패 포함)
+            # a3_demoted_symbols도 빈 집합이 되어 이전과 100% 동일하게
+            # 동작한다.
+            a3_demoted_symbols = frozenset(
+                s.symbol for s in demotion_signals if s.demotion_applied
+            )
             core_rank = self._core_signal_sort_rank(
                 candidates,
                 ctx.core_signal_freshness_max_age_days,
+                demoted_symbols=a3_demoted_symbols,
             )
             candidates.sort(
                 key=lambda s: (
@@ -1942,6 +1965,11 @@ class UniverseSelectionService:
                 (d for d in reversed(window_days) if day_status.get(d) == "blocked"),
                 None,
             )
+            # UNIV-5 soft demotion(2026-08-07): A3만 실제로 core 내부 정렬에
+            # 반영한다. A5 단독 매칭은 여전히 관측 전용(정렬 미반영) — 001450류
+            # 경계선 변동형 오탐 위험을 낮추기 위한 보수적 선택이다(계획 문서
+            # "soft demotion 설계안" §참고).
+            demotion_applied = "A3" in matched_rules
             signals.append(
                 CoreActivityDemotionShadowSignal(
                     symbol=symbol,
@@ -1953,6 +1981,8 @@ class UniverseSelectionService:
                         last_blocked_date.isoformat() if last_blocked_date else None
                     ),
                     evaluation_date=evaluation_date.isoformat(),
+                    demotion_applied=demotion_applied,
+                    assigned_tier=CORE_SIGNAL_TIER_DEMOTED if demotion_applied else None,
                 )
             )
 
