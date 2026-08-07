@@ -51,7 +51,7 @@
 |---|---|---|---|---|
 | ① allocation(자본 배정) | 점수(`entry_score`) 계산 단계 | `entry_score`, `max_new_capital_pct` | §13.2.13 | 미확정(경계 구간 영향 관측, 주문까지 이어졌어야 한다는 뜻은 아님) |
 | ② 활동성 부족 | 점수 이전/기본 적격성(`eligibility_passed`) 단계 | `eligibility_low_relative_activity`, `volume_surge_ratio`/`turnover_surge_ratio` | §13.4.4 | 미확정(차단 비중 급증, 경계 구간 표본 극소) |
-| ③ downstream 하향 | 매수 후보(`buy_candidate`) 판정 이후 | `candidate_vs_final.alignment_status` | §13.2.14 | 미확정(qualitative 근거 판별력 부족 확인, 재분해 필요) |
+| ③ downstream 하향 | 매수 후보(`buy_candidate`) 판정 이후 | `candidate_vs_final.alignment_status` | §13.2.14, **[2026-08-08] `buy_path_variable_gate_matrix.md` §28** | **구조 재설계 후보**(08-03~06 4거래일 연속 매수 의도 유지 0건, `evidence_strength` 분류력은 확인됐으나 사후 성과 개선 근거 없음 — `matched` 표본 forward return 전무) |
 | ④ 주문요청 미생성 | EV 게이트/리스크/컴플라이언스 단계 | `expected_value_gate.passed`, `risk_check_passed`, `order_request` 생성 여부 | **[2026-08-07 KST] 신규매수(APPROVE/BUY) hard block 제거 적용 완료 — 관찰 단계로 전환**(상세 §27) | 관찰 중 |
 
 ## 다음 검증 로드맵(2026-08-06, 문서 구조 정리 — 새 실측 없음)
@@ -120,6 +120,8 @@
 **[2026-08-07 KST 21:33 후속, C축 08-07 종가 기준 손익 시뮬레이션]** 대체 소스(`signal_feature_snapshots`)로 08-07 종가를 확보해(1차 소스는 아직 없음) EV 게이트 차단 표본의 손익을 계산했다. forward return이 실제로 계산된 구조적 차단 표본은 3건뿐 — T+1 2건(`008930`+1.94%/`051900`+2.93%)은 모두 양(+), T+2 1건(`035420`-8.30%)은 음(-)으로 한 방향 결론 불가. `001450`은 이전 T+1/T+2 음(-)에서 T+4 +5.36%로 **방향이 반전**됐다 — 짧은 horizon만으로 내린 판단이 긴 horizon에서 뒤집힐 수 있음을 보여준다. 근소실패군은 여전히 독립 표본 0건. §24의 "완화 후보(미확정)" 판정을 유지하며 정책 판단은 내리지 않는다. 상세는 §26.
 
 **[2026-08-07 KST 정책 결정 반영, C축 신규매수 hard block 제거]** §17~§26의 사후 성과 실측을 근거로 사용자가 정책 결정을 내렸다 — 신규매수(`APPROVE`/`BUY`) 경로의 EV 게이트를 hard block에서 non-blocking telemetry로 전환한다(코드: `translation.py::_has_required_expected_value_anchor()`, 1개 지점). `SELL`/`EXIT`/`REDUCE`와 B축(downstream 하향)은 이번 결정의 대상이 아니며 변경 없음. EV 계산값은 그대로 저장돼 관측 가능성을 유지한다. C축(신규매수)의 상태를 "완화 후보(미확정)"에서 **"제거 적용 완료 — 관찰 단계"**로 갱신한다. 다음 후속 과제는 (1) 제거 후 `order_request` 생성/제출 건수 변화, (2) 그 주문들의 실제 사후 성과, (3) advisory 지표로서 EV 값의 잔존 가치 재검토다. 상세는 `buy_path_variable_gate_matrix.md` §27.
+
+**[2026-08-08 KST 후속, B축 원인 구조 분해 및 사후 성과 검증 — "구조 재설계 후보"로 상향]** C축이 완화된 지금 B축을 정밀 재분석했다. 코드(`decision_factory.py::_classify_alignment_status()`)와 데이터 양쪽에서 `downgraded`=100% `primary_candidate=BUY_CANDIDATE`(매수 의도) 기원, `suppressed`=100% `WATCH` 기원임을 예외 없이 확인했다 — `suppressed`는 이 축의 엄밀한 정의(매수 의도 하향) 밖이다. `evidence_strength`는 위 §13.2.14의 "판별력 부족" 재평가와 달리, `BUY_CANDIDATE` population으로 정확히 좁혀 다시 보면 **실제로 강한 분류력**을 보였다(`weak`/`none`은 통과율 0%, `moderate`/`strong`도 25.5%뿐) — 다만 이는 "그럴듯한 근거"가 아니라 FDC가 실제로 그 필드를 근거로 판단한다는 뜻일 뿐, 사후 성과 개선을 증명하지는 않는다. **가장 중요한 factual 발견**: `2026-08-03~06` 4거래일 연속 매수 의도가 지배적으로 유지된 사례가 **0건**이었고, `08-07`에야 처음 3건이 통과(그중 1건이 이번 조사 전체 최초의 실제 체결 `068270`). 계산 가능한 하향 표본(n=6)의 사후 성과는 평균 +1.29%(T+1)·양수율 66.7%로 하향이 기대값을 개선했다는 근거가 없다 — 다만 `matched`(통과) 표본의 forward return이 08-07 결정 3건뿐이라 전무해 직접 비교는 아직 불가능하다. 이 반복성(4거래일 연속 100%)과 광범위성(evidence_strength가 강해도 통과율 25.5%뿐)을 근거로 판정을 "미확정"에서 **"구조 재설계 후보"**로 상향한다 — "제거 후보"까지는 아니다(C축과 달리 단일 코드 지점이 아니라 FDC의 AI 판단 편향 자체가 대상이라 구체 설계안이 아직 없음). 상세는 `buy_path_variable_gate_matrix.md` §28.
 
 ### 우선순위 요약
 
