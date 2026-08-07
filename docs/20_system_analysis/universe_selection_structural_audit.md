@@ -40,8 +40,8 @@
 
 ### 축 A — 신호 데이터 신선도/커버리지
 
-- Step 8의 freshness tier(`_core_signal_tier`, FRESH/STALE/MISSING)와 뒤단 게이트의 `eligibility_feature_coverage_ok` / `eligibility_low_feature_coverage`(`deterministic_trigger_engine.py`)가 **같은 개념("이 종목의 signal feature가 있는가/최신인가")을 서로 다른 레이어에서 각자 판단**한다.
-- **분류: 설명 가능한 단계 분리(정당)** — 앞단(Step 8)은 "순위를 낮출 뿐"이고 뒤단은 "그 사이클에서 아예 막을지"를 결정한다. 둘의 결과가 항상 일치할 필요는 없다(freshness가 STALE이어도 여전히 feature 자체는 존재해 커버리지는 OK일 수 있음). 다만 **두 값이 서로 다른 신선도 정의(날짜 기준 vs 존재 여부 기준)를 쓰는지 문서화된 곳이 없다** — 이 부분은 "구조적 책임 혼선" 소지가 있다(§3 참고).
+- Step 8의 freshness tier(`_core_signal_tier`, FRESH/STALE/MISSING/DEMOTED)와 뒤단 게이트의 `eligibility_feature_coverage_ok` / `eligibility_low_feature_coverage`(`deterministic_trigger_engine.py`)가 **비슷해 보이지만 실제로는 서로 다른 판단 기준·다른 입력·다른 결과 영향을 가진 별개의 메커니즘**이다. 상세 비교는 §9 참고.
+- **분류(보수적으로): 일부 입력(overall_score의 존재 여부)은 겹치지만, 판단 기준(날짜 경과 vs 항목 존재 개수)과 책임(정렬 순위 vs 차단 여부)이 다르다.** "같다/중복이다"라고 단정할 근거는 소스에서 찾지 못했다 — §9에서 코드 기준으로 상세히 비교한다.
 
 ### 축 B — 활동성(relative_activity/volume/turnover)
 
@@ -149,7 +149,78 @@
 ## 8. 아직 확인하지 못한 부분(다음 턴 조사 필요)
 
 - `docs/10_signal_research_sppv/[DESIGN] universe_selection_service.md`와 `[PRIORITY_MAP] remaining_work_priority_map.md`는 이번 감사에서 제목만 확인 대상으로 지정됐을 뿐, 본문 전체를 정독하지는 못했다 — `core_risk_off` shadow 버전(v1~v5)의 도입 배경과 "죽은 코드 여부"를 판단하려면 이 문서들과 관련 SPPV 이력을 먼저 봐야 한다.
-- freshness tier와 `feature_coverage_ok`가 실제로 같은 기준을 쓰는지(같으면 순수 중복, 다르면 정당 분리)는 코드 구조만으로 확정하지 못했다 — 두 판정에 쓰이는 signal_feature_snapshot 필드가 동일한지 직접 대조가 필요하다.
+- **[2026-08-07 갱신]** freshness tier와 `feature_coverage_ok`의 기준 차이는 §9에서 코드 기준으로 상세 비교해 해소했다 — 둘은 서로 다른 판단 기준(날짜 경과 vs 항목 존재 개수)을 쓰며, 참조하는 snapshot 필드도 부분적으로만 겹친다(`overall_score`만 공통, `fast_score`/`slow_score`는 coverage만 참조). 다만 `deterministic_trigger_engine.py`에 전달되는 `signal_feature_snapshot`을 실제로 어느 호출부가 어떤 조회 방식(같은 `list_latest_by_instrument_ids` 경로인지, 별도 as-of 조회인지)으로 조달하는지는 호출 체인을 끝까지 추적하지 못해 미확인으로 남는다(§9 참고).
+
+## 9. 신호 신선도 vs feature coverage — 상세 비교(2026-08-07 KST 문서 보강)
+
+이 절은 §2 축 A를 코드 기준으로 상세히 뒷받침한다. **코드 변경 없음 — read-only 문서 보강이다.**
+
+### 정의
+
+- **core signal freshness tier**: `core` source_type 후보를 core 내부에서 **재정렬**할 때만 쓰는 계층(FRESH/STALE/MISSING, 그리고 이번 세션에서 추가된 DEMOTED)이다. 특정 종목의 BUY 평가 여부 자체를 바꾸지 않는다.
+- **feature coverage gate**(`eligibility_feature_coverage_ok`/`eligibility_low_feature_coverage`): 개별 decision 1건을 **차단할지 말지**를 가르는 BUY eligibility 게이트의 항목 중 하나다.
+
+### 계산 위치(코드 근거)
+
+- **freshness tier**: `UniverseSelectionService._core_signal_tier()`(`universe_selection.py:846-864`)가 계산하고, `_core_signal_sort_rank()`(`universe_selection.py:867-`)의 2차 정렬 키로만 쓰인다. 입력값은 `_prime_core_signal_score_cache()`(`universe_selection.py:811-843`)가 `signal_feature_snapshots.list_latest_by_instrument_ids(instrument_ids, timeframe="1d")`(Postgres 구현: `DISTINCT ON (instrument_id) ... ORDER BY instrument_id, snapshot_at DESC, signal_feature_snapshot_id DESC` — instrument당 최신 1건, timeframe 고정)로 배치 조회해 만든 캐시(`self._core_signal_score_cache`, `{symbol: (overall_score, snapshot_at)}`)뿐이다. **오직 `overall_score`와 `snapshot_at` 두 값만 본다.**
+  - 계층 판정 로직: `max_age_days`(운영값은 `scripts/run_decision_loop.py:322`의 `DEFAULT_CORE_SIGNAL_FRESHNESS_MAX_AGE_DAYS = 5`, KST 달력일 기준)가 `None`이거나 캐시에 해당 심볼이 아예 없으면 즉시 FRESH로 반환하는 게 아니라 — 정확히는: `snapshot_at is None`(캐시에 값이 없음)이거나 `max_age_days is None`이면 FRESH, 그 외에는 `(오늘 - snapshot 날짜) <= max_age_days`면 FRESH, 초과하면 STALE. **캐시에 해당 심볼의 `overall_score` 자체가 없으면(스냅샷이 아예 없거나 `overall_score` 필드가 None이면) `_core_signal_sort_rank()`의 `_key()`가 `entry is None` 분기로 빠져 MISSING이 된다** — 즉 MISSING은 "스냅샷 없음"과 "스냅샷은 있지만 `overall_score`가 None"을 구분하지 않고 하나로 합친다.
+  - DEMOTED tier(UNIV-5)는 이 freshness 판정과 무관한 별도 입력(`trade_decisions`의 `eligibility_low_relative_activity` 반복 이력, A3 매칭)으로 결정되며, freshness 계산 결과를 덮어쓴다.
+- **feature coverage**: `deterministic_trigger_engine.py`의 `_build_feature_coverage_score()`(`deterministic_trigger_engine.py:431-448`)가 계산한다. **7개 항목의 단순 존재(Not-None) 여부 평균**이다 — 날짜/나이는 전혀 보지 않는다:
+  1. `signal_feature_snapshot is not None`
+  2. `signal_feature_snapshot.overall_score is not None`
+  3. `signal_feature_snapshot.fast_score is not None`
+  4. `signal_feature_snapshot.slow_score is not None`
+  5. `market_regime is not None`
+  6. `strategy_selection is not None`
+  7. `portfolio_allocation is not None`
+
+  `coverage_score = (참인 항목 수) / 7`이다. BUY 경로에서는 `coverage_score < 0.50`이면 `eligibility_low_feature_coverage`로 차단(`deterministic_trigger_engine.py:471-474`), 그 외 한 경로(포지션 보유 종목의 exit 관련 평가로 보임, `deterministic_trigger_engine.py:1131-1134`)에서는 임계값이 `0.35`다 — **두 개의 서로 다른 coverage 임계값이 코드에 존재**하며, 이번 문서화에서는 두 경로가 정확히 어떤 조건에서 갈리는지까지는 전부 추적하지 못했다(추가 확인 필요, 아래 "아직 단정하지 않은 부분" 참고).
+
+### 입력값 비교
+
+| | freshness tier | feature coverage |
+|---|---|---|
+| 참조 필드 | `overall_score`, `snapshot_at` | `overall_score`, `fast_score`, `slow_score`, `market_regime`, `strategy_selection`, `portfolio_allocation`(snapshot 자체 존재 여부 포함) |
+| 날짜/나이 고려 | **예**(`max_age_days` 대비 경과일) | **아니오**(존재 여부만, 아무리 오래된 값이어도 존재하면 조건 충족) |
+| 조회 시점/경로 | universe 선정(compose) 시점, `list_latest_by_instrument_ids`로 배치 조회한 캐시 | decision 평가 시점, 호출자가 넘겨준 `signal_feature_snapshot` 객체(어느 함수가 어떻게 조달하는지는 이번 문서화에서 끝까지 추적하지 못함 — 미확인) |
+| 공통 입력 | `overall_score`의 **존재 여부**만 개념적으로 겹친다 | 좌동 |
+
+### 결과 영향 비교
+
+| | freshness tier | feature coverage |
+|---|---|---|
+| 무엇을 바꾸는가 | `core` 내부 정렬 **순서만** (2차 정렬 키) | 그 decision의 **BUY eligibility 통과/차단 자체** |
+| 직접 차단하는가 | 아니오 | **예**(`eligibility_low_feature_coverage`) |
+| 간접적으로 배제로 이어질 수 있는가 | `core_ranking_mode==CORE_RANKING_MODE_SIGNAL_SCORE`이고 `core_cap`이 실제로 절단되는 상황(운영 기본값 12)이면, 순위가 낮아진 결과로 그날 cap 밖으로 밀려날 수 있다 — 그러나 이는 "차단"이 아니라 "그날 유니버스에 안 들어옴"이라는 다른 결과다 | 해당 없음(이미 차단이 최종 결과) |
+| 적용 범위 | `source_type == CORE`만 | source_type 무관, BUY 경로로 평가되는 모든 decision |
+
+### 동시에 어긋날 수 있는 시나리오
+
+- **STALE인데 feature_coverage_ok인 경우**: **코드 구조상 가능하다.** freshness tier는 날짜 경과만 보고, feature coverage는 날짜를 전혀 보지 않는다 — 스냅샷이 `max_age_days`를 넘겨 STALE로 강등돼도, 그 스냅샷의 `overall_score`/`fast_score`/`slow_score`가 여전히 채워져 있고 `market_regime`/`strategy_selection`/`portfolio_allocation`도 정상 산출되면 `coverage_score`는 그대로 1.0일 수 있다.
+- **freshness 문제는 없는데(FRESH) feature coverage는 낮은 경우**: **코드 구조상 가능하다.** 스냅샷 자체는 최신(`max_age_days` 이내)이라도, `fast_score`/`slow_score`가 그 스냅샷에 없거나(freshness tier는 `overall_score`만 보므로 이 결측을 못 잡는다), 또는 `market_regime`/`strategy_selection`/`portfolio_allocation` 같은 **snapshot과 무관한 별도 평가 객체**가 그 결정 순간에 산출되지 않았다면(예: 레짐 판정 서비스 일시 실패) `coverage_score`가 0.50 밑으로 떨어질 수 있다 — freshness tier는 이런 실패를 전혀 감지하지 못한다.
+- **참고(코드 주석 기준, 미검증 인용)**: `deterministic_trigger_engine.py`의 주석(SPPV-2.137 인용)은 "0.50 하드 게이트를 통과한 population(n=13,016 전수 확인 시점 기준)에서는 `coverage_score`가 예외 없이 1.0이었다"고 적어놓았다 — 즉 **과거 특정 시점의 실측에서는** 0.50~1.0 사이 중간값이 실제로 관측되지 않았다는 뜻이다. 이 문서는 그 주석을 그대로 인용할 뿐, 현재 시점에도 여전히 그런지는 재검증하지 않았다(과거 실측 결과의 인용이지 이번 문서화의 새 확인 사실이 아니다).
+
+### 운영/디버깅에서 왜 헷갈릴 수 있는가
+
+- 두 메커니즘 모두 "신호/데이터 품질"이라는 같은 단어로 설명되기 쉽지만, 하나는 **순서**를, 하나는 **통과/차단**을 결정한다 — 로그나 diagnostics만 보고 "신선도가 낮다"는 사실 하나로 "그래서 차단됐겠다"고 추론하면 틀릴 수 있다(STALE ≠ 차단).
+- 두 메커니즘의 참조 필드가 부분적으로만 겹쳐서, "STALE인데 왜 통과했지?" 또는 "MISSING도 아닌데 왜 feature_coverage로 막혔지?" 같은 질문이 코드를 직접 읽지 않고는 답하기 어렵다.
+- MISSING tier가 "스냅샷 없음"과 "스냅샷은 있지만 `overall_score`만 없음"을 구분하지 않는다는 점도, 원인 분석 시 추가 확인 없이는 헷갈릴 수 있는 지점이다.
+
+### 그래서 필요한 문서 문구(권장)
+
+- `_core_signal_tier()`/`_core_signal_sort_rank()` docstring 또는 인접 주석에 "이 tier는 순서만 바꾸며 BUY 차단과 무관하다"는 한 줄을 명시.
+- `eligibility_low_feature_coverage` 발생 지점 주석에 "이 판정은 snapshot 나이를 보지 않으며, universe 선정의 freshness tier와 독립적이다"는 한 줄을 명시.
+- 위 두 문구는 이번 턴 범위(문서화만) 안에서 코드 주석으로 추가할 수도 있으나, 사용자가 "코드 변경 금지"를 명시했으므로 이번 턴에서는 이 문서(구조 감사)에만 남기고 코드 주석 추가는 다음 턴으로 미룬다.
+
+### 판단 — 의도된 분리인가, 순수 중복인가
+
+**보수적 결론: 일부 입력(`overall_score`의 존재 여부)은 겹치지만, 판단 기준과 책임이 명확히 다르다 — "순수 중복"이라고 부르기는 어렵고, "의도적으로 설계된 분리"라고 단정할 근거도 없다(설계 의도를 직접 언급한 문서를 찾지 못했다).** 결과적으로 두 메커니즘이 서로 다른 층(ranking vs gating)에서 각자의 목적에 맞게 존재하는 것은 구조적으로 타당해 보이지만, 그 차이가 어디에도 명문화되어 있지 않았다는 사실 자체가 이번 문서화의 핵심 근거였다.
+
+### 아직 단정하지 않은 부분
+
+- `deterministic_trigger_engine.py`에 전달되는 `signal_feature_snapshot`을 실제 어느 호출부(`decision_factory.py`/`pre_ai_gate.py`/`signal_backbone.py` 등 후보)가 어떤 조회 경로(같은 `list_latest_by_instrument_ids`류의 "최신 1건" 조회인지, 결정 시점 as-of 조회인지)로 조달하는지는 호출 체인 끝까지 추적하지 못했다 — 따라서 "두 메커니즘이 물리적으로 같은 DB row를 참조하는지"는 확정하지 않는다.
+- `coverage_score < 0.35` 분기(exit 경로로 보이는 `deterministic_trigger_engine.py:1131`)가 정확히 어떤 조건에서 `< 0.50` 분기 대신 평가되는지는 이번 문서화 범위에서 완전히 추적하지 않았다.
+- "0.50 하드 게이트 통과 population에서 coverage_score가 예외 없이 1.0"이라는 SPPV-2.137 인용은 코드 주석을 그대로 옮긴 것이며, 이 문서 작성 시점에 재실측하지 않았다.
 
 ## 다음 단계 제안
 
