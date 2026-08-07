@@ -51,7 +51,7 @@
 ### 축 C — 리스크 레짐(core_risk_off)
 
 - `deterministic_trigger_engine.py`에서 확인한 `core_risk_off_*` reason code가 최소 **13종**(`eligibility_core_risk_off_guard_blocked/pass`, `_ranking_blocked/pass`, `_signal_blocked/pass`, `_activity_blocked/pass`, `_strategy_blocked/pass`, `_topk_override_pass`, `_exception_pass` 등)이고, `decision_json.metadata.core_risk_off_experiment`에는 `mode`(`hard_block_v1`), `shadow_mode`(`shadow_topk_exception_v2`), `apply_ready`/`apply_enabled`/`apply_selected`, `shadow_rank`, `shadow_floor_bucket`(v2/v3/v5 세 버전 병존 확인됨) 등이 있다.
-- **분류: 비효율적 중복 + 구조적 책임 혼선.** 활동성(축 B)과 달리, 리스크 레짐 쪽은 **shadow 버전이 v1(암묵)/v2/v3/v5로 세대를 거치며 병존**하고 있고, "authoritative guard"(`_assess_core_risk_off_buy_guard`, 실제로 막음)와 "shadow 실험"(로그만 남김)이 뒤섞여 하나의 함수(`_build_core_risk_off_shadow_experiment_metadata`) 안에 공존한다. Universe 선정 단계에는 이 리스크 레짐 개념이 전혀 없다 — **전부 뒤단(gating)에만 존재**한다. 이는 "앞단이 몰라도 되는 것"이라는 관점에서는 정상 분리지만, **shadow 세대가 3개나 겹쳐 있는 것 자체는 정리 대상**이다(§6 우선순위 참고).
+- **분류(2026-08-07 실측으로 정정): 처음 추정("정리 대상")과 달리, v2/v3/v5는 실제로 소비되는 활성 A/B 실험 변형이었다** — §12에서 코드 기준으로 확인했다. Universe 선정 단계에는 이 리스크 레짐 개념이 전혀 없다 — 전부 뒤단(gating)에만 존재한다는 점은 그대로 유효하지만, "shadow 세대 병존 = 정리 대상"이라는 초기 판단은 **성급했다.**
 
 ### 축 D — 유동성/거래 가능성(정지/관리종목/틱사이즈)
 
@@ -85,14 +85,20 @@
 
 ## 6. 우선순위별 개선 후보 (1~5)
 
-### 1순위 — `core_risk_off` shadow 버전 정리(v1/v2/v3/v5 병존)
+### 1순위 — `core_risk_off` shadow 버전 정리(v1/v2/v3/v5 병존) — **[2026-08-07 실측으로 정정: 정리 후보 아님]**
 
-- **문제**: 리스크 레짐 판정에 최소 3개 세대의 shadow floor bucket 로직이 동시에 남아 있다.
-- **왜 비효율/부적절한가**: 어느 버전이 "현재 유효한 실험"이고 어느 게 "죽은 코드에 가까운 과거 흔적"인지 코드만으로 구분이 안 된다. 디버깅/신규 온보딩 비용이 크다.
-- **코드 위치**: `deterministic_trigger_engine.py`의 `_build_core_risk_off_shadow_experiment_metadata`, `_classify_core_risk_off_shadow_floor_bucket` 호출부(v2/v3/v5).
-- **운영 비용**: 로그/decision_json 크기 증가, 신규 개발자가 "지금 뭐가 실제로 작동 중인지" 파악하는 데 드는 시간.
-- **단순화 방향**: 각 버전의 도입 시점/목적을 git blame + 관련 SPPV 문서로 먼저 재구성하고, 죽은 버전은 제거하거나 "역사 기록"으로만 문서화.
-- **지금 당장 손대면 위험한가**: **위험하다.** 리스크 게이트는 `src/AGENTS.md`가 명시한 "명시적 근거와 테스트 없이 변경하지 않는다" 경계 정중앙에 있다. 이번 턴에서 손대지 않았고, 다음 턴도 먼저 각 버전의 실제 활성 여부를 read-only로 확인하는 것부터 시작해야 한다.
+- **원래 추정(§6 최초 작성 시점)**: 리스크 레짐 판정에 최소 3개 세대의 shadow floor bucket 로직이 동시에 남아 "정리 대상 1순위"로 지목했다.
+- **§12에서 코드 기준으로 확인한 결과, 이 추정은 틀렸다.** v2/v3/v5 floor bucket은 죽은 코드가 아니라 `trigger_proxy_attribution.py`가 소비하는 **활성 A/B 실험 변형**이며, `scripts/run_ops_scheduler.py`가 장후(after-hours)에 정기적으로 forward-return 귀속 분석을 수행하는 데 쓰인다(§12 참고).
+- **남은 진짜 문제는 "정리"가 아니라 "명명 혼선"이다**: `_CORE_RISK_OFF_RANKING_MODE="hard_block_v1"`(authoritative 버전 라벨), `_CORE_RISK_OFF_SHADOW_MODE="shadow_topk_exception_v2"`(top-k shadow 메커니즘 버전 라벨), 그리고 floor bucket의 `v2`/`v3`/`v5`(참후보 검증용 임계값 변형)가 **서로 다른 세 가지 버전 축**인데 모두 "v숫자" 표기를 공유해 코드만 보고는 헷갈리기 쉽다. 이는 §6-1의 새 항목으로 아래에 재정의한다.
+
+### 1순위(정정) — `core_risk_off`의 세 가지 서로 다른 버전 축이 같은 "v숫자" 표기를 공유해 혼선을 만든다
+
+- **문제**: `hard_block_v1`(authoritative 게이트 버전), `shadow_topk_exception_v2`(top-k shadow/apply 메커니즘 버전), floor bucket `v2`/`v3`/`v5`(forward-return 귀속 분석용 임계값 실험 변형) — 이 셋은 서로 완전히 다른 것을 가리키는데 이름만 보면 같은 계열의 순차 버전처럼 보인다.
+- **왜 비효율/부적절한가**: 코드를 처음 보는 사람은 "v2가 v1을 대체했나?", "v5는 왜 v4 없이 바로 나오나?" 같은 잘못된 질문을 하게 된다. 실제로는 세 축 모두 병렬로 살아있고, 대체 관계가 아니다.
+- **코드 위치**: `deterministic_trigger_engine.py` 상단 상수(`_CORE_RISK_OFF_RANKING_MODE`, `_CORE_RISK_OFF_SHADOW_MODE`, `_CORE_RISK_OFF_SHADOW_V2_*`/`_V3_*`/`_V5_*`), `_build_core_risk_off_shadow_experiment_metadata()`.
+- **운영 비용**: 디버깅/온보딩 시 오해 비용. 실제 동작에는 영향이 없다(순수 명명/문서화 문제).
+- **단순화 방향**: 세 버전 축을 구분하는 짧은 주석/문서 한 줄이면 충분하다 — 코드 구조 변경은 불필요해 보인다.
+- **지금 당장 손대면 위험한가**: 문서화는 안전. 상수 이름 자체를 바꾸는 것은 `decision_json`에 이미 그 이름으로 대량 기록된 이력 데이터(`trigger_proxy_attribution.py`가 그 필드명으로 과거 데이터를 읽는다)와의 하위 호환을 깨뜨릴 수 있어 **위험** — 이번 감사 범위에서 이름 변경을 제안하지 않는다.
 
 ### 2순위 — 신호 신선도 판정의 이중 정의(freshness tier vs feature_coverage_ok) 명문화
 
@@ -139,8 +145,11 @@
 - 정적 core seed의 단순성(activity 미참조) — 이번 감사로도 "정적 유지"라는 기존 전제를 뒤집을 근거를 찾지 못했다.
 
 **줄일 수 있는 accidental complexity**
-- `core_risk_off` shadow 버전 3세대 병존(§6-1) — 가장 유력한 정리 대상.
+- `core_risk_off`의 세 버전 축(authoritative/shadow-topk/floor-실험)이 같은 "v숫자" 표기를 공유하는 명명 혼선(§6-1, 정정판) — 코드 정리가 아니라 문서화로 해소 가능.
 - 신호 신선도 이중 정의의 미문서화(§6-2) — 문서화만으로 해소 가능한 낮은 비용 항목.
+
+**[2026-08-07 정정] 처음에는 아니었지만 이제 유지해야 하는 필수 복잡성으로 재분류**
+- `core_risk_off` floor bucket v2/v3/v5 — §12 실측으로 `trigger_proxy_attribution.py`/`run_ops_scheduler.py`가 소비하는 활성 A/B 실험 변형임을 확인했다. 제거하면 안 된다.
 
 **아직 판단 보류가 필요한 영역**
 - market_overlay 파이프라인의 목적 재정의(§6-4) — 코드 문제가 아니라 정책 목적 정의 문제일 수 있어, 이번 감사만으로 결론 낼 수 없다.
@@ -338,6 +347,68 @@
 - **freeze anchor 재구성 자체의 한계**: `frozen_at`을 as-of 커트오프로 쓰는 것은 "그 시각에 앞단이 봤을 값"의 **근사**다 — 실제 `_prime_core_signal_score_cache()` 호출이 `frozen_at`과 정확히 같은 순간에 실행됐는지, 아니면 그 전후로 약간의 시차가 있었는지는 확인하지 않았다. 이 시차 안에서 배치가 끼어들었다면 이 스크립트는 그 차이를 놓칠 수 있다.
 - **core source_type만 봤다**: 이번 실측은 `source_type='core'`만 비교했다. `event_overlay`/`market_overlay` 등 다른 source_type에 대한 정합도는 이번 범위 밖이다.
 - **"뒤단 값"도 decision_context 단위 집계다**: 같은 거래일·같은 종목에 여러 decision이 있으면 그 decision들이 가리키는 `signal_feature_snapshot_id`를 집합으로 모아 비교했다 — 만약 하루 안에서 뒤단 자체가 서로 다른 snapshot_id를 쓰는 경우(그 자체로 흥미로운 현상)가 있었다면 이번 표본에서는 관측되지 않았다는 뜻이지, 그런 경우가 원천적으로 불가능하다는 뜻은 아니다.
+
+## 12. `core_risk_off` shadow 세대 구조 정리(2026-08-07 KST)
+
+§2 축 C와 §6-1이 "v1/v2/v3/v5 병존 = 정리 대상"으로 지목했던 부분을 코드 기준으로 끝까지 추적했다. **코드 변경 없음 — read-only 조사·문서 보강이다.** 결론을 먼저 밝히면: **이 추정은 부분적으로 틀렸다.** v2/v3/v5는 죽은 흔적이 아니라 실제로 소비되는 활성 실험 변형이다. 진짜 문제는 "정리 대상 코드"가 아니라 "서로 다른 세 버전 축이 같은 표기를 공유하는 명명 혼선"이다.
+
+### authoritative guard — 실제로 BUY pass/block에 영향을 주는 지점
+
+`_is_core_risk_off_regime(source_type, market_regime)`(`deterministic_trigger_engine.py:610-617`)이 게이트 발동 여부를 판정한다(`source_type=='core'` 이고 `market_regime.risk_tone=='risk_off'` 이고 `market_regime.regime_label=='bearish_trend'`일 때만 활성). 활성이면 `_assess_core_risk_off_buy_guard()`(`:620-701`)가 호출되어 4단계를 순서대로 통과해야 한다:
+
+1. `authoritative_entry_gate_score`(entry_score와 allocation 여유도의 가중합)가 `_CORE_RISK_OFF_RANKING_MIN_SCORE` 미만이면 차단(`eligibility_core_risk_off_ranking_blocked`) — **단, `apply_topk_override_selected=True`면 이 단계를 우회하고 통과**(`eligibility_core_risk_off_topk_override_pass`).
+2. `overall`/`slow` 신호 점수 최소 기준 미달 시 차단.
+3. `volume_surge_ratio`/`turnover_surge_ratio` 최대값이 활동성 최소 기준(`apply_topk_override_selected`면 완화된 `_CORE_RISK_OFF_SHADOW_ACTIVITY_MIN`, 아니면 `1.20`) 미달 시 차단.
+4. `strategy_selection.preferred_strategy`가 정해진 3종(`defensive_low_volatility_rotation`/`mean_reversion_bounce`/`event_continuation`) 밖이면 차단.
+
+이 함수의 반환값(`risk_off_exception_eligible`, `core_risk_off_guard_reasons`)이 `_assess_buy_eligibility()`에 그대로 전달되어 **실제 `eligibility_passed`를 좌우한다** — 이것이 유일한 authoritative 경로다.
+
+### shadow metadata — 단순 관측 기록
+
+`_build_core_risk_off_shadow_experiment_metadata()`(`:789-1012`)가 계산하는 대부분의 필드(`shadow_overall_pass`, `shadow_slow_pass`, `shadow_signal_pass`, `shadow_activity_pass`, `shadow_strategy_pass`, `shadow_reason_codes` 등)는 **decision_json에 기록될 뿐, 이 값들 자체가 `eligibility_passed`나 `_assess_core_risk_off_buy_guard()`의 계산에 다시 입력되지 않는다** — authoritative guard는 이 shadow 함수를 호출하지 않고 완전히 별도로 자체 계산한다. 순수 관측용이다.
+
+### apply/projection 경로 — shadow 결과가 실제로 authoritative 판단에 반영되는 유일한 다리
+
+- **`project_core_risk_off_topk_exceptions()`**(`core_risk_off_topk_projection.py`)는 그 자체로는 "This helper is shadow-only. It does not change authoritative eligibility"라고 docstring에 명시한 순수 함수다 — 여러 종목의 shadow 후보를 cross-sectional로 랭킹해 `shadow_topk_selected`를 부여할 뿐, 아무것도 변경하지 않는다.
+- 그러나 이 함수의 **호출자**가 그 결과를 실제로 사용한다 — `scripts/run_decision_loop.py`의 `_build_core_risk_off_apply_overrides_for_cycle()`(`:1281-`)이 그날 cycle 시작 시 **core 유니버스 전체에 대해 미리 한 번씩 deterministic trigger를 계산**(prepass)하고, `project_core_risk_off_topk_exceptions()`로 top-k를 뽑아 `overrides[symbol]["core_risk_off_topk_v1"] = {"selected": True, ...}`를 만든다. 이 `overrides`가 그 cycle의 **실제 decision 평가에 `deterministic_trigger_override`로 전달**되어, 앞서 authoritative guard의 1·3단계(ranking/activity 임계값)를 완화한다 — **즉 projection 함수 자체는 순수해도, 그 호출자는 shadow 결과를 authoritative 판단에 실제로 반영한다.** "shadow-only"라는 docstring은 그 함수 자신에 대해서만 맞는 말이고, 전체 파이프라인에 대한 설명으로 그대로 쓰면 오해를 낳는다.
+- **[중요, 실측 확인]** 이 apply 경로는 `_APPLY_CORE_RISK_OFF_TOPK`(env `DETERMINISTIC_TRIGGER_APPLY_CORE_RISK_OFF_TOPK`, 코드 기본값 `"0"`=비활성) 플래그로 게이트된다. `docker-compose.yml:343`은 `${DETERMINISTIC_TRIGGER_APPLY_CORE_RISK_OFF_TOPK:-1}`로 **기본 활성화를 선언**하지만, **실제 실행 중인 `agent_trading-app-1` 컨테이너의 프로세스 환경에는 이 변수가 전혀 설정되어 있지 않음을 직접 확인했다**(`docker exec ... env | grep RISK_OFF` 결과 없음). 즉 코드 기본값(`"0"`)이 적용돼 **이 컨테이너에서는 현재 이 apply 경로가 비활성 상태로 동작 중**이다. 이 불일치의 원인(컨테이너 재기동 필요/`.env` 미설정/다른 시작 경로 등)은 이번 조사에서 확정하지 않았다 — read-only 관찰 결과만 보고한다.
+- 반대로, decision들이 이미 만들어진 **뒤**(cycle 종료 후) `_apply_core_risk_off_shadow_projection_for_cycle()`(`:1184-`)가 별도로 존재한다 — 이건 그 cycle의 실제 decision 결과(`decision_json`)를 다시 읽어 `project_core_risk_off_topk_exceptions()`를 한 번 더 돌리고, 그 결과(`shadow_topk_candidate`/`shadow_topk_selected`/`shadow_rank`/`shadow_group_size`)를 **이미 확정된 그 decision들의 `decision_json`에 UPDATE로 되써넣는다.** 이건 순수 관측 라벨 갱신이다 — 이미 일어난 decision의 eligibility를 바꾸지 않는다.
+
+### v1 / v2 / v3 / v5의 정체 — 서로 다른 세 축이 섞여 있다
+
+이 조사에서 확인한 가장 중요한 사실: **"core_risk_off의 v1/v2/v3/v5"는 하나의 순차 버전 계열이 아니라, 완전히 다른 세 가지 것을 가리키는 세 개의 독립된 축이 우연히 같은 "v숫자" 표기를 공유하는 것이다.**
+
+1. **`_CORE_RISK_OFF_RANKING_MODE = "hard_block_v1"`** — authoritative guard(`_assess_core_risk_off_buy_guard`) 자체의 버전 라벨. 구현은 하나뿐이다("v1"이라고 부르지만 "v2"가 따로 존재하지 않는다 — 향후 교체를 염두에 둔 라벨일 뿐).
+2. **`_CORE_RISK_OFF_SHADOW_MODE = "shadow_topk_exception_v2"`** — top-k 예외 승격(apply) 메커니즘의 버전 라벨. 이 역시 구현은 하나뿐이다.
+3. **floor bucket의 `v2`/`v3`/`v5`** — `_classify_core_risk_off_shadow_floor_bucket()`을 서로 다른 임계값 조합(`mild_overall_min`/`mild_slow_min`/`moderate_overall_min`/`moderate_slow_min`)으로 반복 호출해 만든 **병렬 실험 변형**이다. "v1"(암묵, 기본 임계값), v2, v3는 같은 `overall`/`slow` 입력을 쓰고 임계값만 다르며, **v5만 유일하게 다른 입력값**(`signal_feature_snapshot.component_scores_json`의 `shadow_overall_score_v5`/`shadow_slow_score_v5` — 별도로 계산된 점수)을 쓴다. `v4`는 코드 어디에도 없다(건너뛴 이유는 이번 조사로 확인하지 못했다).
+
+이 세 축은 서로 대체 관계가 아니라 **병렬로 항상 함께 계산**된다 — 하나의 decision마다 authoritative 판정 1회, shadow topk 판정 1회, floor bucket 판정 4종(v1/v2/v3/v5)이 전부 계산되어 `decision_json`에 함께 기록된다.
+
+### 현재 활성 경로 정리
+
+| 구성 요소 | 활성 상태 | 실제 영향 |
+|---|---|---|
+| authoritative guard(`hard_block_v1`) | **항상 활성**(core_risk_off_guard_active일 때) | eligibility_passed 직접 결정 |
+| top-k apply override(`shadow_topk_exception_v2`) | **코드상 존재, 이 컨테이너에서는 env 플래그 부재로 비활성 관측됨**(위 실측 참고) | 활성화되면 authoritative guard의 ranking/activity 임계값을 완화 |
+| floor bucket v1(암묵)/v2/v3 | **활성 — `trigger_proxy_attribution.py`가 소비** | eligibility에는 영향 없음, 장후 forward-return 귀속 분석(`run_ops_scheduler.py`)에 쓰임 |
+| floor bucket v5 | **활성 — 좌동, 단 입력 신호가 다름**(`component_scores_json` 기반) | 좌동 |
+| post-cycle shadow projection(라벨 재기록) | **항상 실행**(cycle_results가 있으면) | decision_json 메타데이터만 갱신, eligibility 불변 |
+
+### 정리 후보 vs 보류 후보(보수적 재분류)
+
+- **즉시 제거 후보**: 없음. 이번 조사에서 실제로 아무 곳에서도 읽히지 않는 "완전한 죽은 코드"는 발견하지 못했다.
+- **문서화만 필요**(코드 변경 불필요): `hard_block_v1`/`shadow_topk_exception_v2`/floor bucket `v2·v3·v5`가 서로 다른 세 축이라는 사실 — 이번 문서가 그 역할을 한다.
+- **추가 활성 여부 실측이 필요한 것**: `DETERMINISTIC_TRIGGER_APPLY_CORE_RISK_OFF_TOPK`가 `docker-compose.yml`의 선언(기본 활성)과 실제 실행 중인 컨테이너의 상태(비활성 관측)가 다른 이유 — 이번 조사 범위에서는 원인을 확정하지 않았고, 코드/설정 변경도 하지 않았다. **이것이 이번 조사에서 가장 후속 확인이 필요한 항목이다.**
+
+### 이번 조사 결과만으로 리팩터링 착수 가능한가
+
+**아니다 — 문서화 우선이 여전히 맞다.** 다만 방향이 바뀌었다: "shadow 버전 정리"가 아니라 "①명명 혼선 문서화, ②`APPLY_CORE_RISK_OFF_TOPK` 활성 상태 불일치의 원인 확인(다음 read-only 조사 대상)"이 맞는 다음 단계다. 리스크 게이트 코드 자체를 건드리는 것은 여전히 `src/AGENTS.md` 경계 원칙상 이번 조사 범위 밖이다.
+
+### 아직 단정하지 못한 부분
+
+- `DETERMINISTIC_TRIGGER_APPLY_CORE_RISK_OFF_TOPK`가 왜 실행 중인 컨테이너에 설정되어 있지 않은지(설계상 의도인지, 배포 시 실수인지, `.env` 파일에 있는데 다른 경로로 기동됐는지)는 확인하지 않았다 — `.env` 파일 내용을 직접 열람하지 않았다(민감 정보 포함 가능 파일은 원칙적으로 노출하지 않는다).
+- `v4`가 왜 없는지(건너뛴 이유, 혹은 다른 이름으로 존재하는지)는 git blame/log를 이번 조사 범위에서 깊이 추적하지 않았다.
+- floor bucket v1/v2/v3/v5 실험이 `trigger_proxy_attribution.py`의 귀속 분석에서 실제로 어떤 결론(어느 변형이 가장 유망한지)을 내고 있는지는 이번 조사 범위 밖이다 — 이번 조사는 "소비되는지 여부"만 확인했다.
 
 ## 다음 단계 제안
 
