@@ -11,6 +11,7 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 from decimal import Decimal
 from uuid import uuid4
 
@@ -154,12 +155,19 @@ def _make_order_intent(ai_inputs: AIDecisionInputs) -> OrderIntent:
 class TestTranslationNearMissOverride:
     """``build_submit_order_request_from_decision()``의 near-miss 반영 확인."""
 
-    def test_off_path_ev_fail_without_override_returns_none(self) -> None:
-        """스위치 off(override 미적용) 상태 — 기존 동작과 100% 동일하게 차단."""
+    def test_off_path_ev_fail_without_override_now_submits_for_new_entry(
+        self,
+    ) -> None:
+        """정책(2026-08-07): 신규매수(APPROVE/BUY)는 override 없이도
+        expected_value_gate_passed=False만으로는 더 이상 차단되지 않는다
+        — near-miss override는 신규매수에서는 더 이상 결정적 요인이
+        아니다(청산/축소는 이 정책 변경 대상이 아니다, 별도 회귀
+        테스트로 확인)."""
         ai_inputs = _make_ai_inputs(expected_value_gate_passed=False)
         intent = _make_order_intent(ai_inputs)
         result = build_submit_order_request_from_decision(intent)
-        assert result is None
+        assert result is not None
+        assert result.side == OrderSide.BUY
 
     def test_on_path_near_miss_override_allows_submission(self) -> None:
         """override 적용 시 동일 EV-fail 조건이라도 제출이 허용된다."""
@@ -190,3 +198,30 @@ class TestTranslationNearMissOverride:
         intent = _make_order_intent(ai_inputs)
         result = build_submit_order_request_from_decision(intent)
         assert result is not None
+
+    def test_reduce_ev_fail_without_override_still_returns_none(self) -> None:
+        """정책(2026-08-07) 변경은 신규매수(APPROVE/BUY)에만 적용된다 —
+        청산/축소(REDUCE)는 override 없이 expected_value_gate_passed=False
+        면 기존과 동일하게 차단돼야 한다(회귀 확인)."""
+        ai_inputs = _make_ai_inputs(expected_value_gate_passed=False)
+        reduce_ai_inputs = replace(ai_inputs, decision_type="REDUCE", side="sell")
+        request = SubmitOrderRequest(
+            account_ref="test-account",
+            client_order_id="test-client-order-id",
+            correlation_id="test-correlation-id",
+            strategy_id="test-strategy",
+            symbol="000810",
+            market="KRX",
+            side=OrderSide.SELL,
+            order_type="market",
+            quantity=Decimal("10"),
+        )
+        intent = OrderIntent(
+            decision_context_id=uuid4(),
+            order_intent_id=uuid4(),
+            request=request,
+            context=AssembledContext(),
+            ai_backend_inputs=reduce_ai_inputs,
+        )
+        result = build_submit_order_request_from_decision(intent)
+        assert result is None

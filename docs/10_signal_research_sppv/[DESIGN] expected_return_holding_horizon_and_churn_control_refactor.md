@@ -259,6 +259,33 @@ edge_after_cost_bps
   - `expected_value_gate_passed`
   - `expected_value_gate_reason_codes`
 
+### 6.5 정책 개정(2026-08-07) — §6.3 "신규 BUY" 규칙의 hard block 해제
+
+이 설계 문서의 본래 목적은 §1~§2에서 명시한 대로 **신규 진입
+억제가 아니라 보유 후 빈번한 매도/재매수(churn) 억제**였다.
+그런데 2026-08-03 이후 실측(`buy_path_variable_gate_matrix.md`
+§17~§26)에서 §6.3 "신규 BUY" 규칙(`edge_after_cost_bps <
+minimum_required_edge_bps` → `WATCH`/`HOLD`)이 실제 운영에서는
+**신규 진입 자체를 거의 전부 차단**하는 방향으로 작동했고, 그
+결과 이 설계의 진짜 목적(보유 이후 계층, §7~§10)이 시험될
+무대조차 만들지 못했다(§18~§20). 여러 차례의 사후 성과 실측
+(§19, §22~§26)에서도 이 차단이 기대수익률을 개선했다는 근거는
+확인되지 않았고, 오히려 차단 표본 중 다수가 이후 상승 마감했다.
+
+**정책 결정(2026-08-07)**: §6.3의 "신규 BUY" 규칙을 **hard
+block에서 non-blocking telemetry로 전환**한다 — `expected_
+value_gate_passed=false`만으로는 신규매수(`APPROVE`/`BUY`)의
+주문 요청 생성을 막지 않는다. EV 관련 계산값(`expected_return_
+bps`/`expected_downside_bps`/`edge_after_cost_bps` 등)은 그대로
+계산·저장해 관측 가능성을 유지한다. **§6.3의 "REDUCE/EXIT"
+규칙과 §7~§10(보유기간 정책, 반전매매 hysteresis, 재진입
+쿨다운)은 이 개정의 대상이 아니며 그대로 유지된다** — 이 개정은
+이 설계의 원래 목적(청산·축소 단계의 churn 억제)을 되살리려는
+방향이지, 그 목적 자체를 철회하는 것이 아니다. 구현 상세는
+`buy_path_variable_gate_matrix.md` §27, 코드 변경은
+`src/agent_trading/services/translation.py::_has_required_
+expected_value_anchor()`.
+
 ---
 
 ## 7. Holding Profile / 보유기간 정책

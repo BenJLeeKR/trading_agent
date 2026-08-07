@@ -6282,3 +6282,51 @@ API는 짧은 대기(대체 소스 20:10 KST 배치까지 3시간 이내)와
   2건 양(+)은 완화를 지지하는 방향의 재료를 소폭 늘렸으나, n=3
   수준으로는 정책 판단을 내리기에 부족하다.
 - 상세: `buy_path_variable_gate_matrix.md` §26.
+
+**[2026-08-07 KST 정책 결정 및 구현, C축 신규매수 EV 게이트 hard
+block 제거]** §17~§26의 사후 성과 실측(계산 가능한 3건 중 T+1
+2건 양(+), `001450`의 horizon별 반전 등)을 근거로 사용자가 정책
+결정을 내렸다 — **신규매수(`APPROVE`/`BUY`) 경로에서 EV 게이트
+불통과만으로 주문 요청 생성을 막지 않는다.** 이 결정을 코드와
+문서에 반영했다.
+
+- **결정 근거(개별 손실 회피가 아니라 기대수익률/기회비용
+  관점)**: (1) 하방/비용 공식은 실측 기반이라 "공식이 틀렸다"는
+  근거는 없지만, 상류/하류 기준선 간극(§18.3)이 신규 진입 대부분
+  을 걸러내는 구조로 작동했다. (2) 계산 가능했던 forward return
+  중 T+1 2건이 모두 양(+)이었고 차단이 기대값을 개선했다는
+  실증은 쌓이지 않았다. (3) 4거래일간 주문 요청이 실질적으로
+  0건에 수렴한 것은 안전성의 증거가 아니라 기회비용으로
+  재해석한다.
+- **차단 지점 확정**: `decision_orchestrator.py::_check_ai_buy_
+  override_gate()`는 `buy_candidate=True`(관측 사례 전부 해당)
+  에는 적용되지 않는 override 전용 가드다 — 실질적 차단은
+  `translation.py::_has_required_expected_value_anchor()`가
+  `build_submit_order_request_from_decision()` 최종 단계에서
+  `expected_value_gate_passed=false`를 이유로 `SubmitOrder
+  Request` 생성을 막은 것이었다.
+- **적용한 변경(1개 지점)**: `translation.py`에서 `decision_type
+  in {"APPROVE","BUY"}`일 때만 이 차단 분기를 건너뛰도록 수정.
+  EV 계산값(8개 필드) 존재 여부 확인은 그대로 유지(관측 가능성
+  보존, 데이터 품질 문제와는 별개). `SELL`/`EXIT`/`REDUCE`는
+  완전히 무변화.
+- **건드리지 않은 것**: `_check_ai_buy_override_gate()`의 EV
+  체크(override 전용 좁은 경로), `resolve_ev_gate_near_miss_
+  override()`(계산값은 여전히 관측 목적으로 저장), EV 게이트
+  계산 로직 자체(`expected_value_gate.py`), §7~§10 보유기간/
+  hysteresis 계층, B축(downstream 하향) — 전부 이번 결정의
+  대상이 아니다.
+- **테스트**: `test_ev_gate_near_miss_override.py`의 기존 차단
+  검증 테스트를 새 정책(허용)에 맞게 개정하고, `REDUCE` 경로가
+  여전히 차단됨을 확인하는 회귀 테스트를 추가했다. **로컬
+  환경에서 `pytest` 직접 실행은 불가**했다(host `python3`에
+  프로젝트 의존성 미설치, 로컬 컨테이너는 별도 production
+  체크아웃을 마운트) — `py-compile`과 수동 코드 추적으로
+  대체 검증했고, 실제 자동 테스트는 PR의 `Harness` CI
+  `full-test` 단계에서 확인된다.
+- **다음 관찰 포인트**: 제거 후 `order_request` 생성/제출 건수
+  변화, 그 주문들의 사후 성과, advisory 지표로서 EV 값의 잔존
+  가치.
+- 상세: `buy_path_variable_gate_matrix.md` §27, `[DESIGN]
+  expected_return_holding_horizon_and_churn_control_refactor.md`
+  §6.5.

@@ -5494,3 +5494,143 @@ forward return이 **아직 없다**(당일 결정). **근소실패군을
    재현되는 사례인지, 표본이 쌓이는 대로 계속 추적한다.
 4. 이 결과를 §24(완화 후보 설계)·§20(D축) 판단에 계속 연결한다
    — 정책/코드 변경은 이번 절에서도 하지 않는다.
+
+## 27. C축(EV gate) 신규매수 hard block 해제 — 정책 결정 및 구현(2026-08-07 KST)
+
+**이번 절의 성격**: §17~§26의 사후 성과 실측을 근거로, 사용자가
+**정책 결정**을 내렸다 — 신규매수(`APPROVE`/`BUY`) 경로에서
+EV 게이트를 hard block에서 non-blocking telemetry로 전환한다.
+이 절은 "더 검증할지"가 아니라 **결정을 코드/문서에 반영**하는
+절이다. B축(downstream 하향)과 청산·축소(`SELL`/`EXIT`/
+`REDUCE`) 경로는 이번 결정의 대상이 **아니다**.
+
+### 27.1 판정 갱신(§24의 "완화 후보(미확정)"에서 상향)
+
+| 항목 | §24~§26 시점 | 이번 절(정책 결정 반영) |
+|---|---|---|
+| C축(EV 게이트, 신규매수) | 완화 후보(미확정) | **신규매수 hard block 제거 적용 완료** — 관찰 단계로 전환 |
+| B축(downstream 하향) | 완화 후보(미확정) | **변경 없음** — 이번 결정의 대상이 아니다 |
+| C축(EV 게이트, `SELL`/`EXIT`/`REDUCE`) | 유지 | **변경 없음** — §6.3의 REDUCE/EXIT 규칙, §7~§10 유지 |
+
+**제거 근거(기대수익률 극대화 관점, 개별 손실 회피 아님)**:
+(1) §19.2~§19.3에서 확인한 대로 하방/비용 공식은 실측 기반이라
+"공식이 틀렸다"는 근거는 없지만, §18.3에서 확인한 상류/하류
+기준선 간극이 신규 진입의 대부분을 걸러내는 구조로 작동했다.
+(2) §23/§26에서 계산 가능했던 forward return 중 T+1 2건
+(`008930` +1.94%, `051900` +2.93%)이 모두 양(+)이었고, `001450`
+의 T+4는 짧은 horizon에서의 음(-) 판단이 반전(+5.36%)됐다 —
+차단이 기대값을 개선했다는 실증이 쌓이지 않았다. (3) 4거래일
+동안 주문 요청이 실질적으로 0건에 수렴한 것(§15~§16, §20)은
+안전성의 증거가 아니라 **기회비용**으로 재해석한다. **개별
+사례(예: `035420`의 T+2 -8.30%)의 손익 부호는 이 결정의 근거가
+아니다** — §24.1의 원칙(버킷 평균/기회비용 기준)을 그대로
+유지한다.
+
+### 27.2 코드 변경 — 가장 좁은 지점 1곳
+
+**차단 지점 재확인**: `decision_orchestrator.py::_check_ai_
+buy_override_gate()`는 `deterministic_trigger.buy_candidate=
+True`(즉 deterministic 레이어가 이미 candidate로 인정한 경우,
+2026-08-03~07 관측 사례 전부 이에 해당)에는 적용되지 않는다
+(`return None`, 조건부 override 전용 가드). 실제로 04-03~07의
+모든 `buy`/`approve` 결정이 `decision_type='approve'`/`'buy'`
+로 그대로 저장(`trade_decisions`)되면서도 `order_request`가
+거의 생성되지 않았던 이유는, **`translation.py::_has_required_
+expected_value_anchor()`**가 `build_submit_order_request_from_
+decision()`의 최종 단계에서 `expected_value_gate_passed=false`
+를 이유로 `SubmitOrderRequest` 생성을 막았기 때문이다 — 이것이
+신규매수 EV 게이트의 실질적·결정적 차단 지점이다.
+
+**적용한 변경(1곳, `translation.py`)**:
+```python
+is_new_entry = decision_type in {"APPROVE", "BUY"}
+if (
+    not is_new_entry
+    and not ai_inputs.expected_value_gate_passed
+    and not ai_inputs.ev_gate_near_miss_override_applied
+):
+    return False
+```
+신규매수(`APPROVE`/`BUY`)는 `expected_value_gate_passed=False`
+여도 이 분기를 건너뛴다 — 이후 단계(EV 계산값 8개 필드가 모두
+존재하는지 확인)는 그대로 유지돼, EV 계산 자체가 안 된 경우
+(예: `signal_feature_snapshot` 결측)는 여전히 차단된다(이번
+정책 변경과 무관한 별개 데이터 품질 문제). `SELL`/`EXIT`/
+`REDUCE`는 `is_new_entry=False`라 조건식이 기존과 동일하게
+평가된다 — **완전히 무변화**.
+
+**건드리지 않은 것(명시)**:
+- `decision_orchestrator.py::_check_ai_buy_override_gate()`의
+  EV 체크(override 전용, `buy_candidate=False`인 좁은 경로에만
+  적용) — 이번 턴에서 손대지 않았다. 이 경로는 "AI가 deterministic
+  이 원하지 않는데도 override로 사겠다는" 훨씬 좁은 경우이며,
+  이번 4거래일 관측 사례 전부와 무관하다. 여러 지점을 동시에
+  건드리지 않는다는 원칙에 따라 유지했다.
+- `resolve_ev_gate_near_miss_override()`(§13.5 부근에서 이미
+  검토한 SPPV-2.87/2.88 근소부족 조건부 완화 메커니즘) — 신규
+  매수에서는 이번 변경으로 그 존재 의의(차단을 우회시키는 것)가
+  사실상 사라졌지만, 계산 결과(`ev_gate_near_miss_override_
+  applied`/`deficit_bps`/`threshold_bps`)는 여전히 `decision_
+  json`에 관측값으로 남는다 — 과도한 정리를 피하기 위해 함수
+  자체와 호출부는 그대로 유지했다.
+- EV 게이트 계산 로직(`expected_value_gate.py`) 자체 — 값은
+  계속 그대로 계산·저장된다. `minimum_required_edge_bps` 등
+  임계값도 바꾸지 않았다(§27.1에서 이미 "공식이 틀렸다는 근거는
+  없다"고 밝혔다).
+- `SELL`/`EXIT`/`REDUCE` 경로의 `expected_value_anchor` 요구
+  (§6.3 REDUCE/EXIT 규칙) — 완전히 무변화.
+
+### 27.3 테스트 변경(narrow, full pytest 미실행)
+
+- `tests/services/test_ev_gate_near_miss_override.py`:
+  `test_off_path_ev_fail_without_override_returns_none`을
+  `test_off_path_ev_fail_without_override_now_submits_for_new_
+  entry`로 개정 — 기존에는 "차단"을 검증했으나 이제는 "허용"을
+  검증한다(정책 변경을 그대로 반영). 신규 회귀 테스트
+  `test_reduce_ev_fail_without_override_still_returns_none`을
+  추가해 `REDUCE`는 override 없이 EV 게이트 실패 시 여전히
+  차단됨을 고정했다.
+- **실행 환경 한계(명시)**: 이 워크스페이스의 host `python3`에는
+  프로젝트 의존성(`httpx` 등)이 설치돼 있지 않고, 로컬에서 실행
+  중인 유일한 컨테이너(`agent_trading-app-1`)는 `/workspace/
+  agent_trading`(별도 production 체크아웃)을 마운트해 이 dev
+  트리의 변경을 반영하지 않는다 — 이번 턴에서 `pytest`를 직접
+  실행하지 못했다. 대신 (a) `bash scripts/harness/run.sh
+  py-compile`로 두 파일의 구문 유효성을 확인했고, (b) 수정한
+  함수의 5가지 분기(신규매수 게이트 실패/신규매수 값 결측/신규
+  매수 게이트 통과/`REDUCE` 게이트 실패/`SELL` anchor 실패)를
+  코드 추적으로 수동 검증했다. **PR의 GitHub Actions
+  `Harness`가 `full-test` 단계를 포함**하므로, 실제 자동 테스트
+  실행은 PR 생성 후 CI에서 확인된다 — 이 문서에는 CI 결과를
+  사후에 반영하지 않았다(다음 턴 확인 필요).
+
+### 27.4 factual / 해석 / 미확정
+
+- **factual**: (1) 실제 차단 지점은 `translation.py`의 EV
+  anchor 체크였다(신규매수·청산 공용 함수, `decision_type`으로
+  분기 추가). (2) 신규매수만 이 체크를 건너뛰도록 1개 지점에서
+  수정했다. (3) `REDUCE`/`SELL`/`EXIT` 경로, EV 계산 로직,
+  근소부족 완화 메커니즘, §7~§10 보유기간/hysteresis 계층은
+  전부 무변화다. (4) 로컬 환경에서 `pytest` 직접 실행은 의존성/
+  컨테이너 마운트 문제로 불가능했다.
+- **해석**: 이번 변경은 "EV 게이트가 틀렸다"는 선언이 아니라,
+  "신규 진입 차단의 기회비용이 실측상 더 크다"는 판단을 코드에
+  반영한 것이다 — 관측값은 그대로 남기므로, 이후 표본이 쌓이면
+  advisory 지표로서의 가치(예: EV 값과 사후 성과의 상관관계
+  재확인)를 다시 검증할 수 있다.
+- **미확정**: (1) 이 변경 이후 실제 `order_request` 생성/제출
+  건수 변화. (2) 그 주문들의 사후 성과. (3) CI `full-test`
+  결과(다음 턴 확인). (4) advisory 지표로서 EV 값이 실제로
+  유용한지 — 표본이 쌓인 뒤에만 답할 수 있다.
+
+### 27.5 후속 관찰 포인트
+
+1. 이 변경 배포 이후 신규매수 `order_request` 생성 건수·제출
+   건수가 실제로 늘어나는지.
+2. 그 주문들이 실제로 체결되면 사후 성과(절대수익률)를 §22~§26
+   과 동일한 방법으로 계속 추적한다.
+3. `expected_value_gate_passed`/`edge_after_cost_bps` 등 관측값
+   과 사후 성과의 관계를 표본이 쌓인 뒤 재평가해, advisory
+   신호로서의 잔존 가치를 다시 검토한다.
+4. B축(downstream 하향)은 이 변경과 독립적으로 §20~§25의 관찰을
+   계속한다 — 이번 결정으로 B축 판정이 바뀌지 않았다.

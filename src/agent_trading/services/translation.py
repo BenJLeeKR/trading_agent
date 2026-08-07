@@ -150,8 +150,16 @@ def _has_required_expected_value_anchor(
     decision_type = (ai_inputs.decision_type or "").strip().upper()
     if decision_type not in {"APPROVE", "BUY", "SELL", "EXIT", "REDUCE"}:
         return True
+    # 정책(2026-08-07): 신규매수(APPROVE/BUY)는 expected_value_gate 불통과
+    # 만으로 submit을 차단하지 않는다 — 기대수익률 극대화 관점에서 신규
+    # 진입 차단의 기회비용이 실측상 더 크다고 판단했다(상세: buy_path_
+    # variable_gate_matrix.md §27). EV 계산값은 그대로 기록해 관측
+    # 가능성은 유지한다. SELL/EXIT/REDUCE(청산·축소)는 이 정책 변경의
+    # 대상이 아니며 기존과 동일하게 게이트를 강제한다.
+    is_new_entry = decision_type in {"APPROVE", "BUY"}
     if (
-        not ai_inputs.expected_value_gate_passed
+        not is_new_entry
+        and not ai_inputs.expected_value_gate_passed
         and not ai_inputs.ev_gate_near_miss_override_applied
     ):
         return False
