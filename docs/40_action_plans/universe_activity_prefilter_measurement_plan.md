@@ -622,6 +622,88 @@ freeze는 `business_date` 단위로 하루 1회만 materialize되므로(§상단
 
 - Postgres 구현(`list_recent_core_eligibility_reasons`)에 대응하는 통합 테스트(`tests/repositories/test_postgres_trade_decisions.py`)는 이 환경에서 DB 인증 실패(`InvalidPasswordError`)로 실행하지 못했다 — 이는 이번 변경과 무관한 기존 환경 제약(호스트에서 라이브 DB 접속 자격 증명 불일치)이며, 사용자 승인 없이 DB 접속 설정을 바꾸지 않았다. 이 read-only SELECT 경로 자체가 실제 운영 DB에서 올바르게 동작하는지는 다음 실제 배포/운영 관측으로 재확인이 필요하다.
 
+## `core` soft demotion 설계안(2026-08-06 KST)
+
+A3/A5 shadow-only 관측이 운영 코드에 들어간 상태를 전제로, 그 다음 단계인 **soft demotion**(core seed 자격 박탈도, hard exclusion도 아니고 `core` 내부 정렬/우선순위만 조정)을 설계했다. **이번 절은 설계안이며 코드 변경은 없다.**
+
+### 조사한 근거
+
+- `_core_signal_sort_rank()`(`universe_selection.py:866-899`)가 이미 **정확히 이런 종류의 "core 내부 보조 정렬 키" 메커니즘**을 갖고 있다 — `(tier, -overall_score, symbol)` 튜플로 정렬하고, `tier`는 `CORE_SIGNAL_TIER_FRESH=0` / `STALE=1` / `MISSING=2`(`universe_selection_types.py:94-100`) 중 하나다. "신선도가 낮으면 완전히 빼지 않고 계층으로 하향시킨다"는 계약이 이미 이 코드에 있다 — soft demotion은 이 메커니즘에 새 계층을 하나 추가하는 것과 정확히 같은 모양이다.
+- 이 `core_rank`는 Step 8 정렬에서 `(s.priority, core_rank.get(s.symbol, 0) if s.source_type == CORE else 0)`(`universe_selection.py:1118` 부근)로 쓰인다 — **`priority`는 전혀 건드리지 않고, `source_type == CORE`가 아니면 보조 키가 항상 `0`이라 다른 source_type과 무관**하다. 이는 사용자가 기대한 방향과 코드 구조가 이미 정확히 일치한다.
+- 이 정렬은 `ctx.core_ranking_mode == CORE_RANKING_MODE_SIGNAL_SCORE`일 때만 적용되는데, `scripts/run_decision_loop.py:750`에서 **실제로 이 모드를 명시적으로 사용 중**임을 확인했다 — 즉 이 메커니즘은 이미 운영 경로에서 살아있다.
+- `_apply_cap()`(`universe_selection.py:2033-2078`)은 **정렬이 끝난 순서 그대로** 순회하며 `core_cap`으로 자른다. `scripts/run_decision_loop.py:307`의 `DEFAULT_TRADING_UNIVERSE_CORE_CAP = 12`를 확인했다 — **`core_cap`은 실제로 12로 운영 중이며 None(무제한)이 아니다.** 이전 실측에서 관측한 "core 유니버스가 대체로 12개로 고정"된 것과 정확히 일치한다. 즉 core 후보 풀(전체 allowlist+membership 기준으로는 수십~80여 종목)이 매일 12개로 잘리는 구조이므로, **정렬 순서를 뒤로 미루는 것만으로도 실제로 그날 유니버스에서 빠질 수 있다** — soft demotion이 공허한 조치가 아니라는 근거다.
+
+### 질문 1~2 — soft demotion 정의와 구현 위치
+
+**가장 자연스러운 정의: `_core_signal_sort_rank()`의 기존 tier 메커니즘에 새 tier를 하나 추가하는 것.** 별도 penalty score나 새 정렬 파이프라인을 만들 필요가 없다 — 이미 있는 "계층으로 하향" 계약을 그대로 재사용한다.
+
+| 구현 위치 후보 | 장점 | 단점 | 권장 |
+|---|---|---|---|
+| `_core_signal_sort_rank()` 내부에 tier 추가 | 기존 메커니즘 그대로 재사용, diff 최소, 다른 source_type 자동 격리(이미 `if s.source_type==CORE else 0`로 보장됨) | freshness 개념과 "반복 실패" 개념이 하나의 tier 축에 섞인다(아래 참고) | **권장** |
+| sort 직전 별도 `core_rank` 보정 레이어 | 개념적으로 freshness와 demotion을 분리 | 정렬 파이프라인이 두 단계로 늘어나고, 두 랭크를 어떻게 합성할지(더하기? 우선순위?) 새 규칙이 필요 — 복잡도 증가 | 비권장(1차안으로는) |
+| `SelectedSymbol.priority`를 core 내부에서만 미세 조정 | — | `priority`는 held/reconciliation/event/market/manual을 포함한 **전역 우선순위**다. core만 건드릴 방법이 없어 다른 source_type을 침범할 위험이 구조적으로 존재 — 사용자가 명시적으로 금지한 방향과 충돌 | **기각** |
+
+freshness와 demotion을 같은 tier 축에 섞는 것에 대한 우려는 실재하지만, 완화 가능하다 — **demotion tier를 별도 정수 상수(`CORE_SIGNAL_TIER_DEMOTED`)로 두고, `MISSING`보다 더 나쁜 최하위 tier로 배치**하면 두 개념이 값 하나로 뭉개지지 않고 여전히 구분 가능한 계층으로 남는다.
+
+### 질문 3 — 실제로 영향이 나는가
+
+- `core_cap`이 `None`이면(무제한) soft demotion은 **순서만 바꾸고 실제 포함 여부는 바꾸지 않는다** — 관측 가치는 있지만 실질 효과는 없다.
+- 그러나 위에서 확인했듯 **운영 기본값은 `core_cap=12`로 바인딩되어 있다.** core 후보 풀 크기(`APPROVED_CORE_UNIVERSE_SYMBOLS` + membership, 수십~80여 종목)가 매일 12개로 잘리므로, 정렬 순서 변경은 **실제로 그날 어떤 종목이 유니버스에 들어오는지를 바꿀 수 있는 실질적 개입**이다. `max_cap=30`(기본값)은 held 등을 포함한 전체 상한이라 core_cap보다 항상 느슨하게 작용한다 — 실질적 절단은 `core_cap`이 담당한다고 봐도 된다.
+- 결론: **soft demotion은 장식이 아니다.** 이 사실 자체가 "왜 처음부터 강하게 반영하면 안 되는가"의 근거이기도 하다 — 즉시 실제 유니버스 구성을 바꿀 수 있으므로, 오탐 시 대가가 결코 작지 않다.
+
+### 질문 4 — A3/A5를 입력으로 쓰는 방식 비교
+
+| 방식 | 장점 | 단점 | 권장 |
+|---|---|---|---|
+| A3 매칭 시에만 demotion tier 부여, A5 단독은 관측만(미반영) | 가장 보수적, A3는 이미 "결함 없음"으로 확인된 규칙, A5는 여전히 병행 관찰 단계 | A5가 잡는 (A3와 겹치지 않는) 케이스는 이번 단계에서 효과가 없음 | **1차안으로 권장** |
+| A3=강한 페널티(최하위 tier), A5=약한 페널티(STALE과 MISSING 사이) | A5도 어느 정도 반영 | tier 3단계 이상 관리 필요, 복잡도 증가, A5의 오탐 검증이 아직 A3만큼 축적되지 않음 | 2차안(추후 검토) |
+| A3/A5 매칭 개수 기반 penalty score(연속형) | 세밀한 조정 가능 | tier 메커니즘과 안 맞음(연속 점수를 새로 도입해야 함), "최소 개입" 원칙과 배치, 설명이 더 복잡해짐 | 기각 |
+| `demotion_active` boolean만 사용(A3 or A5 매칭 여부만 보고 강도 구분 없음) | 가장 단순 | 001450류 오탐 위험을 규칙별로 차등화할 수 없음 | 기각 |
+
+### 질문 5 — 보수적 설계 강도
+
+`001450`(경계선 변동형)이 가장 엄격한 A3에서도 1회 걸렸다가 바로 다음 날 회복한 사례(이전 시뮬레이션 §참고)를 감안하면, 아래가 가장 보수적인 조합이다:
+
+- **완전 맨 뒤가 아니라 "MISSING보다 한 단계 더 아래"** — MISSING(신선도 정보 자체가 없음)보다도 나쁜 취급을 하되, 그 안에서는 여전히 `overall_score` 내림차순 2차 정렬이 살아 있어 "같은 demotion tier 안에서도 신호가 나은 종목이 앞선다."
+- **하루 1회 평가, 자동 재진입** — 이미 shadow 구현이 매 compose마다(사실상 매일 freeze 시점에 한 번) 재평가하므로, 조건을 벗어나면 다음 날 즉시 demotion tier에서 빠진다. 별도 냉각 기간(cooldown)을 추가로 두지 않는 것이 이전 시뮬레이션의 "day-level 재진입" 전제와 일치한다.
+- **A3만 트리거, A5 단독은 미반영**(질문 4 권장안과 동일) — `001450` 같은 케이스가 A5에는 더 자주 걸리므로, A5를 아직 반영하지 않는 것 자체가 오탐 방어선이다.
+
+### 질문 6 — 관측 메타데이터
+
+기존 `CoreActivityDemotionShadowSignal`(shadow 구현에서 이미 추가됨)에 있는 필드를 그대로 재사용하고, soft demotion 반영 여부만 추가하면 충분하다:
+
+- 이미 있음: `matched_rules`, `streak`, `appearance_count_in_window`, `blocked_count_in_window`, `last_blocked_business_date`, `evaluation_date`
+- 추가 필요: `demotion_applied: bool`(A3 매칭 여부, 즉 실제로 tier가 내려갔는지), `assigned_tier`(부여된 tier 값 — 관측 시 freshness tier와 구분 가능해야 함)
+- **불필요**: `demotion_strength`(연속 강도 개념은 기각됐으므로), `prior_core_rank`/`adjusted_core_rank`(정렬 결과 전체를 비교하려면 compose 함수 바깥에서 별도로 재구성 가능 — diagnostics에 매 compose마다 전체 랭킹 스냅샷을 남기는 것은 과하다)
+
+### 질문 7 — 단계적 도입 순서
+
+권장 순서: **① 설계 확정(이번 턴) → ② soft demotion shadow(순위를 실제로 바꾸지 않고, "만약 반영했다면 어떻게 바뀌었을지"만 계산·로그) → ③ soft demotion 실제 반영 → ④(그 이후 판단) hard exclusion 검토.**
+
+②를 건너뛰고 바로 ③으로 가면, "정렬이 실제로 바뀐 뒤에야" 오탐 여부를 알 수 있다 — 이미 `core_cap=12`가 실질적 절단을 한다는 게 확인된 이상 위험이 실재한다. ②는 코드로는 "A3 매칭 시 가상의 demotion tier를 적용했을 때 core_rank가 어떻게 달라지는지"를 계산해 로그/diagnostics에만 남기고, 실제 정렬 키 계산에는 아직 반영하지 않는 단계다 — shadow 구현 때 이미 확립한 "관측 먼저" 원칙을 정렬에도 그대로 적용한다.
+
+### 사용자 기대 방향에 대한 검토
+
+사용자가 제시한 방향(`priority` 불변, 다른 source_type 불가침, core 내부 보조 정렬 키만 추가, A3 강하게/A5 약하게, rank 조정 영향 관측부터 시작)은 **`_core_signal_sort_rank()`의 실제 코드 구조와 정확히 일치하며 반박 근거를 찾지 못했다.** 다만 한 가지는 더 보수적으로 조정을 권한다 — "A5도 약한 페널티로 반영"보다는 **A5는 이번 단계에서 아직 반영하지 않는(관측만 유지) 쪽이 더 안전**하다. 이유: A5는 여전히 "병행 관찰 규칙"(1차 shadow 계측 시뮬레이션 결론)일 뿐, A3만큼 결함 없음이 반복 검증되지 않았고, `core_cap=12`가 실질적 절단을 한다는 사실이 확인된 이상 첫 반영 범위는 가장 신뢰도 높은 신호(A3) 하나로 좁히는 것이 맞다.
+
+### 권장 1차 설계안 요약
+
+- `universe_selection_types.py`에 `CORE_SIGNAL_TIER_DEMOTED = 3`(MISSING=2보다 나쁜 최하위)을 추가한다.
+- `_core_signal_tier()` 또는 `_core_signal_sort_rank()`의 `_key()`에서, 해당 심볼이 최근 shadow 판정(`matched_rules`에 `"A3"` 포함)이면 freshness tier 계산 결과를 무시하고 `CORE_SIGNAL_TIER_DEMOTED`를 반환한다.
+- A5 단독 매칭은 이번 단계에서 tier에 영향을 주지 않는다(계속 관측만).
+- 같은 tier 안에서는 기존과 동일하게 `-overall_score`, `symbol` 순으로 2차 정렬한다(demotion됐다고 완전히 무작위가 아니라, 그 안에서도 신호 좋은 종목이 우선한다).
+- `priority`, 다른 source_type의 정렬/포함은 전혀 건드리지 않는다.
+
+### hard exclusion과의 경계
+
+soft demotion은 **"유니버스에서 빼는 것"이 아니라 "core 내부에서 뒤로 보내는 것"**이다 — `core_cap`이 헐거우면(그날 core 후보가 12개 미만이면) demotion되어도 여전히 포함된다. hard exclusion(완전 배제, cap과 무관하게 항상 빠짐)은 이번 설계 범위가 아니며, soft demotion을 충분히 관측한 뒤(②③ 단계를 거친 뒤) 별도로 재검토해야 한다.
+
+### 아직 결정 유보가 필요한 항목
+
+- `CORE_SIGNAL_TIER_DEMOTED`를 MISSING(2)보다 나쁘게 둘지, STALE과 MISSING 사이에 둘지 — 이번 문서는 "MISSING보다 나쁨"을 권장했지만, 이는 "확인된 반복 실패가 데이터 결측보다 더 나쁜 신호"라는 판단 하나의 근거일 뿐 — soft demotion shadow(②) 단계에서 실제 순위 변화를 보고 재확인할 수 있다.
+- A5를 언제 A3와 함께(또는 A3보다 약하게) 반영할지 — 이번 문서는 "아직 아니다"로 결론냈다.
+- soft demotion shadow(②) 단계의 관측 기간을 얼마나 둘지(예: 1~2주) — 다음 턴에서 구체화한다.
+
 ## 해석 기준
 
 - `low_average_volume` 또는 `low_turnover` 비중이 높으면 universe 사전 필터 강화 후보로 본다.
