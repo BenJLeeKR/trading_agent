@@ -292,9 +292,52 @@
 - `decision_factory.py`는 별도 조달 없이 `decision_orchestrator`의 결과를 재사용한다.
 - universe selection과 decision/eligibility 두 경로 모두 같은 테이블·같은 timeframe·같은 최신-1건 로직을 쓰지만, 동시각 tie-break 처리가 다르다(배치 경로만 있음).
 
-**아직 미확인인 부분**
-- 실제 운영 데이터에서 같은 instrument·같은 `timeframe`에 `snapshot_at`이 완전히 동일한 중복 행이 실제로 존재하는지는 이번 조사에서 DB를 조회하지 않아 확인하지 않았다(코드 구조상 가능성만 확인).
-- 하루 중 두 조회 사이(freeze materialize 시점과 이후 decision 사이클들 사이)에 실제로 새 배치가 끼어드는 사례가 있었는지도 이번 조사 범위에서 실측하지 않았다.
+**아직 미확인인 부분(§11에서 일부 실측으로 보완)**
+- 실제 운영 데이터에서 같은 instrument·같은 `timeframe`에 `snapshot_at`이 완전히 동일한 중복 행이 실제로 존재하는지 — §11에서 최근 10영업일 실측으로 확인(결과: 관측된 사례 없음).
+- 하루 중 두 조회 사이(freeze materialize 시점과 이후 decision 사이클들 사이)에 실제로 새 배치가 끼어드는 사례가 있었는지 — §11 실측 범위 안에서는 관측되지 않았다(대표성 한계는 §11 참고).
+
+## 11. 앞단/뒤단 `signal_feature_snapshot_id` 정합도 실측(2026-08-07 KST)
+
+§10이 "구조적으로는 같은 row일 가능성이 높지만 단정할 수 없다"고 정리한 것을, 최근 10영업일 실제 운영 데이터로 **계량 실측**했다. **코드 변경 없음** — 새 read-only 분석 스크립트 `scripts/analysis/measure_signal_feature_snapshot_alignment.py`를 추가했다.
+
+### 실측 방법
+
+- 앞단(universe selection) snapshot은 **재구성값**이다 — compose 시점에 실제로 무엇을 봤는지는 DB에 저장되지 않으므로(`_core_signal_score_cache`는 메모리에만 존재), 그 거래일의 `universe_freeze_runs.frozen_at`(freeze materialize 시각, `freeze_purpose='decision_loop_intraday'`)을 as-of 커트오프로 써서 `signal_feature_snapshots`를 `snapshot_at <= frozen_at, ORDER BY snapshot_at DESC, signal_feature_snapshot_id DESC LIMIT 1`로 재조회했다 — universe selection의 원본 쿼리와 동일한 정렬·tie-break 기준을 그대로 쓰되 시점만 과거로 고정한 것이다.
+- 뒤단(decision/eligibility) snapshot은 **실제 영속화된 값**이다 — `trading.decision_contexts.signal_feature_snapshot_id` 컬럼에서 직접 읽었다(재구성 아님).
+- 매칭 키: 같은 거래일(business_date) × 같은 종목(symbol, `source_type='core'`). 그 거래일 그 종목의 모든 decision이 가리키는 `signal_feature_snapshot_id`를 집합으로 모아, 앞단 재구성값이 그 집합 안에 있으면 "일치"로 판정했다.
+
+### 실행
+
+- 컨테이너: `agent_trading-app-1`
+- 짧은 범위(2일) 검증 명령: `python3 scripts/analysis/measure_signal_feature_snapshot_alignment.py --date-from 2026-08-05 --date-to 2026-08-06 --account-alias 'Entrypoint Paper' --output-json /tmp/uag_alignment/short_result.json` → 24건 비교, 100% 일치. 스크립트 자체의 동작을 먼저 작은 범위로 확인한 뒤 본 실측으로 확장했다.
+- 본 실측(최근 10영업일) 명령: `python3 scripts/analysis/measure_signal_feature_snapshot_alignment.py --date-from 2026-07-24 --date-to 2026-08-06 --account-alias 'Entrypoint Paper' --output-json /tmp/uag_alignment/result_10d.json`
+
+### 결과
+
+- 거래일별 freeze anchor 10건, 종목×거래일 비교 **164건**(일별 12~30건, core 유니버스 일일 규모와 일치).
+- **일치 164건 / 불일치 0건 — 일치율 100.0%(164/164).**
+- "snapshot_at은 같고 id만 다른" tie-break 실증 사례: **0건**.
+- "앞단만 있음"/"뒤단만 있음"/"둘 다 없음" 같은 결측 불일치도 **0건**.
+- 반복 불일치 종목: 불일치 자체가 없어 해당 없음.
+
+### 불일치 유형별 분포
+
+이번 10영업일 표본에서는 불일치가 전혀 관측되지 않았다 — 따라서 "타이밍 차이 vs tie-break 차이" 같은 유형 분류를 적용할 대상 자체가 없었다. 이는 유형 분포가 "0"이라는 실측 결과이지, 분류 로직 자체가 작동하지 않았다는 뜻이 아니다(짧은 범위 검증에서도 로직은 정상 동작했다).
+
+### 판단(보수적)
+
+**이번 10영업일·1개 계정 표본에서는 앞단/뒤단 불일치가 아주 드문 예외조차 아니라 "전혀 없었다."** 이는 §10이 우려한 시나리오(배치 재적재로 인한 타이밍 차이, 동시각 중복행으로 인한 tie-break 차이)가 이 표본 안에서는 실제로 발생하지 않았다는 뜻이다. 가능한 설명(추정, 미검증): `timeframe='1d'` 배치가 통상 장 마감 후 하루 1회만 적재되고(이전 세션 메모리 기준 약 20:10 KST 전후로 추정), freeze materialize(오전)와 그날의 모든 decision이 그 사이 시간대에 몰려 있다면, 다음 배치가 오기 전까지는 앞단이 보는 "그 시각 기준 최신"과 뒤단이 보는 "실행 시점 최신"이 물리적으로 같은 단 하나의 행일 수밖에 없다 — 그러나 이 설명 자체를 이번 실측에서 재검증하지는 않았다(배치 스케줄 자체를 이번 턴에서 조회하지 않았다).
+
+### 이번 실측이 근거로 삼기에 충분한가
+
+**`freshness tier` 로직을 수정해야 한다는 근거는 이번 실측에서 나오지 않았다.** 오히려 반대 방향의 근거(불일치가 관측되지 않음)가 나왔다. 다만 **이 결과를 "완전히 안전하다"는 결론으로 과장해서도 안 된다** — 아래 대표성 한계가 있다.
+
+### 실측 결과의 대표성 한계
+
+- **표본 기간이 짧다**: 10영업일, 1개 계정(`Entrypoint Paper`)뿐이다. 배치 재적재나 정정이 드물게만 발생하는 이벤트라면, 10일 표본에 우연히 포함되지 않았을 수 있다.
+- **freeze anchor 재구성 자체의 한계**: `frozen_at`을 as-of 커트오프로 쓰는 것은 "그 시각에 앞단이 봤을 값"의 **근사**다 — 실제 `_prime_core_signal_score_cache()` 호출이 `frozen_at`과 정확히 같은 순간에 실행됐는지, 아니면 그 전후로 약간의 시차가 있었는지는 확인하지 않았다. 이 시차 안에서 배치가 끼어들었다면 이 스크립트는 그 차이를 놓칠 수 있다.
+- **core source_type만 봤다**: 이번 실측은 `source_type='core'`만 비교했다. `event_overlay`/`market_overlay` 등 다른 source_type에 대한 정합도는 이번 범위 밖이다.
+- **"뒤단 값"도 decision_context 단위 집계다**: 같은 거래일·같은 종목에 여러 decision이 있으면 그 decision들이 가리키는 `signal_feature_snapshot_id`를 집합으로 모아 비교했다 — 만약 하루 안에서 뒤단 자체가 서로 다른 snapshot_id를 쓰는 경우(그 자체로 흥미로운 현상)가 있었다면 이번 표본에서는 관측되지 않았다는 뜻이지, 그런 경우가 원천적으로 불가능하다는 뜻은 아니다.
 
 ## 다음 단계 제안
 
