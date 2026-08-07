@@ -2632,6 +2632,41 @@ class TestCoreRankingModeSignalScore:
         # snapshot 보유 2종목이 먼저(동점이라 사전순), 미보유 2종목이 뒤(사전순).
         assert core == ["000007", "000008", "000001", "000002"]
 
+    def test_demoted_symbols_sort_below_missing_regardless_of_score(self) -> None:
+        """UNIV-5 soft demotion(2026-08-07): demoted_symbols에 있으면 최고
+        점수라도 MISSING보다 더 아래로 밀린다. 빈 집합(기본값)이면 이전과
+        100% 동일하게 동작한다(회귀 방지)."""
+        repos = build_in_memory_repositories()
+        svc = UniverseSelectionService(repos)
+        svc._core_signal_score_cache = {
+            "000001": (0.90, NOW),  # 최고 점수지만 demoted 대상
+            "000002": (0.50, NOW),  # snapshot 보유, demoted 아님
+            # "000003"은 snapshot 없음(MISSING)
+        }
+        candidates = [
+            SelectedSymbol(symbol="000001", market="KRX", source_type=SourceType.CORE),
+            SelectedSymbol(symbol="000002", market="KRX", source_type=SourceType.CORE),
+            SelectedSymbol(symbol="000003", market="KRX", source_type=SourceType.CORE),
+        ]
+
+        # demoted_symbols가 비어 있으면 기존 동작과 동일 — 점수순.
+        rank_no_demotion = svc._core_signal_sort_rank(candidates)
+        assert sorted(rank_no_demotion, key=rank_no_demotion.get) == [
+            "000001",
+            "000002",
+            "000003",
+        ]
+
+        # "000001"을 demote하면, 최고 점수임에도 MISSING("000003")보다도 뒤로 간다.
+        rank_with_demotion = svc._core_signal_sort_rank(
+            candidates, demoted_symbols=frozenset({"000001"})
+        )
+        assert sorted(rank_with_demotion, key=rank_with_demotion.get) == [
+            "000002",
+            "000003",
+            "000001",
+        ]
+
 
 class TestCoverageModeAndFreshnessGuard:
     """SPPV-2.151 / S5 — 생성 모집단 정렬(coverage 모드) + freshness guard.

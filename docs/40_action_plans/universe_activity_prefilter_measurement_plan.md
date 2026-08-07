@@ -704,6 +704,40 @@ soft demotion은 **"유니버스에서 빼는 것"이 아니라 "core 내부에�
 - A5를 언제 A3와 함께(또는 A3보다 약하게) 반영할지 — 이번 문서는 "아직 아니다"로 결론냈다.
 - soft demotion shadow(②) 단계의 관측 기간을 얼마나 둘지(예: 1~2주) — 다음 턴에서 구체화한다.
 
+## `core` soft demotion 실제 구현(2026-08-07 KST)
+
+위 설계안을 실제 운영 코드에 반영했다. **hard exclusion이 아니다** — `core` seed 자격은 그대로 유지되고, `core` 내부 정렬 tier만 조정된다. Step ②(soft demotion shadow, 순위 계산만 하고 반영하지 않는 중간 단계)는 건너뛰고 곧바로 A3 반영으로 진행했다 — 이유는 A3가 이미 shadow-only 관측(PR #178)과 시뮬레이션(PR #174) 두 단계 모두에서 결함 없음이 확인됐고, `_core_signal_sort_rank()`가 이미 "계층으로 하향" 계약을 갖고 있어 새 tier 추가가 기존 메커니즘을 그대로 재사용하는 최소 변경이었기 때문이다.
+
+### 무엇이 바뀌었는가
+
+- `universe_selection_types.py`: `CORE_SIGNAL_TIER_DEMOTED = 3`(MISSING=2보다 나쁜 최하위 tier) 추가. `CoreActivityDemotionShadowSignal`에 `demotion_applied: bool`, `assigned_tier: int | None` 필드 추가.
+- `universe_selection.py`:
+  - `_core_signal_sort_rank()`에 `demoted_symbols: frozenset[str] = frozenset()` 파라미터를 추가 — 이 집합에 속한 심볼은 freshness tier 계산과 무관하게 `CORE_SIGNAL_TIER_DEMOTED`를 부여받는다(같은 tier 안에서는 여전히 `overall_score` 내림차순 2차 정렬). 빈 집합(기본값)이면 이전과 100% 동일하다.
+  - `_evaluate_core_activity_demotion_shadow()`가 만드는 각 신호에 `demotion_applied = "A3" in matched_rules`, `assigned_tier = DEMOTED if demotion_applied else None`를 채운다.
+  - Step 8 정렬 호출부가 Step 6.5에서 **이미 계산된** `demotion_signals`에서 `demotion_applied=True`인 심볼만 뽑아 `_core_signal_sort_rank(..., demoted_symbols=...)`로 넘긴다 — 같은 판단(A3 매칭 여부)을 중복 계산하지 않고 shadow 관측과 soft demotion 반영이 동일한 단일 계산 결과를 공유한다.
+
+### A3만 반영하고 A5는 아직 반영하지 않는 이유
+
+A5(최근 5영업일 중 차단일수≥3, 비연속 허용)는 shadow 시뮬레이션에서 `001450`(경계선 변동형) 같은 케이스를 A3보다 더 자주 잡는 경향이 확인됐다 — A3는 "연속" 조건이라 우연한 산발적 차단에는 반응하지 않지만, A5는 반응할 수 있다. 첫 실제 반영은 오탐 위험이 가장 낮은 신호(A3) 하나로 좁히는 것이 계획 문서의 일관된 결론이다. `CoreActivityDemotionShadowSignal.matched_rules`에는 A5도 계속 기록되므로 관측은 끊기지 않는다.
+
+### 다른 source_type을 침범하지 않는 이유(코드 근거)
+
+- `demoted_symbols`는 `_core_signal_sort_rank()`의 `core_symbols`(이미 `source_type == CORE`로 필터링된 목록) 안에서만 참조된다.
+- Step 8 정렬 키 `core_rank.get(s.symbol, 0) if s.source_type == SourceType.CORE else 0`는 기존 코드 그대로 유지 — CORE가 아닌 심볼은 보조 키가 항상 `0`이라 이번 변경으로 전혀 영향받지 않는다.
+- `SelectedSymbol.priority`, `_apply_exclusions()`, `_apply_cap()`은 이번 구현에서 손대지 않았다.
+
+### soft demotion 실패 시 fallback
+
+- Step 6.5의 `try/except`가 그대로 유지되어, shadow 평가/이력 조회가 실패하면 `demotion_signals = ()`가 되고, 그 결과 `a3_demoted_symbols`도 빈 집합이 되어 **soft demotion 반영 자체가 자동으로 무효화되고 기존 정렬로 조용히 되돌아간다**(로그는 남는다). 별도의 추가 예외 처리를 두지 않았다 — 이미 있는 안전장치가 그대로 이 경로도 보호한다.
+
+### 검증
+
+- 신규 단위 테스트 추가(`tests/services/test_universe_selection.py::TestCoreRankingModeSignalScore::test_demoted_symbols_sort_below_missing_regardless_of_score`): `demoted_symbols`가 비어 있으면 기존 정렬과 동일하고, 특정 심볼을 demote하면 최고 점수라도 MISSING보다 뒤로 밀리는 것을 직접 확인. `tests/services/test_universe_selection.py` 전체 115개 통과.
+
+### 다음 단계
+
+운영 관측을 일정 기간(1~2주 권장, §soft demotion 설계안 참고) 쌓은 뒤, 실제로 얼마나 자주 A3 강등이 발생했는지, 강등된 심볼이 이후 어떻게 됐는지(회복/지속)를 확인하고 나서 **A5 반영 여부와 강도**를 재판단한다. hard exclusion은 이번 구현 이후에도 여전히 범위 밖이다.
+
 ## 해석 기준
 
 - `low_average_volume` 또는 `low_turnover` 비중이 높으면 universe 사전 필터 강화 후보로 본다.

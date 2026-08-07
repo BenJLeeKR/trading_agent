@@ -98,7 +98,15 @@ CORE_SIGNAL_TIER_STALE = 1
 """snapshot 보유하나 기준 일수 초과 — FRESH 뒤로 하향."""
 
 CORE_SIGNAL_TIER_MISSING = 2
-"""snapshot 없음 — 최하위."""
+"""snapshot 없음 — freshness 계층 중 최하위."""
+
+CORE_SIGNAL_TIER_DEMOTED = 3
+"""UNIV-5 soft demotion(2026-08-07): 최근 `eligibility_low_relative_activity`
+반복 차단 이력(규칙 A3, streak>=3)이 확인된 `core` 종목의 tier — MISSING보다
+더 아래로 내린다. freshness 문제(데이터 결측/오래됨)가 아니라 확인된 반복
+실패라는 더 강한 신호이기 때문이다. 완전 배제가 아니라 `core` 내부 정렬
+최하위일 뿐이며, `core_cap`이 헐거우면(그날 core 후보가 cap 미만이면)
+여전히 포함된다."""
 
 
 @dataclass(slots=True, frozen=True)
@@ -289,14 +297,19 @@ class MomentumShadowSignal:
 
 @dataclass(slots=True, frozen=True)
 class CoreActivityDemotionShadowSignal:
-    """UNIV-5: `core` 반복 활동성 부족 차단 shadow 강등(demotion) 후보 신호.
+    """UNIV-5: `core` 반복 활동성 부족 차단 강등(demotion) 후보 신호.
 
     ``docs/40_action_plans/universe_activity_prefilter_measurement_plan.md``의
-    "`core` 동적 강등 규칙 후보 shadow-only 시뮬레이션" 결과를 바탕으로,
-    최근 ``eligibility_low_relative_activity`` 반복 차단 이력이 규칙
-    A3(``streak>=3``) 또는 A5(``최근 5영업일 중 차단일수>=3``)에 해당하는
-    `core` 종목을 관측만 한다. **선정 결과(포함 여부/우선순위/source_type/
-    cap)에는 어떤 영향도 주지 않는다** — 순수 관측용 신호다.
+    "`core` 동적 강등 규칙 후보 shadow-only 시뮬레이션"/"soft demotion 설계안"
+    결과를 바탕으로, 최근 ``eligibility_low_relative_activity`` 반복 차단
+    이력이 규칙 A3(``streak>=3``) 또는 A5(``최근 5영업일 중 차단일수>=3``)에
+    해당하는 `core` 종목을 판정한다.
+
+    **[2026-08-07 soft demotion 반영]** A3 매칭 시(``demotion_applied=True``)
+    실제로 `core` 내부 정렬 tier가 ``CORE_SIGNAL_TIER_DEMOTED``로 내려간다
+    (완전 제외 아님 — 같은 `core` 안에서 뒤로 밀릴 뿐이다). A5 단독 매칭은
+    여전히 관측 전용이며 정렬에 영향을 주지 않는다. source_type/cap/priority
+    에는 어떤 영향도 주지 않는다.
     """
 
     symbol: str
@@ -317,7 +330,16 @@ class CoreActivityDemotionShadowSignal:
     """가장 최근에 차단이 확인된 거래일(ISO 날짜 문자열)."""
 
     evaluation_date: str
-    """이 shadow 판정을 계산한 기준일(compose 실행일, ISO 날짜 문자열)."""
+    """이 판정을 계산한 기준일(compose 실행일, ISO 날짜 문자열)."""
+
+    demotion_applied: bool = False
+    """``True``면 A3 매칭으로 실제 `core` 내부 정렬 tier가 내려갔다는 뜻이다.
+    A5 단독 매칭은 ``False``(관측만, 정렬 미반영)."""
+
+    assigned_tier: int | None = None
+    """``demotion_applied``가 ``True``일 때 부여된 tier 값
+    (``CORE_SIGNAL_TIER_DEMOTED``). ``False``면 ``None`` — 이 경우 해당
+    심볼은 기존 freshness tier(FRESH/STALE/MISSING) 계산을 그대로 따른다."""
 
 
 @dataclass(slots=True, frozen=True)
