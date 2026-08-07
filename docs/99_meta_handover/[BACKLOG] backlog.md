@@ -6378,3 +6378,47 @@ B축을 정밀 재분석했다. read-only(코드/DB 조회만, 문서 수정 외
   `068270`/`078930`)의 실제 forward return — 이번 조사 전체
   에서 **최초의 "매수 의도 유지" 사후 성과** 데이터가 된다.
 - 상세: `buy_path_variable_gate_matrix.md` §28.
+
+**[2026-08-08 KST 후속, B축 rule-level 원인 분해 + 재설계 후보안
+(A/B/C) 도출]** 위 판정("구조 재설계 후보")을 rule-level로
+더 좁혔다. read-only(코드/DB 조회만).
+
+- **guard 미개입 재확인**: `decision_orchestrator.py`의 5개
+  guard는 fire할 때 전용 `reason_codes`(`ai_override_gate` 등)
+  를 남기도록 코드가 구성돼 있는데, `downgraded` 전체의 `reason_
+  codes`에 이 guard 전용 코드가 **0건**이었다 — 100% FDC(AI
+  4단 체인) 자체 판단.
+- **핵심 발견 — `risk_tone`이 가장 강력한 단일 판별 변수**:
+  `primary_candidate=BUY_CANDIDATE` 사이클을 `risk_tone`으로
+  교차집계한 결과 `risk_off`에서 통과율 **11.7%**(82/702),
+  `risk_on`에서 **93.2%**(55/59) — `evidence_strength`(0%/
+  25.5%)보다도 더 결정적이다. `2026-08-03/05/06`은 100%
+  `risk_off`였고, `08-07`에 처음 2종목(`000240`/`068270`)이
+  `risk_on`으로 나타나 그 종목만 `matched`가 됐다 — 4거래일
+  연속 매수 의도 유지 0건(§28)의 실질적 원인일 가능성이 크다.
+- **코드 경로 확인**: `strategy_selection.py`(43행 부근)의
+  `if regime_label == "bearish_trend" or risk_tone == "risk_
+  off":` 분기가 원인이다 — `risk_tone=risk_off`이면 `regime_
+  label`(추세)이 `bullish_trend`여도 **예외 없이** 모멘텀 전략
+  (`swing_momentum`/`event_continuation`/`intraday_breakout`)
+  을 `allowed_strategies`에서 배제하고 방어적 전략만 허용한다.
+  이것이 `strategy_policy_mismatch`(226회) 태그의 근원으로
+  보인다.
+- **사후 성과 재인용**: 이 메커니즘으로 하향된 계산 가능 표본
+  (n=6, 전부 `risk_off`)의 T+1 평균 +1.29%·양수율 66.7%(§28) —
+  하향이 기대값을 개선했다는 근거가 아직 없다.
+- **재설계 후보안**: (A) 유지 — `evidence_strength`, 종목 특정
+  이벤트 신호(`event_conflict`/`legal_dispute`/`governance_
+  conflict`), `BUY_CANDIDATE` 임계값(①축, 범위 밖). (B) 완화
+  후보 — `strategy_selection.py`의 `risk_tone==risk_off` 단독
+  조건이 추세와 무관하게 모멘텀 전략을 전면 배제하는 것; `risk_
+  off`+`bullish_trend` 조합을 분리해 완화된 허용 목록을 검토.
+  (C) 제거 후보 — **이번 턴에서 특정하지 않음**(C축과 달리 단일
+  코드 지점이 아니라 AI 판단과 결합된 구조적 규칙이라, `matched`
+  사후 성과 없이는 근거 부족).
+- **`matched` T+1 재확인**: 3건 전부 `08-07`(금) 결정이라 다음
+  거래일(`08-10` 월)까지 여전히 계산 불가 — 거래일 미도래,
+  소스 문제 아님.
+- **코드 변경 없음**: 제안 설계는 근거(사후 성과)가 아직 n=6
+  으로 작아 이번 턴에서 착수하지 않았다.
+- 상세: `buy_path_variable_gate_matrix.md` §29.

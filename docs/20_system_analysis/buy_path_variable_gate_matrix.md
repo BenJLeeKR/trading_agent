@@ -5862,3 +5862,221 @@ BUY_CANDIDATE` 사이클만으로 재계산**: 기존 §22의 대표 라벨은
 4. 이 결과를 §20 D축(설계 변경 필요성) 판단과 §24의 완화 후보
    프레임에 계속 연결한다 — B축은 이제 "완화 후보(미확정)"보다
    한 단계 강한 "구조 재설계 후보"로 갱신됐다.
+
+## 29. B축(downstream 하향) rule-level 원인 분해와 재설계 후보안(2026-08-08 KST, read-only)
+
+**범위 고정**: 이번 절은 `downgraded`(매수 의도 하향)를 중심으로
+다룬다. `suppressed`(WATCH 기원)는 §28에서 이미 확인한 대로
+매수 의도와 무관해 이번 재설계 논의의 핵심 대상이 아니다 —
+같은 표에 참고로만 남긴다. `EV` 게이트(C축)는 이미 §27에서
+신규매수 hard block을 제거했으므로 이번 절의 대상이 아니다.
+
+### 29.1 `matched` 표본 T+1 재확인 — 여전히 계산 불가(사유 명시)
+
+1차 소스(`instrument_status_snapshots`) 최신 종가는 여전히
+`2026-08-06`, 대체 소스(`signal_feature_snapshots`)는 `2026-
+08-07 20:00 KST`까지다 — 08:07 KST 재확인 시점 기준 어제(§26,
+§28)와 동일하다. **`matched`(매수 의도 유지) 3건(`000240`/
+`068270`/`078930`)은 전부 `2026-08-07`(금) 결정이라, T+1에는
+**다음 거래일 종가**가 필요하다 — `2026-08-08`(토)/`2026-08-09`
+(일)은 거래일이 아니므로 다음 거래일은 `2026-08-10`(월)이다.
+**이것은 소스 미반영이나 데이터 공백이 아니라, 그 거래일 자체가
+아직 도래하지 않은 것**이다 — 억지로 보간하지 않는다.
+
+### 29.2 rule-level 원인 분해
+
+**Step 1 — 게이트/가드 개입 여부(코드 대조)**: `decision_
+orchestrator.py`의 guard 체인 5곳(`_check_held_position_sell_
+override`/`_check_source_policy_upgrade_guard`/`_check_watch_
+candidate_upgrade_guard`/`_check_buy_eligibility_upgrade_guard`/
+`_check_ai_buy_override_gate`)은 전부 fire할 때 `object.__
+setattr__(agent_bundle.composer_output, "decision_type", ...)`
+로 **`composer_output`을 직접 mutate**한다 — 즉 어느 guard든
+fire하면 흔적(guard 전용 `reason_codes`, 예: `ai_override_gate`/
+`ai_override_expected_value_blocked`)이 저장된 `reason_codes`에
+남아야 한다. `2026-08-03` 이후 `downgraded` 전체의 `reason_
+codes`를 전수 확인한 결과 **guard 전용 코드가 단 하나도
+없다** — 전부 AI(FDC/EI/AR 4단 체인)가 스스로 생성한 서술형
+태그(`event_overlay_negative_bias`/`high_volatility`/`risk_off`
+/`moderate_evidence`/`overbought`/`legal_dispute`/`governance_
+conflict`/`strategy_policy_mismatch`/`short_horizon` 등)뿐이다.
+**결론: `downgraded`는 orchestrator의 하드 가드가 아니라 FDC
+자신의 판단 결과다.**
+
+**Step 2 — 태그 빈도 분해(`2026-08-03`+ `downgraded` 전체,
+개별 토큰 기준)**:
+
+| 태그 | 빈도 |
+|---|---|
+| `high_volatility` | 448 |
+| `risk_off` | 250 |
+| `strategy_policy_mismatch` | 226 |
+| `event_conflict` | 200 |
+| `bullish_regime` | 129 |
+| `short_horizon` / `moderate_evidence` | 127 |
+| `event_overlay_positive` | 124 |
+| `rsi_overbought`/`overbought`/`overbought_rsi` | 168(합산) |
+| `legal_dispute`/`governance_conflict` | 93(합산, 이벤트 종목 특정) |
+
+**Step 3 — 가장 강력한 구조적 판별 변수를 찾다: `risk_tone`**.
+`deterministic_trigger.metadata.risk_tone`(구조적 필드, AI
+서술이 아니라 `market_regime.py`가 산출)을 `primary_candidate=
+BUY_CANDIDATE` 사이클로 교차집계한 결과:
+
+| `risk_tone` | `matched`(사이클) | `downgraded`(사이클) | 통과율 |
+|---|---|---|---|
+| `risk_off` | 82 | 620 | **11.7%**(82/702) |
+| `risk_on` | 55 | 4 | **93.2%**(55/59) |
+
+이는 `evidence_strength`(통과율 0%/25.5%, §28.1)나 `risk_
+opinion`보다 **훨씬 더 결정적인 판별력**이다. 날짜별로도
+`2026-08-03`/`08-05`/`08-06` 전체가 100% `risk_off`였고,
+`2026-08-07`에 처음으로 2개 종목(`000240`/`068270`)이 `risk_on`
+으로 나타나 그 종목들만 `matched`(매수 의도 유지)로 분류됐다 —
+**08-03~06 4거래일 연속 매수 의도 유지 0건(§28)의 실질적 원인은
+그 4일 내내 `risk_tone`이 단 한 번도 `risk_on`이 아니었기
+때문**일 가능성이 크다.
+
+**Step 4 — `risk_tone`이 하향을 만드는 코드 경로(구조적 확인)**:
+`strategy_selection.py`(43행 부근)를 코드 추적한 결과:
+
+```python
+if regime_label == "bearish_trend" or risk_tone == "risk_off":
+    preferred_strategy = "defensive_low_volatility_rotation"
+    allowed_strategies = (
+        "defensive_low_volatility_rotation",
+        "mean_reversion_bounce",
+    )
+```
+
+**이것이 핵심 구조적 규칙이다**: `risk_tone == "risk_off"`이면
+`regime_label`이 `bullish_trend`(상승 추세)여도 **무조건**
+모멘텀 계열 전략(`swing_momentum`/`event_continuation`/
+`intraday_breakout`)이 `allowed_strategies`에서 제외되고 방어적
+전략만 남는다. deterministic 레이어가 `bullish_trend` 국면에서
+강한 `BUY_CANDIDATE`를 냈더라도, `risk_tone=risk_off`가 동시에
+있으면 FDC에게 주어지는 "허용된 전략 목록"은 이미 방어적으로
+좁혀져 있다 — Step 2의 `strategy_policy_mismatch`(226회) 태그가
+바로 이 좁혀진 허용 목록과 deterministic의 매수 의도 사이의
+불일치를 가리키는 것으로 보인다. **AI의 "자유 판단"이라기보다,
+AI에게 주어지는 입력 자체(허용 전략 목록)가 이미 `risk_tone`
+하나로 결정되는 구조다.**
+
+**Step 5 — 이 하향이 기대값을 개선했는가(§28의 사후 성과
+재인용)**: `risk_tone=risk_off`로 하향된 계산 가능 표본(n=6,
+전부 `risk_off`)의 T+1 평균은 **+1.29%, 양수율 66.7%**(§28.2)
+— 하향이 실제로 나쁜 진입을 막았다는 근거가 나타나지 않았다.
+`risk_tone`이 이토록 강하게(88.3% 하향률) 신규 진입을 억제하는데
+그 억제가 실제 성과 개선으로 이어졌다는 근거가 아직 없다는
+조합이, 이번 rule-level 분해의 핵심 결론이다.
+
+**예외 사례(`078930`, 08-07, 오염도 49.1%)**: `risk_off`인데도
+거의 절반(29/57)이 통과했다 — `risk_tone=risk_off`가 하향을
+"결정"하는 것이 아니라 "강하게 편향"시키는 수준임을 보여주는
+반례다. 이 예외의 구체적 원인(다른 어떤 필드가 `078930`을
+`risk_off`에도 통과시켰는지)은 이번 절에서 추가 분해하지 않았다
+— 다음 착수 턴 과제로 남긴다.
+
+### 29.3 핵심 질문에 대한 답
+
+1. **`matched`가 실제로 더 좋았는지, `downgraded`가 더 좋았는지**:
+   **아직 말할 수 없다** — `matched`의 forward return이 08-10
+   (월)까지 전무하다. 말할 수 있는 것은 `downgraded`(n=6)의
+   사후 성과가 평균 양(+)이었다는 것뿐이다.
+2. **B축은 "정교한 교정"인가, "신규 진입 과도 억제"인가**: 현재
+   증거로는 후자에 더 가깝다 — `risk_off` 국면에서는 종목별
+   품질(deterministic `entry_score`, `evidence_strength`)과
+   거의 무관하게 88.3%가 획일적으로 하향되고, 그 하향된 표본의
+   사후 성과가 나쁘지 않았다.
+3. **어떤 규칙이 하향을 가장 많이 설명하는가**: `risk_tone`
+   (구조적 필드) 단독으로 통과율이 11.7%(`risk_off`) vs 93.2%
+   (`risk_on`)로 갈린다 — 이번 조사에서 확인된 **가장 강력한
+   단일 판별 변수**다. 그 메커니즘은 `strategy_selection.py`의
+   `risk_tone == "risk_off"` 분기가 `allowed_strategies`를
+   방어적으로 좁히는 것이다.
+4. **그 규칙에 기대수익률 개선 근거가 있는가**: 이번 데이터
+   (n=6)로는 **없다** — 오히려 반대 방향(양(+) 사후 성과)의
+   근거가 쌓였다. 다만 n=6은 정책 판단을 확정하기엔 작다.
+5. **`suppressed`와 `downgraded`를 같은 문제로 묶어도 되는가**:
+   **아니다** — `suppressed`는 `WATCH` 기원(매수 의도 없음)
+   이라 `risk_tone` 메커니즘과 무관하게 별도로 다뤄야 한다
+   (§28에서 이미 확정).
+
+### 29.4 B축 재설계 후보안(A 유지 / B 완화 / C 제거·축소)
+
+**(A) 유지 후보**
+
+| 항목 | 목적 | 현재 동작 | 근거 |
+|---|---|---|---|
+| `evidence_strength` 자체를 FDC 입력으로 유지 | 근거가 약한 매수 의도는 신중히 보라는 신호 | `weak`/`none`은 `matched` 0건(§28.1) | 실제 분류력이 확인됨 — 다만 "정당성"까지 확인된 건 아니라는 점은 §28.1의 구분을 유지 |
+| `event_conflict`/`legal_dispute`/`governance_conflict` 같은 종목 특정 이벤트 신호 | 구체적 기업 리스크(소송·지배구조 갈등 등) 반영 | 관측된 태그 조합에서 실제 사건 기반으로 보임 | 종목별 실질 리스크이므로 완화/제거 대상이 아니다 |
+| `BUY_CANDIDATE` 임계값(`entry_score>=0.65`, deterministic 레이어) | 애초에 후보 자체를 정하는 상류 기준 | 이번 절 범위 밖(①축, 별도 관리) | 이번 턴에서 재론하지 않는다 |
+
+**(B) 완화(soft demotion) 후보**
+
+| 항목 | 목적 | 현재 동작 | 문제점 | 기대 효과 | 부작용/리스크 | 착수 전 검증 |
+|---|---|---|---|---|---|---|
+| `strategy_selection.py`의 `risk_tone == "risk_off"` 단독 조건이 `allowed_strategies`를 방어적으로 전면 제한 | 리스크오프 국면에서 과도한 모멘텀 추종 억제(churn-control 본래 취지와 연결) | `regime_label`(추세 방향)과 무관하게 `risk_tone`만으로 모멘텀 전략을 전부 배제 | `bullish_trend`+`risk_off` 조합처럼 추세와 리스크 신호가 갈릴 때 **좋은 매수 의도까지 획일적으로 방어 모드로 강등** — 88.3% 하향률의 실질적 원인 후보 | `risk_off`가 실제로 유효한 경고일 때만 방어적으로 좁히고, `bullish_trend`처럼 추세가 반대 방향이면 완전 배제가 아니라 완화된 허용(예: 모멘텀 전략을 제외하지 않고 가중치만 낮추는 방식)으로 전환 | `risk_off`+`bullish_trend` 조합의 사후 성과가 실제로 `risk_off`+비-`bullish_trend` 조합보다 나은지 별도로 분해 필요(이번 턴 미착수) |
+| `strategy_policy_mismatch` 태그가 곧바로 강한 하향(WATCH/HOLD)으로 이어지는 현재 흐름 | 전략 정합성 확인 | 위 규칙의 결과로 나타나는 AI의 자기 서술 — 하향의 원인이자 결과 | 원인(전략 목록 제한)을 완화하지 않고 이 태그만 손보면 증상만 가리는 우회 처리가 된다 | 원인(위 항목) 완화가 선행돼야 함 | 위 항목과 함께 검토 |
+
+**(C) 제거·역할 축소 후보**
+
+이번 절에서는 **구체적으로 "이 요소를 제거하라"고 특정할 수
+있는 항목이 없다.** C축(EV 게이트)과 달리 B축은 단일 코드
+지점(hard gate)이 아니라 (1) `strategy_selection.py`의 구조적
+규칙과 (2) FDC(AI)의 그 규칙에 대한 반응이 결합된 결과이기
+때문이다. "제거"에 해당하는 조치가 있다면 `risk_tone ==
+"risk_off"` 조건 자체를 없애는 것이겠지만, 이는 §7~§10(보유
+후 churn 억제, 이미 부합 판정된 계층)과는 무관하게 **신규
+진입의 리스크 관리 자체를 없애는 것**이라 근거(현재 n=6)로는
+정당화되지 않는다. **이번 턴은 (C)를 공란으로 남기고, (B)의
+`risk_off`+`bullish_trend` 조합 분해가 끝난 뒤에만 (C) 논의를
+연다.**
+
+### 29.5 factual / 해석 / 미확정 / 제안 설계
+
+- **factual**: (1) `matched` 3건은 전부 `08-07` 결정이라
+  T+1에 `08-10`(월) 종가가 필요하다 — 소스 문제가 아니라 거래일
+  미도래. (2) `downgraded` 전체의 `reason_codes`에 orchestrator
+  guard 전용 코드가 0건 — 하드 가드가 아니라 FDC 자체 판단.
+  (3) `risk_tone`이 `primary_candidate=BUY_CANDIDATE` 통과율을
+  93.2%(`risk_on`)에서 11.7%(`risk_off`)로 가르는 가장 강력한
+  단일 판별 변수다. (4) 이 메커니즘의 코드 경로는 `strategy_
+  selection.py`의 `risk_tone == "risk_off"` 조건이며, `regime_
+  label`(추세)과 무관하게 작동한다. (5) `risk_off` 기반 하향
+  표본(n=6)의 T+1 사후 성과는 평균 +1.29%, 양수율 66.7%.
+- **해석**: `risk_tone` 단독으로 이 정도의 판별력(11.7%
+  vs 93.2%)을 갖는다는 것은, B축 하향이 "종목별 정교한 판단"
+  보다 "국면 하나로 획일적으로 결정되는 구조"에 가깝다는 뜻이다
+  — 이는 churn-control의 본래 목적(보유 후 매도/재매수 억제)
+  과도 결이 다르다. 다만 `risk_off` 자체가 "틀렸다"는 뜻은
+  아니다 — `risk_off`가 실제로 유효한 경고인 경우와, `bullish_
+  trend`처럼 추세 신호와 충돌하는 경우를 구분하지 못하고 있다는
+  것이 문제의 핵심이다.
+- **미확정**: (1) `risk_off`+`bullish_trend` 조합만 따로 뗀
+  사후 성과(이번 절은 `risk_tone` 단독으로만 분해했다). (2)
+  `078930`(예외 사례)이 `risk_off`인데도 절반 통과한 구체적
+  이유. (3) `matched` 표본의 실제 사후 성과(08-10 이후).
+  (4) `strategy_policy_mismatch` 태그가 `risk_tone`과 별개로
+  독립적인 설명력을 갖는지, 완전히 종속적인지.
+- **제안 설계(정책 결정 아님, 다음 착수 턴을 위한 재료)**:
+  `strategy_selection.py`의 `risk_tone == "risk_off"` 조건을
+  `regime_label == "bullish_trend"`와 결합해 세분화하는 방향을
+  제안한다(예: `risk_off`+`bullish_trend` 조합에서는 모멘텀
+  전략을 완전 배제하지 않고 완화된 허용 목록을 별도로 둠) — 다만
+  이번 턴에서 코드로 착수하지 않는다. 착수 전제는 이 조합의
+  사후 성과가 실제로 다른 `risk_off` 조합보다 나은지를 먼저
+  확인하는 것이다.
+
+### 29.6 후속 검증 연결
+
+1. `2026-08-10`(월) 이후 `matched` 3건(`000240`/`068270`/
+   `078930`)의 실제 forward return을 계산한다 — 이 조사 전체
+   최초의 "매수 의도 유지" 성과 데이터가 된다.
+2. `risk_off`+`bullish_trend` 조합과 `risk_off`+비-`bullish_
+   trend` 조합의 사후 성과를 분리해, §29.4(B)의 완화 후보 착수
+   여부를 판단한다.
+3. `078930` 예외 사례의 구체적 원인을 추가 분해한다.
+4. 이 결과를 §20 D축·§24·§28의 완화/재설계 판단에 계속
+   연결한다 — 이번 절은 원인을 더 좁혔을 뿐, 정책 판단 자체를
+   확정하지 않았다.
