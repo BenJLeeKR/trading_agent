@@ -218,9 +218,83 @@
 
 ### 아직 단정하지 않은 부분
 
-- `deterministic_trigger_engine.py`에 전달되는 `signal_feature_snapshot`을 실제 어느 호출부(`decision_factory.py`/`pre_ai_gate.py`/`signal_backbone.py` 등 후보)가 어떤 조회 경로(같은 `list_latest_by_instrument_ids`류의 "최신 1건" 조회인지, 결정 시점 as-of 조회인지)로 조달하는지는 호출 체인 끝까지 추적하지 못했다 — 따라서 "두 메커니즘이 물리적으로 같은 DB row를 참조하는지"는 확정하지 않는다.
+- **[2026-08-07 갱신]** `deterministic_trigger_engine.py`에 전달되는 `signal_feature_snapshot`의 실제 호출 체인은 §10에서 끝까지 추적해 해소했다 — `decision_orchestrator.py`가 유일한 호출부이며, `signal_feature_snapshots.get_latest_by_instrument()`(단건 조회)로 조달한다. universe selection의 배치 조회와 **같은 테이블·같은 timeframe·같은 "최신 1건" 선택 로직**을 쓰지만, 동시각 tie-break 방식이 다르고 두 조회가 실행되는 시각도 서로 다르다 — "물리적으로 항상 같은 row"라고 단정하지는 않는다(§10 참고).
 - `coverage_score < 0.35` 분기(exit 경로로 보이는 `deterministic_trigger_engine.py:1131`)가 정확히 어떤 조건에서 `< 0.50` 분기 대신 평가되는지는 이번 문서화 범위에서 완전히 추적하지 않았다.
 - "0.50 하드 게이트 통과 population에서 coverage_score가 예외 없이 1.0"이라는 SPPV-2.137 인용은 코드 주석을 그대로 옮긴 것이며, 이 문서 작성 시점에 재실측하지 않았다.
+
+## 10. `signal_feature_snapshot` 조달 경로 추적(2026-08-07 KST 문서 보강)
+
+§9가 "아직 단정하지 않은 부분"으로 남긴 질문 — freshness tier와 feature coverage가 **물리적으로 같은 DB row를 보는지** — 를 실제 호출 체인을 끝까지 따라가 확인했다. **코드 변경 없음 — read-only 조사·문서 보강이다.**
+
+### universe selection 경로 (freshness tier)
+
+1. `scripts/run_decision_loop.py`가 `UniverseSelectionService.compose(ctx)`를 호출 — `core_ranking_mode=CORE_RANKING_MODE_SIGNAL_SCORE`, `core_signal_freshness_max_age_days=5`.
+2. `compose_with_diagnostics()`의 Step 1(`_add_core_universe`) 실행 도중 `_prime_core_signal_score_cache(instruments)`(`universe_selection.py:811-843`)가 core 후보 **전체**의 `instrument_id`를 모아 **한 번의 배치 조회**로 호출한다.
+3. 실제 repository 호출: `self._repos.signal_feature_snapshots.list_latest_by_instrument_ids(instrument_ids, timeframe="1d")`(기본값). Postgres 구현(`repositories/postgres/signal_feature_snapshots.py:130-`)은:
+   ```sql
+   SELECT DISTINCT ON (instrument_id) *
+   FROM trading.signal_feature_snapshots
+   WHERE instrument_id = ANY($1::uuid[]) AND timeframe = $2
+   ORDER BY instrument_id, snapshot_at DESC, signal_feature_snapshot_id DESC
+   ```
+   instrument_id별 **최신 1건**을 뽑되, `snapshot_at`이 완전히 동일한 행이 여러 개 있으면 `signal_feature_snapshot_id DESC`로 tie-break한다.
+4. 이 조회는 **compose 1회 호출당 1번**(하루 중 freeze materialize 시점 등, compose가 실제로 실행될 때마다) 일어나고, 그 결과(`overall_score`, `snapshot_at`만 추출)가 `self._core_signal_score_cache`에 캐시된 뒤 `_core_signal_sort_rank()`가 재사용한다.
+
+### decision / eligibility 경로 (feature coverage)
+
+1. `assess_deterministic_triggers()`(`deterministic_trigger_engine.py:72`)의 **유일한 실제 호출부**는 `decision_orchestrator.py:1164`다(grep으로 다른 호출부 없음을 확인).
+2. 그 직전 `decision_orchestrator.py`의 `_derive_deterministic_context_components()`(`decision_orchestrator.py:1114-`)가 `signal_feature_snapshot`을 준비한다:
+   - `instrument`가 이미 있으면 그대로 쓰고, 없으면 `self._repos.instruments.get_by_symbol(symbol, market_code)`로 조회.
+   - 실제 repository 호출: `self._repos.signal_feature_snapshots.get_latest_by_instrument(instrument_for_signal.instrument_id)`(`decision_orchestrator.py:1140-1143`, `timeframe` 인자 생략 → 기본값 `"1d"`).
+   - Postgres 구현(`repositories/postgres/signal_feature_snapshots.py:98-111`):
+     ```sql
+     SELECT * FROM trading.signal_feature_snapshots
+     WHERE instrument_id = $1 AND timeframe = $2
+     ORDER BY snapshot_at DESC
+     LIMIT 1
+     ```
+     역시 **최신 1건**을 뽑지만, **`signal_feature_snapshot_id`로 tie-break하는 2차 정렬 키가 없다** — `snapshot_at`이 완전히 같은 행이 여러 개면 어느 행이 반환될지 이 쿼리만으로는 보장되지 않는다(Postgres가 임의의 한 행을 반환).
+3. 이 조회는 **decision(=symbol 평가) 1건마다** 개별적으로 실행된다 — universe selection처럼 배치로 한 번에 여러 종목을 모아 조회하지 않는다.
+4. `decision_factory.py`(`decision_factory.py:92-97`)는 이 결과를 다시 조회하지 않고, `decision_orchestrator`가 만든 `assembled_context.signal_feature_snapshot`(또는 `decision_context.signal_feature_snapshot_id`)을 그대로 재사용해 `signal_feature_snapshot_id`만 추출해 기록한다 — **decision_factory는 별도 조달 경로가 아니다.**
+
+### repository 호출 비교
+
+| | universe selection(freshness) | decision/eligibility(feature coverage) |
+|---|---|---|
+| repository 메서드 | `list_latest_by_instrument_ids`(배치, 복수 instrument) | `get_latest_by_instrument`(단건, instrument 1개) |
+| 구현 클래스 | `repositories/postgres/signal_feature_snapshots.py`(**같은 파일, 같은 클래스**) | 좌동 |
+| 대상 테이블 | `trading.signal_feature_snapshots` | 좌동(**동일 테이블**) |
+| `timeframe` | `"1d"`(기본값, 명시 전달) | `"1d"`(기본값, 생략) — **동일 값** |
+| 선택 기준 | instrument별 `snapshot_at DESC` 최신 1건 | 동일(instrument당 `snapshot_at DESC` 최신 1건) |
+| 동시각 tie-break | `signal_feature_snapshot_id DESC`로 결정론적 처리 | **tie-break 없음** — 동률이면 결과가 보장되지 않음 |
+| 호출 빈도/시점 | compose 1회당 배치 1번(하루 중 특정 시점, 예: freeze materialize) | decision 1건마다 개별 호출(하루 중 여러 번, 각 결정 시점) |
+| 조회 방식 | "최신 1건" — 결정 시점 as-of 아님(과거 시점 필터 없음) | 동일 — "최신 1건", as-of 필터 없음 |
+
+### 같은 row를 볼 가능성 / 다른 row를 볼 가능성
+
+- **구조적으로 같은 row를 볼 가능성이 높다.** 같은 테이블, 같은 repository 클래스, 같은 `timeframe="1d"`, 같은 "instrument당 최신 1건" 선택 로직을 쓴다. 하루 단위(`timeframe="1d"`) 배치가 통상 하루 한 번만 적재된다면(이전 세션의 실측에서도 같은 날 반복 평가 시 `volume_surge_ratio`/`turnover_surge_ratio` 값이 완전히 동일하게 관측됨 — §core 반복 차단 분석 참고), 두 조회는 대부분의 경우 동일한 `signal_feature_snapshot_id`를 반환할 것으로 보인다.
+- **그러나 "항상 같은 row"라고 단정하지는 않는다.** 두 가지 이유가 있다: (1) 두 조회는 **서로 다른 시각에 독립적으로 실행되는 별개의 쿼리**다 — universe selection은 compose 시점(예: 아침 freeze materialize)에 한 번, decision 평가는 그날 여러 decision 사이클마다 각각 실행된다. 그 사이에 새 배치 적재(재처리, 정정 등)가 발생하면 서로 다른 `snapshot_at`/`signal_feature_snapshot_id`를 볼 수 있다. (2) 동일 `snapshot_at`을 가진 행이 실제로 여러 개 존재하는 경우(재시도로 인한 중복 적재 등), 배치 경로는 `signal_feature_snapshot_id DESC`로 결정론적으로 정해지지만 **단건 경로는 tie-break 키가 없어 다른 행이 선택될 수 있다** — 이 시나리오가 실제로 발생하는지는 이번 조사에서 실측하지 않았다(코드 구조상 가능성만 확인).
+
+### freshness tier와 feature coverage가 참조하는 값의 출처
+
+- freshness tier의 `overall_score`/`snapshot_at`과 feature coverage의 `overall_score`/`fast_score`/`slow_score`는 — **위에서 확인한 두 개의 서로 다른 조회 경로 각각의 결과 객체**에서 나온다. 즉 **같은 snapshot object(같은 Python 인스턴스)를 공유하는 것이 아니라, 각자 별도로 조회한 `SignalFeatureSnapshotEntity` 인스턴스**에서 값을 읽는다 — 위 근거대로 그 두 인스턴스가 (대체로) 같은 DB row를 표현할 가능성이 높다는 것이지, 코드가 하나의 객체를 재사용하는 구조는 아니다.
+
+### 질문 7·8에 대한 판정
+
+- **freshness는 배치 조회 캐시 기반, eligibility는 decision별 개별 조달 — 확인된 사실이다.** (`list_latest_by_instrument_ids` 1회 배치 vs `get_latest_by_instrument` 개별 호출, 위 표 참고)
+- **"같은 데이터를 다르게 해석한다" vs "조달 경로 자체가 다르다" 중 어느 쪽에 가까운가**: **보수적으로 결론 내리면 "조달 경로(코드 경로·호출 시점·호출 빈도)는 명확히 다르지만, 결과적으로 대체로 같은 물리적 데이터를 가리킬 가능성이 높은 구조"다.** 두 경로 모두 같은 테이블·같은 timeframe·같은 "최신 1건" 개념을 쓴다는 점에서 "완전히 독립된 두 데이터 소스"라고 보기는 어렵지만, 그렇다고 "하나의 조회 결과를 공유해서 쓴다"고 보기도 어렵다 — **경로는 두 개, 결과는 대부분 같은 데이터를 가리킬 것으로 추정되는 구조**로 정리한다.
+
+### 현재까지 확인된 사실 vs 아직 미확인인 부분
+
+**확인된 사실(호출 체인 직접 추적)**
+- `assess_deterministic_triggers()`의 유일한 실제 호출부는 `decision_orchestrator.py`다.
+- `decision_orchestrator.py`가 `signal_feature_snapshots.get_latest_by_instrument()`로 단건 조회해 `signal_feature_snapshot`을 준비한다.
+- `decision_factory.py`는 별도 조달 없이 `decision_orchestrator`의 결과를 재사용한다.
+- universe selection과 decision/eligibility 두 경로 모두 같은 테이블·같은 timeframe·같은 최신-1건 로직을 쓰지만, 동시각 tie-break 처리가 다르다(배치 경로만 있음).
+
+**아직 미확인인 부분**
+- 실제 운영 데이터에서 같은 instrument·같은 `timeframe`에 `snapshot_at`이 완전히 동일한 중복 행이 실제로 존재하는지는 이번 조사에서 DB를 조회하지 않아 확인하지 않았다(코드 구조상 가능성만 확인).
+- 하루 중 두 조회 사이(freeze materialize 시점과 이후 decision 사이클들 사이)에 실제로 새 배치가 끼어드는 사례가 있었는지도 이번 조사 범위에서 실측하지 않았다.
 
 ## 다음 단계 제안
 
