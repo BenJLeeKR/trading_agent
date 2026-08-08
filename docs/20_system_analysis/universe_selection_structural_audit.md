@@ -471,6 +471,98 @@
 - `ops-scheduler` 컨테이너가 언제 마지막으로 (재)생성됐는지, 그 시점이 `docker-compose.yml`의 현재 선언과 일치하는 이미지/설정으로 떠 있는지는 이번 조사에서 별도로 확인하지 않았다(단, 키 존재 자체는 실측으로 확인했으므로 이 부분이 결론에 영향을 주지는 않는다).
 - `agent_trading-app-1`이 왜 `tail -f /dev/null`로만 떠 있는지(의도된 설계인지, 다른 목적의 유틸리티 컨테이너인지)는 이번 조사 범위 밖이라 확정하지 않았다 — `scripts/harness/README.md`/`docs/80_harness_engineering/`에서 관련 근거를 찾지 못했다(문서 두 곳을 훑었으나 이 컨테이너의 존재 목적을 명시한 문구를 발견하지 못했다 — 문서 부재일 수도, 조사 범위 부족일 수도 있어 단정하지 않는다).
 
+## 14. `APPLY_CORE_RISK_OFF_TOPK`의 BUY 차단 경로/downstream 영향(2026-08-07 KST)
+
+이번 절은 §13이 "존재를 확인했다"에서 멈춘 것을 이어받아, **이 값이 실제로 BUY 차단 경로와 그 뒤(downstream)의 최종 결정에 영향을 주는지**를 코드 인과 체인 + read-only 실측으로 확인한다. **코드/설정/컨테이너 변경 없음. env 값은 어디에도 인용하지 않는다(존재 여부·실측 결과만 기술).**
+
+**용어 확인**: 코드/문서 어디에도 리터럴 `"downstream"`이라는 필드명은 없다. 이 절에서 "downstream"은 사용자 표현을 그대로 따르되, 코드에서 실제로 발견한 개념 — `decision_orchestrator.py`의 `_check_ai_buy_override_gate()`(로그 태그 `[ai_override_gate]`) 등, **FDC(`FinalDecisionComposerAgent`)가 결정을 내린 뒤 그 결정을 다시 검사·강등할 수 있는 후속 단계** — 로 해석했다. 이 해석 자체가 사용자의 의도와 다를 수 있다는 점을 명시한다.
+
+### 코드 읽기 위치와 분기
+
+1. `scripts/run_decision_loop.py:324-326`: `_APPLY_CORE_RISK_OFF_TOPK`가 `_build_core_risk_off_apply_overrides_for_cycle()`(§13)의 실행 여부를 켠다/끈다. 꺼져 있으면 그 cycle의 `deterministic_trigger_override`에 `core_risk_off_topk_v1` 키가 전혀 만들어지지 않는다.
+2. `deterministic_trigger_engine.py`의 `assess_deterministic_triggers()` 진입부에서 `core_risk_off_topk_override = _normalize_core_risk_off_topk_override(deterministic_trigger_override)` — override가 없으면 빈 dict.
+3. `apply_topk_override_selected = bool(core_risk_off_topk_override.get("selected"))`가 `_assess_core_risk_off_buy_guard(apply_topk_override_selected=...)`에 전달된다(`:241-244`).
+
+### authoritative guard 영향 범위 — 정확히 어느 단계가 바뀌는가
+
+`_assess_core_risk_off_buy_guard()`(`:620-701`) 안에서 `apply_topk_override_selected`가 바꾸는 것은 정확히 두 곳이다:
+
+- **활동성 최소 기준**: `required_activity_min = _CORE_RISK_OFF_SHADOW_ACTIVITY_MIN if apply_topk_override_selected else 1.20` — override가 선택되면 더 낮은(완화된) 기준을 쓴다.
+- **ranking score 하한 우회**: `authoritative_entry_gate_score < _CORE_RISK_OFF_RANKING_MIN_SCORE`일 때, override가 없으면 즉시 차단(`eligibility_core_risk_off_ranking_blocked`)하지만, **override가 선택돼 있으면 차단하지 않고 통과시킨다**(`eligibility_core_risk_off_topk_override_pass` + `eligibility_core_risk_off_shadow_rank_promoted`).
+
+신호 품질(overall/slow) 체크와 전략 체크(strategy)는 override와 무관하게 그대로 적용된다 — override는 ranking/activity 두 지점만 완화한다.
+
+### 그 영향이 실제 BUY pass/block에 반영되는가 — 직접 인과 체인(코드 추적으로 확정)
+
+이 함수의 반환값(`risk_off_exception_eligible`, `core_risk_off_guard_reasons`)은 곧바로 `_assess_buy_eligibility()`에 전달되어 **`eligibility_passed`를 직접 결정**한다(`:225-238`). 그리고 `eligibility_passed`는 `buy_candidate` 산정의 **필수 선행 조건**이다:
+
+```python
+# deterministic_trigger_engine.py:279-284
+if (
+    eligibility_passed
+    and entry_score >= thresholds["buy_candidate_threshold"]
+    and (regime_switch_v1_gate_assessment is None or ...gate_open)
+):
+    buy_candidate = True
+```
+
+즉 `apply_topk_override_selected` → `eligibility_passed` → `buy_candidate` — **직접 인과 체인이다(간접 영향이나 단순 metadata 변화가 아니다).**
+
+### downstream(FDC 이후) 반영 방식
+
+`decision_orchestrator.py`의 `_check_ai_buy_override_gate()`(약 `:559-` 이후, 로그 태그 `[ai_override_gate]`)는 FDC가 `APPROVE`/`BUY`를 결정했더라도 `deterministic_trigger.buy_candidate`가 `False`면 그 결정을 강등(downgrade)한다:
+
+```python
+# decision_orchestrator.py 발췌(요지)
+if bool(getattr(deterministic_trigger, "buy_candidate", False)):
+    return None  # 강등 없음 — FDC 결정 유지
+# buy_candidate=False면 이 아래에서 downgrade_decision(WATCH/HOLD)으로 강등
+```
+
+**즉 `apply_topk_override_selected`가 `True`가 되어 `buy_candidate`가 `True`로 바뀌면, `_check_ai_buy_override_gate`가 FDC의 BUY/APPROVE 결정을 강등하지 않고 그대로 통과시킨다. 반대로 override가 없어 `buy_candidate=False`면 FDC가 BUY라고 판단했어도 WATCH/HOLD로 강등된다.** 이는 단순 metadata 변화가 아니라 **최종 결정(decision_type) 자체를 바꾸는 직접 영향**이다.
+
+이 전체 메커니즘은 **`core_risk_off_guard_active=True`일 때만** 작동한다 — 즉 `source_type=='core'`이고 `market_regime.risk_tone=='risk_off'`이고 `market_regime.regime_label=='bearish_trend'`일 때만 관여한다. **`risk_tone`이 `risk_off`가 아닌 상태에서는 이 메커니즘 자체가 개입하지 않는다** — 사용자가 질문한 "risk_tone 관련 결과"와 정확히 이 조건에서만 연결된다.
+
+### `0` vs `1` 차이 요약(코드 기준)
+
+| | `=0`(또는 override 미선택) | `=1`이고 해당 심볼이 top-k로 선택됨 |
+|---|---|---|
+| 활동성 최소 기준 | `1.20`(엄격) | `_CORE_RISK_OFF_SHADOW_ACTIVITY_MIN`(완화) |
+| ranking score 하한 미달 시 | 즉시 차단 | 우회 통과(`topk_override_pass`) |
+| `eligibility_passed`(해당 조건 경계에서) | `False`가 될 수 있음 | `True`로 바뀔 수 있음 |
+| `buy_candidate` | `eligibility_passed=False`면 항상 `False` | `eligibility_passed=True`이고 entry_score 충족 시 `True` 가능 |
+| FDC 이후 `_check_ai_buy_override_gate` | `buy_candidate=False`면 FDC의 BUY를 WATCH/HOLD로 강등 | `buy_candidate=True`면 강등 없이 FDC 결정 유지 |
+
+### read-only 실측 — 실제로 이 경로가 발동한 적이 있는가
+
+컨테이너 `agent_trading-app-1`에서 `trading.trade_decisions`를 read-only로 조회했다(`source_type='core'`, `2026-07-24` 이후, `env 값은 조회하지 않음`):
+
+- `core_risk_off_guard_active=True`(risk_off 레짐이 실제로 활성이었던 decision) 건수: **4044건**
+- 이 중 `core_risk_off_experiment.shadow_topk_candidate=True`(top-k 후보 자체가 될 자격이 있었던 건): **0건**
+- `apply_selected=True`(override가 실제로 선택된 건): **0건**
+- `apply_ready=True`: **0건**
+- `eligibility_reasons`에 `eligibility_core_risk_off_topk_override_pass`가 기록된 건: **0건**
+- 이 4044건의 `eligibility_passed` 분포: **100% `false`**(4044/4044)
+
+**해석(실측 기반)**: 이번 표본 기간 동안, top-k override가 관여할 수 있는 **전제 조건(`shadow_topk_candidate=True`) 자체가 단 한 번도 성립하지 않았다.** `shadow_topk_candidate`는 `ranking_score`, 신호(overall/slow), 활동성, 전략 4가지를 모두 통과해야 하는데, risk_off 레짐이 활성이었던 4044건 전부가 이 중 최소 하나에서 막혔다. **따라서 이 표본 기간에는 `_APPLY_CORE_RISK_OFF_TOPK`가 `0`이든 `1`이든 실제 BUY 판단 결과에 아무런 차이가 없었을 것으로 판단된다** — 값을 조회하지 않고도 이 결론에 도달할 수 있다(선택 후보 자체가 없었으므로 "선택됨"이 발생할 수 없다).
+
+### 운영값 판단(보수적)
+
+- **"영향은 있지만 지금은 꺼야 한다" / "켜는 게 맞다" 같은 단정은 이번 조사 근거로는 내릴 수 없다.** 코드상 인과관계는 명확히 존재하지만(직접 영향), 실측상 최근 10영업일 동안 그 인과관계가 **한 번도 실제로 발동되지 않았다**(전제 조건 자체가 성립하지 않음).
+- **"실제로 downstream에는 거의 영향이 없다"는 이번 표본 기준으로는 맞다** — 다만 이는 "이 메커니즘이 원래 영향이 없다"는 뜻이 아니라 "이 표본 기간에 발동 조건이 우연히든 구조적으로든 성립하지 않았다"는 뜻이다. risk_off 레짐이 더 오래 지속되거나 신호/활동성/전략 조건을 만족하는 종목이 나타나면 언제든 발동할 수 있는 살아있는 코드 경로다.
+- **값을 `0`으로 바꿔야 한다거나 `1`로 유지해야 한다는 근거는 이번 조사에서 나오지 않았다.** 이는 "이 완화 메커니즘을 risk_off 국면에서 top-k 한정으로 허용할 것인가"라는 **정책 결정**이며, 코드 조사만으로 대신 판단할 수 없다. 이번 조사가 제공하는 것은 "그 정책을 켜두어도 최근 10일간 실제로 작동한 적이 없었다"는 사실뿐이다.
+
+### 이번 조사 결과만으로 무엇이 맞는가
+
+**"현재 값 유지" 또는 "실제 변경 필요성 없음"이 가장 근접한 결론이다** — 단, 그 근거는 "이 값이 안전하다고 검증됐다"가 아니라 "이 표본 기간에 실제 영향이 관측되지 않았다"이다. "운영 확인 후 변경 검토"는 이 메커니즘을 **의도적으로 활용하려는 목적**(risk_off 국면에서 소수 우량 종목에 예외를 허용)이 있다면 유효한 다음 단계지만, 이번 조사만으로 그 의도 자체를 확인하지는 못했다.
+
+### 아직 단정하지 못한 부분
+
+- "downstream"의 정확한 의미(§ 상단 용어 확인 참고) — 사용자가 실제로 가리킨 화면/필드가 무엇인지 확인하지 못했다.
+- `shadow_topk_candidate`가 4044건 전부에서 실패한 정확한 사유(신호/활동성/전략 중 어느 것이 주로 막았는지)는 이번 조사에서 세분화하지 않았다.
+- `ops-scheduler`의 실제 env 값 자체(§13에서도 인용하지 않음)는 여전히 확인하지 않았다 — 다만 위 실측 결론은 그 값과 무관하게 성립한다(전제 조건이 없었으므로).
+- 이 메커니즘이 설계된 원래 정책 의도(왜 top-k 예외를 두려 했는지)는 관련 SPPV 설계 문서를 깊이 추적하지 않아 확정하지 못했다.
+
 ## 다음 단계 제안
 
 **설계/문서 정리를 우선한다.** 코드 리팩터링(1순위인 `core_risk_off` 정리조차)은 `src/AGENTS.md`의 리스크 경계 원칙상 이번 감사만으로 바로 들어가면 안 된다. 권장 순서:
