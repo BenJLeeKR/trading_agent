@@ -398,17 +398,78 @@
 
 - **즉시 제거 후보**: 없음. 이번 조사에서 실제로 아무 곳에서도 읽히지 않는 "완전한 죽은 코드"는 발견하지 못했다.
 - **문서화만 필요**(코드 변경 불필요): `hard_block_v1`/`shadow_topk_exception_v2`/floor bucket `v2·v3·v5`가 서로 다른 세 축이라는 사실 — 이번 문서가 그 역할을 한다.
-- **추가 활성 여부 실측이 필요한 것**: `DETERMINISTIC_TRIGGER_APPLY_CORE_RISK_OFF_TOPK`가 `docker-compose.yml`의 선언(기본 활성)과 실제 실행 중인 컨테이너의 상태(비활성 관측)가 다른 이유 — 이번 조사 범위에서는 원인을 확정하지 않았고, 코드/설정 변경도 하지 않았다. **이것이 이번 조사에서 가장 후속 확인이 필요한 항목이다.**
+- **[2026-08-07 후속 조사로 해소] `APPLY_CORE_RISK_OFF_TOPK` 활성 상태 불일치**: §13에서 원인을 확인했다 — 배포 불일치가 아니라, 최초 관측이 **잘못된 컨테이너**(`agent_trading-app-1`, idle 유틸리티 컨테이너)를 확인한 것이었다. 실제 decision loop를 실행하는 `agent_trading-ops-scheduler` 컨테이너에서는 이 변수가 존재함을 확인했다.
 
 ### 이번 조사 결과만으로 리팩터링 착수 가능한가
 
-**아니다 — 문서화 우선이 여전히 맞다.** 다만 방향이 바뀌었다: "shadow 버전 정리"가 아니라 "①명명 혼선 문서화, ②`APPLY_CORE_RISK_OFF_TOPK` 활성 상태 불일치의 원인 확인(다음 read-only 조사 대상)"이 맞는 다음 단계다. 리스크 게이트 코드 자체를 건드리는 것은 여전히 `src/AGENTS.md` 경계 원칙상 이번 조사 범위 밖이다.
+**아니다 — 문서화만으로 충분하다.** 코드/설정 변경 필요성 자체가 §13에서 해소됐다 — 남은 것은 "①명명 혼선 문서화"(이미 이 문서로 완료)뿐이다. 리스크 게이트 코드 자체를 건드리는 것은 여전히 `src/AGENTS.md` 경계 원칙상 범위 밖이며, 애초에 이번 조사로는 코드를 건드릴 근거 자체가 나오지 않았다.
 
 ### 아직 단정하지 못한 부분
 
-- `DETERMINISTIC_TRIGGER_APPLY_CORE_RISK_OFF_TOPK`가 왜 실행 중인 컨테이너에 설정되어 있지 않은지(설계상 의도인지, 배포 시 실수인지, `.env` 파일에 있는데 다른 경로로 기동됐는지)는 확인하지 않았다 — `.env` 파일 내용을 직접 열람하지 않았다(민감 정보 포함 가능 파일은 원칙적으로 노출하지 않는다).
 - `v4`가 왜 없는지(건너뛴 이유, 혹은 다른 이름으로 존재하는지)는 git blame/log를 이번 조사 범위에서 깊이 추적하지 않았다.
 - floor bucket v1/v2/v3/v5 실험이 `trigger_proxy_attribution.py`의 귀속 분석에서 실제로 어떤 결론(어느 변형이 가장 유망한지)을 내고 있는지는 이번 조사 범위 밖이다 — 이번 조사는 "소비되는지 여부"만 확인했다.
+
+## 13. `APPLY_CORE_RISK_OFF_TOPK` env/기동 경로 조사(2026-08-07 KST)
+
+§12가 "추가 확인 필요" 항목으로 남긴 질문 — `DETERMINISTIC_TRIGGER_APPLY_CORE_RISK_OFF_TOPK`가 `docker-compose.yml` 선언과 실제 컨테이너 관측 사이에 왜 차이가 있었는가 — 를 기동 경로 기준으로 추적했다. **코드/설정 변경 없음, 컨테이너 재기동 없음 — read-only 조사다. env 값은 어디에도 인용하지 않는다(키 존재 여부만 기술).**
+
+**결론을 먼저 밝히면: 이것은 배포 불일치가 아니라, 이전 조사가 확인한 컨테이너 자체가 잘못됐다.**
+
+### 코드 읽기 위치
+
+`scripts/run_decision_loop.py:324-326`: `_APPLY_CORE_RISK_OFF_TOPK = os.environ.get("DETERMINISTIC_TRIGGER_APPLY_CORE_RISK_OFF_TOPK", "0") == "1"` — 이 모듈 레벨 상수가 `run_decision_loop.py` 프로세스 자신의 환경변수를 읽는다.
+
+### compose 선언 위치 — 어떤 서비스에 주입되는가
+
+`docker-compose.yml`에는 `app`/`api`/`frontend`/`migrate`/`ops-scheduler`/`reconciliation-worker`/`realized-pnl-recompute-worker` 등 여러 서비스 블록이 있다. `DETERMINISTIC_TRIGGER_APPLY_CORE_RISK_OFF_TOPK: "${...:-1}"` 선언은 **`ops-scheduler` 서비스 블록(약 343행)에만** 있다 — `app` 서비스 블록에는 이 키가 전혀 없다. `docker compose config`(read-only 렌더링)로 확인한 결과도 이 키는 `ops-scheduler` 서비스 아래에 정확히 1회만 나타난다.
+
+### 컨테이너/기동 경로 실제 관측
+
+- `agent_trading-app-1`: compose 서비스 `app`, 컨테이너 커맨드가 **`tail -f /dev/null`** — decision loop를 실행하지 않는 idle 유틸리티 컨테이너다(`docker exec` 등으로 코드를 들여다볼 때 쓰는 용도로 보인다).
+- `agent_trading-ops-scheduler`: compose 서비스 `ops-scheduler`, 컨테이너 커맨드가 **`python3 /app/scripts/run_ops_scheduler.py --max-general-buy-submit-per-day 5`** — 이 컨테이너가 실제로 살아있는 프로세스다.
+- `run_ops_scheduler.py`는 decision 사이클마다 `run_decision_loop.py`를 **서브프로세스로 실행**한다(`scripts/run_ops_scheduler.py:1929-1938`, `python3 -m scripts.run_decision_loop --count 1 ...`).
+- 그 서브프로세스에 전달되는 환경은 `_build_base_env()`(`scripts/run_ops_scheduler.py:419-423`)가 만든다 — `env = os.environ.copy()`로 **부모 프로세스(`ops-scheduler` 컨테이너 자신)의 환경을 그대로 복사**하고 `PYTHONUNBUFFERED`만 추가한다. 즉 `ops-scheduler` 컨테이너 프로세스가 이 변수를 갖고 있다면, 그 서브프로세스인 `run_decision_loop.py`도 그대로 물려받는다.
+- **`agent_trading-ops-scheduler` 컨테이너의 프로세스 환경에서 이 키가 실제로 존재함을 확인했다**(`docker exec agent_trading-ops-scheduler env | grep -c DETERMINISTIC_TRIGGER_APPLY_CORE_RISK_OFF_TOPK` → `1`; 값은 확인·인용하지 않았다).
+
+### wrapper/env 주입 경로(`scripts/harness/docker_compose_env.sh`)
+
+- `docker_compose_env.sh`는 `load_external_env.sh`를 source해 `/etc/agent_trading/`(기본 경로, `AGENT_TRADING_ENV_DIR`로 오버라이드 가능) 아래의 `runtime.env:ai.env:kis.env`(필수)와 `local.override.env`(선택)를 모아 `docker compose --env-file ... "$@"`로 넘겨준다.
+- 실제 서버에서 `/etc/agent_trading/runtime.env`, `ai.env`, `kis.env`는 존재하고, `local.override.env`는 존재하지 않는다(파일 존재 여부만 확인, 값은 열람하지 않음).
+- 위 세 파일 중 어디에도 `DETERMINISTIC_TRIGGER_APPLY_CORE_RISK_OFF_TOPK` **키 자체가 존재하지 않는다**(`grep -c '^DETERMINISTIC_TRIGGER_APPLY_CORE_RISK_OFF_TOPK='`로 확인, 결과 0건씩) — 즉 외부 env 파일이 이 값을 명시적으로 지정하지 않고, `docker-compose.yml`의 기본값(`:-1`)이 그대로 적용되는 구조로 보인다.
+
+### 코드 기대값 vs 실제 관측값 비교
+
+| 관점 | 관측/기대 |
+|---|---|
+| compose 선언(소스 기준) | `ops-scheduler` 서비스에만 `${...:-1}`로 기본 활성 선언 |
+| `app` 서비스(소스 기준) | 이 키 선언 자체가 없음 |
+| `agent_trading-app-1` 실제 프로세스 | 키 없음(선언이 없으므로 당연) |
+| `agent_trading-ops-scheduler` 실제 프로세스 | **키 존재 확인**(값은 미인용) |
+| 외부 env 파일(`/etc/agent_trading/*.env`) | 이 키에 대한 명시적 오버라이드 없음(파일에 키 자체가 없음) |
+| `run_decision_loop.py` 서브프로세스(실제 실행 경로) | `ops-scheduler`의 env를 `os.environ.copy()`로 그대로 물려받음 — 존재할 것으로 판단됨 |
+
+### 가능한 원인 후보(분류)
+
+이전 조사의 "불일치"는 다음 후보들로 설명될 수 있었으나, 실제로는 아래 첫 번째 후보로 확정됐다:
+
+1. **[확정] 애초에 다른 서비스/컨테이너를 관측했다** — `agent_trading-app-1`은 decision loop를 실행하지 않는 idle 컨테이너이고, compose 선언 자체도 그 서비스에는 없다. "불일치"가 아니라 "처음부터 무관한 대상을 비교했다."
+2. (배제됨) 컨테이너가 오래 떠 있어 compose 재정의 이전 상태로 남아 있다 — `ops-scheduler`에서 키가 확인되므로 이 가능성은 이번 발견으로 뒷받침되지 않는다(다만 `ops-scheduler`가 언제 마지막으로 재생성됐는지는 확인하지 않았다).
+3. (배제됨) wrapper가 기대한 env 파일을 안 읽는다 — 외부 env 파일 자체가 이 키를 아예 선언하지 않으므로, wrapper의 파일 로딩 성공/실패와 무관하게 compose 기본값이 적용되는 구조다.
+4. (미확인) 다른 compose project/파일로 컨테이너가 생성됐을 가능성 — `docker inspect`의 `com.docker.compose.project` 라벨이 두 컨테이너 모두 `agent_trading`으로 동일함을 확인해, 이 가능성은 낮아 보인다.
+
+### 가장 가능성 높은 설명
+
+**이전 조사(§12)의 "불일치" 관측은 실제 배포/env 문제가 아니라, decision loop를 실행하지 않는 `agent_trading-app-1`(idle 컨테이너)의 환경을 확인했기 때문에 발생한 것으로 판단된다.** 실제로 `run_decision_loop.py`가 실행되는 경로(`ops-scheduler` → subprocess)의 컨테이너에서는 이 변수가 존재함을 직접 확인했다. `docker-compose.yml`의 기본값 선언과 실제 실행 경로 사이에 구조적 불일치는 발견되지 않았다.
+
+### 다음 액션 판단
+
+- **문서화만으로 충분하다.** 배포 재확인, 컨테이너 재기동, `.env` 점검 등 운영 조치는 필요하지 않은 것으로 판단된다 — 애초에 "문제"라고 여겼던 관측이 잘못된 대상 비교에서 나온 것이었다.
+- 다만 이번 조사에서도 **`ops-scheduler` 프로세스의 실제 env 값 자체**(활성 `"1"`인지, 다른 값인지)는 인용하지 않았다 — 키 존재 여부만 확인했으므로, "정확히 어떤 값으로 활성화되어 있는지"는 이 문서만으로는 확정되지 않는다(다만 값이 무엇이든, §12에서 관측한 "비활성처럼 보였던" 현상 자체가 잘못된 컨테이너 관측에서 비롯된 것이라는 결론에는 영향이 없다).
+
+### 아직 단정하지 못한 부분
+
+- `ops-scheduler` 컨테이너가 언제 마지막으로 (재)생성됐는지, 그 시점이 `docker-compose.yml`의 현재 선언과 일치하는 이미지/설정으로 떠 있는지는 이번 조사에서 별도로 확인하지 않았다(단, 키 존재 자체는 실측으로 확인했으므로 이 부분이 결론에 영향을 주지는 않는다).
+- `agent_trading-app-1`이 왜 `tail -f /dev/null`로만 떠 있는지(의도된 설계인지, 다른 목적의 유틸리티 컨테이너인지)는 이번 조사 범위 밖이라 확정하지 않았다 — `scripts/harness/README.md`/`docs/80_harness_engineering/`에서 관련 근거를 찾지 못했다(문서 두 곳을 훑었으나 이 컨테이너의 존재 목적을 명시한 문구를 발견하지 못했다 — 문서 부재일 수도, 조사 범위 부족일 수도 있어 단정하지 않는다).
 
 ## 다음 단계 제안
 
