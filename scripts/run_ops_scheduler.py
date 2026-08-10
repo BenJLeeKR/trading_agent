@@ -103,7 +103,7 @@ KST = ZoneInfo("Asia/Seoul")
 
 DEFAULT_SNAPSHOT_INTERVAL_SECONDS = 300
 DEFAULT_EVENT_INTERVAL_SECONDS = 300
-DEFAULT_DECISION_INTERVAL_SECONDS = 300
+DEFAULT_DECISION_INTERVAL_SECONDS = 600
 DEFAULT_POST_SUBMIT_INTERVAL_SECONDS = 30
 DEFAULT_FILL_SYNC_INTERVAL_SECONDS = 600
 DEFAULT_FILL_SYNC_AFTER_HOURS_INTERVAL_SECONDS = 1800
@@ -282,6 +282,37 @@ def _derive_operations_day_status(state: SchedulerState) -> str:
     if state.pre_market_done:
         return "intraday"
     return "pre_market"
+
+
+def _resolve_decision_interval_default_seconds() -> int:
+    """``OPS_SCHEDULER_DECISION_INTERVAL_SECONDS`` env override for the decision
+    배치(decision_submit_gate) 실행 간격 기본값.
+
+    값이 없으면 ``DEFAULT_DECISION_INTERVAL_SECONDS``(600초)를 그대로 쓴다.
+    값이 있어도 정수 파싱 실패거나 0 이하이면 무효 값으로 보고 동일하게
+    fallback한다 — ``--decision-interval`` CLI 인자로 명시 override하는
+    기존 경로는 이 함수와 무관하게 그대로 유지된다.
+    """
+    raw = os.environ.get("OPS_SCHEDULER_DECISION_INTERVAL_SECONDS")
+    if raw is None or not raw.strip():
+        return DEFAULT_DECISION_INTERVAL_SECONDS
+    try:
+        parsed = int(raw.strip())
+    except ValueError:
+        logger.warning(
+            "OPS_SCHEDULER_DECISION_INTERVAL_SECONDS=%r is not a valid integer — "
+            "falling back to default %ds",
+            raw, DEFAULT_DECISION_INTERVAL_SECONDS,
+        )
+        return DEFAULT_DECISION_INTERVAL_SECONDS
+    if parsed <= 0:
+        logger.warning(
+            "OPS_SCHEDULER_DECISION_INTERVAL_SECONDS=%d must be positive — "
+            "falling back to default %ds",
+            parsed, DEFAULT_DECISION_INTERVAL_SECONDS,
+        )
+        return DEFAULT_DECISION_INTERVAL_SECONDS
+    return parsed
 
 
 def _parse_hhmm(value: str) -> dtime:
@@ -3324,12 +3355,19 @@ async def _heartbeat_task(state: SchedulerState, pool) -> None:
             raise
 
 
-async def _log_startup_info(env: dict[str, str], state: SchedulerState, pool_ok: bool) -> None:
+async def _log_startup_info(
+    env: dict[str, str],
+    state: SchedulerState,
+    pool_ok: bool,
+    *,
+    decision_interval_seconds: int = DEFAULT_DECISION_INTERVAL_SECONDS,
+) -> None:
     """스케줄러 시작 정보 로깅."""
     logger.info("=" * 60)
     logger.info("🚀 Ops Scheduler starting up")
     logger.info("=" * 60)
     logger.info("  KIS env:             %s", env.get("KIS_ENV", "paper"))
+    logger.info("  Decision interval:   %ds", decision_interval_seconds)
     logger.info("  Live-info enabled:   %s", env.get("KIS_LIVE_INFO_ENABLED", "false"))
     logger.info("  Live-info token cache: %s (path: %s)",
         env.get("KIS_LIVE_TOKEN_CACHE_ENABLED", "false"),
@@ -3420,7 +3458,10 @@ async def _run_scheduler(args: argparse.Namespace) -> int:
                     pool = None
 
     # P3: Startup info logging
-    await _log_startup_info(env, state, pool is not None)
+    await _log_startup_info(
+        env, state, pool is not None,
+        decision_interval_seconds=args.decision_interval,
+    )
 
     # P3: Advisory lock wrapper
     async def _run_with_lock() -> int:
@@ -3881,7 +3922,16 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--end-of-day-end", type=_parse_hhmm, default=END_OF_DAY_END)
     parser.add_argument("--snapshot-interval", type=int, default=DEFAULT_SNAPSHOT_INTERVAL_SECONDS)
     parser.add_argument("--event-interval", type=int, default=DEFAULT_EVENT_INTERVAL_SECONDS)
-    parser.add_argument("--decision-interval", type=int, default=DEFAULT_DECISION_INTERVAL_SECONDS)
+    parser.add_argument(
+        "--decision-interval",
+        type=int,
+        default=_resolve_decision_interval_default_seconds(),
+        help=(
+            "decision_submit_gate 배치 실행 간격(초). 기본값은 "
+            "OPS_SCHEDULER_DECISION_INTERVAL_SECONDS env로 override 가능하며, "
+            "미설정 시 600초(10분)."
+        ),
+    )
     parser.add_argument("--post-submit-interval", type=int, default=DEFAULT_POST_SUBMIT_INTERVAL_SECONDS)
     parser.add_argument("--fill-sync-interval", type=int, default=DEFAULT_FILL_SYNC_INTERVAL_SECONDS)
     parser.add_argument(
