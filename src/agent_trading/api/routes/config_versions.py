@@ -54,6 +54,13 @@ async def update_max_single_position_pct(
     ``activated_by``는 이 요청을 승인한 principal의 role로 채운다(현재
     Inspection API의 RBAC는 토큰당 단일 role만 구분하므로, 실제 운영자
     식별은 ``reason`` 필드와 별도 접근 로그로 보완한다).
+
+    ``environment``는 ``'paper'`` | ``'live'``만 허용한다. ``Environment``
+    enum에는 ``'real'``도 있지만, ``trading.config_versions.environment``의
+    DB CHECK 제약이 ``'real'``을 받지 않아(운영 Postgres에서 직접 확인)
+    ``config_version_admin.validate_environment()``가 그 값을 명시적으로
+    거부한다 — 애플리케이션 레벨에서 막지 않으면 DB INSERT에서야 크래시가
+    나기 때문이다.
     """
     try:
         client_uuid = UUID(body.client_id)
@@ -77,7 +84,7 @@ async def update_max_single_position_pct(
             error_code="invalid_environment",
             message="Invalid environment",
             field="environment",
-            expected="'paper' | 'live' | 'real'",
+            expected="'paper' | 'live'",
             received=body.environment,
             request_path=_REQUEST_PATH,
             next_action="check environment value",
@@ -111,11 +118,15 @@ async def update_max_single_position_pct(
             status_code=400,
             error_code="config_version_publish_rejected",
             message=str(exc),
-            field="max_single_position_pct",
-            expected="0 < x <= 100, differs from current active value, active version must exist",
-            received=str(body.max_single_position_pct),
+            field="max_single_position_pct,environment",
+            expected=(
+                "max_single_position_pct: 0 < x <= 100 and different from the current "
+                "active value; environment: 'paper' | 'live' (not 'real'); "
+                "an active config_version must already exist for the target client_id/environment"
+            ),
+            received=f"max_single_position_pct={body.max_single_position_pct}, environment={body.environment}",
             request_path=_REQUEST_PATH,
-            next_action="check current active config_version and retry with a valid, different value",
+            next_action="check current active config_version and the exact error message, then retry with valid values",
         )
 
     return UpdateMaxSinglePositionPctResponse(

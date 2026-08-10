@@ -52,8 +52,10 @@ except ImportError:
 from agent_trading.domain.enums import Environment
 from agent_trading.runtime.bootstrap import postgres_runtime
 from agent_trading.services.config_version_admin import (
+    ALLOWED_ENVIRONMENTS,
     ConfigVersionAdminError,
     publish_max_single_position_pct,
+    validate_environment,
 )
 
 logger = logging.getLogger(__name__)
@@ -84,8 +86,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--environment",
         required=True,
-        choices=[e.value for e in Environment],
-        help="Target environment",
+        choices=sorted(e.value for e in ALLOWED_ENVIRONMENTS),
+        help=(
+            "Target environment — only 'paper'/'live' (not 'real': "
+            "config_versions.environment's DB CHECK constraint does not accept it)"
+        ),
     )
     parser.add_argument(
         "--max-single-position-pct",
@@ -128,8 +133,9 @@ async def _run(args: argparse.Namespace) -> int:
 
     try:
         environment = Environment(args.environment)
-    except ValueError:
-        logger.error("Invalid --environment: %s", args.environment)
+        validate_environment(environment)
+    except (ValueError, ConfigVersionAdminError) as exc:
+        logger.error("Invalid --environment: %s (%s)", args.environment, exc)
         return 1
 
     try:

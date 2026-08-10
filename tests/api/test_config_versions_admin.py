@@ -10,6 +10,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from datetime import datetime, timezone
 from uuid import uuid4
 
@@ -175,6 +176,39 @@ class TestUpdateMaxSinglePositionPct:
                 headers=_ADMIN_HEADERS,
             )
         assert response.status_code == 400
+
+    def test_real_environment_is_rejected_with_400_not_500(self) -> None:
+        """``environment="real"``은 유효한 ``Environment`` enum 값이라
+
+        ``Environment("real")`` 파싱 자체는 성공한다 — 그래서
+        ``test_invalid_environment_returns_400``(완전히 잘못된 문자열)과는
+        다른 경로를 탄다. ``trading.config_versions.environment``의 실제 DB
+        CHECK 제약이 ``'real'``을 받지 않으므로(운영 Postgres에서 확인),
+        이 값은 애플리케이션 레벨에서 명확한 400으로 막혀야 한다 — DB
+        INSERT까지 가서 처리되지 않은 예외(500)로 새어나가면 안 된다.
+        """
+        repos, app = self._build()
+        client_id = uuid4()
+        self._seed_active_config_version(repos, client_id=client_id)
+        with TestClient(app) as client:
+            response = client.post(
+                _REQUEST_PATH,
+                json={
+                    "client_id": str(client_id),
+                    "environment": "real",
+                    "max_single_position_pct": "15",
+                },
+                headers=_ADMIN_HEADERS,
+            )
+        assert response.status_code == 400
+        assert response.status_code != 500
+        body = response.json()
+        assert "real" in json.dumps(body).lower()
+
+        # "real"로는 어떤 config_version도 새로 생기지 않았어야 한다.
+        active = asyncio.run(repos.config_versions.get_active(client_id, Environment.PAPER))
+        assert active is not None
+        assert active.config_json["risk"]["max_single_position_pct"] == "10"
 
     def test_viewer_role_is_forbidden(self) -> None:
         """auth_enabled + viewer role → 403 (require_admin gate)."""

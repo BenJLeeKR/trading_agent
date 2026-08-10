@@ -1759,7 +1759,13 @@ class UpdateMaxSinglePositionPctRequest(BaseModel):
     """
 
     client_id: str = Field(..., description="Client UUID whose active config to update")
-    environment: str = Field(..., description="'paper' | 'live' | 'real'")
+    environment: str = Field(
+        ...,
+        description=(
+            "'paper' | 'live' only — 'real' is rejected (config_versions.environment's "
+            "DB CHECK constraint does not accept it)"
+        ),
+    )
     max_single_position_pct: Decimal = Field(
         ..., description="New value, 0 < x <= 100 (NAV 대비 단일 종목 최대 비중 %)"
     )

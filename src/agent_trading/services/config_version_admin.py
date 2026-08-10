@@ -16,6 +16,15 @@
    (``order_manager.py._record_audit()``와 동일한 패턴).
 4. **좁은 범위** — 이번 버전은 ``risk.max_single_position_pct`` 단일 키만
    다룬다. 다른 risk/execution 키는 그대로 보존한다.
+5. **environment는 ``paper``/``live``만 허용** — ``Environment`` enum에는
+   ``REAL``도 있지만(주석: "KIS actual naming — normalized to LIVE
+   internally"), 그 정규화를 실제로 수행하는 공용 헬퍼가 코드베이스
+   어디에도 없고, ``trading.config_versions.environment`` DB 컬럼의
+   CHECK 제약(``ck_config_versions_environment``)은 ``'paper'``/``'live'``
+   두 값만 허용한다(운영 Postgres에서 직접 확인). 이 경로가 ``REAL``을
+   그대로 받아 ``repos.config_versions.add()``까지 통과시키면 애플리케이션
+   레벨에서는 아무 오류가 없다가 DB INSERT에서 CHECK 제약 위반으로
+   크래시한다 — 이 함수는 그 크래시가 나기 전에 명시적으로 거부한다.
 """
 
 from __future__ import annotations
@@ -40,6 +49,15 @@ logger = logging.getLogger(__name__)
 # 그러므로 0과 음수는 반드시 거부해야 한다(추측이 아니라 코드 동작 근거).
 MIN_MAX_SINGLE_POSITION_PCT = Decimal("0")
 MAX_MAX_SINGLE_POSITION_PCT = Decimal("100")
+
+# trading.config_versions.environment의 실제 DB CHECK 제약과 정확히 일치시킨다
+# (``ck_config_versions_environment``, 운영 Postgres에서 직접 확인 — 추정 아님).
+# ``Environment.REAL``은 여기서 의도적으로 제외한다: enum 주석은 "normalized to
+# LIVE internally"라고 적었지만 그 정규화를 실제로 수행하는 공용 헬퍼가
+# 코드베이스에 없고, 이 admin 경로가 그 정규화를 대신 발명하면 이 endpoint만
+# 특별 취급되어 일관성이 떨어진다. DB가 실제로 받는 값만 허용하는 쪽이 더
+# 단순하고 정합적이다(선택지 A).
+ALLOWED_ENVIRONMENTS = frozenset({Environment.PAPER, Environment.LIVE})
 
 
 class ConfigVersionAdminError(ValueError):
@@ -89,6 +107,25 @@ def validate_max_single_position_pct(value: Decimal) -> None:
         )
 
 
+def validate_environment(environment: Environment) -> None:
+    """``environment``가 ``ALLOWED_ENVIRONMENTS``(``paper``/``live``)에 속하는지 확인한다.
+
+    ``Environment.REAL``은 이 admin 경로에서 명시적으로 거부한다 —
+    ``trading.config_versions.environment``의 실제 DB CHECK 제약이
+    ``'paper'``/``'live'``만 허용하기 때문이다(위 모듈 상단 주석 참고).
+    이 검증을 여기(API와 CLI가 공유하는 단일 진입점)에서 하므로, 두 경로가
+    항상 같은 정책을 따른다.
+    """
+    if environment not in ALLOWED_ENVIRONMENTS:
+        allowed = ", ".join(sorted(e.value for e in ALLOWED_ENVIRONMENTS))
+        raise ConfigVersionAdminError(
+            f"environment={environment.value!r} is not allowed for this admin path "
+            f"(allowed: {allowed}) — trading.config_versions.environment's DB CHECK "
+            "constraint does not accept 'real', and no environment-normalization "
+            "helper exists elsewhere in this codebase to safely convert it."
+        )
+
+
 async def publish_max_single_position_pct(
     repos: RepositoryContainer,
     *,
@@ -118,6 +155,8 @@ async def publish_max_single_position_pct(
     ------
     ConfigVersionAdminError
         - 값이 유효 범위(0 < x <= 100) 밖일 때
+        - ``environment``가 ``paper``/``live``가 아닐 때(``Environment.REAL``
+          포함 — DB CHECK 제약이 허용하지 않는다)
         - 활성 config_version이 없을 때(이 경로는 기존 활성 버전을 복제하는
           것이 전제이므로, 아직 아무 버전도 없는 client×environment는
           이 경로로 새로 만들 수 없다 — ``scripts/run_orchestrator_once.py``
@@ -126,6 +165,7 @@ async def publish_max_single_position_pct(
           새 version_tag가 계속 쌓이는 것을 막는다)
     """
     validate_max_single_position_pct(max_single_position_pct)
+    validate_environment(environment)
 
     active = await repos.config_versions.get_active(client_id, environment)
     if active is None:

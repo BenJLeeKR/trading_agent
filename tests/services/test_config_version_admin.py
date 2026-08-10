@@ -17,8 +17,10 @@ from agent_trading.domain.entities import ConfigVersionEntity
 from agent_trading.domain.enums import Environment
 from agent_trading.repositories.bootstrap import build_in_memory_repositories
 from agent_trading.services.config_version_admin import (
+    ALLOWED_ENVIRONMENTS,
     ConfigVersionAdminError,
     publish_max_single_position_pct,
+    validate_environment,
 )
 
 
@@ -205,3 +207,90 @@ class TestPublishMaxSinglePositionPct:
                     activated_by="test-operator",
                 )
             )
+
+
+class TestValidateEnvironment:
+    """``Environment.REAL``이 DB CHECK 제약을 절대 건드리지 않게 막는 정책.
+
+    ``trading.config_versions.environment``의 실제 DB CHECK 제약은
+    ``'paper'``/``'live'``만 허용한다(운영 Postgres에서 직접 확인,
+    ``db/migrations/0001_initial_schema.sql``의
+    ``ck_config_versions_environment``와도 일치). ``Environment`` enum에는
+    ``REAL``도 있지만 이를 안전하게 ``LIVE``로 바꾸는 공용 정규화 헬퍼가
+    코드베이스에 없으므로, 이 admin 경로는 ``REAL``을 명시적으로 거부한다
+    (선택지 A — 정규화하지 않고 거부).
+    """
+
+    def test_allowed_environments_is_exactly_paper_and_live(self) -> None:
+        assert ALLOWED_ENVIRONMENTS == {Environment.PAPER, Environment.LIVE}
+        assert Environment.REAL not in ALLOWED_ENVIRONMENTS
+
+    def test_accepts_paper(self) -> None:
+        validate_environment(Environment.PAPER)  # 예외 없이 통과해야 한다.
+
+    def test_accepts_live(self) -> None:
+        validate_environment(Environment.LIVE)  # 예외 없이 통과해야 한다.
+
+    def test_rejects_real(self) -> None:
+        with pytest.raises(ConfigVersionAdminError, match="real"):
+            validate_environment(Environment.REAL)
+
+
+class TestPublishRejectsRealEnvironment:
+    """``publish_max_single_position_pct()``가 ``Environment.REAL``을
+
+    ``get_active()``/DB에 닿기 전에 거부하는지 — API가 없어도(서비스
+    레이어 단독으로도) 같은 정책이 적용됨을 확인한다.
+    """
+
+    def test_rejects_real_before_touching_active_version(self) -> None:
+        """활성 버전을 아예 시딩하지 않아도(즉 get_active()를 부를 필요조차
+
+        없이) environment 검증이 먼저 실패해야 한다 — validate_environment()
+        가 validate_max_single_position_pct() 바로 다음, get_active() 호출
+        이전에 실행되는 순서를 그대로 확인한다.
+        """
+        repos = build_in_memory_repositories()
+        client_id = uuid4()  # 시딩하지 않음
+
+        with pytest.raises(ConfigVersionAdminError, match="real"):
+            asyncio.run(
+                publish_max_single_position_pct(
+                    repos,
+                    client_id=client_id,
+                    environment=Environment.REAL,
+                    max_single_position_pct=Decimal("15"),
+                    activated_by="test-operator",
+                )
+            )
+
+        # "real"로는 어떤 config_version도 생기지 않았어야 한다.
+        active = asyncio.run(repos.config_versions.get_active(client_id, Environment.PAPER))
+        assert active is None
+
+    def test_rejects_real_even_with_seeded_active_paper_version(self) -> None:
+        """``environment=real``로 호출하면, 같은 client의 ``paper`` 활성
+
+        버전이 있어도 그걸 조회/복제하지 않고 즉시 거부해야 한다(엔드포인트가
+        ``environment``를 무시하고 ``paper``로 흘려버리는 사고를 방지).
+        """
+        repos = build_in_memory_repositories()
+        client_id = uuid4()
+        original = _seed_active_config_version(repos, client_id=client_id, environment=Environment.PAPER)
+
+        with pytest.raises(ConfigVersionAdminError, match="real"):
+            asyncio.run(
+                publish_max_single_position_pct(
+                    repos,
+                    client_id=client_id,
+                    environment=Environment.REAL,
+                    max_single_position_pct=Decimal("15"),
+                    activated_by="test-operator",
+                )
+            )
+
+        # 기존 paper 활성 버전은 전혀 건드리지 않았다.
+        active = asyncio.run(repos.config_versions.get_active(client_id, Environment.PAPER))
+        assert active is not None
+        assert active.config_version_id == original.config_version_id
+        assert active.config_json["risk"]["max_single_position_pct"] == "10"
