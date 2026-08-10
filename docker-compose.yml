@@ -367,6 +367,8 @@ services:
       # Scheduler Specific
       SCHEDULER_AFTER_HOURS_WINDOW: "${SCHEDULER_AFTER_HOURS_WINDOW:-3600}"
       SCHEDULER_INSTANCE_ID: "${SCHEDULER_INSTANCE_ID:-default}"
+      # decision_submit_gate 배치 실행 간격(초). 기본값 600초(10분).
+      OPS_SCHEDULER_DECISION_INTERVAL_SECONDS: "${OPS_SCHEDULER_DECISION_INTERVAL_SECONDS:-600}"
     volumes:
       - ./scripts:/app/scripts
       - ./src:/app/src
