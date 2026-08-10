@@ -274,3 +274,68 @@ class RootConfig(BaseModel):
 - live 설정 활성화는 승인 워크플로를 거친다.
 - 전략 비활성화는 설정 삭제가 아니라 status 변경으로 처리한다.
 - 브로커 장애 시 emergency config profile로 전환 가능해야 한다.
+
+## 9. `risk.max_single_position_pct` 운영 변경 경로
+
+**구현 완료.** 과거에는 이 값을 바꾸는 유일한 방법이 `trading.config_versions`
+row를 직접 DB에서 조작하는 것뿐이었다(운영 승인 경로 없음, §5의 immutable
+버전 원칙을 지킬 보장도 없었음). 이제는 다음 두 경로 중 하나로 안전하게
+새 버전을 발행할 수 있다 — 둘 다 같은 서비스 함수
+(`agent_trading.services.config_version_admin.publish_max_single_position_pct()`)
+를 공유하므로 검증/부작용은 완전히 동일하다.
+
+### Admin API
+
+```
+POST /config-versions/risk/max-single-position-pct
+Authorization: Bearer <admin 토큰>
+Content-Type: application/json
+
+{
+  "client_id": "<UUID>",
+  "environment": "paper",
+  "max_single_position_pct": "15",
+  "reason": "risk appetite 상향 조정"
+}
+```
+
+- `require_admin`이 걸려 있다 — `orders.py`의 `PUT /orders/{id}/status`와
+  동일한 게이팅 패턴(admin role 토큰 필요).
+- 응답에 `previous_max_single_position_pct`/`new_max_single_position_pct`/
+  `config_version_id`/`previous_config_version_id`가 함께 나와, 무엇이
+  바뀌었는지 바로 확인할 수 있다.
+
+### CLI(운영자가 직접 실행)
+
+```bash
+# 미리보기(기본값, 아무것도 쓰지 않음)
+python -m scripts.publish_max_single_position_pct \
+  --client-id <UUID> --environment paper \
+  --max-single-position-pct 15 --activated-by ops-jay --reason "..."
+
+# 실제 발행
+python -m scripts.publish_max_single_position_pct \
+  --client-id <UUID> --environment paper \
+  --max-single-position-pct 15 --activated-by ops-jay --reason "..." --apply
+```
+
+### 이 경로가 §5의 immutable 원칙을 지키는 방법
+
+- 기존 활성 `config_version` row는 **절대 UPDATE하지 않는다.** 그
+  `config_json`을 그대로 복제한 뒤 `risk.max_single_position_pct`만 바꿔
+  **새 row**를 추가하고, 그 row의 `activated_at`을 현재 시각으로 설정한다.
+  `get_active()`가 `activated_at DESC`로 조회하므로 새 row가 곧바로
+  "활성 버전"이 된다 — 과거 row는 그대로 남아 `get_active_at()`을 통한
+  replay(특정 시점의 실제 유효 설정 재현)에 계속 쓰인다.
+- 안전장치: `0 < max_single_position_pct <= 100`만 허용한다. `0` 이하는
+  거부한다 — `sizing_engine.py`의 `_apply_concentration_constraint()`가
+  `<= 0`을 "제약 조건 자체를 건너뜀"으로 해석하기 때문에, 0을 허용하면
+  운영자가 의도와 반대로(더 엄격하게 만들려다가) 안전장치를 완전히 꺼버릴
+  수 있다. 활성 버전이 아예 없는 client×environment, 그리고 현재
+  활성값과 동일한 값의 중복 발행도 거부한다.
+- 모든 변경은 `audit_logs`에 before/after 값과 `activated_by`/`reason`이
+  함께 기록된다.
+- 다른 risk/execution 키(`min_cash_buffer_pct`, `execution.max_order_value`
+  등)는 이번 관리 경로의 범위 밖이며 그대로 보존된다 — 새 버전은
+  `risk.max_single_position_pct` 한 키만 바뀐, 나머지는 기존 활성 버전과
+  동일한 config_json을 갖는다.

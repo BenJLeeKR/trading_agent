@@ -451,6 +451,14 @@ def create_app(
 
     protected_routers.append(realized_pnl_router)
 
+    # Phase 9 — Config version admin (write, admin-only per-route gate;
+    # router-level dependency below still enforces the viewer-minimum floor)
+    from agent_trading.api.routes.config_versions import (
+        router as config_versions_router,
+    )
+
+    protected_routers.append(config_versions_router)
+
     if auth_enabled:
         for router in protected_routers:
             app.include_router(router, dependencies=[Depends(require_viewer)])
