@@ -2670,6 +2670,27 @@ async def _run_loop(
                     item_source_type = getattr(item, "source_type", "core")
                     general_submit_reserved = False
 
+                    # SUBMIT_BUDGET_TRACE: symbol이 submit lane 판정에 들어가기
+                    # 직전의 budget/inflight 스냅샷(원인 추적 전용, 판정 로직에는
+                    # 영향을 주지 않는다).
+                    _lane_enter_effective_count = (
+                        submit_budget_consumed_count + general_submit_inflight_count
+                    )
+                    logger.info(
+                        "SUBMIT_BUDGET_TRACE lane_enter cycle=%d symbol=%s "
+                        "source_type=%s submit=%s dry_run=%s "
+                        "allow_general_submit=%s max_general_submits_this_cycle=%d "
+                        "submit_budget_consumed_count=%d "
+                        "general_submit_inflight_count=%d "
+                        "effective_general_submit_count=%d "
+                        "held_position_lane_bypass=%s",
+                        cycle_count, item.symbol, item_source_type, submit, dry_run,
+                        allow_general_submit, max_general_submits_this_cycle,
+                        submit_budget_consumed_count, general_submit_inflight_count,
+                        _lane_enter_effective_count,
+                        item_source_type == "held_position",
+                    )
+
                     async def _execute_symbol_cycle(
                         *,
                         symbol_submit: bool,
@@ -2735,8 +2756,39 @@ async def _run_loop(
                                 symbol=item.symbol,
                             )
                             if lane_decision.submit:
+                                _inflight_before_reserve = general_submit_inflight_count
                                 general_submit_inflight_count += 1
                                 general_submit_reserved = True
+                                # SUBMIT_BUDGET_TRACE: slot 예약 성공 시점.
+                                logger.info(
+                                    "SUBMIT_BUDGET_TRACE reserve cycle=%d symbol=%s "
+                                    "source_type=%s submit_budget_consumed_count=%d "
+                                    "general_submit_inflight_count_before=%d "
+                                    "general_submit_inflight_count_after=%d "
+                                    "max_general_submits_this_cycle=%d",
+                                    cycle_count, item.symbol, item_source_type,
+                                    submit_budget_consumed_count,
+                                    _inflight_before_reserve,
+                                    general_submit_inflight_count,
+                                    max_general_submits_this_cycle,
+                                )
+                            else:
+                                # SUBMIT_BUDGET_TRACE: lane 차단 시점(주로
+                                # submit_budget_consumed_core 등 budget 소진 사유).
+                                logger.info(
+                                    "SUBMIT_BUDGET_TRACE blocked cycle=%d symbol=%s "
+                                    "source_type=%s effective_general_submit_count=%d "
+                                    "submit_budget_consumed_count=%d "
+                                    "general_submit_inflight_count=%d "
+                                    "max_general_submits_this_cycle=%d "
+                                    "stop_reason=%s",
+                                    cycle_count, item.symbol, item_source_type,
+                                    effective_general_submit_count,
+                                    submit_budget_consumed_count,
+                                    general_submit_inflight_count,
+                                    max_general_submits_this_cycle,
+                                    lane_decision.dry_run_reason,
+                                )
                         result = await _execute_symbol_cycle(
                             symbol_submit=lane_decision.submit,
                             symbol_dry_run=lane_decision.dry_run,
@@ -2749,12 +2801,33 @@ async def _run_loop(
                         if general_submit_reserved:
                             status = result.get("status", "UNKNOWN")
                             async with _general_submit_lock:
+                                _inflight_before_release = general_submit_inflight_count
+                                _consumed_before_release = submit_budget_consumed_count
                                 general_submit_inflight_count = max(
                                     0,
                                     general_submit_inflight_count - 1,
                                 )
-                                if status in ("SUBMITTED", "RECONCILE_REQUIRED"):
+                                is_budget_consuming_status = status in (
+                                    "SUBMITTED", "RECONCILE_REQUIRED",
+                                )
+                                if is_budget_consuming_status:
                                     submit_budget_consumed_count += 1
+                                # SUBMIT_BUDGET_TRACE: reservation 해제(반납 또는 확정 소비) 시점.
+                                logger.info(
+                                    "SUBMIT_BUDGET_TRACE release cycle=%d symbol=%s "
+                                    "source_type=%s status=%s reserved=True "
+                                    "budget_consuming=%s "
+                                    "general_submit_inflight_count_before=%d "
+                                    "general_submit_inflight_count_after=%d "
+                                    "submit_budget_consumed_count_before=%d "
+                                    "submit_budget_consumed_count_after=%d",
+                                    cycle_count, item.symbol, item_source_type, status,
+                                    is_budget_consuming_status,
+                                    _inflight_before_release,
+                                    general_submit_inflight_count,
+                                    _consumed_before_release,
+                                    submit_budget_consumed_count,
+                                )
                     else:
                         lane_decision = evaluate_symbol_submit_lane(
                             submit=submit,

@@ -2966,6 +2966,25 @@ async def _run_intraday_due_tasks(
             now.isoformat(), gap, decision_interval, gap - decision_interval,
         )
 
+        # SUBMIT_BUDGET_TRACE: scheduler가 subprocess에 cycle budget을
+        # 넘기기 직전의 daily budget 계산 상태 스냅샷(원인 추적 전용,
+        # 판정 로직은 변경하지 않는다).
+        logger.info(
+            "SUBMIT_BUDGET_TRACE scheduler run_date=%s db_submit_count=%d "
+            "state_submit_count=%d effective_submit_count=%d "
+            "max_general_buy_submit_per_day=%d "
+            "remaining_general_submit_budget=%d allow_general_submit=%s "
+            "dry_run=%s",
+            state.run_date.isoformat(),
+            db_submit_count,
+            state.submit_count,
+            effective_submit_count,
+            max_general_buy_submit_per_day,
+            remaining_general_submit_budget,
+            general_budget_ok,
+            dry_run,
+        )
+
         allow_general_submit = general_budget_ok
         result = await _run_and_record(
             state,
