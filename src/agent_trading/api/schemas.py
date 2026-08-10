@@ -1751,6 +1751,41 @@ class ManualStatusChangeResponse(BaseModel):
     actor: str
 
 
+class UpdateMaxSinglePositionPctRequest(BaseModel):
+    """``POST /config-versions/risk/max-single-position-pct`` 요청 본문.
+
+    이 endpoint는 어떤 client×environment의 활성 config를 바꾸는지
+    명시적으로 지정하게 강제한다 — 암묵적 "현재 계정"이라는 개념이 없다.
+    """
+
+    client_id: str = Field(..., description="Client UUID whose active config to update")
+    environment: str = Field(
+        ...,
+        description=(
+            "'paper' | 'live' only — 'real' is rejected (config_versions.environment's "
+            "DB CHECK constraint does not accept it)"
+        ),
+    )
+    max_single_position_pct: Decimal = Field(
+        ..., description="New value, 0 < x <= 100 (NAV 대비 단일 종목 최대 비중 %)"
+    )
+    reason: str | None = Field(default=None, description="Optional operator-provided reason (audit trail)")
+
+
+class UpdateMaxSinglePositionPctResponse(BaseModel):
+    """성공적인 config_version 발행 결과."""
+
+    config_version_id: str
+    previous_config_version_id: str
+    client_id: str
+    environment: str
+    version_tag: str
+    previous_max_single_position_pct: str | None
+    new_max_single_position_pct: str
+    activated_at: datetime | None
+    activated_by: str
+
+
 class ExternalEventView(BaseModel):
     """Lightweight external event view for UI consumption."""
 
