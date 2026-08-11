@@ -38,7 +38,15 @@ def select_strategy(
     preferred_time_horizon = "swing"
     reason_codes: list[str] = [f"source_type_{normalized_source_type}"]
 
-    if regime_label == "bearish_trend" or risk_tone == "risk_off":
+    # 안 A(2026-08-11 KST, B축 재설계): risk_off 단독 조건이 regime_label과
+    # 무관하게(bullish_trend여도) 모멘텀 계열을 전면 배제하던 것을,
+    # bullish_trend에 한해서만 완화한다. bearish_trend/range_bound/
+    # event_driven_unstable 등 그 외 regime_label에서는 risk_off일 때
+    # 기존과 동일하게 방어 전략으로 전면 제한한다(이 조건식 자체는
+    # 변경하지 않음 — 아래 `regime_label != "bullish_trend"` 절만 추가).
+    if regime_label != "bullish_trend" and (
+        regime_label == "bearish_trend" or risk_tone == "risk_off"
+    ):
         preferred_strategy = "defensive_low_volatility_rotation"
         allowed_strategies = (
             "defensive_low_volatility_rotation",
@@ -65,6 +73,26 @@ def select_strategy(
         preferred_entry_style = "MARKET"
         preferred_time_horizon = "short"
         reason_codes.append("event_driven_tactical")
+    elif regime_label == "bullish_trend" and risk_tone == "risk_off":
+        # 안 A: bullish_trend에서는 risk_off라도 모멘텀 계열을 완전
+        # 배제하지 않고 완화된 허용으로 전환한다 — "완전 차단"이 아니라
+        # preferred_strategy만 방어적으로 유지하고 allowed_strategies에는
+        # swing_momentum/event_continuation을 포함시킨다.
+        # "risk_off_defensive"를 재사용하지 않고 새 태그
+        # "risk_off_bullish_trend_relaxed"만 남기는 이유: "risk_off_defensive"는
+        # 기존 분석 문서(§28~30)에서 "모멘텀 계열 전면 배제"라는 특정 의미로
+        # 이미 쓰여왔다 — 이 분기는 그 의미와 다르므로(완화됐으므로) 같은
+        # 태그를 재사용하면 과거/향후 집계가 섞여 오염된다.
+        preferred_strategy = "defensive_low_volatility_rotation"
+        allowed_strategies = (
+            "defensive_low_volatility_rotation",
+            "mean_reversion_bounce",
+            "swing_momentum",
+            "event_continuation",
+        )
+        preferred_entry_style = "LIMIT"
+        preferred_time_horizon = "swing"
+        reason_codes.append("risk_off_bullish_trend_relaxed")
     elif regime_label == "bullish_trend":
         preferred_strategy = "swing_momentum"
         allowed_strategies = (

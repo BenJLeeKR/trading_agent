@@ -6236,3 +6236,113 @@ downgraded(BUY_CANDIDATE)` 표본에서 **공통 태그에 가깝다** —
   으로 작고 `matched` 비교군이 전무해, "즉시 완화하라"는 정책
   결론으로는 올리지 않는다 — §29.4의 (B) 완화 후보/(C) 제거
   후보 미특정 판정도 그대로 유지된다.
+
+## 31. B축 재설계 — 직전 보고 수치 정정 및 안 A(risk_off +
+bullish_trend 완화) 구현(2026-08-11 KST)
+
+### 31.1 직전 보고(같은 날 앞선 턴)의 수치 오류 정정
+
+직전 턴의 "B축 재설계안 비교" 보고는 `2026-08-01~08-11`
+`BUY_CANDIDATE` 기원 표본을 `N=987`, `risk_off` 통과율 9.85%
+(80/812), `risk_on` 통과율 35.4%(62/175)로 보고했다. **이 중
+`risk_on` 35.4%는 사실 오류다.**
+
+**오류 원인(factual)**: 그 보고는 `risk_tone` 실측값을
+`decision_json -> 'deterministic_trigger' ->> 'risk_tone'`
+경로로 조회했는데, 이 경로는 **항상 NULL**이다(risk_tone은
+`deterministic_trigger` 바로 아래가 아니라
+`deterministic_trigger -> 'metadata' -> 'risk_tone'`에 한 단계
+더 중첩돼 있다 — `strategy_selection -> 'metadata' ->
+'risk_tone'`에도 동일한 값이 있고, 이 둘은 991건 전수 조사에서
+100% 일치했다). 조회 결과가 전부 NULL이자, 대안으로
+`reason_codes::text ilike '%risk_off%'`라는 **텍스트 검색
+프록시**를 즉석에서 만들어 대신 썼다. `reason_codes`는 FDC(LLM)가
+자유서술식으로 생성하는 필드라, 실제 `risk_tone='risk_off'`인데도
+FDC가 그 사실을 reason_codes에 "risk_off"라는 문자열로 명시하지
+않은 사례(108건)가 전부 "risk_on"으로 오분류됐다.
+
+**정정 전/후 비교** (기간 `2026-08-01 00:00~2026-08-11 23:59
+KST`, 조회 시점에 따라 소폭 변동 — 아래는 2026-08-11
+14시경 재조회 값):
+
+| | 정정 전(reason_codes 텍스트 프록시, 오류) | 정정 후(`deterministic_trigger.metadata.risk_tone`, 정확) |
+|---|---|---|
+| 전체 표본 | 987 | 991 |
+| `risk_off`: matched/downgraded/diverged | 80/723/9 (총 812) | 86/835/9 (총 930) |
+| `risk_on`: matched/downgraded | 62/113 (총 175) | **56/5**(총 61) |
+| `risk_off` 통과율 | 9.85% | **9.25%** |
+| `risk_on` 통과율 | 35.4% | **91.8%** |
+
+`risk_on` 쪽 오차가 결정적이다 — 실제로는 `risk_on`
+`downgraded`가 113건이 아니라 **5건뿐**이었다. 정정된 수치
+(9.25% vs 91.8%)는 §29에서 이미 확정했던 값(11.7% vs 93.2%,
+다른 기간·다른 population)과 방향·크기가 거의 일치한다 — 즉
+정정 전 수치가 이례적으로 낮은 `risk_on` 통과율을 보였던 것
+자체가 필터 버그의 징후였다.
+
+**정정되지 않는 부분(그대로 유지)**: `regime_label` 분포(100%
+`bullish_trend`, `td.regime_label` 컬럼 직접 조회라 버그 영향
+없음), 상위 반복 종목 분포(008930/051900/073240/001450/111770/
+181710 순, 순위 불변), `eligibility_passed=true` 100%(liquidity
+게이트 미발동) — 이 결론들은 정정 전 보고서에서도 이미 올바른
+필드/컬럼으로 조회했으므로 그대로 유효하다.
+
+**해석**: 이번 오류는 "분석 결론이 틀렸다"가 아니라 "risk_on
+쪽 표본이 실제보다 훨씬 크게 보였다"는 방향의 오류였고, 정정
+후에는 §29의 기존 결론(risk_tone이 가장 강한 단일 판별 변수)이
+**더 강하게** 재확인된다.
+
+### 31.2 안 A 구현 확정
+
+§29.4의 (B) 완화 후보로 제시했던 "risk_off + bullish_trend
+조합 분리"를 **최소 범위로 구현**했다. 코드 변경:
+`src/agent_trading/services/strategy_selection.py`.
+
+- 기존 `if regime_label == "bearish_trend" or risk_tone ==
+  "risk_off":` 조건은 `bearish_trend`/`range_bound`/
+  `event_driven_unstable` 등 `bullish_trend`가 아닌 모든
+  regime에서 **그대로 유지**한다(risk_off면 방어 전략 전면
+  제한, 변경 없음).
+- `regime_label == "bullish_trend" and risk_tone ==
+  "risk_off"` 조합만 새 분기로 분리해, `allowed_strategies`에
+  `swing_momentum`/`event_continuation`을 **포함**시킨다(완전
+  배제 → 완화된 허용). `preferred_strategy`는 의도대로
+  `defensive_low_volatility_rotation`으로 방어적으로 유지한다.
+- 새 reason_code `risk_off_bullish_trend_relaxed`를 추가하고,
+  기존 `risk_off_defensive`는 이 분기에서 재사용하지 않는다 —
+  `risk_off_defensive`는 §28~30에서 이미 "모멘텀 계열 전면
+  배제"라는 특정 의미로 쓰여왔으므로, 의미가 다른 완화 분기에
+  같은 태그를 붙이면 과거/향후 집계가 섞여 오염된다.
+- `event_overlay`/`held_position` 후처리 로직은 수정하지 않았다
+  — 기존 로직이 `regime_label != "bearish_trend"`일 때
+  `preferred_strategy`를 `event_continuation`으로 덮어쓰는
+  동작은 `bullish_trend`+`risk_on` 경로와 동일하게 새 분기에도
+  그대로 적용되며, 이는 기존 설계와 일관된 재사용이지 새로운
+  충돌이 아니다.
+
+**구현 범위 밖(이번에 건드리지 않음)**: `bearish_trend`/
+`range_bound`/`event_driven_unstable`의 risk_off 처리,
+`held_position` churn-control, `SELL`/`EXIT`/`REDUCE` 경로,
+`_check_buy_eligibility_upgrade_guard`(liquidity 게이트),
+`evidence_strength` 임계치, EV 계산 로직.
+
+### 31.3 검증
+
+`tests/services/test_strategy_selection.py`에 5개 테스트
+추가(기존 4개 전부 그대로 통과 유지) — dev validation
+container(`bash scripts/harness/docker_dev_exec.sh python3 -m
+pytest ...`)에서 실행, 9/9 PASS. `accept style`/`accept
+no-bypass`/`accept architecture` 전부 PASS. `accept backend-file`은
+import-graph로 함께 선택된 `tests/services/test_decision_
+orchestrator.py`의 기존 실패 3건(이번 변경과 무관 — `git
+stash`로 정정 전 코드에서도 동일하게 실패함을 확인) 때문에
+전체 결과가 FAIL로 표시된다.
+
+### 31.4 미확정(그대로 남김)
+
+- `risk_off + bullish_trend` 완화가 실제로 기대값을 개선하는지는
+  **완화 적용 후에야** 관측 가능하다 — 이번 턴은 코드 변경만
+  했고 운영 배포/사후 성과는 다루지 않았다.
+- `risk_off + bearish_trend`/`range_bound` 등 비교 국면 표본은
+  여전히 이 기간에 0건이다.
+- `matched` 표본의 forward return은 여전히 확보되지 않았다.
