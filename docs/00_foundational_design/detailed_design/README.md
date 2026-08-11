@@ -67,11 +67,12 @@
    - idempotency, out-of-order/중복/정정 처리, 장애 복구 계약
    - 실행 계획: [`docs/40_action_plans/kis_realized_pnl_moving_average_action_plan.md`](../../40_action_plans/kis_realized_pnl_moving_average_action_plan.md)
 
-13. `13_loss_cut_policy_investigation.md` (설계 조사, 정책 결정 대기 — 구현 미착수)
-   - 손실률 기반(매수가 대비 -N%) Loss-cut 정책 도입 여부 조사
-   - 현재 운영 코드에는 이런 정량 손절이 없음을 소스 기준으로 재확인
-   - 정책안 3종(하드 손절/단계형/관측용 shadow) 비교, 설정 경로(`env` vs `config_versions`+Admin API) 비교
-   - 후속: [`docs/99_meta_handover/[BACKLOG] backlog.md`](../../99_meta_handover/%5BBACKLOG%5D%20backlog.md)
+13. `13_loss_cut_policy_specification_and_config_path_design.md` (정책 명세 초안, 구현 미착수)
+   - 손실률 기반(매수가 대비 -N%) Loss-cut 정책의 정책 명세 + 설정 경로 설계 초안 — 구현 직전 수준까지 구체화
+   - 2단계(soft/hard) 손절 구조, 기존 held_position 청산 로직과의 합성/우선순위 규칙, 기준 가격, cooldown 설계
+   - `risk.loss_cut` config_json 스키마 초안 + Admin API/CLI 입력 계약 초안, shadow 전용 `env` 허용 범위
+   - 선행 조사(설계 조사/현황 분석): [`docs/20_system_analysis/loss_cut_policy_investigation.md`](../../20_system_analysis/loss_cut_policy_investigation.md) — 현재 운영 코드에 정량 손절이 없음을 소스 기준으로 확인, 정책안 3종(하드 손절/단계형/관측용 shadow) 비교
+   - 실행 계획: [`docs/40_action_plans/loss_cut_policy_and_config_path_action_plan.md`](../../40_action_plans/loss_cut_policy_and_config_path_action_plan.md)
 
 ## 설계 원칙
 
