@@ -1427,6 +1427,27 @@ class TestTradeDecisionPersistence:
         )
         await repos.decision_contexts.add(context)
 
+        # 최근 이벤트가 전혀 없으면 deterministic_trigger.primary_candidate가
+        # NO_ACTION으로 귀결되고 _evaluate_pre_agent_short_circuit()의
+        # "NO_ACTION + recent_events=0" 조건(decision_orchestrator.py)에
+        # 걸려 AI 호출 자체가 스킵된다 — 이 short-circuit이 만드는 stub
+        # bundle은 schema_versions에 ai_compliance를 포함하지 않으므로
+        # (실제 4-agent 경로와 의도적으로 다름 — compliance는 애초에
+        # 호출되지 않았기 때문) agent_version_json에 4개 키가 아니라
+        # 3개만 남는다. 이 테스트는 실제 4-agent 파이프라인의
+        # agent_version_json을 검증하려는 것이므로, 최근 이벤트를 하나
+        # 시딩해 그 경로를 탄다.
+        await repos.external_events.add(
+            ExternalEventEntity(
+                event_id=uuid4(),
+                event_type="news",
+                source_name="naver",
+                published_at=now,
+                symbol=sample_request.symbol,
+                market=sample_request.market,
+            )
+        )
+
         service = DecisionOrchestratorService(repos=repos, use_subprocess_isolation=False)
         intent = await service.assemble(
             sample_request,
@@ -3083,6 +3104,26 @@ class TestAssembleAndCreateOrderFullFlow:
         )
         repos.instruments._items[instrument.instrument_id] = instrument
 
+        # ── 최근 이벤트 시딩 ──
+        # 최근 이벤트가 전혀 없으면 deterministic_trigger.primary_candidate가
+        # NO_ACTION으로 귀결되고 _evaluate_pre_agent_short_circuit()의
+        # "NO_ACTION + recent_events=0" 조건(decision_orchestrator.py)에
+        # 걸려 AI 호출 자체가 스킵된다 — 이 경우 4개 real agent가 아니라
+        # deterministic stub bundle이 반환되어 recorder에 아무 것도
+        # 기록되지 않는다(실제 운영에서도 동일하게 발생하는 의도된 비용
+        # 절감 최적화). 이 테스트는 실제 4-agent 파이프라인 기록을
+        # 검증하려는 것이므로, 최근 이벤트를 하나 시딩해 그 경로를 탄다.
+        await repos.external_events.add(
+            ExternalEventEntity(
+                event_id=uuid4(),
+                event_type="news",
+                source_name="naver",
+                published_at=now,
+                symbol=instrument.symbol,
+                market=instrument.market_code,
+            )
+        )
+
         # ── Create services sharing the same repos ──
         service = DecisionOrchestratorService(repos=repos, use_subprocess_isolation=False)
         manager = OrderManager(repos=repos, reconciliation_service=None)
@@ -3168,6 +3209,27 @@ async def test_assemble_creates_decision_context_when_not_provided(
     request = dataclasses.replace(
         sample_request,
         strategy_id=str(uuid4()),
+    )
+
+    # 이 테스트는 실제 4-agent 파이프라인(EI/AR/AC/FDC)이 호출·기록되는지
+    # 검증하려는 것이지만, symbol에 최근 이벤트가 전혀 없으면
+    # deterministic_trigger.primary_candidate가 NO_ACTION으로 귀결되고
+    # _evaluate_pre_agent_short_circuit()의 "NO_ACTION + recent_events=0"
+    # 조건(decision_orchestrator.py)에 걸려 AI 호출 자체가 스킵된다 — 이
+    # 경우 4개 real agent가 아니라 deterministic stub bundle이 반환되어
+    # recorder에 아무 것도 기록되지 않는다(실제 운영에서도 동일하게
+    # 발생하는, 의도된 비용 절감 최적화). 최근 이벤트를 하나 시딩해
+    # 이 short-circuit을 피하고 테스트가 원래 검증하려던 실제 agent
+    # 호출 경로를 타도록 한다.
+    await service._repos.external_events.add(
+        ExternalEventEntity(
+            event_id=uuid4(),
+            event_type="news",
+            source_name="naver",
+            published_at=datetime.now(timezone.utc),
+            symbol=request.symbol,
+            market=request.market,
+        )
     )
 
     intent = await service.assemble(request)
