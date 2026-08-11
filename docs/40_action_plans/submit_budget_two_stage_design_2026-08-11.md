@@ -468,3 +468,45 @@ AI 소요 시간을 정확히 남긴다. 이 로깅 개선은 D안 구현과 별
 상세: PR로 반영, `docs/99_meta_handover/[BACKLOG] backlog.md` #17,
 `docs/10_signal_research_sppv/[PRIORITY_MAP] remaining_work_priority_map.md`
 참고.
+
+---
+
+## 11. 테스트 보강 결과 (2026-08-11 KST, dev validation container 기준)
+
+PR #222(merged) 병합 후, "구조 변경은 들어갔지만 pytest 증거가 약하다"는
+한계를 해소하기 위해 `tests/scripts/test_run_decision_loop.py`를
+**dev validation container**(`bash scripts/harness/docker_dev_exec.sh
+python3 -m pytest ...`, `network_mode=none`)에서 실행/보강했다.
+
+- 기존 `TestGeneralSubmitLane`의 2개 테스트(`test_run_loop_allows_next_
+  general_submit_after_pre_submit_failure`, `test_run_loop_allows_
+  multiple_general_submits_up_to_cycle_budget`)는 옛 reservation 구조의
+  `_run_one_cycle()` per-call `submit`/`dry_run` kwargs를 직접 검증하고
+  있어 새 구조에서 하드 실패했다(`submit_symbols == []`). 단순 기본값
+  보정이 아니라, **같은 행동을 새 구조(Pass 1.5/Pass 2)로 검증하도록
+  재작성**했다 — `test_run_loop_pass2_moves_to_next_candidate_after_
+  submit_failure` / `test_run_loop_pass2_submits_up_to_cycle_budget`.
+- 신규 4개 테스트 클래스로 핵심 항목 A/B/C/D를 직접 증명:
+  - `TestDeferActionableForPass2`(A) — actionable intent는 `assemble()`
+    1회만 호출되고 `PENDING_PASS2`로 적재, `ExecutionService`는 Pass 1에서
+    호출되지 않음. non-actionable(HOLD)은 오늘처럼 즉시 실행됨.
+  - `TestGeneralLanePriorityKeyAndDedupe`(B) — 정렬 기준(순수 함수) +
+    같은 symbol 2개 source_type 중 1건만 제출 시도로 이어짐.
+  - `TestRunGeneralLanePass2BudgetConsumption`(C) — WATCH는 budget
+    미소비, SUBMITTED/RECONCILE_REQUIRED만 소비.
+  - `TestHeldPositionLaneUnaffectedByPass2`(D) — held_position 심볼은
+    `defer_actionable_for_pass2`를 절대 받지 않음(`_run_loop` 레벨 확인).
+- `tests/scripts/test_run_decision_loop.py` 전체(127건) dev validation
+  container에서 실행 — 전부 PASS. `tests/services/translation_test.py`
+  (26건, 무변경 확인용)도 PASS.
+- `accept style`/`accept no-bypass`(`hard_bypass_count=0`, review 대상
+  7건은 전부 기존 파일에서도 쓰던 `AsyncMock`/`patch` 격리 패턴)/
+  `accept architecture` 모두 PASS.
+- `accept backend-file`은 `scripts/`, `tests/scripts/` 모두 스코프
+  밖(`invalid_path_scope`)이라 여전히 N/A — 그 대신 위 pytest 실행
+  결과가 실제 증거다.
+
+**미검증**: `assemble()`/`assemble_and_submit()` 부수효과 완전 동일성과
+Pass 2 순차화로 인한 cycle 소요시간 증가폭은 이번 테스트 보강으로도
+검증되지 않는다(실제 LLM/DB 붙는 장중 실측이 필요한 영역) — 여전히
+다음 장중 실측 대상.

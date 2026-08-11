@@ -95,6 +95,8 @@ from scripts.run_decision_loop import (
     _parse_universe_symbols,
     _read_trading_universe,
     _resolve_symbol_price,
+    _general_lane_priority_key,
+    _run_general_lane_pass2,
     _run_loop,
     _run_one_cycle,
     _run_precheck,
@@ -2655,9 +2657,19 @@ class TestHeldPositionSellBudget:
 class TestGeneralSubmitLane:
     """일반 BUY submit lane 직렬화/승계 검증."""
 
+    # NOTE(2026-08-11 KST, D안 2단계 분리): 아래 두 테스트는 원래
+    # ``_run_one_cycle()``의 ``submit``/``dry_run`` kwargs가 예약 시점에
+    # 바로 최종값을 반영한다는 옛 구조(reservation)를 검증했다. 이제 general
+    # lane의 Pass 1은 항상 ``defer_actionable_for_pass2=True``로만
+    # ``_run_one_cycle()``을 호출하고, budget 소비/차단은 Pass 2
+    # (``_run_general_lane_pass2()`` → ``_submit_general_lane_candidate()``)
+    # 에서만 일어난다. 단순히 새 kwargs 기본값을 덮어 통과시키는 대신,
+    # 새 구조가 실제로 같은 행동(예산 이연/이월, budget 소진 시 차단)을
+    # 보장하는지를 검증하도록 다시 작성했다.
     @pytest.mark.asyncio
-    async def test_run_loop_allows_next_general_submit_after_pre_submit_failure(self) -> None:
-        """첫 일반 후보가 pre-submit 실패하면 같은 cycle 다음 BUY가 submit을 이어받아야 함."""
+    async def test_run_loop_pass2_moves_to_next_candidate_after_submit_failure(self) -> None:
+        """Pass 2에서 첫 candidate가 budget-비소비 결과로 끝나면, budget이
+        남아있는 한 다음 candidate가 이어받아 제출을 시도해야 한다(item C)."""
         import scripts.run_decision_loop as module
 
         universe = (
@@ -2665,7 +2677,6 @@ class TestGeneralSubmitLane:
             UniverseSymbol(symbol="000150", market="KRX", source_type="core"),
             UniverseSymbol(symbol="003670", market="KRX", source_type="core"),
         )
-        calls: list[dict[str, object]] = []
 
         @asynccontextmanager
         async def _mock_runtime(run_migrations: bool = False) -> AsyncIterator[dict[str, Any]]:
@@ -2680,31 +2691,50 @@ class TestGeneralSubmitLane:
             yield _DummyTx()
 
         async def _mock_run_one_cycle(**kwargs: object) -> dict[str, object]:
-            calls.append(
+            # Pass 1: 전부 actionable로 판단해 pending_candidates_sink에 적재.
+            sink = kwargs.get("pending_candidates_sink")
+            assert isinstance(sink, list)
+            sink.append(
                 {
+                    "cycle_index": kwargs["cycle_index"],
                     "symbol": kwargs["symbol"],
-                    "submit": kwargs["submit"],
-                    "dry_run": kwargs["dry_run"],
-                    "dry_run_reason": kwargs.get("dry_run_reason"),
+                    "market": kwargs["market"],
+                    "source_type": kwargs["source_type"],
+                    "intent": None,
+                    "trade_decision_id": None,
+                    "decision_context_id": None,
+                    "request": None,
+                    "final_trade_score": None,
+                    "analysis_completed_at": datetime.now(timezone.utc),
                 }
             )
-            if kwargs["symbol"] == "000030":
+            return {
+                "status": "PENDING_PASS2",
+                "symbol": str(kwargs["symbol"]),
+                "market": str(kwargs["market"]),
+                "source_type": str(kwargs["source_type"]),
+                "duration_seconds": 0.01,
+            }
+
+        submit_calls: list[str] = []
+
+        async def _mock_submit_candidate(
+            candidate: dict[str, object], *, cycle_count: int, runtime: dict[str, object],
+        ) -> dict[str, object]:
+            symbol = str(candidate["symbol"])
+            submit_calls.append(symbol)
+            if symbol == "000030":
+                # pre-submit 실패 — budget을 소비하지 않는 상태(non-SUBMITTED/
+                # RECONCILE_REQUIRED)로 끝난다.
                 return {
                     "status": "SIZING_REJECTED",
-                    "symbol": "000030",
-                    "market": "KRX",
-                    "duration_seconds": 0.01,
-                }
-            if kwargs["submit"]:
-                return {
-                    "status": "SUBMITTED",
-                    "symbol": str(kwargs["symbol"]),
+                    "symbol": symbol,
                     "market": "KRX",
                     "duration_seconds": 0.01,
                 }
             return {
-                "status": "DRY_RUN",
-                "symbol": str(kwargs["symbol"]),
+                "status": "SUBMITTED",
+                "symbol": symbol,
                 "market": "KRX",
                 "duration_seconds": 0.01,
             }
@@ -2727,6 +2757,10 @@ class TestGeneralSubmitLane:
                 patch("scripts.run_decision_loop._seed_if_empty", AsyncMock(return_value=False)),
                 patch("scripts.run_decision_loop._run_precheck", AsyncMock(return_value=None)),
                 patch("scripts.run_decision_loop._run_one_cycle", side_effect=_mock_run_one_cycle),
+                patch(
+                    "scripts.run_decision_loop._submit_general_lane_candidate",
+                    side_effect=_mock_submit_candidate,
+                ),
                 patch("agent_trading.db.transaction.transaction", new=_mock_tx),
                 patch(
                     "agent_trading.repositories.postgres.bootstrap.build_postgres_repositories",
@@ -2745,17 +2779,20 @@ class TestGeneralSubmitLane:
         finally:
             module._shutdown_event = original_shutdown_event
 
+        # 정렬 기준(동일 source_type/score → analysis_completed_at 오름차순,
+        # universe 순서와 동일)상 000030 → 000150 → 003670 순으로 시도된다.
+        # 000030은 budget을 소비하지 않으므로 budget(=1)이 그대로 남아
+        # 000150이 이어받아 SUBMITTED된다. 그 시점에 budget이 소진되므로
+        # 003670은 _submit_general_lane_candidate가 전혀 호출되지 않아야
+        # 한다(예산 소진 후보는 Pass 2 진입 자체를 막는다).
+        assert submit_calls == ["000030", "000150"]
+        # 000030(SIZING_REJECTED)이 실패로 집계되어 exit_code=1.
         assert exit_code == 1
-        submit_symbols = [str(call["symbol"]) for call in calls if call["submit"] is True]
-        dry_run_calls = [call for call in calls if call["dry_run"] is True]
-
-        assert "000030" in submit_symbols
-        assert len(submit_symbols) == 2
-        assert len(dry_run_calls) == 1
-        assert dry_run_calls[0]["dry_run_reason"] == "submit_budget_consumed_core"
 
     @pytest.mark.asyncio
-    async def test_run_loop_allows_multiple_general_submits_up_to_cycle_budget(self) -> None:
+    async def test_run_loop_pass2_submits_up_to_cycle_budget(self) -> None:
+        """budget 범위 내에서는 순서대로 전부 제출되고, budget을 넘는
+        candidate는 Pass 2 호출 자체 없이 차단돼야 한다(item C)."""
         import scripts.run_decision_loop as module
 
         universe = (
@@ -2764,7 +2801,6 @@ class TestGeneralSubmitLane:
             UniverseSymbol(symbol="003670", market="KRX", source_type="core"),
             UniverseSymbol(symbol="005930", market="KRX", source_type="core"),
         )
-        calls: list[dict[str, object]] = []
 
         @asynccontextmanager
         async def _mock_runtime(run_migrations: bool = False) -> AsyncIterator[dict[str, Any]]:
@@ -2779,24 +2815,40 @@ class TestGeneralSubmitLane:
             yield _DummyTx()
 
         async def _mock_run_one_cycle(**kwargs: object) -> dict[str, object]:
-            calls.append(
+            sink = kwargs.get("pending_candidates_sink")
+            assert isinstance(sink, list)
+            sink.append(
                 {
+                    "cycle_index": kwargs["cycle_index"],
                     "symbol": kwargs["symbol"],
-                    "submit": kwargs["submit"],
-                    "dry_run": kwargs["dry_run"],
-                    "dry_run_reason": kwargs.get("dry_run_reason"),
+                    "market": kwargs["market"],
+                    "source_type": kwargs["source_type"],
+                    "intent": None,
+                    "trade_decision_id": None,
+                    "decision_context_id": None,
+                    "request": None,
+                    "final_trade_score": None,
+                    "analysis_completed_at": datetime.now(timezone.utc),
                 }
             )
-            if kwargs["submit"]:
-                return {
-                    "status": "SUBMITTED",
-                    "symbol": str(kwargs["symbol"]),
-                    "market": "KRX",
-                    "duration_seconds": 0.01,
-                }
             return {
-                "status": "DRY_RUN",
+                "status": "PENDING_PASS2",
                 "symbol": str(kwargs["symbol"]),
+                "market": str(kwargs["market"]),
+                "source_type": str(kwargs["source_type"]),
+                "duration_seconds": 0.01,
+            }
+
+        submit_calls: list[str] = []
+
+        async def _mock_submit_candidate(
+            candidate: dict[str, object], *, cycle_count: int, runtime: dict[str, object],
+        ) -> dict[str, object]:
+            symbol = str(candidate["symbol"])
+            submit_calls.append(symbol)
+            return {
+                "status": "SUBMITTED",
+                "symbol": symbol,
                 "market": "KRX",
                 "duration_seconds": 0.01,
             }
@@ -2819,6 +2871,10 @@ class TestGeneralSubmitLane:
                 patch("scripts.run_decision_loop._seed_if_empty", AsyncMock(return_value=False)),
                 patch("scripts.run_decision_loop._run_precheck", AsyncMock(return_value=None)),
                 patch("scripts.run_decision_loop._run_one_cycle", side_effect=_mock_run_one_cycle),
+                patch(
+                    "scripts.run_decision_loop._submit_general_lane_candidate",
+                    side_effect=_mock_submit_candidate,
+                ),
                 patch("agent_trading.db.transaction.transaction", new=_mock_tx),
                 patch(
                     "agent_trading.repositories.postgres.bootstrap.build_postgres_repositories",
@@ -2838,13 +2894,10 @@ class TestGeneralSubmitLane:
             module._shutdown_event = original_shutdown_event
 
         assert exit_code == 0
-        submit_symbols = [str(call["symbol"]) for call in calls if call["submit"] is True]
-        dry_run_calls = [call for call in calls if call["dry_run"] is True]
-
-        assert submit_symbols == ["000030", "000150", "003670"]
-        assert len(dry_run_calls) == 1
-        assert dry_run_calls[0]["symbol"] == "005930"
-        assert dry_run_calls[0]["dry_run_reason"] == "submit_budget_consumed_core"
+        # budget=3이므로 처음 3개(정렬 순서 = universe 순서)만 Pass 2가
+        # 시도하고, 4번째(005930)는 _submit_general_lane_candidate가 전혀
+        # 호출되지 않아야 한다.
+        assert submit_calls == ["000030", "000150", "003670"]
 
     @pytest.mark.asyncio
     async def test_run_loop_general_submit_lane_does_not_serialize_symbol_execution(self) -> None:
@@ -2921,6 +2974,352 @@ class TestGeneralSubmitLane:
 
         assert exit_code == 1
         assert peak_active >= 2
+
+
+# ---------------------------------------------------------------------------
+# D안(2026-08-11 KST) — submit budget 2단계 분리 (Pass 1/Pass 1.5/Pass 2)
+# ---------------------------------------------------------------------------
+
+
+class TestDeferActionableForPass2:
+    """``_run_one_cycle(defer_actionable_for_pass2=True)`` — Pass 1 분기 검증(item A)."""
+
+    @pytest.mark.asyncio
+    async def test_actionable_intent_is_deferred_not_submitted_in_pass1(self) -> None:
+        """actionable(APPROVE) intent는 Pass 1에서 즉시 제출되지 않고
+        ``pending_candidates_sink``에 적재된 뒤 ``PENDING_PASS2``를
+        반환해야 한다. ``ExecutionService``는 Pass 1에서 호출되지 않아야
+        한다(AI 비용 중복 지불 방지 확인 포함 — assemble()은 1회만 호출)."""
+        from agent_trading.services.decision_orchestrator import AIDecisionInputs
+
+        # build_submit_order_request_from_decision()이 실제로 actionable로
+        # 판정하려면 EV anchor 필드(expected_return_bps 등)가 전부 채워져
+        # 있어야 한다(translation.py의 _has_required_expected_value_anchor —
+        # APPROVE/BUY도 이 필드 존재 여부 자체는 면제되지 않는다).
+        intent = dataclasses.replace(
+            _make_stub_intent(),
+            ai_backend_inputs=AIDecisionInputs(
+                decision_type="APPROVE",
+                side="buy",
+                confidence=0.8,
+                expected_return_bps=Decimal("78.56"),
+                expected_downside_bps=Decimal("42.00"),
+                net_expected_value_bps=Decimal("36.56"),
+                final_trade_score=Decimal("0.77"),
+                minimum_required_edge_bps=Decimal("10.00"),
+                edge_after_cost_bps=Decimal("8.56"),
+                estimated_round_trip_cost_bps=Decimal("8.00"),
+                slippage_buffer_bps=Decimal("20.00"),
+            ),
+        )
+        sink: list[dict[str, object]] = []
+
+        async with _mock_runtime_for_one_cycle() as runtime:
+            orchestrator = runtime["orchestrator"]
+            mock_assemble = AsyncMock(return_value=intent)
+            with (
+                patch.object(orchestrator, "assemble", mock_assemble),
+                patch("scripts.run_decision_loop.ExecutionService") as mock_execution_service_cls,
+            ):
+                result = await _run_one_cycle(
+                    cycle=1,
+                    submit=False,
+                    dry_run=False,
+                    output="text",
+                    runtime=runtime,
+                    defer_actionable_for_pass2=True,
+                    pending_candidates_sink=sink,
+                    cycle_index=3,
+                )
+
+        assert result["status"] == "PENDING_PASS2"
+        mock_assemble.assert_awaited_once()
+        mock_execution_service_cls.assert_not_called()
+        assert len(sink) == 1
+        candidate = sink[0]
+        assert candidate["cycle_index"] == 3
+        assert candidate["symbol"] == SYMBOL
+        assert candidate["intent"] is intent
+        # request는 _run_one_cycle()이 이 cycle을 위해 직접 만든
+        # SubmitOrderRequest다(assemble()의 반환값과는 별개 객체) — Pass 2가
+        # 그대로 재사용할 수 있도록 symbol/side만 확인한다.
+        assert candidate["request"].symbol == SYMBOL
+        assert candidate["request"].side == OrderSide.BUY
+
+    @pytest.mark.asyncio
+    async def test_non_actionable_intent_still_runs_execution_pipeline_immediately(self) -> None:
+        """non-actionable(HOLD) intent는 오늘과 동일하게 Pass 1에서 즉시
+        ``run_execution_pipeline()``까지 실행해 감사 추적을 남겨야 한다 —
+        pending_candidates_sink에는 아무것도 쌓이지 않아야 한다."""
+        from agent_trading.services.decision_orchestrator import AIDecisionInputs
+
+        hold_intent = dataclasses.replace(
+            _make_stub_intent(),
+            ai_backend_inputs=AIDecisionInputs(decision_type="HOLD", side="buy"),
+        )
+        sink: list[dict[str, object]] = []
+
+        async with _mock_runtime_for_one_cycle() as runtime:
+            orchestrator = runtime["orchestrator"]
+            with patch.object(orchestrator, "assemble", AsyncMock(return_value=hold_intent)):
+                result = await _run_one_cycle(
+                    cycle=1,
+                    submit=False,
+                    dry_run=False,
+                    output="text",
+                    runtime=runtime,
+                    defer_actionable_for_pass2=True,
+                    pending_candidates_sink=sink,
+                    cycle_index=0,
+                )
+
+        assert result["status"] != "PENDING_PASS2"
+        assert sink == []
+
+
+class TestGeneralLanePriorityKeyAndDedupe:
+    """``_general_lane_priority_key()`` 정렬 + Pass 1.5 dedupe 검증(item B)."""
+
+    def test_priority_orders_source_type_then_score_then_time(self) -> None:
+        t0 = datetime(2026, 8, 11, 9, 0, 0, tzinfo=timezone.utc)
+        t1 = datetime(2026, 8, 11, 9, 0, 1, tzinfo=timezone.utc)
+        core_high_score = {
+            "source_type": "core", "final_trade_score": Decimal("0.9"),
+            "analysis_completed_at": t1,
+        }
+        core_low_score_earlier = {
+            "source_type": "core", "final_trade_score": Decimal("0.1"),
+            "analysis_completed_at": t0,
+        }
+        event_overlay_top_score = {
+            "source_type": "event_overlay", "final_trade_score": Decimal("0.99"),
+            "analysis_completed_at": t0,
+        }
+        market_overlay_no_score = {
+            "source_type": "market_overlay", "final_trade_score": None,
+            "analysis_completed_at": t0,
+        }
+        ordered = sorted(
+            [market_overlay_no_score, event_overlay_top_score, core_low_score_earlier, core_high_score],
+            key=_general_lane_priority_key,
+        )
+        # 1차: source_type(core > event_overlay > market_overlay).
+        # core 둘 사이에서는 2차 기준(final_trade_score 내림차순)이 우선한다
+        # — event_overlay가 core보다 점수가 높아도 순위에서 밀린다.
+        assert ordered == [
+            core_high_score, core_low_score_earlier,
+            event_overlay_top_score, market_overlay_no_score,
+        ]
+
+    @pytest.mark.asyncio
+    async def test_dedupe_keeps_only_highest_priority_candidate_per_symbol(self) -> None:
+        """같은 symbol이 core/event_overlay 두 source_type으로 동시에
+        들어와도, 우선순위가 높은 core 1건만 실제 제출 시도로 이어져야
+        한다(나머지는 symbol_duplicate_in_cycle로 drop)."""
+        now = datetime.now(timezone.utc)
+        candidates = [
+            {
+                "cycle_index": 0, "symbol": "005930", "market": "KRX",
+                "source_type": "event_overlay", "intent": None,
+                "trade_decision_id": None, "decision_context_id": None,
+                "request": None, "final_trade_score": None,
+                "analysis_completed_at": now,
+            },
+            {
+                "cycle_index": 1, "symbol": "005930", "market": "KRX",
+                "source_type": "core", "intent": None,
+                "trade_decision_id": None, "decision_context_id": None,
+                "request": None, "final_trade_score": None,
+                "analysis_completed_at": now,
+            },
+        ]
+        cycle_results: list[dict[str, object]] = [
+            {"status": "PENDING_PASS2", "symbol": "005930", "cycle_index": 0},
+            {"status": "PENDING_PASS2", "symbol": "005930", "cycle_index": 1},
+        ]
+        submitted_source_types: list[str] = []
+
+        async def _mock_submit(
+            candidate: dict[str, object], *, cycle_count: int, runtime: dict[str, object],
+        ) -> dict[str, object]:
+            submitted_source_types.append(str(candidate["source_type"]))
+            return {
+                "status": "SUBMITTED",
+                "symbol": str(candidate["symbol"]),
+                "market": "KRX",
+                "duration_seconds": 0.01,
+            }
+
+        with patch(
+            "scripts.run_decision_loop._submit_general_lane_candidate",
+            side_effect=_mock_submit,
+        ):
+            new_consumed = await _run_general_lane_pass2(
+                candidates,
+                cycle_results=cycle_results,
+                cycle_count=1,
+                max_general_submits_this_cycle=5,
+                submit_budget_consumed_count=0,
+                runtime={},
+                output="text",
+            )
+
+        # event_overlay는 dedupe로 제출 시도조차 되지 않는다.
+        assert submitted_source_types == ["core"]
+        assert new_consumed == 1
+        assert cycle_results[0]["status"] == "SKIPPED"
+        assert cycle_results[0]["stop_reason"] == "symbol_duplicate_in_cycle"
+        assert cycle_results[1]["status"] == "SUBMITTED"
+
+
+class TestRunGeneralLanePass2BudgetConsumption:
+    """``_run_general_lane_pass2()`` — budget 소비 조건 검증(item C)."""
+
+    @pytest.mark.asyncio
+    async def test_budget_increments_only_on_submitted_or_reconcile_required(self) -> None:
+        """WATCH/SKIPPED로 끝난 candidate는 budget을 소비하지 않고,
+        SUBMITTED/RECONCILE_REQUIRED만 소비해야 한다."""
+        now = datetime.now(timezone.utc)
+
+        def _candidate(idx: int, symbol: str) -> dict[str, object]:
+            return {
+                "cycle_index": idx, "symbol": symbol, "market": "KRX",
+                "source_type": "core", "intent": None,
+                "trade_decision_id": None, "decision_context_id": None,
+                "request": None, "final_trade_score": None,
+                "analysis_completed_at": now,
+            }
+
+        candidates = [
+            _candidate(0, "AAA"),
+            _candidate(1, "BBB"),
+            _candidate(2, "CCC"),
+        ]
+        cycle_results: list[dict[str, object]] = [
+            {"status": "PENDING_PASS2", "symbol": "AAA", "cycle_index": 0},
+            {"status": "PENDING_PASS2", "symbol": "BBB", "cycle_index": 1},
+            {"status": "PENDING_PASS2", "symbol": "CCC", "cycle_index": 2},
+        ]
+        outcomes = {"AAA": "WATCH", "BBB": "SUBMITTED", "CCC": "RECONCILE_REQUIRED"}
+
+        async def _mock_submit(
+            candidate: dict[str, object], *, cycle_count: int, runtime: dict[str, object],
+        ) -> dict[str, object]:
+            symbol = str(candidate["symbol"])
+            return {
+                "status": outcomes[symbol],
+                "symbol": symbol,
+                "market": "KRX",
+                "duration_seconds": 0.01,
+            }
+
+        with patch(
+            "scripts.run_decision_loop._submit_general_lane_candidate",
+            side_effect=_mock_submit,
+        ):
+            new_consumed = await _run_general_lane_pass2(
+                candidates,
+                cycle_results=cycle_results,
+                cycle_count=1,
+                max_general_submits_this_cycle=5,
+                submit_budget_consumed_count=0,
+                runtime={},
+                output="text",
+            )
+
+        # WATCH(AAA)는 미소비, SUBMITTED(BBB)+RECONCILE_REQUIRED(CCC) 2건만 소비.
+        assert new_consumed == 2
+        assert cycle_results[0]["status"] == "WATCH"
+        assert cycle_results[1]["status"] == "SUBMITTED"
+        assert cycle_results[2]["status"] == "RECONCILE_REQUIRED"
+
+
+class TestHeldPositionLaneUnaffectedByPass2:
+    """held_position lane이 D안 Pass 1(defer_actionable_for_pass2)을 절대
+    타지 않는지 검증(item D)."""
+
+    @pytest.mark.asyncio
+    async def test_held_position_symbol_never_defers_to_pass2(self) -> None:
+        import scripts.run_decision_loop as module
+
+        universe = (
+            UniverseSymbol(symbol="005930", market="KRX", source_type="held_position"),
+            UniverseSymbol(symbol="000660", market="KRX", source_type="core"),
+        )
+        calls: list[dict[str, object]] = []
+
+        @asynccontextmanager
+        async def _mock_runtime(run_migrations: bool = False) -> AsyncIterator[dict[str, Any]]:
+            yield {"repositories": MagicMock()}
+
+        class _DummyTx:
+            async def commit(self) -> None:
+                return None
+
+        @asynccontextmanager
+        async def _mock_tx() -> AsyncIterator[_DummyTx]:
+            yield _DummyTx()
+
+        async def _mock_run_one_cycle(**kwargs: object) -> dict[str, object]:
+            calls.append(
+                {
+                    "symbol": kwargs["symbol"],
+                    "source_type": kwargs["source_type"],
+                    "defer_actionable_for_pass2": kwargs.get(
+                        "defer_actionable_for_pass2", False
+                    ),
+                    "pending_candidates_sink": kwargs.get("pending_candidates_sink"),
+                }
+            )
+            return {
+                "status": "DRY_RUN",
+                "symbol": str(kwargs["symbol"]),
+                "market": "KRX",
+                "duration_seconds": 0.01,
+            }
+
+        original_shutdown_event = module._shutdown_event
+        module._shutdown_event = asyncio.Event()
+        try:
+            with (
+                patch("scripts.run_decision_loop._install_signal_handlers", return_value=None),
+                patch(
+                    "scripts.run_decision_loop._load_trading_universe_with_anchor",
+                    AsyncMock(
+                        return_value=(
+                            universe,
+                            UniverseAnchorMetadata(source="test"),
+                        )
+                    ),
+                ),
+                patch("scripts.run_decision_loop.postgres_runtime", new=_mock_runtime),
+                patch("scripts.run_decision_loop._seed_if_empty", AsyncMock(return_value=False)),
+                patch("scripts.run_decision_loop._run_precheck", AsyncMock(return_value=None)),
+                patch("scripts.run_decision_loop._run_one_cycle", side_effect=_mock_run_one_cycle),
+                patch("agent_trading.db.transaction.transaction", new=_mock_tx),
+                patch(
+                    "agent_trading.repositories.postgres.bootstrap.build_postgres_repositories",
+                    return_value=MagicMock(),
+                ),
+            ):
+                await _run_loop(
+                    interval=0,
+                    max_cycles=1,
+                    submit=True,
+                    dry_run=False,
+                    allow_general_submit=True,
+                    max_general_submits_this_cycle=5,
+                    output="text",
+                )
+        finally:
+            module._shutdown_event = original_shutdown_event
+
+        held_call = next(c for c in calls if c["source_type"] == "held_position")
+        core_call = next(c for c in calls if c["source_type"] == "core")
+        assert held_call["defer_actionable_for_pass2"] is False
+        assert held_call["pending_candidates_sink"] is None
+        assert core_call["defer_actionable_for_pass2"] is True
+        assert core_call["pending_candidates_sink"] is not None
 
 
 # ---------------------------------------------------------------------------
