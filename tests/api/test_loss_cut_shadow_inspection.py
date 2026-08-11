@@ -253,3 +253,192 @@ def test_loss_cut_shadow_samples_filters_by_tier_and_limits_fields() -> None:
     assert item["source_type"] == "held_position"
     assert item["actual_decision_type"] == "hold"
     assert item["shadow_only"] is True
+
+
+def test_loss_cut_shadow_daily_splits_observations_by_kst_date() -> None:
+    repos = build_in_memory_repositories()
+    account_id, strategy_id, decision_context_id, now = _seed_common(repos)
+    day1 = now.replace(hour=10, minute=0, second=0, microsecond=0)
+    day2 = day1 + timedelta(days=1)
+
+    decisions = [
+        _make_decision(
+            decision_context_id=decision_context_id,
+            strategy_id=strategy_id,
+            symbol="005930",
+            created_at=day1,
+            source_type="held_position",
+            decision_type=DecisionType.HOLD,
+            loss_cut_shadow=_shadow_payload(triggered=True, tier="hard", loss_pct="15"),
+        ),
+        _make_decision(
+            decision_context_id=decision_context_id,
+            strategy_id=strategy_id,
+            symbol="000660",
+            created_at=day1,
+            source_type="held_position",
+            decision_type=DecisionType.WATCH,
+            loss_cut_shadow=_shadow_payload(triggered=False, tier=None, loss_pct="3"),
+        ),
+        _make_decision(
+            decision_context_id=decision_context_id,
+            strategy_id=strategy_id,
+            symbol="035420",
+            created_at=day2,
+            source_type="held_position",
+            decision_type=DecisionType.WATCH,
+            loss_cut_shadow=_shadow_payload(triggered=True, tier="soft", loss_pct="8"),
+        ),
+    ]
+    for decision in decisions:
+        repos.trade_decisions._items[decision.trade_decision_id] = decision
+
+    app = create_app(repos=repos, auth_enabled=False)
+    with TestClient(app) as tc:
+        response = tc.get(
+            "/trade-decisions/loss-cut-shadow/daily",
+            params={
+                "account_id": str(account_id),
+                "start_date": (day1 - timedelta(days=1)).date().isoformat(),
+                "end_date": (day2 + timedelta(days=1)).date().isoformat(),
+            },
+        )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert len(body["days"]) == 2
+
+    day1_kst = day1.astimezone(timezone(timedelta(hours=9))).date().isoformat()
+    day2_kst = day2.astimezone(timezone(timedelta(hours=9))).date().isoformat()
+    by_date = {d["trade_date"]: d for d in body["days"]}
+
+    assert by_date[day1_kst]["total_observation_count"] == 2
+    assert by_date[day1_kst]["triggered_count"] == 1
+    assert by_date[day1_kst]["hard_trigger_count"] == 1
+    assert by_date[day1_kst]["soft_trigger_count"] == 0
+    assert by_date[day1_kst]["trigger_rate"] == 0.5
+
+    assert by_date[day2_kst]["total_observation_count"] == 1
+    assert by_date[day2_kst]["triggered_count"] == 1
+    assert by_date[day2_kst]["soft_trigger_count"] == 1
+    assert by_date[day2_kst]["trigger_rate"] == 1.0
+
+    # 날짜는 오름차순으로 나와야 한다.
+    assert [d["trade_date"] for d in body["days"]] == sorted(
+        d["trade_date"] for d in body["days"]
+    )
+
+
+def test_loss_cut_shadow_daily_triggered_filter() -> None:
+    repos = build_in_memory_repositories()
+    account_id, strategy_id, decision_context_id, now = _seed_common(repos)
+
+    decisions = [
+        _make_decision(
+            decision_context_id=decision_context_id,
+            strategy_id=strategy_id,
+            symbol="005930",
+            created_at=now,
+            source_type="held_position",
+            decision_type=DecisionType.HOLD,
+            loss_cut_shadow=_shadow_payload(triggered=True, tier="hard", loss_pct="15"),
+        ),
+        _make_decision(
+            decision_context_id=decision_context_id,
+            strategy_id=strategy_id,
+            symbol="000660",
+            created_at=now,
+            source_type="held_position",
+            decision_type=DecisionType.WATCH,
+            loss_cut_shadow=_shadow_payload(triggered=False, tier=None, loss_pct="3"),
+        ),
+    ]
+    for decision in decisions:
+        repos.trade_decisions._items[decision.trade_decision_id] = decision
+
+    app = create_app(repos=repos, auth_enabled=False)
+    with TestClient(app) as tc:
+        response = tc.get(
+            "/trade-decisions/loss-cut-shadow/daily",
+            params={
+                "account_id": str(account_id),
+                "start_date": (now - timedelta(days=1)).date().isoformat(),
+                "end_date": (now + timedelta(days=1)).date().isoformat(),
+                "triggered": "true",
+            },
+        )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert len(body["days"]) == 1
+    assert body["days"][0]["total_observation_count"] == 1
+    assert body["days"][0]["triggered_count"] == 1
+    assert body["triggered"] is True
+
+
+def test_loss_cut_shadow_daily_empty_result_returns_empty_days() -> None:
+    repos = build_in_memory_repositories()
+    account_id, _strategy_id, _decision_context_id, now = _seed_common(repos)
+
+    app = create_app(repos=repos, auth_enabled=False)
+    with TestClient(app) as tc:
+        response = tc.get(
+            "/trade-decisions/loss-cut-shadow/daily",
+            params={
+                "account_id": str(account_id),
+                "start_date": now.date().isoformat(),
+                "end_date": now.date().isoformat(),
+            },
+        )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["days"] == []
+
+
+def test_loss_cut_shadow_daily_kst_boundary_crosses_to_next_day() -> None:
+    """UTC 기준으로는 같은 날이어도, KST로는 다음 날로 넘어가는 경계값을
+
+    올바르게 처리하는지 확인한다(UTC 15:30 == KST 00:30 다음 날)."""
+    repos = build_in_memory_repositories()
+    account_id, strategy_id, decision_context_id, _now = _seed_common(repos)
+
+    utc_late = datetime(2026, 8, 1, 15, 30, tzinfo=timezone.utc)
+    decision = _make_decision(
+        decision_context_id=decision_context_id,
+        strategy_id=strategy_id,
+        symbol="005930",
+        created_at=utc_late,
+        source_type="held_position",
+        decision_type=DecisionType.HOLD,
+        loss_cut_shadow=_shadow_payload(triggered=True, tier="hard", loss_pct="15"),
+    )
+    repos.trade_decisions._items[decision.trade_decision_id] = decision
+
+    app = create_app(repos=repos, auth_enabled=False)
+    with TestClient(app) as tc:
+        response = tc.get(
+            "/trade-decisions/loss-cut-shadow/daily",
+            params={
+                "account_id": str(account_id),
+                "start_date": "2026-08-02",
+                "end_date": "2026-08-02",
+            },
+        )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert len(body["days"]) == 1
+    assert body["days"][0]["trade_date"] == "2026-08-02"
+    assert body["days"][0]["total_observation_count"] == 1
+
+    with TestClient(app) as tc:
+        response_prev_day = tc.get(
+            "/trade-decisions/loss-cut-shadow/daily",
+            params={
+                "account_id": str(account_id),
+                "start_date": "2026-08-01",
+                "end_date": "2026-08-01",
+            },
+        )
+    assert response_prev_day.json()["days"] == []

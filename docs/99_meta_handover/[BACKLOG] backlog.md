@@ -6608,3 +6608,18 @@ investigation.md`로 이동하고, 정책 명세 문서 번호를 14→13으로
   body에는 그대로 포함). `decision_type` 필터는 summary의 분포
   집계로 충분하다고 보고 samples 필터에는 넣지 않았다 — 필요해지면
   추가 가능한 낮은 리스크 확장.
+
+**[2026-08-11 KST 신설, Loss-cut shadow 일자별 breakdown API
+추가 완료 — read path 확장, 정식 정책 도입 아님]** 상세:
+`docs/40_action_plans/loss_cut_policy_and_config_path_action_plan.md`
+"2단계 후속 2".
+
+- `GET /trade-decisions/loss-cut-shadow/daily` 추가. 신규
+  repository/SQL/테이블 없음 — 기존 `list_loss_cut_shadow_
+  observations()` 재사용, route에서 KST 날짜로 그룹핑.
+- **의도적으로 남겨둔 축소 범위**: 날짜별 `source_type_counts`/
+  `actual_decision_type_counts` 세부 분포는 넣지 않았다(날짜 수 ×
+  카테고리 수로 응답이 커지는 것을 피하기 위함) — 필요해지면
+  `summary`를 해당 날짜 하루로 좁혀 호출하는 우회로가 이미 있다.
+  실제로 필요해지는 시점(3단계 실측 보고 작성 중 명확한 수요가
+  확인되면)에 다시 추가를 검토한다.

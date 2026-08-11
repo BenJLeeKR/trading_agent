@@ -994,6 +994,40 @@ class LossCutShadowSamplesResponse(BaseModel):
     items: list[LossCutShadowSampleView]
 
 
+class LossCutShadowDailyItem(BaseModel):
+    """`GET /trade-decisions/loss-cut-shadow/daily`의 날짜 1건 집계.
+
+    ``summary``와 동일한 핵심 카운트만 담는다 — ``source_type_counts``/
+    ``actual_decision_type_counts`` 같은 세부 분포는 날짜 수만큼
+    응답이 커지는 것을 피하기 위해 이 항목에는 포함하지 않는다(특정
+    날짜의 세부 분포가 필요하면 ``summary``를 그 날짜 하루로
+    좁혀 호출하면 된다).
+    """
+
+    trade_date: date
+    total_observation_count: int
+    triggered_count: int
+    soft_trigger_count: int
+    hard_trigger_count: int
+    shadow_only_count: int
+    trigger_rate: float | None = None
+
+
+class LossCutShadowDailyResponse(BaseModel):
+    """`GET /trade-decisions/loss-cut-shadow/daily` 응답.
+
+    관측이 있었던 날짜만 ``days``에 나타난다(활동이 없는 날짜는
+    포함하지 않는다 — ``realized-pnl/daily-summary``와 동일한 "빈
+    상태" 원칙)."""
+
+    account_id: UUID
+    start_date: date
+    end_date: date
+    source_type: str | None = None
+    triggered: bool | None = None
+    days: list[LossCutShadowDailyItem]
+
+
 class CandidateAlignmentStatusItem(BaseModel):
     """Deterministic candidate와 최종 decision의 정렬 상태 분포."""
 
