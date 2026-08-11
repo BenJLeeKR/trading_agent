@@ -11482,3 +11482,30 @@ predictive_power_validation.md` 및 `plans/[DESIGN] regime_
 conditional_entry_signal_v1.md` 참고)으로 재개한다.** Loss-cut
 구현 착수는 정책 결정이 난 뒤 별도 턴에서 진행한다 — 지금 이
 문서만으로 착수 승인을 의미하지 않는다.
+
+## 손실률 기반 Loss-cut 정책 명세 초안(A) + 설정 경로 설계 초안 완료(2026-08-11 KST, read-only 설계, 구현 미착수)
+
+위 조사(2026-08-11 KST 이전 항목)의 결론을 구현 직전 수준까지
+구체화했다. 코드/DB/마이그레이션/API 변경 없음(문서만).
+
+- **정책 명세**: 2단계(soft→REDUCE, hard→EXIT) 구조를 추천안으로
+  확정 초안화했다(구체 임계치 숫자는 미확정, shadow 실측 후 결정).
+  기존 held_position 청산 guard 체인(`decision_orchestrator.py`)의
+  `_check_held_position_sell_override`와 `_check_held_position_
+  exit_hysteresis_gate` 사이에 새 guard를 삽입하는 안을 구체
+  지정했고, `reverse_trade_hysteresis.py`에 이미 있는 `"stop_loss"`/
+  `"drawdown"` escape-hatch 키워드를 재사용해 hysteresis gate 코드를
+  건드리지 않고 통합하는 설계를 확정했다.
+- **설정 경로**: `env`가 아니라 `config_versions` + Admin API/CLI로
+  최종 확정 초안화 — `risk.max_single_position_pct` 선례를 그대로
+  재사용하는 `risk.loss_cut` config_json 스키마와 API/CLI 입력
+  계약 초안을 작성했다. shadow 실험용 `env`(`LOSS_CUT_SHADOW_
+  ENABLED`)는 "관측 로그 여부만 제어, 실거래 결정에는 절대 개입하지
+  않는다"는 엄격한 경계로 제한했다.
+- 상세: `docs/00_foundational_design/detailed_design/14_loss_cut_
+  policy_specification_and_config_path_design.md`(신규),
+  `docs/40_action_plans/loss_cut_policy_and_config_path_action_
+  plan.md`(신규).
+- **이후 우선순위는 변경 없음**: 이번 항목은 설계를 한 단계 더
+  구체화했을 뿐 착수 승인이 아니다. `SPPV-3` 미해결 항목이 여전히
+  다음 주력 작업이다.

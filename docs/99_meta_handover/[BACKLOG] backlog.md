@@ -6501,3 +6501,39 @@ priority_map.md`(2026-08-11 항목). 아래 4개는 착수 전 반드시
   `holding_profile_policy.py`의 기존 `reentry_cooldown_until`
   메커니즘으로 재사용할지 — 셋 다 설계 문서 §4에 미확정으로 남아
   있다. 착수 전 이 셋을 먼저 확정해야 한다.
+
+**[2026-08-11 KST 갱신, Loss-cut 정책 명세 초안(A) + 설정 경로
+설계 초안 완료 — 위 4개 질문 중 2개는 초안 수준으로 답변, 2개는
+여전히 열려 있음]** 상세:
+`docs/00_foundational_design/detailed_design/14_loss_cut_policy_
+specification_and_config_path_design.md`.
+
+- **정책안 확정(부분 진전)**: 안 A/B/C 중 "지금 켤 안"이 아니라
+  "목표로 삼을 구조"로 2단계(soft/hard) 형태를 초안 확정했다. 다만
+  **구체 임계치 숫자(soft %/hard %/축소 비율/cooldown 시간)는 여전히
+  미확정** — shadow 실측 이후로 명시적으로 남겨뒀다. "정책안 확정"
+  질문은 구조 수준에서만 닫혔고, 숫자 수준에서는 여전히 열려 있다.
+- **설정 경로 확정(초안 완료)**: `config_versions` + Admin API/CLI로
+  간다는 결론과, 구체적인 `risk.loss_cut` config_json 스키마·API/CLI
+  입력 계약 초안까지 작성했다 — 이 질문은 **초안 수준에서 답변
+  완료**, 실제 구현(B3단계) 착수 시 재확인만 필요.
+- **shadow 관측 필요 여부**: 필요하다고 결론(문서 §3.6, §5의 B단계
+  2~3단계) — 그러나 실제 shadow 계산기 구현은 **여전히 미착수**다.
+  이 항목은 여전히 별도 착수 턴이 필요한 backlog다.
+- **구현 착수 전 검증 포인트**: 이전 항목이 나열한 3개 중 (1) 기준
+  가격은 `position_snapshot.average_price`로 **고정 완료**(설계
+  문서 §3.4), (2) 기존 게이트와의 우선순위는 **부분적 우선(완전
+  우회 아님) 안으로 초안 확정했으나 사용자 명시 확인이 아직
+  필요**(설계 문서 §3.3, §6), (3) 재진입 cooldown 재사용 방식은
+  **`SymbolTradeStateEntity.metadata_json` 재사용으로 초안 확정**
+  (신규 컬럼/마이그레이션 불필요, 설계 문서 §3.5). 세 항목 모두
+  "구현 시작해도 되는 수준"까지는 아니고, (2)는 특히 사용자 확인이
+  남아 있다.
+- **신규로 열린 질문**: held_position에 대한 loss-cut 차등 적용
+  여부(설계 문서 §3.2)는 데이터 없이 판단 불가로 새로 backlog에
+  추가됐다 — shadow 단계에서 source_type별로 나눠 관측해야 답이
+  나온다.
+- **다음 착수 후보(사용자 승인 필요)**: `docs/40_action_plans/
+  loss_cut_policy_and_config_path_action_plan.md` 2단계(shadow
+  계산기 구현) — 착수 전 사용자 승인 및 shadow 관측 표본 크기
+  기준 확정이 선행돼야 한다.

@@ -73,6 +73,12 @@
    - 정책안 3종(하드 손절/단계형/관측용 shadow) 비교, 설정 경로(`env` vs `config_versions`+Admin API) 비교
    - 후속: [`docs/99_meta_handover/[BACKLOG] backlog.md`](../../99_meta_handover/%5BBACKLOG%5D%20backlog.md)
 
+14. `14_loss_cut_policy_specification_and_config_path_design.md` (정책 명세 초안, 구현 미착수)
+   - `13_loss_cut_policy_investigation.md`의 결론을 구현 직전 수준까지 구체화
+   - 2단계(soft/hard) 손절 구조, 기존 held_position 청산 로직과의 합성/우선순위 규칙, 기준 가격, cooldown 설계
+   - `risk.loss_cut` config_json 스키마 초안 + Admin API/CLI 입력 계약 초안, shadow 전용 `env` 허용 범위
+   - 실행 계획: [`docs/40_action_plans/loss_cut_policy_and_config_path_action_plan.md`](../../40_action_plans/loss_cut_policy_and_config_path_action_plan.md)
+
 ## 설계 원칙
 
 - 실전/모의 환경은 논리적으로만이 아니라 설정, 자격증명, 계좌, 라우팅 수준에서 분리한다.
