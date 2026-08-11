@@ -79,13 +79,14 @@ from agent_trading.runtime.bootstrap import (
     _build_kis_live_quote_client,
     postgres_runtime,
 )
-from agent_trading.services.common_types import SubmitResult
+from agent_trading.services.common_types import PhaseTraceEntry, SubmitResult
 from agent_trading.services.core_risk_off_topk_projection import (
     project_core_risk_off_topk_exceptions,
 )
 from agent_trading.services.deterministic_trigger_engine import (
     DeterministicTriggerAssessment,
 )
+from agent_trading.services.execution_service import ExecutionService
 from agent_trading.services.guardrail_audit import (
     persist_validation_result,
 )
@@ -101,6 +102,9 @@ from agent_trading.services.submit_lane_gate import (
     evaluate_symbol_submit_lane,
 )
 from agent_trading.services.sizing_engine import calculate_sizing
+from agent_trading.services.translation import (
+    build_submit_order_request_from_decision,
+)
 from agent_trading.services.universe_freeze_dedupe import (
     dedupe_universe_symbols_by_symbol_market,
 )
@@ -1717,8 +1721,20 @@ async def _run_one_cycle(
     universe_anchor: UniverseAnchorMetadata | None = None,
     deterministic_trigger_override: dict[str, object] | None = None,
     r3b_alpha_percentile: float | None = None,
+    defer_actionable_for_pass2: bool = False,
+    pending_candidates_sink: list[dict[str, object]] | None = None,
+    cycle_index: int | None = None,
 ) -> dict[str, object]:
     """Execute a single decision cycle with shared runtime.
+
+    ``defer_actionable_for_pass2``(D안, 2026-08-11 KST)가 True이면
+    ``submit``/``dry_run``과 무관하게 ``assemble()``만 실행한다. AI 판단이
+    actionable(BUY/APPROVE)이면 실제 제출을 시도하지 않고
+    ``pending_candidates_sink``에 후보만 적재한 뒤 ``PENDING_PASS2``
+    상태를 반환한다(호출자의 Pass 1.5/Pass 2가 이어받는다). non-actionable
+    (WATCH/HOLD)이면 오늘과 동일하게 즉시 ``run_execution_pipeline()``을
+    실행해 감사 추적(``execution_attempts``)을 그대로 남긴다. 상세 설계:
+    ``docs/40_action_plans/submit_budget_two_stage_design_2026-08-11.md``.
 
     Per-symbol transaction을 생성하여 격리를 보장한다.
     Runtime (pool, httpx clients, agents)은 외부에서 주입받아 공유한다.
@@ -2050,6 +2066,78 @@ async def _run_one_cycle(
                         getattr(result, "error_phase", None),
                         getattr(result, "error_message", None),
                         getattr(result, "trade_decision_id", None),
+                    )
+            elif defer_actionable_for_pass2:
+                # D안 Pass 1(분석 전용) — assemble()만 실행하고, 실제 제출
+                # 여부/시점은 Pass 1.5/Pass 2(호출자, _run_loop)로 미룬다.
+                # budget 확인/소비는 여기서 전혀 하지 않는다(2026-08-11 KST).
+                intent = await asyncio.wait_for(
+                    orchestrator.assemble(
+                        request,
+                        seeded_events=seeded_events,
+                    ),
+                    timeout=PER_AGENT_HARD_TIMEOUT,
+                )
+                is_actionable = (
+                    build_submit_order_request_from_decision(intent) is not None
+                )
+                if is_actionable and pending_candidates_sink is not None:
+                    pending_candidates_sink.append({
+                        "cycle_index": cycle_index,
+                        "symbol": symbol,
+                        "market": market,
+                        "source_type": source_type,
+                        "intent": intent,
+                        "trade_decision_id": intent.trade_decision_id,
+                        "decision_context_id": intent.decision_context_id,
+                        "request": request,
+                        "final_trade_score": intent.ai_backend_inputs.final_trade_score,
+                        "analysis_completed_at": datetime.now(timezone.utc),
+                    })
+                    result = SubmitResult(
+                        status="PENDING_PASS2",
+                        order_intent=intent,
+                        trade_decision_id=(
+                            str(intent.trade_decision_id)
+                            if intent.trade_decision_id else None
+                        ),
+                        decision_context_id=intent.decision_context_id,
+                    )
+                else:
+                    # non-actionable(WATCH/HOLD) — 오늘과 동일하게 즉시
+                    # run_execution_pipeline()을 실행해 execution_attempts
+                    # 감사 추적을 그대로 남긴다. budget과 무관(실제 제출까지
+                    # 가지 않고 non-actionable로 조기 종료된다).
+                    broker = runtime["primary_broker_adapter"]
+                    execution_service = ExecutionService(repos=repos)
+                    _phase_start = time.monotonic()
+                    _phase_trace: list[PhaseTraceEntry] = []
+
+                    def _add_phase(phase: str, status: str) -> None:
+                        nonlocal _phase_start
+                        _now_m = time.monotonic()
+                        _phase_trace.append(
+                            PhaseTraceEntry(
+                                phase=phase,
+                                elapsed_ms=int((_now_m - _phase_start) * 1000),
+                                status=status,
+                            )
+                        )
+                        _phase_start = _now_m
+
+                    result = await asyncio.wait_for(
+                        execution_service.run_execution_pipeline(
+                            intent,
+                            intent.trade_decision_id,
+                            request,
+                            order_manager,
+                            broker,
+                            actor_type="system",
+                            actor_id="decision_orchestrator",
+                            _add_phase=_add_phase,
+                            _phase_trace=_phase_trace,
+                        ),
+                        timeout=PER_AGENT_HARD_TIMEOUT,
                     )
             else:
                 # Should not happen (CLI defaults ensure submit=True or dry_run)
@@ -2513,6 +2601,351 @@ async def _run_t3_live_pipeline_shielded(
     )
 
 
+# ── D안 Pass 1.5 + Pass 2 (submit budget 2단계 분리, 2026-08-11 KST) ─────────
+# 상세 설계: docs/40_action_plans/submit_budget_two_stage_design_2026-08-11.md
+#
+# 우선순위 정렬 기준(고정, 로그에도 동일하게 남긴다):
+#   1차 source_type — core > event_overlay > market_overlay
+#   2차 final_trade_score 내림차순
+#   3차 analysis_completed_at 오름차순(먼저 분석 끝난 것 우선)
+_GENERAL_LANE_SOURCE_TYPE_PRIORITY: dict[str, int] = {
+    "core": 0,
+    "event_overlay": 1,
+    "market_overlay": 2,
+}
+
+
+def _general_lane_priority_key(
+    candidate: dict[str, object],
+) -> tuple[int, Decimal, datetime]:
+    source_rank = _GENERAL_LANE_SOURCE_TYPE_PRIORITY.get(
+        str(candidate.get("source_type")), 99
+    )
+    score = candidate.get("final_trade_score")
+    score_key = -(score if isinstance(score, Decimal) else Decimal("-Infinity"))
+    analysis_completed_at = candidate.get("analysis_completed_at") or datetime.now(
+        timezone.utc
+    )
+    return (source_rank, score_key, analysis_completed_at)
+
+
+def _general_lane_dropped_result(
+    cycle_count: int,
+    candidate: dict[str, object],
+    reason: str,
+) -> dict[str, object]:
+    return _serialize_cycle_result(
+        cycle_count,
+        SubmitResult(
+            status="SKIPPED",
+            stop_reason=reason,
+            order_intent=candidate.get("intent"),
+            trade_decision_id=(
+                str(candidate["trade_decision_id"])
+                if candidate.get("trade_decision_id")
+                else None
+            ),
+            decision_context_id=candidate.get("decision_context_id"),
+        ),
+        0.0,
+        symbol=str(candidate.get("symbol")),
+        market=str(candidate.get("market")),
+        source_type=str(candidate.get("source_type")),
+    )
+
+
+def _emit_general_lane_pass2_output(
+    result: dict[str, object], *, cycle_count: int, output: str,
+) -> None:
+    """Pass 2에서 확정된 결과를 오늘과 동일한 방식으로 stdout/log에 남긴다.
+
+    ``_process_one()``의 "Output per-symbol result" 블록과 동일한 형식이다
+    — ``run_ops_scheduler.py``의 stdout JSON 파서(``_extract_json_objects``
+    등)가 Pass 2 결과도 오늘과 동일하게 한 줄씩 읽을 수 있어야 한다.
+    """
+    if output == "json":
+        print(json.dumps(result, ensure_ascii=False))
+    else:
+        logger.info(
+            "Cycle %d symbol=%s:%s complete(pass2) — status=%s duration=%.2fs",
+            cycle_count,
+            result.get("symbol"),
+            result.get("market"),
+            result.get("status", "UNKNOWN"),
+            result.get("duration_seconds", 0),
+        )
+
+
+async def _submit_general_lane_candidate(
+    candidate: dict[str, object],
+    *,
+    cycle_count: int,
+    runtime: dict[str, object],
+) -> dict[str, object]:
+    """Pass 2: 이미 확정된 actionable intent를 실제로 제출한다.
+
+    ``assemble()``을 다시 호출하지 않는다 — Pass 1이 만든 ``intent``를
+    그대로 ``ExecutionService.run_execution_pipeline()``에 넘겨 AI 비용을
+    중복으로 지불하지 않는다.
+    """
+    from agent_trading.db.transaction import transaction as _db_transaction
+    from agent_trading.repositories.postgres.bootstrap import (
+        build_postgres_repositories,
+    )
+    from agent_trading.services.order_manager import OrderManager
+    from agent_trading.services.reconciliation_service import ReconciliationService
+
+    symbol = str(candidate["symbol"])
+    market = str(candidate["market"])
+    source_type = str(candidate["source_type"])
+    _start = time.monotonic()
+    try:
+        async with _db_transaction() as tx:
+            repos: RepositoryContainer = build_postgres_repositories(tx)
+
+            # ── Pass 2 진입 직전 재검증: reentry cooldown/저orderable cash 등
+            # pre_ai_gate 사유를 다시 확인한다(Pass 1과 동일 함수 재호출 —
+            # 그 사이 새로 발생한 조건만 새로 걸린다). "포지션이 새로 생겼는지"
+            # 자체는 이 함수가 general 신규진입 경로에서 하드 블록하지 않으므로
+            # (일부러 그렇게 설계됨 — HOLD/REDUCE 판단을 막지 않기 위해)
+            # 완전히 커버되지 않는다 — 대신 run_execution_pipeline() 내부의
+            # duplicate-buy guard(_evaluate_buy_duplicate_validation_result)가
+            # "이미 활성 매수 주문이 있는" 케이스를 잡아준다. cash/duplicate/
+            # stale snapshot/quote는 run_execution_pipeline()이 호출 시점에
+            # 자체적으로 재확인한다.
+            revalidation, _details = await _evaluate_pre_ai_validation_result(
+                repos,
+                account_alias=ACCOUNT_ALIAS,
+                symbol=symbol,
+                market=market,
+                source_type=source_type,
+                remaining_general_buy_budget=None,
+                db_conn=tx.connection,
+            )
+            if revalidation is not None and revalidation.stop_reason:
+                duration = time.monotonic() - _start
+                return _serialize_cycle_result(
+                    cycle_count,
+                    SubmitResult(
+                        status="SKIPPED",
+                        stop_reason=f"pass2_stale_{revalidation.stop_reason}",
+                        order_intent=candidate.get("intent"),
+                        trade_decision_id=(
+                            str(candidate["trade_decision_id"])
+                            if candidate.get("trade_decision_id")
+                            else None
+                        ),
+                        decision_context_id=candidate.get("decision_context_id"),
+                    ),
+                    duration,
+                    symbol=symbol, market=market, source_type=source_type,
+                )
+
+            # ── market session 재확인(경량) ──────────────────────────────
+            # run_ops_scheduler.py의 session_gate가 이 subprocess 자체를
+            # 이미 intraday 구간에서만 기동하지만, Pass 1→Pass 2 사이 시간이
+            # 벌어져 장마감 경계를 넘을 가능성에 대한 최소 방어선이다.
+            now_kst = datetime.now(KST)
+            if (now_kst.hour, now_kst.minute) >= (15, 30):
+                duration = time.monotonic() - _start
+                return _serialize_cycle_result(
+                    cycle_count,
+                    SubmitResult(
+                        status="SKIPPED",
+                        stop_reason="pass2_market_session_closed",
+                        order_intent=candidate.get("intent"),
+                        trade_decision_id=(
+                            str(candidate["trade_decision_id"])
+                            if candidate.get("trade_decision_id")
+                            else None
+                        ),
+                        decision_context_id=candidate.get("decision_context_id"),
+                    ),
+                    duration,
+                    symbol=symbol, market=market, source_type=source_type,
+                )
+
+            reconciliation_service = ReconciliationService(repos=repos)
+            order_manager = OrderManager(
+                repos=repos, reconciliation_service=reconciliation_service,
+            )
+            execution_service = ExecutionService(repos=repos)
+            broker = runtime["primary_broker_adapter"]
+
+            _phase_start = time.monotonic()
+            _phase_trace: list[PhaseTraceEntry] = []
+
+            def _add_phase(phase: str, status: str) -> None:
+                nonlocal _phase_start
+                _now_m = time.monotonic()
+                _phase_trace.append(
+                    PhaseTraceEntry(
+                        phase=phase,
+                        elapsed_ms=int((_now_m - _phase_start) * 1000),
+                        status=status,
+                    )
+                )
+                _phase_start = _now_m
+
+            result = await asyncio.wait_for(
+                execution_service.run_execution_pipeline(
+                    candidate["intent"],
+                    candidate["trade_decision_id"],
+                    candidate["request"],
+                    order_manager,
+                    broker,
+                    actor_type="system",
+                    actor_id="decision_orchestrator",
+                    _add_phase=_add_phase,
+                    _phase_trace=_phase_trace,
+                ),
+                timeout=PER_AGENT_HARD_TIMEOUT,
+            )
+            await tx.commit()
+        duration = time.monotonic() - _start
+        return _serialize_cycle_result(
+            cycle_count, result, duration,
+            symbol=symbol, market=market, source_type=source_type,
+        )
+    except Exception as exc:
+        duration = time.monotonic() - _start
+        logger.exception("Pass2 submit failed symbol=%s: %s", symbol, exc)
+        return _serialize_cycle_result(
+            cycle_count, None, duration, symbol=symbol, market=market,
+            source_type=source_type, error=str(exc),
+        )
+
+
+async def _run_general_lane_pass2(
+    pending_general_candidates: list[dict[str, object]],
+    *,
+    cycle_results: list[dict[str, object]],
+    cycle_count: int,
+    max_general_submits_this_cycle: int,
+    submit_budget_consumed_count: int,
+    runtime: dict[str, object],
+    output: str = "json",
+) -> int:
+    """Pass 1.5(dedupe+정렬) + Pass 2(순차 제출)를 실행하고, 갱신된
+    ``submit_budget_consumed_count``를 반환한다.
+
+    ``cycle_results``는 ``cycle_index``로 in-place 갱신한다(PENDING_PASS2
+    placeholder를 최종 결과로 교체).
+    """
+    # ── Pass 1.5: symbol 단위 dedupe(같은 symbol이 여러 source_type으로
+    # 동시에 universe에 들어온 경우 우선순위가 가장 높은 1건만 남긴다) ──
+    best_by_symbol: dict[str, dict[str, object]] = {}
+    for candidate in pending_general_candidates:
+        symbol = str(candidate["symbol"])
+        existing = best_by_symbol.get(symbol)
+        if existing is None or _general_lane_priority_key(
+            candidate
+        ) < _general_lane_priority_key(existing):
+            if existing is not None:
+                logger.info(
+                    "SUBMIT_PIPELINE_TRACE candidate_dropped cycle=%d symbol=%s "
+                    "source_type=%s reason=symbol_duplicate_in_cycle",
+                    cycle_count, symbol, existing["source_type"],
+                )
+                dropped = _general_lane_dropped_result(
+                    cycle_count, existing, "symbol_duplicate_in_cycle",
+                )
+                cycle_results[existing["cycle_index"]] = dropped
+                _emit_general_lane_pass2_output(
+                    dropped, cycle_count=cycle_count, output=output,
+                )
+            best_by_symbol[symbol] = candidate
+        else:
+            logger.info(
+                "SUBMIT_PIPELINE_TRACE candidate_dropped cycle=%d symbol=%s "
+                "source_type=%s reason=symbol_duplicate_in_cycle",
+                cycle_count, symbol, candidate["source_type"],
+            )
+            dropped = _general_lane_dropped_result(
+                cycle_count, candidate, "symbol_duplicate_in_cycle",
+            )
+            cycle_results[candidate["cycle_index"]] = dropped
+            _emit_general_lane_pass2_output(
+                dropped, cycle_count=cycle_count, output=output,
+            )
+
+    sorted_candidates = sorted(
+        best_by_symbol.values(), key=_general_lane_priority_key
+    )
+    for rank, candidate in enumerate(sorted_candidates):
+        score = candidate.get("final_trade_score")
+        logger.info(
+            "SUBMIT_PIPELINE_TRACE candidate_enqueued cycle=%d symbol=%s "
+            "source_type=%s priority_rank=%d source_type_rank=%d "
+            "final_trade_score=%s analysis_completed_at=%s",
+            cycle_count, candidate["symbol"], candidate["source_type"], rank,
+            _GENERAL_LANE_SOURCE_TYPE_PRIORITY.get(
+                str(candidate["source_type"]), 99
+            ),
+            str(score) if score is not None else "none",
+            candidate["analysis_completed_at"].isoformat(),
+        )
+
+    # ── Pass 2: 순차 제출, 그 순간의 budget 여유 안에서만 ──────────────
+    for candidate in sorted_candidates:
+        symbol = str(candidate["symbol"])
+        source_type = str(candidate["source_type"])
+        remaining = max_general_submits_this_cycle - submit_budget_consumed_count
+        if remaining <= 0:
+            logger.info(
+                "SUBMIT_BUDGET_TRACE blocked cycle=%d symbol=%s source_type=%s "
+                "submit_budget_consumed_count=%d general_submit_inflight_count=0 "
+                "max_general_submits_this_cycle=%d stop_reason=%s pass=2",
+                cycle_count, symbol, source_type, submit_budget_consumed_count,
+                max_general_submits_this_cycle, "submit_budget_consumed_core",
+            )
+            logger.info(
+                "SUBMIT_PIPELINE_TRACE submit_skipped cycle=%d symbol=%s "
+                "reason=budget_exhausted remaining=0",
+                cycle_count, symbol,
+            )
+            dropped = _general_lane_dropped_result(
+                cycle_count, candidate, "submit_budget_consumed_core",
+            )
+            cycle_results[candidate["cycle_index"]] = dropped
+            _emit_general_lane_pass2_output(
+                dropped, cycle_count=cycle_count, output=output,
+            )
+            continue
+
+        logger.info(
+            "SUBMIT_PIPELINE_TRACE submit_attempt cycle=%d symbol=%s "
+            "source_type=%s submit_budget_consumed_count_before=%d "
+            "max_general_submits_this_cycle=%d",
+            cycle_count, symbol, source_type, submit_budget_consumed_count,
+            max_general_submits_this_cycle,
+        )
+        submit_result = await _submit_general_lane_candidate(
+            candidate, cycle_count=cycle_count, runtime=runtime,
+        )
+        cycle_results[candidate["cycle_index"]] = submit_result
+        _emit_general_lane_pass2_output(
+            submit_result, cycle_count=cycle_count, output=output,
+        )
+        status = submit_result.get("status", "UNKNOWN")
+        if status in ("SUBMITTED", "RECONCILE_REQUIRED"):
+            submit_budget_consumed_count += 1
+            logger.info(
+                "SUBMIT_PIPELINE_TRACE submit_consumed cycle=%d symbol=%s "
+                "status=%s submit_budget_consumed_count_after=%d",
+                cycle_count, symbol, status, submit_budget_consumed_count,
+            )
+        else:
+            logger.info(
+                "SUBMIT_PIPELINE_TRACE submit_skipped cycle=%d symbol=%s "
+                "reason=%s remaining=%d",
+                cycle_count, symbol, status,
+                max_general_submits_this_cycle - submit_budget_consumed_count,
+            )
+
+    return submit_budget_consumed_count
+
+
 # ── Main loop ───────────────────────────────────────────────────────────────
 
 
@@ -2653,14 +3086,20 @@ async def _run_loop(
                     exc_info=True,
                 )
             submit_budget_consumed_count = 0
+            # D안(2026-08-11 KST) 이후 general lane은 더 이상 AI 판단 전에
+            # slot을 예약하지 않으므로 항상 0이다 — HP-무관 SUBMIT_BUDGET_TRACE
+            # lane_enter 로그의 기존 필드 형식만 유지하기 위해 남겨둔다.
             general_submit_inflight_count = 0
             # held_position REDUCE/EXIT sell은 위험 축소 목적이므로
             # 일반 BUY lane과 분리하고, cycle cap 없이 같은 symbol 중복만 막는다.
             held_position_sell_cycle_count = 0
             held_position_sell_cycle_symbols: set[str] = set()
             _general_submit_lock = asyncio.Lock()
+            # D안 Pass 1.5/Pass 2용 — 이번 cycle에서 actionable(BUY/APPROVE)로
+            # 확정된 general lane 후보(메모리 한정, DB schema 변경 없음).
+            pending_general_candidates: list[dict[str, object]] = []
 
-            async def _process_one(item: object) -> dict[str, object]:
+            async def _process_one(item: object, item_index: int) -> dict[str, object]:
                 """Process a single universe item with semaphore concurrency cap."""
                 nonlocal submit_budget_consumed_count
                 nonlocal general_submit_inflight_count
@@ -2668,7 +3107,6 @@ async def _run_loop(
                 nonlocal held_position_sell_cycle_symbols
                 async with sem:
                     item_source_type = getattr(item, "source_type", "core")
-                    general_submit_reserved = False
 
                     # SUBMIT_BUDGET_TRACE: symbol이 submit lane 판정에 들어가기
                     # 직전의 budget/inflight 스냅샷(원인 추적 전용, 판정 로직에는
@@ -2697,6 +3135,8 @@ async def _run_loop(
                         symbol_dry_run: bool,
                         symbol_dry_run_reason: str | None,
                         remaining_general_buy_budget: int | None,
+                        defer_actionable_for_pass2: bool = False,
+                        pending_candidates_sink: list[dict[str, object]] | None = None,
                     ) -> dict[str, object]:
                         try:
                             return await _run_one_cycle(
@@ -2722,6 +3162,9 @@ async def _run_loop(
                                 r3b_alpha_percentile=(
                                     cycle_r3b_alpha_percentiles.get(item.symbol)
                                 ),
+                                defer_actionable_for_pass2=defer_actionable_for_pass2,
+                                pending_candidates_sink=pending_candidates_sink,
+                                cycle_index=item_index,
                             )
                         except Exception as exc:
                             logger.exception(
@@ -2737,97 +3180,27 @@ async def _run_loop(
                             }
 
                     if submit and not dry_run and item_source_type != "held_position":
-                        # General/core BUY lane reserves submit slots atomically,
-                        # but runs the symbol cycle outside the lock so non-held
-                        # symbols are not effectively serialized.
-                        async with _general_submit_lock:
-                            effective_general_submit_count = (
-                                submit_budget_consumed_count + general_submit_inflight_count
-                            )
-                            lane_decision = evaluate_symbol_submit_lane(
-                                submit=submit,
-                                dry_run=dry_run,
-                                allow_general_submit=allow_general_submit,
-                                source_type=item_source_type,
-                                submit_budget_consumed_count=effective_general_submit_count,
-                                max_general_submits_this_cycle=max_general_submits_this_cycle,
-                                held_position_sell_cycle_count=held_position_sell_cycle_count,
-                                held_position_sell_cycle_symbols=held_position_sell_cycle_symbols,
-                                symbol=item.symbol,
-                            )
-                            if lane_decision.submit:
-                                _inflight_before_reserve = general_submit_inflight_count
-                                general_submit_inflight_count += 1
-                                general_submit_reserved = True
-                                # SUBMIT_BUDGET_TRACE: slot 예약 성공 시점.
-                                logger.info(
-                                    "SUBMIT_BUDGET_TRACE reserve cycle=%d symbol=%s "
-                                    "source_type=%s submit_budget_consumed_count=%d "
-                                    "general_submit_inflight_count_before=%d "
-                                    "general_submit_inflight_count_after=%d "
-                                    "max_general_submits_this_cycle=%d",
-                                    cycle_count, item.symbol, item_source_type,
-                                    submit_budget_consumed_count,
-                                    _inflight_before_reserve,
-                                    general_submit_inflight_count,
-                                    max_general_submits_this_cycle,
-                                )
-                            else:
-                                # SUBMIT_BUDGET_TRACE: lane 차단 시점(주로
-                                # submit_budget_consumed_core 등 budget 소진 사유).
-                                logger.info(
-                                    "SUBMIT_BUDGET_TRACE blocked cycle=%d symbol=%s "
-                                    "source_type=%s effective_general_submit_count=%d "
-                                    "submit_budget_consumed_count=%d "
-                                    "general_submit_inflight_count=%d "
-                                    "max_general_submits_this_cycle=%d "
-                                    "stop_reason=%s",
-                                    cycle_count, item.symbol, item_source_type,
-                                    effective_general_submit_count,
-                                    submit_budget_consumed_count,
-                                    general_submit_inflight_count,
-                                    max_general_submits_this_cycle,
-                                    lane_decision.dry_run_reason,
-                                )
+                        # D안 Pass 1(2026-08-11 KST): 예약 없이 분석만 수행한다.
+                        # budget 확인/소비는 이 함수 밖(cycle 메인 루프의
+                        # Pass 1.5/Pass 2)에서만 일어난다 — 상세 설계는
+                        # docs/40_action_plans/submit_budget_two_stage_design_2026-08-11.md.
                         result = await _execute_symbol_cycle(
-                            symbol_submit=lane_decision.submit,
-                            symbol_dry_run=lane_decision.dry_run,
-                            symbol_dry_run_reason=lane_decision.dry_run_reason,
-                            remaining_general_buy_budget=max(
-                                0,
-                                max_general_submits_this_cycle - submit_budget_consumed_count,
-                            ),
+                            symbol_submit=False,
+                            symbol_dry_run=False,
+                            symbol_dry_run_reason=None,
+                            remaining_general_buy_budget=None,
+                            defer_actionable_for_pass2=True,
+                            pending_candidates_sink=pending_general_candidates,
                         )
-                        if general_submit_reserved:
-                            status = result.get("status", "UNKNOWN")
-                            async with _general_submit_lock:
-                                _inflight_before_release = general_submit_inflight_count
-                                _consumed_before_release = submit_budget_consumed_count
-                                general_submit_inflight_count = max(
-                                    0,
-                                    general_submit_inflight_count - 1,
-                                )
-                                is_budget_consuming_status = status in (
-                                    "SUBMITTED", "RECONCILE_REQUIRED",
-                                )
-                                if is_budget_consuming_status:
-                                    submit_budget_consumed_count += 1
-                                # SUBMIT_BUDGET_TRACE: reservation 해제(반납 또는 확정 소비) 시점.
-                                logger.info(
-                                    "SUBMIT_BUDGET_TRACE release cycle=%d symbol=%s "
-                                    "source_type=%s status=%s reserved=True "
-                                    "budget_consuming=%s "
-                                    "general_submit_inflight_count_before=%d "
-                                    "general_submit_inflight_count_after=%d "
-                                    "submit_budget_consumed_count_before=%d "
-                                    "submit_budget_consumed_count_after=%d",
-                                    cycle_count, item.symbol, item_source_type, status,
-                                    is_budget_consuming_status,
-                                    _inflight_before_release,
-                                    general_submit_inflight_count,
-                                    _consumed_before_release,
-                                    submit_budget_consumed_count,
-                                )
+                        logger.info(
+                            "SUBMIT_PIPELINE_TRACE analysis_complete cycle=%d symbol=%s "
+                            "source_type=%s decision_type=%s trade_decision_id=%s "
+                            "pending_pass2=%s duration_seconds=%s",
+                            cycle_count, item.symbol, item_source_type,
+                            result.get("decision_type"), result.get("trade_decision_id"),
+                            result.get("status") == "PENDING_PASS2",
+                            result.get("duration_seconds"),
+                        )
                     else:
                         lane_decision = evaluate_symbol_submit_lane(
                             submit=submit,
@@ -2902,8 +3275,30 @@ async def _run_loop(
                     return result
 
             # Process ALL symbols concurrently with semaphore cap
-            coros = [_process_one(item) for item in universe]
-            cycle_results: list[dict[str, object]] = await asyncio.gather(*coros)
+            coros = [
+                _process_one(item, idx) for idx, item in enumerate(universe)
+            ]
+            cycle_results: list[dict[str, object]] = list(
+                await asyncio.gather(*coros)
+            )
+
+            # ── D안 Pass 1.5 + Pass 2 (2026-08-11 KST) ──────────────────────
+            # Pass 1(위 _process_one)은 budget과 무관하게 분석만 수행했다.
+            # 여기서 actionable(BUY/APPROVE) 후보만 모아 symbol 단위로
+            # dedupe하고, 명시적 우선순위로 정렬한 뒤, cycle budget이 남아
+            # 있는 동안만 순차적으로 실제 제출한다. 상세 설계:
+            # docs/40_action_plans/submit_budget_two_stage_design_2026-08-11.md
+            if pending_general_candidates:
+                submit_budget_consumed_count = await _run_general_lane_pass2(
+                    pending_general_candidates,
+                    cycle_results=cycle_results,
+                    cycle_count=cycle_count,
+                    max_general_submits_this_cycle=max_general_submits_this_cycle,
+                    submit_budget_consumed_count=submit_budget_consumed_count,
+                    runtime=runtime,
+                    output=output,
+                )
+
             try:
                 await _apply_core_risk_off_shadow_projection_for_cycle(cycle_results)
             except Exception:

@@ -348,3 +348,123 @@ AI 소요 시간을 정확히 남긴다. 이 로깅 개선은 D안 구현과 별
   라인 단위로 diff하지 않았다(§5).
 - Pass 2 순차 처리 시 전체 cycle 소요 시간이 얼마나 늘어나는지
   추정하지 않았다 — 구현 턴에서 실측 필요.
+
+---
+
+## 10. 구현 반영 결과 (2026-08-11 KST, 코드 구현 턴)
+
+`scripts/run_decision_loop.py`에 §3의 same-cycle 경량 2단계 구조를
+그대로 구현했다. DB schema 변경 없음. `held_position` lane은 손대지
+않았다(기존 코드 100% 유지).
+
+### 구현 위치
+- `_run_one_cycle()`: `defer_actionable_for_pass2` 파라미터 추가.
+  True이면 `assemble()`만 실행하고, `build_submit_order_request_
+  from_decision(intent)`로 actionable 여부를 판정한다. actionable이면
+  `pending_candidates_sink`(cycle 메모리 내 리스트)에 후보를 적재하고
+  `PENDING_PASS2` 상태를 반환, non-actionable이면 오늘과 동일하게
+  즉시 `ExecutionService.run_execution_pipeline()`을 실행해
+  `execution_attempts` 감사 추적을 그대로 남긴다.
+- `_process_one()`: general lane(`item_source_type != "held_position"`)
+  분기에서 기존 reservation(lock+inflight) 코드를 제거하고, Pass 1
+  분석 호출 1건으로 대체.
+- 신규 `_run_general_lane_pass2()` / `_submit_general_lane_candidate()`
+  / `_general_lane_priority_key()` / `_general_lane_dropped_result()`
+  / `_emit_general_lane_pass2_output()`: Pass 1.5(dedupe+정렬) + Pass 2
+  (순차 제출)를 `_run_loop()`의 cycle 본문에서 `asyncio.gather()` 직후
+  호출한다. `cycle_results`를 `cycle_index`로 in-place 갱신해
+  `PENDING_PASS2` placeholder를 최종 결과로 교체한다.
+- `ExecutionService`는 `assemble_and_submit()`이 내부적으로 쓰는 것과
+  동일하게 `ExecutionService(repos=repos)`(기본값)로 매 호출마다 새로
+  구성한다 — §2에서 확인한 대로 오늘 코드와 동등하다(인스턴스별 quote
+  circuit breaker/cache는 애초에 심볼 호출마다 새 인스턴스라 공유되지
+  않았다).
+
+### 기존 설계 대비 실제 구현 차이
+- §3.3(stale 방지)의 "held position 변화 재검증"은 설계 문서가
+  가정한 것보다 약하다: `evaluate_pre_ai_validation_result()`를 Pass 2
+  직전에 재호출하지만, 이 함수는 신규 진입(non-held) 경로에서 "포지션이
+  생겼다"는 사실 자체로 하드 블록하지 않도록 **의도적으로** 설계돼
+  있다(HOLD/REDUCE 판단을 막지 않기 위해). 대신 `run_execution_
+  pipeline()` 내부의 duplicate-buy guard(`_evaluate_buy_duplicate_
+  validation_result`)가 "이미 활성 매수 주문이 있는" 케이스를 잡는다.
+  즉 재검증은 reentry cooldown/저orderable cash만 신규로 잡고, 포지션
+  변화 자체는 downstream guard에 위임한다 — §3의 "재검증"이라는 표현이
+  다소 과했다.
+- market session 재확인은 설계에서 예고한 대로 경량(15:30 KST 이후
+  여부만 확인하는 시각 비교)으로 구현했다 — `MarketSessionProvider`
+  같은 정식 세션 게이트는 쓰지 않았다.
+- 기존 `SUBMIT_BUDGET_TRACE`는 `lane_enter`/`reserve`/`release`
+  이벤트는 자연 소멸했다(그 코드 경로 자체가 삭제됐으므로 발생 불가) —
+  `scheduler` 이벤트(`run_ops_scheduler.py`, 변경 없음)와 `blocked`
+  이벤트(이제 Pass 2에서, `general_submit_inflight_count=0` 고정값으로
+  발생)만 남아 공존한다. 이는 "당장 제거하지 말고 공존시켜라"는 지시를
+  "구조적으로 여전히 의미 있는 이벤트만 남기고, 사라진 개념(reserve)은
+  거짓으로 흉내내지 않는다"로 해석한 결과다.
+- `execution_attempts.started_at==completed_at` 0초 오기록(§3.7)은
+  **이번 구현 범위에서 자연스럽게 해결되지 않았다** — non-actionable
+  분기에서 새로 만든 `_add_phase`/`_phase_trace` 클로저는
+  `run_execution_pipeline()` 내부에서 실제 `ExecutionAttemptEntity`를
+  만들 때 자체 `_now = datetime.now(timezone.utc)`를 다시 쓰므로
+  (execution_service.py 기존 코드, 이번 턴에서 손대지 않음) 여전히
+  즉시 stamping된다. 별도 TODO로 남긴다 — `execution_service.py`의
+  `run_execution_pipeline()` 자체를 고쳐야 한다.
+
+### 지켜진 불변식 / 미검증 불변식
+- ✅ (1) 한 cycle 내 같은 symbol 신규 BUY submit 최대 1회 — Pass 1.5
+  dedupe로 보장, 코드 리뷰로 확인.
+- ✅ (2) held_position lane 완전 분리 — `_process_one`의 held_position
+  분기는 한 글자도 바꾸지 않았다.
+- ✅ (3) budget은 Pass 2에서만 차감 — `submit_budget_consumed_count`는
+  `_run_general_lane_pass2()` 내부, `SUBMITTED`/`RECONCILE_REQUIRED`
+  확정 시에만 증가.
+- 🟡 (4) Pass 2 직전 재검증 — cash/duplicate/stale snapshot/quote는
+  `run_execution_pipeline()`이 자체 재확인(기존 코드, 변경 없음).
+  reentry cooldown/cash는 재호출로 재확인. **포지션 변화 자체는
+  duplicate-buy guard에 의존**(위 "실제 구현 차이" 참고) — 완전한
+  실측 검증은 다음 장중 관찰 필요.
+- ✅ (5) stale이면 재분석하지 않고 drop — Pass 2는 `intent`를 그대로
+  재사용, `assemble()`을 다시 호출하지 않는다.
+- ✅ (6) DB schema 변경 없음 — 신규 테이블/컬럼 없음, 후보는 메모리
+  `dict` 리스트.
+- ✅ (7) 정렬 기준 로깅 — `SUBMIT_PIPELINE_TRACE candidate_enqueued`에
+  `priority_rank`/`source_type_rank`/`final_trade_score`/
+  `analysis_completed_at` 모두 포함.
+- 🔴 **미검증**: `assemble()`과 기존 `_run_decision_pipeline()`의
+  부수효과가 라인 단위로 100% 동일한지는 코드 읽기로만 확인했다(§2에서
+  `_run_decision_pipeline()`이 사실상 `self.assemble()` 호출 그 자체임을
+  확인) — 실제 subprocess 실행으로 재검증하지 않았다(장중 배포 금지
+  전제라 이번 턴엔 불가).
+- 🔴 **미검증**: Pass 2 순차화로 인한 cycle 전체 소요시간 증가폭 —
+  다음 장중 실측 시 `CADENCE_TRACE decision_submit_gate action=complete
+  ... actual_duration=...`로 확인 가능.
+
+### 검증
+- `python3 -m py_compile scripts/run_decision_loop.py` — OK
+- `bash scripts/harness/run.sh accept style` — PASS
+- `bash scripts/harness/run.sh accept no-bypass` — PASS (단,
+  `review_bypass_count=1`: `_submit_general_lane_candidate()`의
+  `except Exception as exc:` — 기존 `_execute_symbol_cycle()`과
+  동일하게 "candidate 1건 실패가 나머지 cycle을 죽이지 않게" 하는
+  의도적 격리이며 신규 패턴이 아니다)
+- `bash scripts/harness/run.sh accept architecture` — PASS (신규
+  위반 없음)
+- `bash scripts/harness/run.sh accept backend-file scripts/
+  run_decision_loop.py` — N/A(`invalid_path_scope`, `scripts/`는
+  스코프 밖)
+- full pytest/DB write/컨테이너 재기동/외부 API 호출 없음(원칙 준수)
+
+### 남은 위험요소
+- 위 "미검증 불변식" 2건.
+- `tests/scripts/test_run_ops_scheduler.py` 등 관련 테스트가 이번
+  변경으로 깨지는지 실행하지 못했다(host에 pytest 없음 — 기존에
+  확인된 하네스 갭, 별도 항목).
+- 장중 첫 실측 시 `SUBMIT_BUDGET_TRACE`(scheduler/blocked)와
+  `SUBMIT_PIPELINE_TRACE`(analysis_complete/candidate_enqueued/
+  candidate_dropped/submit_attempt/submit_consumed/submit_skipped)를
+  함께 grep해 실제 동작을 확인해야 한다 — 장중 배포 전에는 확정할 수
+  없다.
+
+상세: PR로 반영, `docs/99_meta_handover/[BACKLOG] backlog.md` #17,
+`docs/10_signal_research_sppv/[PRIORITY_MAP] remaining_work_priority_map.md`
+참고.

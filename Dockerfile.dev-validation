@@ -1,0 +1,17 @@
+FROM python:3.14.6-slim
+
+WORKDIR /app
+
+COPY pyproject.toml README.md requirements.lock ./
+COPY src/ src/
+COPY scripts/ scripts/
+COPY db/ db/
+
+RUN pip install --no-cache-dir --constraint requirements.lock -e ".[dev]"
+
+ENV PYTHONPATH=/app/src
+ENV PYTHONUNBUFFERED=1
+ENV PYTHONDONTWRITEBYTECODE=1
+ENV PYTHONPYCACHEPREFIX=/tmp/pycache
+
+CMD ["python3", "--version"]

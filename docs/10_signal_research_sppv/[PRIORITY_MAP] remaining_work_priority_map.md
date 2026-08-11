@@ -11409,3 +11409,16 @@ BUY 경로 리팩터링 단위를 아래처럼 고정한다.
 `assemble()`/`assemble_and_submit()` 부수효과 diff를 완전히
 검증할 수 없음. 구현은 장 종료 후 전용 턴에서, 관련 테스트 확장과
 함께 진행한다.
+
+## 안 D 코드 구현 완료 (2026-08-11 KST, 검증만/배포 대기)
+
+`scripts/run_decision_loop.py`에 위 1차 설계(경량 2단계) 그대로
+구현 완료 — DB schema 변경 없음, held_position lane 무변경. 상세
+구현 내역/차이점/불변식 검증 상태는
+`docs/40_action_plans/submit_budget_two_stage_design_2026-08-11.md`
+§10. `accept style`/`accept no-bypass`/`accept architecture`/
+`py-compile` 모두 PASS. **장중 배포 금지** 원칙에 따라 이번 턴은
+코드/테스트/문서/PR까지만 진행하고 실제 배포(merge 후 컨테이너
+재기동)는 장 종료 후로 미룬다. 다음 장중 실측 시
+`SUBMIT_PIPELINE_TRACE`(신규)와 `SUBMIT_BUDGET_TRACE`(scheduler/
+blocked만 잔존)를 함께 확인해 최종 검증한다.
