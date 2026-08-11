@@ -6470,3 +6470,34 @@ B축을 정밀 재분석했다. read-only(코드/DB 조회만, 문서 수정 외
 이 부분은 그대로 유지한다. 이번 정정은 오류 정정이며 정책 판단을
 바꾸지 않는다. 상세는 `buy_path_variable_gate_matrix.md` §30.3/
 §30.5(정정판)/§30.6.
+
+**[2026-08-11 KST 신설, 손실률 기반 Loss-cut 정책 후속 질문 —
+설계 조사 완료, 착수는 정책 결정 대기]** 설계 조사 상세는
+`docs/00_foundational_design/detailed_design/13_loss_cut_policy_
+investigation.md`, priority 반영은 `[PRIORITY_MAP] remaining_work_
+priority_map.md`(2026-08-11 항목). 아래 4개는 착수 전 반드시
+확정해야 할 후속 질문이며, 어느 것도 아직 결정되지 않았다.
+
+- **정책안 확정**: 안 A(하드 손절)/안 B(단계형)/안 C(관측용
+  shadow) 중 어느 것을 택할지 — 조사 결과 C가 유일하게 지금 착수해도
+  안전하다는 판단은 있으나, 사용자 최종 결정은 아직 없다.
+- **설정 경로 확정**: 조사에서는 `env`보다 `config_versions` + Admin
+  API/CLI가 맞다고 판단했으나(`max_single_position_pct` 선례와 동일
+  논리), 실제로 `risk.loss_cut_pct`류 신규 config 키를 이 경로에
+  추가할지는 정책안(위 항목)이 먼저 정해져야 설계 가능하다.
+  `06_config_schema.md`의 `risk.per_position_loss_limit_pct`(죽은
+  키)를 재활용할지, 새 키를 만들지도 이때 함께 정한다.
+- **shadow 관측 필요 여부**: 안 C를 택한다면 `scripts/validate_r3b_
+  stop_loss_ablation.py` 패턴을 상시 shadow 계산기로 승격할지(예:
+  `shadow_regime_conditional_entry_signal.py`류 선례처럼 누적 이력
+  JSONL 구축) — 별도 착수 턴 필요, 이번 조사에서는 설계만 하고
+  구현하지 않았다.
+- **구현 착수 전 검증 포인트**: (1) 손실률 계산 기준 가격을
+  `position_snapshot.average_price`로 고정할지(이동평균 원가
+  `position_cost_basis_state.average_cost`와 혼용 금지), (2)
+  기존 `_check_held_position_sell_override`/`_check_held_position_
+  exit_hysteresis_gate`(둘 다 `decision_orchestrator.py`)와의
+  우선순위를 명시 규칙으로 정할지, (3) 재진입 cooldown을
+  `holding_profile_policy.py`의 기존 `reentry_cooldown_until`
+  메커니즘으로 재사용할지 — 셋 다 설계 문서 §4에 미확정으로 남아
+  있다. 착수 전 이 셋을 먼저 확정해야 한다.
