@@ -6546,3 +6546,40 @@ investigation.md` → `docs/20_system_analysis/loss_cut_policy_
 investigation.md`로 이동하고, 정책 명세 문서 번호를 14→13으로
 정리했다(자세한 이유는 `[PRIORITY_MAP]`의 같은 날짜 항목 참고).
 위 두 항목의 파일 경로 참조만 갱신했다.
+
+**[2026-08-11 KST 갱신, Loss-cut shadow 관측 구현 완료 — "다음
+착수 후보" 질문 해소, 신규 backlog 2건 추가]** 상세:
+`docs/40_action_plans/loss_cut_policy_and_config_path_action_plan.md`
+2단계.
+
+- **"shadow 계산기 구현 미착수" 질문 해소**: 위 2026-08-11 항목이
+  "여전히 미착수"라고 남겨둔 shadow 계산기 구현을 이번 턴에
+  완료했다 — `loss_cut_shadow.py`(순수 계산) +
+  `decision_orchestrator.py::_record_loss_cut_shadow_observation()`
+  (관측 전용 호출, `trade_decision_id` 확정 이후에만 실행)로
+  `trade_decisions.decision_json.loss_cut_shadow`에 기록한다.
+  **실주문 결정 변경 없음, 정식 loss-cut 정책 도입 아님.**
+- **held_position 차등 여부 질문에 대한 임시 답**: 위 항목이 새로
+  연 "held_position 차등 적용 여부" 질문에 대해, 이번 shadow
+  구현은 차등을 두지 않고 `position_snapshot.quantity > 0`인 모든
+  사이클에 공통 적용했다 — `source_type`은 관측 payload에
+  기록만 하고 필터링에는 쓰지 않는다. 표본이 쌓이면
+  `source_type`별로 사후 분리 집계가 가능하므로, 지금 필터링을
+  좁히지 않아도 3단계(누적 실측)에서 답을 얻을 수 있다는 판단.
+  **완전히 닫힌 질문은 아니다** — 3단계 실측 결과에 따라
+  held_position 전용으로 좁힐 수도 있다.
+- **신규 backlog 1 — asyncpg 이벤트 루프 스코프 버그**:
+  `agent_trading-app-1` 컨테이너에서 `tests/repositories/
+  test_postgres_trade_decisions.py`를 실행하면(이번 변경 여부와
+  무관하게, 수정 전 baseline에서도 동일 재현) `RuntimeError: ...
+  attached to a different loop`가 전체 파일에서 발생한다 — 이번
+  턴에 추가한 `test_sync_loss_cut_shadow_observation_is_additive_
+  only` 테스트도 이 환경에서는 실행 확인을 못 했다. 별도 조사
+  필요(pytest-asyncio `asyncio_default_fixture_loop_scope = "module"`
+  설정과 `agent_trading-app-1` 컨테이너의 상호작용 의심).
+- **신규 backlog 2 — 3단계(shadow 누적 실측) 착수 조건**: 이번
+  구현으로 `LOSS_CUT_SHADOW_ENABLED=true`를 실제 운영 env에 켜야
+  표본이 쌓이기 시작한다 — 이 스위치를 켜는 것 자체는 여전히 별도
+  사용자 승인이 필요한 운영 변경이다(env 파일 직접 수정 금지 원칙
+  포함). 몇 건/며칠치 표본이 모이면 4단계(정책 확정) 착수가
+  가능한지 기준도 아직 없다.

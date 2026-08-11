@@ -27,6 +27,7 @@ from agent_trading.domain.entities import (
 )
 from agent_trading.domain.enums import DecisionType, OrderSide
 from agent_trading.domain.models import SubmitOrderRequest
+from agent_trading.services.loss_cut_shadow import evaluate_loss_cut_shadow
 from agent_trading.services.order_manager import OrderManager
 from agent_trading.services.order_sync_service import OrderSyncService
 from agent_trading.services.reverse_trade_hysteresis import (
@@ -277,6 +278,10 @@ class DecisionOrchestratorService:
         r3b_alpha_enabled: bool = False,
         # --- EV gate near-miss 조건부 완화 config 기반 스위치 (SPPV-2.87/2.88) ---
         ev_gate_near_miss_override_enabled: bool = False,
+        # --- 손실률 기반 Loss-cut shadow 관측 (관측 전용, 결정 미개입) ---
+        loss_cut_shadow_enabled: bool = False,
+        loss_cut_shadow_soft_threshold_pct: Decimal = Decimal("7"),
+        loss_cut_shadow_hard_threshold_pct: Decimal = Decimal("12"),
     ) -> None:
         self._repos = repos
         self._decision_context_service = DecisionContextService(repos)
@@ -327,6 +332,15 @@ class DecisionOrchestratorService:
         # 아래 5개 조건을 모두 만족하는 매우 좁은 경우에만 예외 통과를
         # 적용한다(§_check_ai_buy_override_gate 이후 적용 지점 참고).
         self._ev_gate_near_miss_override_enabled = ev_gate_near_miss_override_enabled
+        # --- 손실률 기반 Loss-cut shadow 관측 (관측 전용, 결정 미개입) ---
+        # 기본값 False — 이 스위치가 True여도 아래 _record_loss_cut_
+        # shadow_observation()은 guard 목록(§_check_*)에 전혀 포함되지
+        # 않고, 그 목록이 전부 끝난 뒤(§assemble() 최말단)에만 호출된다.
+        # decision_type/side/주문 제출을 절대 바꾸지 않는다(설계 문서
+        # §3.6, §4.3).
+        self._loss_cut_shadow_enabled = loss_cut_shadow_enabled
+        self._loss_cut_shadow_soft_threshold_pct = loss_cut_shadow_soft_threshold_pct
+        self._loss_cut_shadow_hard_threshold_pct = loss_cut_shadow_hard_threshold_pct
         # --- Execution Service (execution pipeline state: sell guard, quote CB, fresh check) ---
         self._execution_service = ExecutionService(
             repos=repos,
@@ -742,6 +756,84 @@ class DecisionOrchestratorService:
                 ("ai_override_gate", detail_code),
             )
         return None
+
+    async def _record_loss_cut_shadow_observation(
+        self,
+        *,
+        trade_decision_id: UUID | None,
+        position_snapshot: PositionSnapshotEntity | None,
+        source_type: str,
+        composer_output: FinalDecisionComposerOutput | None,
+    ) -> None:
+        """손실률 기반 loss-cut shadow 관측을 기록한다 (관측 전용, 결정 미개입).
+
+        이 메서드는 ``assemble()``의 결정 확정 이후(트레이드 결정 mutation이
+        모두 끝난 뒤) 호출되며, 반환값이 없고 어떤 결정 필드도 mutate하지
+        않는다 — 그 자체로 이 관측이 실주문 판단에 영향을 줄 수 없음을
+        보장한다. 관측 결과 저장 실패는 로그로 남기되 예외를 전파하지
+        않는다(실주문 판단 흐름과 무관하게 독립적으로 처리).
+        """
+        if not self._loss_cut_shadow_enabled:
+            return
+        if trade_decision_id is None:
+            return
+
+        has_position = (
+            position_snapshot is not None
+            and position_snapshot.quantity is not None
+            and position_snapshot.quantity > 0
+        )
+        if not has_position:
+            return
+
+        verdict = evaluate_loss_cut_shadow(
+            average_price=position_snapshot.average_price,
+            market_price=position_snapshot.market_price,
+            soft_threshold_pct=self._loss_cut_shadow_soft_threshold_pct,
+            hard_threshold_pct=self._loss_cut_shadow_hard_threshold_pct,
+        )
+
+        payload: dict[str, object] = {
+            "account_id": str(position_snapshot.account_id),
+            "instrument_id": str(position_snapshot.instrument_id),
+            "source_type": source_type,
+            "observed_at": datetime.now(timezone.utc).isoformat(),
+            "average_price": str(position_snapshot.average_price),
+            "market_price": (
+                str(position_snapshot.market_price)
+                if position_snapshot.market_price is not None
+                else None
+            ),
+            "loss_pct": (
+                str(verdict.loss_pct) if verdict.loss_pct is not None else None
+            ),
+            "triggered": verdict.triggered,
+            "tier": verdict.tier,
+            "skipped_reason": verdict.skipped_reason,
+            "soft_threshold_pct": str(self._loss_cut_shadow_soft_threshold_pct),
+            "hard_threshold_pct": str(self._loss_cut_shadow_hard_threshold_pct),
+            "actual_decision_type": (
+                composer_output.decision_type if composer_output is not None else None
+            ),
+            "actual_side": (
+                composer_output.side if composer_output is not None else None
+            ),
+            # shadow 관측이 실제 결정에 영향을 주지 않았음을 명시하는 필드.
+            "shadow_only": True,
+            "decision_unaffected_by_shadow": True,
+        }
+
+        try:
+            await self._repos.trade_decisions.sync_loss_cut_shadow_observation(
+                trade_decision_id,
+                loss_cut_shadow_payload=payload,
+            )
+        except Exception:
+            logger.warning(
+                "loss_cut_shadow observation sync failed: trade_decision_id=%s",
+                trade_decision_id,
+                exc_info=True,
+            )
 
     async def _check_held_position_exit_hysteresis_gate(
         self,
@@ -2512,6 +2604,15 @@ class DecisionOrchestratorService:
             trade_decision_id = td_entity.trade_decision_id
         else:
             trade_decision_id = None
+
+        # --- Loss-cut shadow 관측 (관측 전용 — 이 시점 이후 decision_type/side
+        # 를 mutate하는 코드는 없으므로, 여기서 관측해도 실주문 판단에 영향 없음) ---
+        await self._record_loss_cut_shadow_observation(
+            trade_decision_id=trade_decision_id,
+            position_snapshot=assembled_context.position_snapshot,
+            source_type=assembled_context.source_type,
+            composer_output=agent_bundle.composer_output,
+        )
 
         # --- Generate decision_id if not provided ---
         decision_id = request.decision_id

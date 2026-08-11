@@ -224,6 +224,30 @@ guard를 1번(`_check_held_position_sell_override`) 바로 다음, 4번
 | 목적 | "지금 발동했다면 어떤 성과였을까"를 누적 관측(기존 `scripts/validate_r3b_stop_loss_ablation.py` 패턴의 상시화) | 실제 리스크 통제 |
 | 전환 조건 | — | shadow 누적 표본으로 "loss-cut 발동 표본의 사후 성과가 미발동 대비 개선"이 확인된 뒤에만(이 저장소의 반복 원칙 — 빈도가 아니라 기대값 개선으로 판단) |
 
+### 3.7 구현 현황(2026-08-11 갱신) — [사실]
+
+§3.6의 shadow 단계를 실제로 구현했다. 이 문서가 초안 시점에
+`_check_loss_cut_override`라는 이름의 guard 함수를 가정했던 것과
+달리, 실제 구현은 **guard 목록에 전혀 속하지 않는 별도 private
+메서드**(`_record_loss_cut_shadow_observation()`, `decision_
+orchestrator.py`)로 만들었다 — 어떤 `object.__setattr__` 호출도
+하지 않는다는 것을 이름과 구조 모두로 드러내기 위해서다.
+
+- 실제 구현: `src/agent_trading/services/loss_cut_shadow.py`
+  (순수 계산) + `decision_orchestrator.py::assemble()`에서
+  `trade_decision_id` 확정 **직후**(모든 결정 mutating guard가
+  끝난 뒤) 호출.
+- 관측 대상: §3.2가 열어둔 질문(source_type별 차등)에 대해, shadow
+  단계에서는 차등을 두지 않고 `position_snapshot.quantity > 0`인
+  모든 사이클에 공통 적용했다 — `source_type`은 payload에 기록만
+  하고 필터링에는 쓰지 않는다(표본이 쌓이면 사후에 `source_type`별
+  분리 집계 가능).
+- 저장: §2.3이 언급한 재사용 가능 저장 구조 중 `decision_json`
+  additive JSONB patch(`sync_execution_sizing()`과 동일 패턴)를
+  택했다 — 신규 테이블 없음.
+- 상세 근거/검증 결과: `docs/40_action_plans/loss_cut_policy_and_
+  config_path_action_plan.md` 2단계.
+
 ## 4. 설정 경로 설계 초안
 
 ### 4.1 왜 `env`가 아니라 `config_versions`인가 — [추천, §13 결론 재확인]
@@ -293,6 +317,18 @@ Admin API/CLI로 간다. `env`는 §4.3의 shadow 전용 스위치로만 예외�
   있다** — "이 관측을 계속 켜둘지"는 운영 편의 문제이지 거래 정책이
   아니기 때문이다. 다만 shadow 단계 자체가 목적을 다하면(정식 전환
   완료 또는 폐기 결정) 이 플래그도 함께 정리 대상이 된다.
+- **구현 현황(2026-08-11)**: 실제 구현에서는 이 절이 예시로 든
+  `LOSS_CUT_SHADOW_ENABLED` 외에, "shadow 관측용 threshold"도
+  사용자가 명시적으로 허용한 범위(작업 지시의 "shadow on/off,
+  shadow 관측용 threshold, 최소 로그 제어" 허용 목록)에 포함돼
+  `LOSS_CUT_SHADOW_SOFT_THRESHOLD_PCT`/`LOSS_CUT_SHADOW_HARD_
+  THRESHOLD_PCT`도 env로 추가했다. 두 threshold 값은 §4.2의
+  `risk.loss_cut.soft_threshold_pct`/`hard_threshold_pct`와 이름이
+  의도적으로 유사하지만, **이 env 값은 shadow 계산에만 쓰이고
+  `config_versions`의 정식 값을 대체하거나 자동으로 채우지
+  않는다** — 두 경로가 이름만으로 혼동되지 않도록 `.env.example`
+  주석에 "이름에 항상 SHADOW가 들어가는 것 자체가 관측 전용이라는
+  표시"임을 명시했다.
 
 ### 4.4 Admin API / CLI 입력 계약 — [추천, 기존 패턴 1:1 재사용]
 

@@ -629,6 +629,25 @@ class TradeDecisionRepository(Protocol):
         """Execution 단계의 deterministic sizing 결과를 TD에 반영한다."""
         ...
 
+    async def sync_loss_cut_shadow_observation(
+        self,
+        trade_decision_id: UUID,
+        *,
+        loss_cut_shadow_payload: dict[str, object],
+    ) -> TradeDecisionEntity | None:
+        """Loss-cut **shadow 관측** 결과를 TD의 ``decision_json['loss_cut_
+        shadow']``에 추가한다(관측 전용 — 다른 어떤 컬럼도 건드리지
+        않는다).
+
+        ``sync_execution_sizing()``과 같은 append-only jsonb 패치 패턴을
+        따르되, 그 메서드와 달리 ``quantity``/``max_order_value``/
+        ``target_notional`` 컬럼은 전혀 쓰지 않는다 — 이 메서드는 순수하게
+        관측 metadata만 얹는다(``docs/00_foundational_design/detailed_
+        design/13_loss_cut_policy_specification_and_config_path_
+        design.md`` §3.6 shadow 단계).
+        """
+        ...
+
     async def list_recent_core_eligibility_reasons(
         self,
         account_id: UUID,
