@@ -11380,7 +11380,7 @@ BUY 경로 리팩터링 단위를 아래처럼 고정한다.
 
 위 비교에서 장기 트랙으로 분류했던 안 D를 실제로 구현 가능한
 수준까지 설계했다. 상세는
-`docs/20_system_analysis/submit_budget_two_stage_design_2026-08-11.md`.
+`docs/40_action_plans/submit_budget_two_stage_design_2026-08-11.md`.
 
 핵심 요지:
 
