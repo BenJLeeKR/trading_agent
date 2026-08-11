@@ -289,6 +289,61 @@ async def test_sync_execution_sizing_updates_quantity_fields(
     assert fetched.decision_json["execution_sizing"]["resolved_quantity"] == "37"
 
 
+@pytest.mark.asyncio
+async def test_sync_loss_cut_shadow_observation_is_additive_only(
+    seeded_postgres_data: RepositoryContainer,
+    seeded_decision_context: UUID,
+    seeded_strategy_id: UUID,
+) -> None:
+    """`loss_cut_shadow` 관측 기록은 기존 `decision_json` 키(예:
+    `execution_sizing`)와 `decision_type`/`side`/`quantity` 등 결정
+    컬럼을 전혀 건드리지 않는 순수 additive JSONB patch여야 한다."""
+    repos = seeded_postgres_data
+    decision = _make_full_decision(
+        decision_context_id=seeded_decision_context,
+        strategy_id=seeded_strategy_id,
+    )
+    await repos.trade_decisions.add(decision)
+
+    # 먼저 execution_sizing을 기록해 기존 키가 보존되는지도 함께 확인한다.
+    await repos.trade_decisions.sync_execution_sizing(
+        decision.trade_decision_id,
+        quantity=Decimal("37"),
+        max_order_value=Decimal("5550000"),
+        target_notional=Decimal("5550000"),
+        execution_sizing_payload={"resolved_quantity": "37"},
+    )
+
+    updated = await repos.trade_decisions.sync_loss_cut_shadow_observation(
+        decision.trade_decision_id,
+        loss_cut_shadow_payload={
+            "account_id": str(uuid4()),
+            "instrument_id": str(uuid4()),
+            "source_type": "held_position",
+            "average_price": "100000",
+            "market_price": "85000",
+            "loss_pct": "15.00",
+            "triggered": True,
+            "tier": "hard",
+            "actual_decision_type": "APPROVE",
+            "shadow_only": True,
+            "decision_unaffected_by_shadow": True,
+        },
+    )
+
+    assert updated is not None
+    fetched = await repos.trade_decisions.get(decision.trade_decision_id)
+    assert fetched is not None
+    assert fetched.decision_json["loss_cut_shadow"]["triggered"] is True
+    assert fetched.decision_json["loss_cut_shadow"]["tier"] == "hard"
+    # 기존 키는 보존되어야 한다 (additive patch).
+    assert fetched.decision_json["execution_sizing"]["resolved_quantity"] == "37"
+    # 실주문 결정 필드는 shadow 기록 전후로 전혀 변하지 않아야 한다.
+    assert fetched.decision_type == decision.decision_type
+    assert fetched.side == decision.side
+    assert fetched.quantity == Decimal("37")  # sync_execution_sizing이 남긴 값 그대로
+
+
 # ============================================================================
 # Test 3: Verify decision column is nullable (post-migration assertion)
 # ============================================================================

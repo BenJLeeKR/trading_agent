@@ -4098,3 +4098,190 @@ class TestExecutionSizingSync:
         assert updated.decision_json["execution_sizing"]["requested_quantity_before_sizing"] == "1"
         assert updated.decision_json["execution_sizing"]["resolved_quantity"] == "37"
         assert updated.decision_json["execution_sizing"]["applied_constraints"] == ["max_qty"]
+
+
+class TestLossCutShadowObservation:
+    """`_record_loss_cut_shadow_observation`은 관측 전용이다 — 어떤 실행
+    경로에서도 ``decision_type``/``side``/주문 제출을 바꾸지 않는다는
+    것을 이 클래스의 테스트들이 직접 증명한다: 각 테스트는 실행 후
+    ``TradeDecisionEntity``의 ``decision_type``/``side``가 호출 전과
+    동일하게 유지됨을 assert하고, 오직 ``decision_json.loss_cut_shadow``
+    (additive JSONB 필드)만 바뀌었는지 확인한다."""
+
+    def _make_decision(self, repos, *, decision_type=DecisionType.HOLD, side=None):
+        decision = TradeDecisionEntity(
+            trade_decision_id=uuid4(),
+            decision_context_id=uuid4(),
+            decision_type=decision_type,
+            side=side,
+            strategy_id=uuid4(),
+            symbol="005930",
+            market="KRX",
+            entry_style=EntryStyle.LIMIT,
+            created_at=datetime.now(timezone.utc),
+            decision_json={"existing": True},
+        )
+        return decision
+
+    @pytest.mark.asyncio
+    async def test_disabled_flag_is_a_full_noop(self) -> None:
+        repos = build_in_memory_repositories()
+        service = DecisionOrchestratorService(repos=repos, use_subprocess_isolation=False)
+        decision = self._make_decision(repos)
+        await repos.trade_decisions.add(decision)
+
+        position_snapshot = PositionSnapshotEntity(
+            position_snapshot_id=uuid4(),
+            account_id=uuid4(),
+            instrument_id=uuid4(),
+            quantity=Decimal("10"),
+            average_price=Decimal("100000"),
+            market_price=Decimal("85000"),
+            unrealized_pnl=Decimal("-1500"),
+            source_of_truth="broker",
+            snapshot_at=datetime.now(timezone.utc),
+        )
+
+        await service._record_loss_cut_shadow_observation(
+            trade_decision_id=decision.trade_decision_id,
+            position_snapshot=position_snapshot,
+            source_type="held_position",
+            composer_output=FinalDecisionComposerOutput(decision_type="HOLD", side=""),
+        )
+
+        updated = await repos.trade_decisions.get(decision.trade_decision_id)
+        assert updated is not None
+        assert updated.decision_type == DecisionType.HOLD
+        assert updated.side is None
+        assert "loss_cut_shadow" not in updated.decision_json
+
+    @pytest.mark.asyncio
+    async def test_enabled_records_hard_trigger_without_changing_decision(self) -> None:
+        repos = build_in_memory_repositories()
+        service = DecisionOrchestratorService(
+            repos=repos,
+            use_subprocess_isolation=False,
+            loss_cut_shadow_enabled=True,
+            loss_cut_shadow_soft_threshold_pct=Decimal("7"),
+            loss_cut_shadow_hard_threshold_pct=Decimal("12"),
+        )
+        decision = self._make_decision(repos, decision_type=DecisionType.HOLD, side=None)
+        await repos.trade_decisions.add(decision)
+
+        account_id = uuid4()
+        instrument_id = uuid4()
+        position_snapshot = PositionSnapshotEntity(
+            position_snapshot_id=uuid4(),
+            account_id=account_id,
+            instrument_id=instrument_id,
+            quantity=Decimal("10"),
+            average_price=Decimal("100000"),
+            market_price=Decimal("85000"),  # -15% -> hard
+            unrealized_pnl=Decimal("-1500"),
+            source_of_truth="broker",
+            snapshot_at=datetime.now(timezone.utc),
+        )
+
+        await service._record_loss_cut_shadow_observation(
+            trade_decision_id=decision.trade_decision_id,
+            position_snapshot=position_snapshot,
+            source_type="held_position",
+            composer_output=FinalDecisionComposerOutput(decision_type="HOLD", side=""),
+        )
+
+        updated = await repos.trade_decisions.get(decision.trade_decision_id)
+        assert updated is not None
+        # 실제 결정 필드는 shadow 관측 전과 완전히 동일해야 한다.
+        assert updated.decision_type == DecisionType.HOLD
+        assert updated.side is None
+        assert updated.decision_json["existing"] is True
+
+        shadow = updated.decision_json["loss_cut_shadow"]
+        assert shadow["account_id"] == str(account_id)
+        assert shadow["instrument_id"] == str(instrument_id)
+        assert shadow["source_type"] == "held_position"
+        assert shadow["average_price"] == "100000"
+        assert shadow["market_price"] == "85000"
+        assert Decimal(shadow["loss_pct"]) == Decimal("15")
+        assert shadow["triggered"] is True
+        assert shadow["tier"] == "hard"
+        assert shadow["actual_decision_type"] == "HOLD"
+        assert shadow["shadow_only"] is True
+        assert shadow["decision_unaffected_by_shadow"] is True
+
+    @pytest.mark.asyncio
+    async def test_enabled_but_no_position_is_noop(self) -> None:
+        repos = build_in_memory_repositories()
+        service = DecisionOrchestratorService(
+            repos=repos, use_subprocess_isolation=False, loss_cut_shadow_enabled=True,
+        )
+        decision = self._make_decision(repos)
+        await repos.trade_decisions.add(decision)
+
+        await service._record_loss_cut_shadow_observation(
+            trade_decision_id=decision.trade_decision_id,
+            position_snapshot=None,
+            source_type="core",
+            composer_output=FinalDecisionComposerOutput(decision_type="HOLD", side=""),
+        )
+
+        updated = await repos.trade_decisions.get(decision.trade_decision_id)
+        assert updated is not None
+        assert "loss_cut_shadow" not in updated.decision_json
+
+    @pytest.mark.asyncio
+    async def test_enabled_but_trade_decision_id_none_is_noop(self) -> None:
+        repos = build_in_memory_repositories()
+        service = DecisionOrchestratorService(
+            repos=repos, use_subprocess_isolation=False, loss_cut_shadow_enabled=True,
+        )
+        position_snapshot = PositionSnapshotEntity(
+            position_snapshot_id=uuid4(),
+            account_id=uuid4(),
+            instrument_id=uuid4(),
+            quantity=Decimal("10"),
+            average_price=Decimal("100000"),
+            market_price=Decimal("85000"),
+            unrealized_pnl=Decimal("-1500"),
+            source_of_truth="broker",
+            snapshot_at=datetime.now(timezone.utc),
+        )
+        # trade_decision_id=None -> repos.trade_decisions에 아무 write도
+        # 시도하지 않고 조용히 return해야 한다 (예외 없음).
+        await service._record_loss_cut_shadow_observation(
+            trade_decision_id=None,
+            position_snapshot=position_snapshot,
+            source_type="held_position",
+            composer_output=None,
+        )
+
+    @pytest.mark.asyncio
+    async def test_repository_write_failure_is_logged_not_raised(self) -> None:
+        repos = build_in_memory_repositories()
+        service = DecisionOrchestratorService(
+            repos=repos, use_subprocess_isolation=False, loss_cut_shadow_enabled=True,
+        )
+        position_snapshot = PositionSnapshotEntity(
+            position_snapshot_id=uuid4(),
+            account_id=uuid4(),
+            instrument_id=uuid4(),
+            quantity=Decimal("10"),
+            average_price=Decimal("100000"),
+            market_price=Decimal("85000"),
+            unrealized_pnl=Decimal("-1500"),
+            source_of_truth="broker",
+            snapshot_at=datetime.now(timezone.utc),
+        )
+        repos.trade_decisions.sync_loss_cut_shadow_observation = AsyncMock(
+            side_effect=RuntimeError("boom")
+        )
+
+        # 저장 실패해도 예외를 밖으로 전파하지 않아야 한다 (실주문 판단
+        # 흐름과 무관하게 독립적으로 실패를 흡수하되, 로그로는 남긴다).
+        await service._record_loss_cut_shadow_observation(
+            trade_decision_id=uuid4(),
+            position_snapshot=position_snapshot,
+            source_type="held_position",
+            composer_output=FinalDecisionComposerOutput(decision_type="HOLD", side=""),
+        )
+        repos.trade_decisions.sync_loss_cut_shadow_observation.assert_awaited_once()

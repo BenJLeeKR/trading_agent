@@ -58,18 +58,58 @@ downside shock, holding_profile 만료)이다. 이 사실은
 - 검증 명령: `bash scripts/harness/run.sh accept docs`.
 - 상태: **완료**(2026-08-11, 이번 PR).
 
-### 2단계 — Shadow 계산기 구현(미착수, 다음 후보)
+### 2단계 — Shadow 계산기 구현(완료)
 
 - 왜: 실제 거래 결정을 바꾸지 않고, "loss-cut이 있었다면 어떤
   성과였을까"를 먼저 관측해야 §5(정책 확정)로 넘어갈 근거가 생긴다.
-- 산출물(예정): `scripts/validate_r3b_stop_loss_ablation.py` 패턴을
-  상시 관측 스크립트/서비스로 승격. `LOSS_CUT_SHADOW_ENABLED` env로
-  게이팅(설계 문서 §4.3 — 이 플래그는 로그 여부만 제어, 실거래
-  결정에는 개입하지 않음). `decision_orchestrator.py`의 실제 guard
-  체인은 건드리지 않는다.
-- 착수 전 확인: 사용자 승인(별도 턴), shadow 관측 표본 크기 기준
-  확정.
-- 상태: **미착수**.
+- 산출물:
+  - `src/agent_trading/services/loss_cut_shadow.py`(신규) — 순수
+    계산 함수 `evaluate_loss_cut_shadow()`. DB 쓰기·주문 제출·
+    decision_type 변경 없음, 어떤 guard 목록에도 속하지 않는다.
+  - `decision_orchestrator.py`의 신규 private 메서드
+    `_record_loss_cut_shadow_observation()` — `assemble()`에서
+    `trade_decision_id`가 확정된 **직후**(모든 결정 mutating guard가
+    끝난 뒤)에만 호출되며, 반환값도 없고 어떤 결정 필드도 mutate하지
+    않는다.
+  - 저장: 신규 테이블/마이그레이션 없이 기존
+    `trade_decisions.decision_json`에 `loss_cut_shadow` key를
+    additive JSONB patch(`jsonb_set`)로 추가 —
+    `sync_execution_sizing()`과 완전히 동일한 패턴
+    (`repositories/contracts.py`/`memory.py`/`postgres/trade_decisions.py`에
+    `sync_loss_cut_shadow_observation()` 추가).
+  - 관측 대상: `source_type == "held_position"`으로 제한하지 않고,
+    `position_snapshot.quantity > 0`인 모든 결정 사이클에 공통
+    적용(기존 guard 메서드들의 `has_position` 판정 관례와 동일) —
+    "현재 코드 구조상 가장 작은 안전 범위"를 source_type 분기가
+    아니라 이미 모든 사이클에 공통 계산되는 `position_snapshot`
+    존재 여부로 잡은 것.
+  - 설정 경로: `LOSS_CUT_SHADOW_ENABLED`/
+    `LOSS_CUT_SHADOW_SOFT_THRESHOLD_PCT`/
+    `LOSS_CUT_SHADOW_HARD_THRESHOLD_PCT`(`.env.example`,
+    `config/settings.py`) — 관측 on/off·threshold만 env로 다루고,
+    실주문 정책값은 여전히 env에 두지 않는다(§4 원칙 유지). 기본값
+    `LOSS_CUT_SHADOW_ENABLED=false` — 계산 자체가 실행되지 않는
+    상태가 기본.
+  - read path: 신규 API 없음(`GET /trade-decisions`가
+    `decision_json`을 이미 노출하므로 무료로 충족) +
+    `scripts/dump_loss_cut_shadow_observations.py`(신규, read-only
+    조회 편의 스크립트).
+  - 실패 처리: 관측 저장 실패는 `logger.warning(exc_info=True)`로
+    남기고 예외를 전파하지 않는다(`_sync_trade_decision_execution_
+    sizing()`과 동일한 관례) — 실주문 판단 흐름과 완전히 분리.
+- 검증: 단위 테스트(`tests/services/test_loss_cut_shadow.py`,
+  `tests/services/test_decision_orchestrator.py::
+  TestLossCutShadowObservation`) PASS, `accept db-structure`/
+  `accept architecture`/`accept backend-runtime`/`accept no-bypass`/
+  `accept docs`/`accept env` PASS. Postgres 통합 테스트
+  (`tests/repositories/test_postgres_trade_decisions.py::
+  test_sync_loss_cut_shadow_observation_is_additive_only`)는
+  추가했으나, 검증 환경(`agent_trading-app-1` 컨테이너)의 기존
+  asyncpg 이벤트 루프 스코프 버그(수정 전 baseline에서도 동일하게
+  재현됨 — 이번 변경과 무관)로 이 컨테이너에서는 실행 확인이
+  불가능했다. 코드는 이미 테스트로 검증된 `sync_execution_sizing()`과
+  바이트 단위로 동일한 `jsonb_set` 패턴이라 리스크는 낮다고 판단.
+- 상태: **완료**(2026-08-11, 이번 PR — shadow 관측 구현).
 
 ### 3단계 — Shadow 누적 실측(미착수)
 
@@ -124,30 +164,55 @@ downside shock, holding_profile 만료)이다. 이 사실은
   submit budget 2단계 분리 작업 등에서 이미 확립됨).
 - 상태: **미착수**.
 
-## 4. 검증 기준(이번 1단계 한정)
+## 4. 검증 기준
+
+### 1단계(문서, 완료)
 
 - `bash scripts/harness/run.sh accept docs` — PASS 필요.
 - 코드/스키마 변경이 없으므로 `accept architecture`/`accept style`/
   `accept no-bypass`는 이번 단계에서 필수로 요구하지 않는다(실행
   시 이유를 완료 보고에 남긴다).
 
+### 2단계(shadow 구현, 완료)
+
+- `py_compile`(변경/신규 파일 전체), `accept db-structure`,
+  `accept architecture`, `accept backend-runtime`, `accept no-bypass`,
+  `accept docs`, `accept env` — 전부 PASS.
+- `tests/services/test_loss_cut_shadow.py`(순수 함수 9 tests),
+  `tests/services/test_decision_orchestrator.py::
+  TestLossCutShadowObservation`(5 tests, 관측이 decision_type/side를
+  바꾸지 않음을 직접 assert) — dev-validation container
+  (`bash scripts/harness/run.sh test-file <path>`)에서 전부 PASS.
+- Postgres 통합 테스트 1건은 작성했으나 `agent_trading-app-1`
+  컨테이너의 기존 asyncpg 이벤트 루프 스코프 버그(수정 전 baseline
+  재현 확인 완료 — 이번 변경과 무관한 환경 문제)로 이 환경에서는
+  실행 결과를 확인하지 못했다. 완료 보고에 별도 명시.
+
 ## 5. 남은 리스크 / 후속 확인 필요 사항
 
 `13_loss_cut_policy_specification_and_config_path_design.md` §6과
 동일 — 이 문서에서 중복 나열하지 않는다. 핵심만 재인용:
 
-- soft/hard 임계치 구체 숫자 미확정(shadow 실측 필요).
+- soft/hard 임계치 구체 숫자 미확정(shadow 실측 필요 — 이번 2단계
+  구현으로 실측 자체는 이제 가능해졌으나, 실제 표본 축적/분석은
+  아직 하지 않았다).
 - loss-cut과 기존 hysteresis gate의 우선순위 설계(부분적 우선,
   완전 우회 아님)에 대한 사용자 명시 확인 필요.
 - held_position에 대한 더 타이트한 override 여부는 데이터 없이
   판단 불가.
+- `agent_trading-app-1` 컨테이너의 asyncpg 이벤트 루프 스코프 버그
+  자체는 이번 작업 범위 밖이지만, DB 관련 통합 테스트 검증을
+  막고 있어 별도 조사가 필요하다.
 
 ## 6. `[PRIORITY_MAP]` / `[BACKLOG]` 반영
 
-- `[PRIORITY_MAP] remaining_work_priority_map.md`: 이번 1단계
-  완료를 append. 다음 주력 작업이 `SPPV-3`임은 2026-08-11 이전
-  항목에서 이미 명시했고, 이번 항목은 그 우선순위를 바꾸지 않는다 —
-  Loss-cut 2단계(shadow) 착수는 여전히 "정책 결정 대기" 상태다.
+- `[PRIORITY_MAP] remaining_work_priority_map.md`: 이번 2단계(shadow
+  관측 구현) 완료를 append. 다음 주력 작업이 `SPPV-3`임은
+  2026-08-11 이전 항목에서 이미 명시했고, 이번 항목은 그 우선순위를
+  바꾸지 않는다 — 3단계(shadow 누적 실측)는 여전히 "표본 축적 대기"
+  상태다.
 - `[BACKLOG] backlog.md`: 이번 설계 초안으로 답한 질문(정책 구조,
   합성 규칙, 설정 경로)과 여전히 열려 있는 질문(임계치 숫자,
   우선순위 최종 확인, held_position 차등 여부)을 구분해 갱신한다.
+  신규: `agent_trading-app-1` asyncpg 이벤트 루프 스코프 버그 조사
+  항목을 추가한다.

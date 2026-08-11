@@ -548,6 +548,49 @@ def _resolve_ev_gate_near_miss_override_enabled() -> bool:
     return raw.strip().lower() == "true"
 
 
+def _resolve_loss_cut_shadow_enabled() -> bool:
+    """손실률 기반 Loss-cut **shadow 관측**(관측 전용, 결정 미개입)
+
+    on/off 스위치를 ``LOSS_CUT_SHADOW_ENABLED`` env에서 읽는다.
+
+    설계 근거: ``docs/00_foundational_design/detailed_design/13_loss_
+    cut_policy_specification_and_config_path_design.md`` §3.6, §4.3.
+    다른 `<FEATURE>_ENABLED` 스위치와 동일한 패턴 — paper/real/
+    production 같은 environment 값은 절대 보지 않는다.
+
+    기본값 ``False`` — 명시적으로 ``"true"``로 설정해야만
+    `decision_orchestrator.py`가 loss-cut 가상 판정을 계산해
+    `trade_decisions.decision_json.loss_cut_shadow`에 기록한다. 이
+    스위치가 ``True``여도 `decision_type`/`side`/주문 제출은 전혀
+    바뀌지 않는다 — 이건 §4.3에서 명시한 "관측 로그 여부만 제어"
+    경계를 코드로 강제하는 스위치다. **정식 운영 loss-cut 정책값은
+    이 스위치의 확장이 아니라 별도로 `config_versions` + Admin
+    API/CLI 경로를 통해 도입한다**(§5 B3 이후).
+    """
+    raw = os.getenv("LOSS_CUT_SHADOW_ENABLED", "false")
+    return raw.strip().lower() == "true"
+
+
+def _resolve_loss_cut_shadow_soft_threshold_pct() -> Decimal:
+    """Loss-cut shadow 관측의 soft 임계치(%)를
+
+    ``LOSS_CUT_SHADOW_SOFT_THRESHOLD_PCT`` env에서 읽는다. 기본값
+    ``7``(설계 문서 §3.1 예시값) — shadow 관측 전용이며 정식 정책값이
+    아니다.
+    """
+    return Decimal(os.getenv("LOSS_CUT_SHADOW_SOFT_THRESHOLD_PCT", "7"))
+
+
+def _resolve_loss_cut_shadow_hard_threshold_pct() -> Decimal:
+    """Loss-cut shadow 관측의 hard 임계치(%)를
+
+    ``LOSS_CUT_SHADOW_HARD_THRESHOLD_PCT`` env에서 읽는다. 기본값
+    ``12``(설계 문서 §3.1 예시값) — shadow 관측 전용이며 정식 정책값이
+    아니다.
+    """
+    return Decimal(os.getenv("LOSS_CUT_SHADOW_HARD_THRESHOLD_PCT", "12"))
+
+
 # ---------------------------------------------------------------------------
 # Application settings
 # ---------------------------------------------------------------------------
@@ -785,3 +828,26 @@ class AppSettings:
     threshold나 EV 계산 로직은 전혀 바꾸지 않으며, paper/real/production
     environment 값을 참조하지 않는다.
     """
+
+    # ---- 손실률 기반 Loss-cut shadow 관측 (설계 문서 §3.6, §4.3) ---------
+    loss_cut_shadow_enabled: bool = field(
+        default_factory=_resolve_loss_cut_shadow_enabled
+    )
+    """`LOSS_CUT_SHADOW_ENABLED` env로 제어하는 관측 전용 스위치. 기본값
+    ``False``. ``True``여도 `decision_type`/`side`/주문 제출에는 전혀
+    개입하지 않는다 — `trade_decisions.decision_json.loss_cut_shadow`에
+    가상 판정만 기록한다. **정식 운영 정책 스위치가 아니다** —
+    `config_versions` 경로 도입 전까지의 관측 전용 임시값이다.
+    """
+
+    loss_cut_shadow_soft_threshold_pct: Decimal = field(
+        default_factory=_resolve_loss_cut_shadow_soft_threshold_pct
+    )
+    """`LOSS_CUT_SHADOW_SOFT_THRESHOLD_PCT` env(기본값 ``7``). 관측
+    전용 임계치 — 정식 정책값이 아니다."""
+
+    loss_cut_shadow_hard_threshold_pct: Decimal = field(
+        default_factory=_resolve_loss_cut_shadow_hard_threshold_pct
+    )
+    """`LOSS_CUT_SHADOW_HARD_THRESHOLD_PCT` env(기본값 ``12``). 관측
+    전용 임계치 — 정식 정책값이 아니다."""

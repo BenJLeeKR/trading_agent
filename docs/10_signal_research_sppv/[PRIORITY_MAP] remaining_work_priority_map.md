@@ -11532,3 +11532,39 @@ conditional_entry_signal_v1.md` 참고)으로 재개한다.** Loss-cut
   문서가 빠지며 시리즈 번호가 14→13으로 당겨짐).
 - 이 두 항목(위 "정책/설정 경로 설계 조사 완료"·"정책 명세 초안
   완료")의 `상세:` 참조 경로도 실제 경로 기준으로 갱신했다.
+
+## Loss-cut shadow 관측 구현 완료 — 실주문 결정 변경 없음, 정식 정책 도입 아님(2026-08-11 KST)
+
+`loss_cut_policy_and_config_path_action_plan.md` 2단계(Shadow
+계산기 구현)를 완료했다. **이번 작업은 shadow 관측 구현이다 —
+실주문 결정 변경 없음, 정식 loss-cut 정책 도입 아님.**
+
+- `src/agent_trading/services/loss_cut_shadow.py`(신규 순수 계산
+  모듈) + `decision_orchestrator.py`의 `_record_loss_cut_shadow_
+  observation()`(신규 private 메서드, `assemble()`에서
+  `trade_decision_id` 확정 **이후**에만 호출 — 어떤 결정 mutating
+  guard 목록에도 속하지 않는다)로 손실률 기반 loss-cut 가상 판정을
+  계산해 `trade_decisions.decision_json.loss_cut_shadow`에
+  additive JSONB patch로 기록한다(`sync_execution_sizing()`과
+  동일한 `jsonb_set` 패턴, 신규 테이블/마이그레이션 없음).
+- 관측 대상은 `source_type == "held_position"` 제한이 아니라
+  `position_snapshot.quantity > 0`인 모든 결정 사이클(기존 guard
+  메서드들의 `has_position` 판정 관례와 동일) — "현재 코드 구조상
+  가장 작은 안전 범위"를 이미 모든 사이클에 공통 계산되는
+  `position_snapshot` 존재 여부로 판단했다.
+- 설정 경로: `LOSS_CUT_SHADOW_ENABLED`/`LOSS_CUT_SHADOW_SOFT_
+  THRESHOLD_PCT`/`LOSS_CUT_SHADOW_HARD_THRESHOLD_PCT`(env, 기본값
+  `false`) — 관측 on/off·threshold만 env로 다루고, 실주문 정책값은
+  여전히 `config_versions` 경로 원칙을 유지한다.
+- read path: 신규 API 없이 기존 `GET /trade-decisions`의
+  `decision_json` 노출로 충족 + `scripts/dump_loss_cut_shadow_
+  observations.py`(신규 read-only 조회 스크립트).
+- 검증: `py_compile`, `accept db-structure`/`architecture`/
+  `backend-runtime`/`no-bypass`/`docs`/`env` 전부 PASS, 신규 단위
+  테스트(순수 함수 9건 + orchestrator 관측 5건) dev-validation
+  container에서 PASS. Postgres 통합 테스트는 작성했으나
+  `agent_trading-app-1` 컨테이너의 기존(이번 변경과 무관, baseline
+  재현 확인) asyncpg 이벤트 루프 스코프 버그로 실행 확인은
+  못 했다.
+- **이후 우선순위는 변경 없음**: `SPPV-3`가 여전히 다음 주력
+  작업이다. 3단계(shadow 누적 실측)는 표본 축적 대기 상태다.
