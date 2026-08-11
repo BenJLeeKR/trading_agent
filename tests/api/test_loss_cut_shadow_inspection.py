@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
+from decimal import Decimal
 from uuid import uuid4
 
 from fastapi.testclient import TestClient
@@ -11,6 +12,8 @@ from agent_trading.domain.entities import (
     BrokerAccountEntity,
     ConfigVersionEntity,
     DecisionContextEntity,
+    PositionCostBasisStateEntity,
+    RealizedPnlDailyAggregateEntity,
     StrategyEntity,
     TradeDecisionEntity,
 )
@@ -99,10 +102,10 @@ def _make_decision(
     )
 
 
-def _shadow_payload(*, triggered, tier, loss_pct):
+def _shadow_payload(*, triggered, tier, loss_pct, instrument_id=None):
     return {
         "account_id": str(uuid4()),
-        "instrument_id": str(uuid4()),
+        "instrument_id": str(instrument_id or uuid4()),
         "source_type": "held_position",
         "average_price": "100000",
         "market_price": "85000",
@@ -442,3 +445,170 @@ def test_loss_cut_shadow_daily_kst_boundary_crosses_to_next_day() -> None:
             },
         )
     assert response_prev_day.json()["days"] == []
+
+
+def test_loss_cut_shadow_by_instrument_joins_realized_pnl_and_cost_basis() -> None:
+    repos = build_in_memory_repositories()
+    account_id, strategy_id, decision_context_id, now = _seed_common(repos)
+
+    instrument_id = uuid4()
+    computation_run_id = uuid4()
+
+    # 같은 종목에 대해 hard 1건 + soft 1건 발동.
+    hard_decision = _make_decision(
+        decision_context_id=decision_context_id,
+        strategy_id=strategy_id,
+        symbol="005930",
+        created_at=now,
+        source_type="held_position",
+        decision_type=DecisionType.HOLD,
+        loss_cut_shadow=_shadow_payload(
+            triggered=True, tier="hard", loss_pct="15", instrument_id=instrument_id
+        ),
+    )
+    soft_decision = _make_decision(
+        decision_context_id=decision_context_id,
+        strategy_id=strategy_id,
+        symbol="005930",
+        created_at=now + timedelta(hours=1),
+        source_type="held_position",
+        decision_type=DecisionType.WATCH,
+        loss_cut_shadow=_shadow_payload(
+            triggered=True, tier="soft", loss_pct="8", instrument_id=instrument_id
+        ),
+    )
+    # 다른 종목: triggered=False라 by-instrument에는 나타나지 않아야 한다.
+    other_instrument_id = uuid4()
+    not_triggered_decision = _make_decision(
+        decision_context_id=decision_context_id,
+        strategy_id=strategy_id,
+        symbol="000660",
+        created_at=now,
+        source_type="held_position",
+        decision_type=DecisionType.HOLD,
+        loss_cut_shadow=_shadow_payload(
+            triggered=False, tier=None, loss_pct="2", instrument_id=other_instrument_id
+        ),
+    )
+    for decision in (hard_decision, soft_decision, not_triggered_decision):
+        repos.trade_decisions._items[decision.trade_decision_id] = decision
+
+    repos.realized_pnl_daily_aggregates._items[
+        (account_id, instrument_id, date(2026, 7, 30))
+    ] = RealizedPnlDailyAggregateEntity(
+        account_id=account_id,
+        instrument_id=instrument_id,
+        trade_date=date(2026, 7, 30),
+        realized_pnl_net_sum=Decimal("-50000"),
+        sell_event_count=2,
+        computation_run_id=computation_run_id,
+    )
+    repos.realized_pnl_daily_aggregates._items[
+        (account_id, instrument_id, date(2026, 7, 31))
+    ] = RealizedPnlDailyAggregateEntity(
+        account_id=account_id,
+        instrument_id=instrument_id,
+        trade_date=date(2026, 7, 31),
+        realized_pnl_net_sum=Decimal("-10000"),
+        sell_event_count=1,
+        computation_run_id=computation_run_id,
+    )
+    repos.position_cost_basis_states._items[(account_id, instrument_id)] = (
+        PositionCostBasisStateEntity(
+            account_id=account_id,
+            instrument_id=instrument_id,
+            quantity=Decimal("10"),
+            average_cost=Decimal("100000"),
+            recompute_required=True,
+        )
+    )
+
+    app = create_app(repos=repos, auth_enabled=False)
+    with TestClient(app) as tc:
+        response = tc.get(
+            "/trade-decisions/loss-cut-shadow/by-instrument",
+            params={
+                "account_id": str(account_id),
+                "start_date": (now - timedelta(days=1)).date().isoformat(),
+                "end_date": (now + timedelta(days=1)).date().isoformat(),
+            },
+        )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert len(body["items"]) == 1
+    item = body["items"][0]
+    assert item["instrument_id"] == str(instrument_id)
+    assert item["symbol"] == "005930"
+    assert item["shadow_triggered_count"] == 2
+    assert item["soft_trigger_count"] == 1
+    assert item["hard_trigger_count"] == 1
+    assert Decimal(item["realized_pnl_net_sum"]) == Decimal("-60000")
+    assert item["realized_sell_event_count"] == 3
+    assert item["recompute_required"] is True
+
+
+def test_loss_cut_shadow_by_instrument_missing_cost_basis_state_is_null() -> None:
+    repos = build_in_memory_repositories()
+    account_id, strategy_id, decision_context_id, now = _seed_common(repos)
+    instrument_id = uuid4()
+
+    decision = _make_decision(
+        decision_context_id=decision_context_id,
+        strategy_id=strategy_id,
+        symbol="005930",
+        created_at=now,
+        source_type="held_position",
+        decision_type=DecisionType.HOLD,
+        loss_cut_shadow=_shadow_payload(
+            triggered=True, tier="hard", loss_pct="15", instrument_id=instrument_id
+        ),
+    )
+    repos.trade_decisions._items[decision.trade_decision_id] = decision
+
+    app = create_app(repos=repos, auth_enabled=False)
+    with TestClient(app) as tc:
+        response = tc.get(
+            "/trade-decisions/loss-cut-shadow/by-instrument",
+            params={
+                "account_id": str(account_id),
+                "start_date": (now - timedelta(days=1)).date().isoformat(),
+                "end_date": (now + timedelta(days=1)).date().isoformat(),
+            },
+        )
+
+    assert response.status_code == 200
+    item = response.json()["items"][0]
+    assert Decimal(item["realized_pnl_net_sum"]) == Decimal("0")
+    assert item["realized_sell_event_count"] == 0
+    assert item["recompute_required"] is None
+
+
+def test_loss_cut_shadow_by_instrument_empty_when_nothing_triggered() -> None:
+    repos = build_in_memory_repositories()
+    account_id, strategy_id, decision_context_id, now = _seed_common(repos)
+
+    decision = _make_decision(
+        decision_context_id=decision_context_id,
+        strategy_id=strategy_id,
+        symbol="005930",
+        created_at=now,
+        source_type="held_position",
+        decision_type=DecisionType.HOLD,
+        loss_cut_shadow=_shadow_payload(triggered=False, tier=None, loss_pct="1"),
+    )
+    repos.trade_decisions._items[decision.trade_decision_id] = decision
+
+    app = create_app(repos=repos, auth_enabled=False)
+    with TestClient(app) as tc:
+        response = tc.get(
+            "/trade-decisions/loss-cut-shadow/by-instrument",
+            params={
+                "account_id": str(account_id),
+                "start_date": now.date().isoformat(),
+                "end_date": now.date().isoformat(),
+            },
+        )
+
+    assert response.status_code == 200
+    assert response.json()["items"] == []

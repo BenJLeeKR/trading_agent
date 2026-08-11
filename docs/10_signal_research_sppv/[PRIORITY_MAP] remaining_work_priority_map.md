@@ -11610,3 +11610,23 @@ count`/`soft_trigger_count`/`hard_trigger_count`/`shadow_only_count`/
 - **이후 우선순위는 변경 없음**: `SPPV-3`가 여전히 다음 주력
   작업이다. 3단계(shadow 누적 실측)는 이제 summary/samples/daily
   3종 read path를 모두 갖췄다.
+
+## Loss-cut shadow × realized PnL 교차 inspection API 추가 — 정책 도입 아님, 새 계산 없음(2026-08-11 KST)
+
+`GET /trade-decisions/loss-cut-shadow/by-instrument`를 추가해
+종목별 shadow 발동 이력과 기존 realized PnL 누계를 나란히
+보여준다. **이번 작업도 read path 추가다 — 실주문 결정 변경
+없음, 정식 loss-cut 정책 도입 아님.**
+
+- 신규 repository 메서드 0개 — 기존 `list_loss_cut_shadow_
+  observations()`/`realized_pnl_daily_aggregates.list_by_account_
+  and_instrument()`/`position_cost_basis_states.get()` 3개를
+  조합만 했다.
+- shadow와 realized PnL을 인과관계로 해석하는 판정 필드는 두지
+  않았다 — 카운트/누계 숫자를 나란히 보여줄 뿐, 해석은 사람의
+  몫이다. "loss-cut을 적용했으면 얼마를 아꼈는지" 같은 반사실적
+  계산은 범위 밖으로 명시적으로 제외했다.
+- **이후 우선순위는 변경 없음**: `SPPV-3`가 여전히 다음 주력
+  작업이다. 3단계(shadow 누적 실측) 착수 시 이 4종
+  (summary/samples/daily/by-instrument) read path를 그대로
+  재사용할 수 있다.

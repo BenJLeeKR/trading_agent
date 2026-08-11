@@ -1028,6 +1028,44 @@ class LossCutShadowDailyResponse(BaseModel):
     days: list[LossCutShadowDailyItem]
 
 
+class LossCutShadowByInstrumentItem(BaseModel):
+    """`GET /trade-decisions/loss-cut-shadow/by-instrument`의 종목 1건.
+
+    ``shadow_triggered_count``/``latest_shadow_at``은 shadow 관측값을
+    그대로 센 것이고, ``realized_pnl_net_sum``/``realized_sell_event_
+    count``/``recompute_required``는 기존 realized PnL ledger를 그대로
+    읽은 값이다(전체 기간 누계 — shadow 조회 기간에 종속되지 않는다).
+    **이 두 값을 인과관계로 해석하지 않는다** — "이 shadow가 실제로
+    손실을 막았다" 같은 결론은 이 API가 내리지 않는다. 나란히 놓인
+    참고 정보일 뿐이다."""
+
+    instrument_id: UUID
+    symbol: str
+    shadow_triggered_count: int
+    soft_trigger_count: int
+    hard_trigger_count: int
+    latest_shadow_at: datetime
+    realized_pnl_net_sum: Decimal
+    realized_sell_event_count: int
+    recompute_required: bool | None = None
+    """``position_cost_basis_state``가 없으면 ``None``(포지션 이력이
+    없거나 아직 한 번도 recompute 대상이 된 적 없는 종목)."""
+
+
+class LossCutShadowByInstrumentResponse(BaseModel):
+    """`GET /trade-decisions/loss-cut-shadow/by-instrument` 응답.
+
+    shadow가 **1건이라도 발동(``triggered=true``)**한 종목만
+    ``items``에 나타난다 — 발동 이력이 없는 종목은 이 교차 조회의
+    대상이 아니다."""
+
+    account_id: UUID
+    start_date: date
+    end_date: date
+    source_type: str | None = None
+    items: list[LossCutShadowByInstrumentItem]
+
+
 class CandidateAlignmentStatusItem(BaseModel):
     """Deterministic candidate와 최종 decision의 정렬 상태 분포."""
 

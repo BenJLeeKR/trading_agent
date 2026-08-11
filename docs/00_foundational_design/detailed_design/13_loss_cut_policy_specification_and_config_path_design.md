@@ -259,6 +259,14 @@ orchestrator.py`)로 만들었다 — 어떤 `object.__setattr__` 호출도
   loss-cut-shadow/daily`로 보강했다 — 신규 repository/SQL 없이
   기존 `list_loss_cut_shadow_observations()`의 원시 행을 route에서
   KST 날짜로 그룹핑만 한다(상세: action plan "2단계 후속 2").
+- **realized PnL 교차 inspection 추가(2026-08-11 추가 후속)**:
+  `GET /trade-decisions/loss-cut-shadow/by-instrument`로 종목별
+  shadow 발동 이력(`shadow_triggered_count`/`latest_shadow_at`)과
+  기존 realized PnL 누계(`realized_pnl_daily_aggregates`)·
+  `position_cost_basis_state.recompute_required`를 나란히 보여준다
+  — 신규 repository 메서드 없이 기존 3개 read 메서드를 조합만
+  했고, 두 값을 인과관계로 해석하지 않는다(상세: action plan
+  "2단계 후속 3").
 
 ## 4. 설정 경로 설계 초안
 

@@ -6623,3 +6623,30 @@ investigation.md`로 이동하고, 정책 명세 문서 번호를 14→13으로
   `summary`를 해당 날짜 하루로 좁혀 호출하는 우회로가 이미 있다.
   실제로 필요해지는 시점(3단계 실측 보고 작성 중 명확한 수요가
   확인되면)에 다시 추가를 검토한다.
+
+**[2026-08-11 KST 신설, Loss-cut shadow × realized PnL 교차
+inspection API 추가 완료 — read path 확장, 새 계산 없음, 정식
+정책 도입 아님]** 상세:
+`docs/40_action_plans/loss_cut_policy_and_config_path_action_plan.md`
+"2단계 후속 3".
+
+- `GET /trade-decisions/loss-cut-shadow/by-instrument` 추가. 신규
+  repository 메서드 0개(기존 3개 read 메서드 조합), 신규 계산
+  엔진 없음.
+- **검토 후 제외한 방향**: 방향 A(샘플별 nearest realized event
+  매칭)는 표본마다 "이후 가장 가까운 event"를 찾는 근사 로직이
+  필요해 범위가 더 컸고, 방향 B(일자별 대조)는 이미 있는 `daily`
+  endpoint와 개념이 겹쳐 제외했다. 방향 C(종목별 교차 요약)를
+  택한 이유: 기존 `realized_pnl.py::list_realized_pnl_positions()`
+  가 이미 쓰는 조회 패턴을 그대로 재사용할 수 있어 신규
+  repository 코드가 전혀 필요 없었다.
+- **의도적으로 범위 밖에 둔 것**: "loss-cut을 적용했으면 얼마를
+  아꼈을지" 계산(반사실적 시뮬레이션)은 "정답 계산기 금지"
+  원칙에 정면으로 위배돼 명시적으로 제외했다. 실제 수요가
+  생기면 별도 ablation 스크립트(`scripts/validate_r3b_stop_loss_
+  ablation.py`류) 패턴으로 접근하는 것이 이 API 확장보다 적절할
+  것으로 본다.
+- 신규 backlog: 샘플 단위(방향 A) 교차 조회에 대한 실제 수요가
+  3단계 실측 중 확인되면, "shadow 시점 이후 첫 realized event"
+  근사 매칭 로직을 별도로 설계해야 한다 — 이번 턴에서는 의도적으로
+  미루었다.
