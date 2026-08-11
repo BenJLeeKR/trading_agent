@@ -176,6 +176,62 @@ downside shock, holding_profile 만료)이다. 이 사실은
   (날짜 분리, `triggered` 필터, 빈 결과, UTC→KST 날짜 경계) 전부
   dev-validation container에서 PASS. 신규 repository 코드가 없어
   DB 접근이 필요한 검증 항목 자체가 없다.
+- 상태: **완료**(2026-08-11, PR #230).
+
+### 2단계 후속 3 — Shadow × realized PnL 교차 inspection API 추가(완료)
+
+- 왜: `summary`/`samples`/`daily`는 shadow 데이터만 보여줄 뿐, "이
+  종목에서 shadow가 발동한 뒤 실제 realized PnL이 어땠는지"를 나란히
+  볼 수 없었다 — 3단계 실측 착수 전 최소한의 대조 자료다. **새
+  손익/판정 계산 엔진이 아니라, 이미 저장된 shadow 관측값과 이미
+  저장된 realized PnL 값을 조회해 나란히 보여주는 read-only 교차
+  조회**다. API는 두 값 사이의 인과관계를 단정하지 않는다.
+- 판단(코드 기준):
+  1. route 위치: `trade-decisions/loss-cut-shadow/*` 계열에 그대로
+     둠 — query 계약(`account_id`+기간+`source_type`)이 형제
+     endpoint와 동일하고, realized PnL 값은 참고 필드로만 붙는다.
+     `performance` 계열이나 별도 route로 분리할 이유가 없었다.
+  2. 교차 기준: `account_id + instrument_id`(전체 기간 realized PnL
+     누계와의 조인) — `symbol`이 아니라 `instrument_id`를 쓴 이유는
+     `realized_pnl_daily_aggregates`/`position_cost_basis_state`가
+     전부 `instrument_id`로 keyed돼 있기 때문이다(`symbol`은 표시용
+     으로만 사용).
+  3. 1:1 매칭 아님 — 종목별 **누계**(all-time realized PnL, shadow
+     조회 기간에 종속되지 않음)를 보여줄 뿐, 특정 shadow 관측 1건과
+     특정 realized PnL 이벤트 1건을 인과적으로 짝짓지 않는다. 응답
+     스키마 docstring에 "인과관계로 해석하지 않는다"를 명시했다.
+  4. 이번 턴 최소 안전 범위 = **종목별 교차 요약**(방향 C) — 방향
+     A(샘플별 nearest-event 매칭)는 표본 1건마다 "이후 가장 가까운
+     realized event"를 찾는 추가 쿼리/근사 로직이 필요해 범위가 더
+     크고, 방향 B(일자별 대조)는 이미 있는 `daily`와 개념이 겹친다.
+     방향 C는 기존 `realized_pnl.py`의 `list_realized_pnl_positions()`
+     가 이미 쓰는 조회 패턴(종목별 `realized_pnl_daily_aggregates`
+     합산 + `position_cost_basis_state.recompute_required`)을
+     그대로 재사용할 수 있어 **신규 repository 메서드가 0개**다.
+  5. "loss-cut을 적용했으면 얼마를 아꼈는지" 계산은 범위 밖으로
+     명시적으로 제외 — 그건 반사실적(counterfactual) 시뮬레이션이라
+     "정답 계산기 금지" 원칙에 정면으로 위배된다.
+  6. 해석 제한: 응답에 "이 손절이 유효했다" 류의 판정 필드를 두지
+     않았다 — 카운트/누계 숫자만 나열하고, 해석은 사람의 몫으로
+     남긴다.
+- 산출물:
+  - `GET /trade-decisions/loss-cut-shadow/by-instrument` — 계좌×기간
+    기준 종목별 `shadow_triggered_count`/`soft_trigger_count`/
+    `hard_trigger_count`/`latest_shadow_at`(shadow 쪽, 기간 내
+    `triggered=true`만) + `realized_pnl_net_sum`/
+    `realized_sell_event_count`(realized PnL 쪽, 전체 기간 누계) +
+    `recompute_required`(`position_cost_basis_state`, 없으면
+    `null`). `triggered=true` 이력이 있는 종목만 나타난다.
+  - 신규 repository 메서드 0개 — 기존 `list_loss_cut_shadow_
+    observations()`, `realized_pnl_daily_aggregates.list_by_
+    account_and_instrument()`, `position_cost_basis_states.get()`
+    3개를 조합만 했다.
+  - 신규 테이블/마이그레이션/계산 엔진 없음.
+- 검증: `py_compile`, `accept architecture`/`backend-runtime`/
+  `db-structure`/`no-bypass`/`docs` PASS, 신규 API 테스트 3건
+  (종목별 집계+join 정상 동작, cost-basis 없는 종목 null 처리, 미발동
+  종목 제외) 전부 dev-validation container에서 PASS. 신규
+  repository 코드가 없어 DB 접근이 필요한 검증 항목 자체가 없다.
 - 상태: **완료**(2026-08-11, 이번 PR).
 
 ### 3단계 — Shadow 누적 실측(미착수)
@@ -184,9 +240,9 @@ downside shock, holding_profile 만료)이다. 이 사실은
   가능하다.
 - 산출물(예정): 누적 이력(JSONL 또는 유사 구조, 기존
   `regime_conditional_signal_shadow_history.jsonl`류 관례 재사용),
-  주기적 실측 보고. read path는 이번에 추가한 summary/samples/daily
-  API를 그대로 재사용할 수 있다 — 별도 조회 도구를 새로 만들
-  필요는 없다.
+  주기적 실측 보고. read path는 이번에 추가한 summary/samples/daily/
+  by-instrument API를 그대로 재사용할 수 있다 — 별도 조회 도구를
+  새로 만들 필요는 없다.
 - 상태: **미착수**.
 
 ### 4단계 — 정책 확정(미착수)

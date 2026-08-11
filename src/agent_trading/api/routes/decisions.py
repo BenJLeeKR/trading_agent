@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import json
 from datetime import date, datetime, timedelta, timezone
+from decimal import Decimal
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -17,6 +18,8 @@ from agent_trading.api.schemas import (
     CandidateAlignmentStatusItem,
     CandidateIntentDistributionItem,
     DecisionContextDetail,
+    LossCutShadowByInstrumentItem,
+    LossCutShadowByInstrumentResponse,
     LossCutShadowCountItem,
     LossCutShadowDailyItem,
     LossCutShadowDailyResponse,
@@ -816,6 +819,106 @@ async def get_loss_cut_shadow_daily(
         source_type=source_type,
         triggered=triggered,
         days=days,
+    )
+
+
+@router.get(
+    "/trade-decisions/loss-cut-shadow/by-instrument",
+    response_model=LossCutShadowByInstrumentResponse,
+)
+async def get_loss_cut_shadow_by_instrument(
+    account_id: str = Query(..., description="Account UUID"),
+    start_date: date = Query(..., description="Start date (YYYY-MM-DD, KST)"),
+    end_date: date = Query(..., description="End date (YYYY-MM-DD, KST)"),
+    source_type: str | None = Query(None, description="Optional source_type filter"),
+    repos: RepositoryContainer = Depends(get_repos),
+) -> LossCutShadowByInstrumentResponse:
+    """종목별로 loss-cut shadow 발동 이력과 realized PnL을 나란히 보여준다.
+
+    **교차 조회이지 정답 계산기가 아니다.** shadow 쪽
+    (``shadow_triggered_count``/``soft_trigger_count``/
+    ``hard_trigger_count``/``latest_shadow_at``)은 이 endpoint가
+    지정한 기간 내 ``triggered=true`` 관측만 세고, realized PnL 쪽
+    (``realized_pnl_net_sum``/``realized_sell_event_count``)은 기존
+    ``realized_pnl_daily_aggregates``에 이미 저장된 **전체 기간
+    누계**를 그대로 읽는다(기간 필터링 없음 — shadow가 발동한 시점
+    이후에 발생한 실현손익까지 보여주는 것이 이 endpoint의 목적이므로
+    의도적으로 기간을 묶지 않는다). 두 값 다 이미 저장된 값을 세거나
+    합산할 뿐, 새로운 손익/판정 계산은 전혀 하지 않는다. 두 값을
+    인과관계로 연결하는 판단(예: "이 손절이 손실을 막았다")은 이
+    endpoint가 내리지 않는다 — 사람이 두 값을 나란히 보고 판단하는
+    참고 자료다.
+
+    ``triggered=true``인 관측이 1건도 없는 종목은 ``items``에
+    나타나지 않는다.
+    """
+    if start_date > end_date:
+        raise HTTPException(
+            status_code=400, detail="start_date must be on or before end_date"
+        )
+    aid = _parse_query_uuid(account_id, field="account_id")
+
+    rows = await repos.trade_decisions.list_loss_cut_shadow_observations(
+        aid,
+        start_date=start_date,
+        end_date=end_date,
+        source_type=source_type,
+        triggered=True,
+        limit=None,
+    )
+
+    grouped: dict[UUID, list] = {}
+    symbols_by_instrument: dict[UUID, str] = {}
+    for row in rows:
+        instrument_id_raw = row.loss_cut_shadow.get("instrument_id")
+        if not instrument_id_raw:
+            # triggered=true는 average_price/market_price가 모두 있어야만
+            # 나오므로 이 경로는 사실상 발생하지 않는다 — 방어적으로만 skip.
+            continue
+        iid = UUID(instrument_id_raw)
+        grouped.setdefault(iid, []).append(row)
+        symbols_by_instrument[iid] = row.symbol
+
+    items: list[LossCutShadowByInstrumentItem] = []
+    for iid in sorted(grouped, key=str):
+        instrument_rows = grouped[iid]
+        soft_count = sum(1 for r in instrument_rows if r.loss_cut_shadow.get("tier") == "soft")
+        hard_count = sum(1 for r in instrument_rows if r.loss_cut_shadow.get("tier") == "hard")
+        latest_shadow_at = max(r.created_at for r in instrument_rows)
+
+        daily_rows = await repos.realized_pnl_daily_aggregates.list_by_account_and_instrument(
+            aid, iid
+        )
+        realized_net_sum = sum(
+            (r.realized_pnl_net_sum for r in daily_rows), Decimal("0")
+        )
+        realized_sell_count = sum(r.sell_event_count for r in daily_rows)
+
+        cost_basis_state = await repos.position_cost_basis_states.get(aid, iid)
+        recompute_required = (
+            cost_basis_state.recompute_required if cost_basis_state is not None else None
+        )
+
+        items.append(
+            LossCutShadowByInstrumentItem(
+                instrument_id=iid,
+                symbol=symbols_by_instrument[iid],
+                shadow_triggered_count=len(instrument_rows),
+                soft_trigger_count=soft_count,
+                hard_trigger_count=hard_count,
+                latest_shadow_at=latest_shadow_at,
+                realized_pnl_net_sum=realized_net_sum,
+                realized_sell_event_count=realized_sell_count,
+                recompute_required=recompute_required,
+            )
+        )
+
+    return LossCutShadowByInstrumentResponse(
+        account_id=aid,
+        start_date=start_date,
+        end_date=end_date,
+        source_type=source_type,
+        items=items,
     )
 
 
