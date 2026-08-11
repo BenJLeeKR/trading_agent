@@ -1554,6 +1554,7 @@ semantic_checks = [
     ("harness_readme_declares_validation_layers", contains(root / "scripts" / "harness" / "README.md", "L0", "L6", "check quick", "make check-quick", "check changed", "make check-changed", "type-check backend", "make type-check-backend", "security scan", "make security-scan")),
     ("harness_readme_declares_api_run", contains(root / "scripts" / "harness" / "README.md", "run api-postgres", "INSPECTION_API_TOKEN")),
     ("harness_readme_declares_dev_validation_container", contains(root / "scripts" / "harness" / "README.md", "docker_dev_exec.sh", "dev validation container", "--network none", "Dozzle")),
+    ("harness_readme_declares_dev_frontend_validation_container", contains(root / "scripts" / "harness" / "README.md", "docker_dev_frontend_exec.sh", "frontend validation container", "--network none", "Dozzle")),
     ("harness_readme_declares_compat_aliases", contains(root / "scripts" / "harness" / "README.md", "docs-check", "env-check", "호환 alias")),
     ("harness_readme_routes_to_definition_of_done", contains(root / "scripts" / "harness" / "README.md", "definition_of_done.md", "완료를 주장")),
     ("harness_readme_declares_no_bypass", contains(root / "scripts" / "harness" / "README.md", "accept no-bypass", "hard_bypass_count", "review_bypass_count")),
@@ -2648,6 +2649,9 @@ npmrc = (admin_root / ".npmrc").read_text().strip() if (admin_root / ".npmrc").e
 vite_config = (admin_root / "vite.config.ts").read_text() if (admin_root / "vite.config.ts").exists() else ""
 api_client = (admin_root / "src" / "api" / "client.ts").read_text() if (admin_root / "src" / "api" / "client.ts").exists() else ""
 agents = (admin_root / "AGENTS.md").read_text() if (admin_root / "AGENTS.md").exists() else ""
+run_sh_text = (root / "scripts" / "harness" / "run.sh").read_text() if (root / "scripts" / "harness" / "run.sh").exists() else ""
+frontend_dev_dockerfile = root / "Dockerfile.dev-frontend-validation"
+frontend_dev_exec_script = root / "scripts" / "harness" / "docker_dev_frontend_exec.sh"
 
 static_checks = [
     ("package_json_node_engine", package_engines.get("node") == expected_node),
@@ -2662,6 +2666,10 @@ static_checks = [
     ("api_client_exists", bool(api_client.strip())),
     ("admin_agents_load_limit", "전체 테스트와 전체 빌드 실행을 기본 금지" in agents),
     ("admin_agents_state_display_policy", "loading, empty, error, stale" in agents),
+    ("dev_frontend_validation_dockerfile_present", frontend_dev_dockerfile.exists()),
+    ("dev_frontend_validation_exec_script_present", frontend_dev_exec_script.exists()),
+    ("run_sh_routes_dev_frontend_typecheck_to_container", 'run_dev_frontend_validation_with_timeout "$SAFE_TIMEOUT_SECONDS" npm run "$script_name"' in run_sh_text),
+    ("run_sh_routes_dev_frontend_test_to_container", 'run_dev_frontend_validation_with_timeout "$SAFE_TIMEOUT_SECONDS" npm run test:run -- "$selector"' in run_sh_text),
 ]
 
 dependencies = package_json.get("dependencies", {})
@@ -2695,18 +2703,16 @@ if code == 0 and output:
     runtime_versions["node"] = output.removeprefix("v")
     runtime_sources["node"] = pinned_node_image
 else:
-    code, output = run_command(["node", "--version"])
-    runtime_versions["node"] = output.removeprefix("v") if code == 0 else ""
-    runtime_sources["node"] = "host-node"
+    runtime_versions["node"] = ""
+    runtime_sources["node"] = f"{pinned_node_image}-probe-failed"
 
 code, output = run_command(["docker", "run", "--rm", pinned_node_image, "npm", "--version"])
 if code == 0 and output:
     runtime_versions["npm"] = output
     runtime_sources["npm"] = pinned_node_image
 else:
-    code, output = run_command(["npm", "--version"])
-    runtime_versions["npm"] = output if code == 0 else ""
-    runtime_sources["npm"] = "host-npm"
+    runtime_versions["npm"] = ""
+    runtime_sources["npm"] = f"{pinned_node_image}-probe-failed"
 
 runtime_mismatches = []
 if runtime_versions.get("node") != expected_node:
@@ -2715,11 +2721,23 @@ if runtime_versions.get("npm") != expected_npm:
     runtime_mismatches.append(("npm", expected_npm or "<missing>", runtime_versions.get("npm") or "<missing>", runtime_sources.get("npm", "<unknown>")))
 
 failed_static_checks = [name for name, ok in static_checks if not ok]
+dev_frontend_failed_checks = [
+    name
+    for name in failed_static_checks
+    if name.startswith("dev_frontend_validation_") or name.startswith("run_sh_routes_dev_frontend_")
+]
+runtime_probe_failed_count = sum(
+    1
+    for name in ("node", "npm")
+    if runtime_sources.get(name, "").endswith("-probe-failed")
+)
 
 metrics = {
     "required_file_missing_count": len(missing_files),
     "runtime_version_mismatch_count": len(runtime_mismatches),
+    "runtime_probe_failed_count": runtime_probe_failed_count,
     "static_contract_failed_count": len(failed_static_checks),
+    "dev_frontend_contract_failed_count": len(dev_frontend_failed_checks),
     "dependency_drift_count": len(dependency_drift),
     "test_file_count": len(test_files),
     "component_file_count": len(component_files),

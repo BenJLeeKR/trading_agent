@@ -312,10 +312,14 @@ CI에서는 PR 기준 `origin/<base>`와 비교하고, `main` push 기준에서�
 ### `accept frontend`
 
 - `static_contract_failed_count`: Vite, API client, 타입 생성, 테스트 설정 계약 실패 수.
+- `dev_frontend_contract_failed_count`: `/workspace/agent_trading_dev`에서 frontend 검증을 host Node/npm이 아니라 `docker_dev_frontend_exec.sh` 경로로 강제하는 계약 실패 수.
+- `runtime_probe_failed_count`: pinned `node:<version>-slim` probe 실패 수. host fallback 없이 그대로 실패로 본다.
 - `dependency_drift_count`: `package.json`과 `package-lock.json` 불일치 수.
 - `test_file_count`: Admin UI 테스트 파일 수.
 - `component_file_count`: Admin UI component 파일 수.
 - `full_build_run`, `full_test_run`: 전체 빌드와 전체 테스트 실행 여부를 나타내는 0/1 지표.
+
+`accept frontend`는 Node/npm 런타임 판정을 host fallback 없이 pinned `node:<version>-slim` probe만으로 수행한다. 또한 `/workspace/agent_trading_dev` 기준 frontend 검증 계약은 `Dockerfile.dev-frontend-validation`, `scripts/harness/docker_dev_frontend_exec.sh`, `type-check frontend`/`admin-test-one`의 dev container 라우팅까지 함께 고정한다.
 
 ### `accept ops-report`
 
