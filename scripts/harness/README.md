@@ -94,6 +94,9 @@ GitHub Actions도 사람과 AI가 쓰는 동일한 하네스를 사용한다. CI
 Docker/배포 표준 명령은 `bash scripts/harness/docker_compose_env.sh ...`를 사용하며, 이 래퍼가 `/etc/agent_trading/*.env`를 우선 로드한다.
 
 `/workspace/agent_trading_dev`의 Python 검증은 host `python3` 대신 `bash scripts/harness/docker_dev_exec.sh ...`가 띄우는 dev validation container를 사용한다. 이 컨테이너는 운영 컨테이너를 재사용하지 않고 `/workspace/agent_trading_dev`만 `/app`에 mount하며, 기본 `--network none`과 Dozzle 식별 label을 사용한다. 종료 후 더 오래 관찰해야 할 때만 `HARNESS_DEV_KEEP_CONTAINER=1`로 `--rm` 제거를 허용한다.
+`accept frontend`의 Node/npm 버전 판정은 host fallback 없이 pinned `node:<version>-slim` probe만 사용한다. probe 실패 시 `host-node`나 `host-npm`로 우회하지 않고 계약 실패로 처리한다.
+`/workspace/agent_trading_dev`의 `type-check frontend`, `admin-test-one`도 host Node/npm 대신 `bash scripts/harness/docker_dev_frontend_exec.sh ...`가 띄우는 frontend validation container를 사용한다.
+직접 확인이 필요하면 `make dev-frontend-validation-node`, `make dev-frontend-validation-exec CMD='npm run test:run -- src/__tests__/alerts.test.ts'`를 사용한다.
 
 현재 2026-07-29 기준 계측은 다음과 같다.
 

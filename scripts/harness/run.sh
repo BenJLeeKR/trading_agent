@@ -112,6 +112,15 @@ run_dev_validation_with_timeout() {
   timeout "$seconds" bash "$docker_exec_script" "$@"
 }
 
+run_dev_frontend_validation_with_timeout() {
+  local seconds="$1"
+  shift
+  local docker_exec_script="$ROOT_DIR/scripts/harness/docker_dev_frontend_exec.sh"
+  [[ -x "$docker_exec_script" ]] || fail "dev frontend validation container 스크립트를 실행할 수 없습니다: $docker_exec_script"
+  print_workspace_context "dev_frontend_validation_container" "0"
+  timeout "$seconds" bash "$docker_exec_script" "$@"
+}
+
 run_python_with_timeout() {
   local seconds="$1"
   shift
@@ -1107,10 +1116,15 @@ PY
     frontend_typecheck_script_missing_count=1
   else
     frontend_type_check_run=1
-    if run_with_timeout "$SAFE_TIMEOUT_SECONDS" bash -lc "cd '$ROOT_DIR/admin_ui' && npm run '$script_name'"; then
+    if [[ "$WORKSPACE_ROLE" == "dev" ]]; then
+      run_dev_frontend_validation_with_timeout "$SAFE_TIMEOUT_SECONDS" npm run "$script_name"
+      exit_code=$?
+    elif run_with_timeout "$SAFE_TIMEOUT_SECONDS" bash -lc "cd '$ROOT_DIR/admin_ui' && npm run '$script_name'"; then
       exit_code=0
     else
       exit_code=$?
+    fi
+    if [[ "$exit_code" -ne 0 ]]; then
       frontend_type_check_failed_count=1
     fi
   fi
@@ -1702,18 +1716,16 @@ if code == 0 and output:
     runtime_versions["node"] = output.removeprefix("v")
     runtime_sources["node"] = pinned_node_image
 else:
-    code, output = run_command(["node", "--version"])
-    runtime_versions["node"] = output.removeprefix("v") if code == 0 else ""
-    runtime_sources["node"] = "host-node"
+    runtime_versions["node"] = ""
+    runtime_sources["node"] = f"{pinned_node_image}-probe-failed"
 
 code, output = run_command(["docker", "run", "--rm", pinned_node_image, "npm", "--version"])
 if code == 0 and output:
     runtime_versions["npm"] = output
     runtime_sources["npm"] = pinned_node_image
 else:
-    code, output = run_command(["npm", "--version"])
-    runtime_versions["npm"] = output if code == 0 else ""
-    runtime_sources["npm"] = "host-npm"
+    runtime_versions["npm"] = ""
+    runtime_sources["npm"] = f"{pinned_node_image}-probe-failed"
 
 code, output = run_command(["docker", "exec", "trading_db", "psql", "-U", "trading", "-d", "trading", "-tAc", "SHOW server_version;"])
 runtime_versions["postgres"] = normalize_postgres_version(output) if code == 0 else ""
@@ -3343,7 +3355,11 @@ main() {
       require_arg "$selector" "test_selector"
       [[ "$selector" != -* ]] || fail "옵션처럼 보이는 테스트 selector는 허용하지 않습니다: $selector"
       [[ -d admin_ui ]] || fail "admin_ui 디렉터리가 없습니다."
-      run_with_timeout "$SAFE_TIMEOUT_SECONDS" bash -lc "cd '$ROOT_DIR/admin_ui' && npm run test:run -- '$selector'"
+      if [[ "$WORKSPACE_ROLE" == "dev" ]]; then
+        run_dev_frontend_validation_with_timeout "$SAFE_TIMEOUT_SECONDS" npm run test:run -- "$selector"
+      else
+        run_with_timeout "$SAFE_TIMEOUT_SECONDS" bash -lc "cd '$ROOT_DIR/admin_ui' && npm run test:run -- '$selector'"
+      fi
       ;;
     full-test)
       require_heavy_allowed

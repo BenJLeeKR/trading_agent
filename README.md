@@ -297,6 +297,9 @@ L4/L5 계층의 전체 테스트, smoke, Admin UI 전체 빌드/테스트는 기
 - 환경 기준 검증은 `make accept-env` 또는 `bash scripts/harness/run.sh accept env`를 사용한다. `make env-check`와 `bash scripts/harness/run.sh env-check`는 호환 alias다.
 - 운영 비밀값은 저장소 `.env`가 아니라 `/etc/agent_trading/*.env`에 저장하고, Docker/배포 표준 경로는 `bash scripts/harness/docker_compose_env.sh ...`가 이를 읽는다.
 - `/workspace/agent_trading_dev`의 Python 검증은 host `python3` 대신 `bash scripts/harness/docker_dev_exec.sh ...` 기반 dev validation container를 사용한다. 이 컨테이너는 `/workspace/agent_trading_dev`만 mount하고 기본 `--network none`과 Dozzle 식별 label을 사용한다.
+- `accept frontend`의 Node/npm 버전 검사는 host fallback 없이 pinned `node:<version>-slim` probe만 사용한다.
+- `/workspace/agent_trading_dev`의 `type-check frontend`, `admin-test-one`도 host Node/npm 대신 `bash scripts/harness/docker_dev_frontend_exec.sh ...` 기반 frontend validation container를 사용한다.
+- 필요 시 `make dev-frontend-validation-node`, `make dev-frontend-validation-exec CMD='npm run typecheck'`로 동일 컨테이너를 직접 확인할 수 있다.
 
 ## Agent Role Boundaries
 
