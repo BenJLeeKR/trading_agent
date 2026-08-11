@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 import json
-from datetime import date
+from datetime import date, datetime
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -17,6 +17,10 @@ from agent_trading.api.schemas import (
     CandidateAlignmentStatusItem,
     CandidateIntentDistributionItem,
     DecisionContextDetail,
+    LossCutShadowCountItem,
+    LossCutShadowSampleView,
+    LossCutShadowSamplesResponse,
+    LossCutShadowSummaryResponse,
     PaginatedTradeDecisionsResponse,
     TradeDecisionDetail,
     WatchDiagnosticsEvidenceStrengthItem,
@@ -630,6 +634,171 @@ async def get_watch_diagnostics(
             )
             for row in sample_rows
         ],
+    )
+
+
+_LOSS_CUT_SHADOW_SAMPLES_DEFAULT_LIMIT = 50
+
+
+def _parse_query_uuid(value: str, *, field: str) -> UUID:
+    try:
+        return UUID(value)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=400, detail=f"Invalid {field} UUID: {value}"
+        ) from exc
+
+
+@router.get(
+    "/trade-decisions/loss-cut-shadow/summary",
+    response_model=LossCutShadowSummaryResponse,
+)
+async def get_loss_cut_shadow_summary(
+    account_id: str = Query(..., description="Account UUID"),
+    start_date: date = Query(..., description="Start date (YYYY-MM-DD, KST)"),
+    end_date: date = Query(..., description="End date (YYYY-MM-DD, KST)"),
+    source_type: str | None = Query(None, description="Optional source_type filter"),
+    triggered: bool | None = Query(None, description="Optional triggered filter"),
+    repos: RepositoryContainer = Depends(get_repos),
+) -> LossCutShadowSummaryResponse:
+    """계좌×기간 기준 loss-cut shadow 관측 현황 요약.
+
+    ``trade_decisions.decision_json.loss_cut_shadow``에 이미 기록된
+    값을 그대로 읽어 건수만 센다 — 손실률/트리거 여부를 다시 계산하지
+    않는다(shadow 계산 자체는 ``decision_orchestrator.py``의
+    ``_record_loss_cut_shadow_observation()``에서만 일어난다). shadow는
+    실주문 결정에 개입하지 않으므로, 이 endpoint 자체도 어떤 결정/주문
+    경로도 건드리지 않는 순수 read-only 집계다.
+    """
+    if start_date > end_date:
+        raise HTTPException(
+            status_code=400, detail="start_date must be on or before end_date"
+        )
+    aid = _parse_query_uuid(account_id, field="account_id")
+
+    rows = await repos.trade_decisions.list_loss_cut_shadow_observations(
+        aid,
+        start_date=start_date,
+        end_date=end_date,
+        source_type=source_type,
+        triggered=triggered,
+        limit=None,
+    )
+
+    total = len(rows)
+    triggered_count = 0
+    soft_count = 0
+    hard_count = 0
+    shadow_only_count = 0
+    source_type_counter: dict[str, int] = {}
+    decision_type_counter: dict[str, int] = {}
+
+    for row in rows:
+        shadow = row.loss_cut_shadow
+        if shadow.get("triggered") is True:
+            triggered_count += 1
+        if shadow.get("tier") == "soft":
+            soft_count += 1
+        elif shadow.get("tier") == "hard":
+            hard_count += 1
+        if shadow.get("shadow_only") is True:
+            shadow_only_count += 1
+        source_type_counter[row.source_type] = source_type_counter.get(row.source_type, 0) + 1
+        decision_type_counter[row.actual_decision_type] = (
+            decision_type_counter.get(row.actual_decision_type, 0) + 1
+        )
+
+    return LossCutShadowSummaryResponse(
+        account_id=aid,
+        start_date=start_date,
+        end_date=end_date,
+        source_type=source_type,
+        triggered=triggered,
+        total_observation_count=total,
+        triggered_count=triggered_count,
+        soft_trigger_count=soft_count,
+        hard_trigger_count=hard_count,
+        shadow_only_count=shadow_only_count,
+        trigger_rate=(triggered_count / total) if total > 0 else None,
+        source_type_counts=[
+            LossCutShadowCountItem(key=key, count=count)
+            for key, count in sorted(source_type_counter.items())
+        ],
+        actual_decision_type_counts=[
+            LossCutShadowCountItem(key=key, count=count)
+            for key, count in sorted(decision_type_counter.items())
+        ],
+    )
+
+
+@router.get(
+    "/trade-decisions/loss-cut-shadow/samples",
+    response_model=LossCutShadowSamplesResponse,
+)
+async def list_loss_cut_shadow_samples(
+    account_id: str = Query(..., description="Account UUID"),
+    source_type: str | None = Query(None, description="Optional source_type filter"),
+    triggered: bool | None = Query(None, description="Optional triggered filter"),
+    tier: str | None = Query(None, description="Optional tier filter (soft|hard)"),
+    symbol: str | None = Query(None, description="Optional symbol filter"),
+    before: datetime | None = Query(
+        None, description="Optional — only observations created before this instant"
+    ),
+    limit: int = Query(
+        _LOSS_CUT_SHADOW_SAMPLES_DEFAULT_LIMIT,
+        ge=1,
+        le=500,
+        description="Maximum observations to return",
+    ),
+    repos: RepositoryContainer = Depends(get_repos),
+) -> LossCutShadowSamplesResponse:
+    """loss-cut shadow 관측 원시 표본을 ``created_at`` 내림차순으로 나열한다.
+
+    summary만으로는 확인할 수 없는 개별 관측 행(기준 가격, 손실률,
+    당시 실제 decision_type 등)을 보기 위한 endpoint다. 이 endpoint도
+    ``decision_json.loss_cut_shadow``를 그대로 읽기만 한다.
+    """
+    aid = _parse_query_uuid(account_id, field="account_id")
+
+    rows = await repos.trade_decisions.list_loss_cut_shadow_observations(
+        aid,
+        source_type=source_type,
+        triggered=triggered,
+        tier=tier,
+        symbol=symbol,
+        before=before,
+        limit=limit,
+    )
+
+    items: list[LossCutShadowSampleView] = []
+    for row in rows:
+        shadow = row.loss_cut_shadow
+        instrument_id_raw = shadow.get("instrument_id")
+        items.append(
+            LossCutShadowSampleView(
+                trade_decision_id=row.trade_decision_id,
+                decision_context_id=row.decision_context_id,
+                account_id=row.account_id,
+                created_at=row.created_at,
+                symbol=row.symbol,
+                instrument_id=UUID(instrument_id_raw) if instrument_id_raw else None,
+                source_type=row.source_type,
+                actual_decision_type=row.actual_decision_type,
+                average_price=shadow.get("average_price"),
+                market_price=shadow.get("market_price"),
+                loss_pct=shadow.get("loss_pct"),
+                triggered=shadow.get("triggered"),
+                tier=shadow.get("tier"),
+                skipped_reason=shadow.get("skipped_reason"),
+                shadow_only=shadow.get("shadow_only"),
+            )
+        )
+
+    return LossCutShadowSamplesResponse(
+        account_id=aid,
+        limit=limit,
+        before=before,
+        items=items,
     )
 
 

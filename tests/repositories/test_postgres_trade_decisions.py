@@ -344,6 +344,63 @@ async def test_sync_loss_cut_shadow_observation_is_additive_only(
     assert fetched.quantity == Decimal("37")  # sync_execution_sizing이 남긴 값 그대로
 
 
+@pytest.mark.asyncio
+async def test_list_loss_cut_shadow_observations_filters_by_account_and_tier(
+    seeded_postgres_data: RepositoryContainer,
+    seeded_decision_context: UUID,
+    seeded_strategy_id: UUID,
+    sample_account: AccountEntity,
+) -> None:
+    """계좌 join(``decision_contexts.account_id``) + tier 필터가 올바르게
+
+    동작하는지 확인한다. 이 read path는 계산을 전혀 하지 않는다 —
+    ``sync_loss_cut_shadow_observation()``이 이미 저장한 값을 그대로
+    필터링해 반환할 뿐이다.
+    """
+    repos = seeded_postgres_data
+    account_id = sample_account.account_id
+
+    hard_decision = _make_full_decision(
+        decision_context_id=seeded_decision_context,
+        strategy_id=seeded_strategy_id,
+        source_type="held_position",
+    )
+    await repos.trade_decisions.add(hard_decision)
+    await repos.trade_decisions.sync_loss_cut_shadow_observation(
+        hard_decision.trade_decision_id,
+        loss_cut_shadow_payload={
+            "triggered": True,
+            "tier": "hard",
+            "shadow_only": True,
+        },
+    )
+
+    no_shadow_decision = _make_full_decision(
+        decision_context_id=seeded_decision_context,
+        strategy_id=seeded_strategy_id,
+        source_type="held_position",
+    )
+    await repos.trade_decisions.add(no_shadow_decision)
+
+    rows = await repos.trade_decisions.list_loss_cut_shadow_observations(account_id)
+    matching_ids = {r.trade_decision_id for r in rows}
+    assert hard_decision.trade_decision_id in matching_ids
+    assert no_shadow_decision.trade_decision_id not in matching_ids
+
+    tier_filtered = await repos.trade_decisions.list_loss_cut_shadow_observations(
+        account_id, tier="soft"
+    )
+    assert hard_decision.trade_decision_id not in {r.trade_decision_id for r in tier_filtered}
+
+    hard_filtered = await repos.trade_decisions.list_loss_cut_shadow_observations(
+        account_id, tier="hard"
+    )
+    matched = [r for r in hard_filtered if r.trade_decision_id == hard_decision.trade_decision_id]
+    assert len(matched) == 1
+    assert matched[0].account_id == account_id
+    assert matched[0].loss_cut_shadow["tier"] == "hard"
+
+
 # ============================================================================
 # Test 3: Verify decision column is nullable (post-migration assertion)
 # ============================================================================

@@ -927,6 +927,73 @@ class WatchDiagnosticsResponse(BaseModel):
     recent_watch_items: list[WatchDiagnosticsSampleItem]
 
 
+class LossCutShadowCountItem(BaseModel):
+    """`source_type`/`decision_type` 등 카테고리별 관측 건수 1행."""
+
+    key: str
+    count: int
+
+
+class LossCutShadowSummaryResponse(BaseModel):
+    """`GET /trade-decisions/loss-cut-shadow/summary` 응답.
+
+    ``trade_decisions.decision_json.loss_cut_shadow``에 이미 기록된
+    관측값을 그대로 집계한 것뿐이다 — 손실률/트리거 여부를 다시
+    계산하지 않는다. shadow 관측은 실주문 결정에 개입하지 않으므로
+    ``actual_decision_type_counts``는 shadow 판정과 무관하게 실제로
+    내려진 결정의 분포다.
+    """
+
+    account_id: UUID
+    start_date: date
+    end_date: date
+    source_type: str | None = None
+    triggered: bool | None = None
+    total_observation_count: int
+    triggered_count: int
+    soft_trigger_count: int
+    hard_trigger_count: int
+    shadow_only_count: int
+    """``loss_cut_shadow.shadow_only == true``인 건수 — 관측 전용이었음을
+    보여주는 카운트(정상적으로는 전체 건수와 항상 같아야 한다)."""
+    trigger_rate: float | None = None
+    """``triggered_count / total_observation_count``. 표본이 0건이면
+    ``None``."""
+    source_type_counts: list[LossCutShadowCountItem]
+    actual_decision_type_counts: list[LossCutShadowCountItem]
+
+
+class LossCutShadowSampleView(BaseModel):
+    """`GET /trade-decisions/loss-cut-shadow/samples`의 개별 관측 행."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    trade_decision_id: UUID
+    decision_context_id: UUID
+    account_id: UUID
+    created_at: datetime
+    symbol: str
+    instrument_id: UUID | None = None
+    source_type: str
+    actual_decision_type: str
+    average_price: Decimal | None = None
+    market_price: Decimal | None = None
+    loss_pct: Decimal | None = None
+    triggered: bool | None = None
+    tier: str | None = None
+    skipped_reason: str | None = None
+    shadow_only: bool | None = None
+
+
+class LossCutShadowSamplesResponse(BaseModel):
+    """`GET /trade-decisions/loss-cut-shadow/samples` 응답."""
+
+    account_id: UUID
+    limit: int
+    before: datetime | None = None
+    items: list[LossCutShadowSampleView]
+
+
 class CandidateAlignmentStatusItem(BaseModel):
     """Deterministic candidate와 최종 decision의 정렬 상태 분포."""
 

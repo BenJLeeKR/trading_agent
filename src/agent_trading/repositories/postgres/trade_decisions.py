@@ -9,7 +9,11 @@ from uuid import UUID
 from agent_trading.db.row_mapper import row_to_entity
 from agent_trading.db.transaction import TransactionManager
 from agent_trading.domain.entities import TradeDecisionEntity
-from agent_trading.repositories.contracts import CoreEligibilitySample, TradeDecisionRow
+from agent_trading.repositories.contracts import (
+    CoreEligibilitySample,
+    LossCutShadowObservationRow,
+    TradeDecisionRow,
+)
 
 
 class PostgresTradeDecisionRepository:
@@ -450,6 +454,107 @@ class PostgresTradeDecisionRepository:
         if row is None:
             return None
         return row_to_entity(row, TradeDecisionEntity)
+
+    async def list_loss_cut_shadow_observations(
+        self,
+        account_id: UUID,
+        *,
+        start_date: date | None = None,
+        end_date: date | None = None,
+        source_type: str | None = None,
+        triggered: bool | None = None,
+        tier: str | None = None,
+        symbol: str | None = None,
+        before: datetime | None = None,
+        limit: int | None = None,
+    ) -> Sequence[LossCutShadowObservationRow]:
+        where_parts = [
+            "dc.account_id = $1",
+            "td.decision_json ? 'loss_cut_shadow'",
+        ]
+        params: list[object] = [account_id]
+        param_idx = 2
+
+        if start_date is not None:
+            where_parts.append(
+                f"(td.created_at AT TIME ZONE 'Asia/Seoul')::date >= ${param_idx}"
+            )
+            params.append(start_date)
+            param_idx += 1
+        if end_date is not None:
+            where_parts.append(
+                f"(td.created_at AT TIME ZONE 'Asia/Seoul')::date <= ${param_idx}"
+            )
+            params.append(end_date)
+            param_idx += 1
+        if source_type is not None:
+            where_parts.append(f"td.source_type = ${param_idx}")
+            params.append(source_type)
+            param_idx += 1
+        if triggered is not None:
+            where_parts.append(
+                f"(td.decision_json->'loss_cut_shadow'->>'triggered')::boolean = ${param_idx}"
+            )
+            params.append(triggered)
+            param_idx += 1
+        if tier is not None:
+            where_parts.append(
+                f"td.decision_json->'loss_cut_shadow'->>'tier' = ${param_idx}"
+            )
+            params.append(tier)
+            param_idx += 1
+        if symbol is not None:
+            where_parts.append(f"td.symbol = ${param_idx}")
+            params.append(symbol)
+            param_idx += 1
+        if before is not None:
+            where_parts.append(f"td.created_at < ${param_idx}")
+            params.append(before)
+            param_idx += 1
+
+        limit_sql = ""
+        if limit is not None:
+            limit_sql = f"LIMIT ${param_idx}"
+            params.append(limit)
+            param_idx += 1
+
+        query = f"""
+            SELECT
+                td.trade_decision_id,
+                td.decision_context_id,
+                dc.account_id,
+                td.created_at,
+                td.symbol,
+                td.source_type,
+                td.decision_type,
+                td.decision_json->'loss_cut_shadow' AS loss_cut_shadow
+            FROM trading.trade_decisions td
+            JOIN trading.decision_contexts dc
+                ON dc.decision_context_id = td.decision_context_id
+            WHERE {' AND '.join(where_parts)}
+            ORDER BY td.created_at DESC
+            {limit_sql}
+        """
+        rows = await self._tx.connection.fetch(query, *params)
+
+        results: list[LossCutShadowObservationRow] = []
+        for row in rows:
+            shadow = row["loss_cut_shadow"]
+            if isinstance(shadow, str):
+                shadow = json.loads(shadow)
+            results.append(
+                LossCutShadowObservationRow(
+                    trade_decision_id=row["trade_decision_id"],
+                    decision_context_id=row["decision_context_id"],
+                    account_id=row["account_id"],
+                    created_at=row["created_at"],
+                    symbol=row["symbol"],
+                    source_type=row["source_type"] or "unknown",
+                    actual_decision_type=str(row["decision_type"]),
+                    loss_cut_shadow=shadow or {},
+                )
+            )
+        return results
 
     async def list_recent_core_eligibility_reasons(
         self,

@@ -61,6 +61,7 @@ from agent_trading.domain.enums import (
 from agent_trading.repositories.contracts import (
     CoreEligibilitySample,
     FillSyncHealthSummary,
+    LossCutShadowObservationRow,
     SnapshotSyncHealthSummary,
     TradeDecisionRow,
 )
@@ -669,6 +670,64 @@ class InMemoryTradeDecisionRepository:
         updated = replace(existing, decision_json=merged_decision_json)
         self._items[trade_decision_id] = updated
         return updated
+
+    async def list_loss_cut_shadow_observations(
+        self,
+        account_id: UUID,
+        *,
+        start_date: date | None = None,
+        end_date: date | None = None,
+        source_type: str | None = None,
+        triggered: bool | None = None,
+        tier: str | None = None,
+        symbol: str | None = None,
+        before: datetime | None = None,
+        limit: int | None = None,
+    ) -> Sequence[LossCutShadowObservationRow]:
+        """in-memory 구현: 이 저장소는 decision_context -> account 매핑을
+        보관하지 않으므로(``list_recent_core_eligibility_reasons()``와
+        동일한 테스트 전용 한계) ``account_id``로는 필터링하지 않고,
+        반환하는 row의 ``account_id``는 호출자가 넘긴 값을 그대로
+        되돌려준다. 다른 필터는 전부 실제로 적용한다."""
+        kst = timezone(timedelta(hours=9))
+        rows: list[LossCutShadowObservationRow] = []
+        for item in self._items.values():
+            shadow = (item.decision_json or {}).get("loss_cut_shadow")
+            if shadow is None:
+                continue
+            if source_type is not None and item.source_type != source_type:
+                continue
+            business_date = item.created_at.astimezone(kst).date()
+            if start_date is not None and business_date < start_date:
+                continue
+            if end_date is not None and business_date > end_date:
+                continue
+            if triggered is not None and shadow.get("triggered") != triggered:
+                continue
+            if tier is not None and shadow.get("tier") != tier:
+                continue
+            if symbol is not None and item.symbol != symbol:
+                continue
+            if before is not None and not (item.created_at < before):
+                continue
+            rows.append(
+                LossCutShadowObservationRow(
+                    trade_decision_id=item.trade_decision_id,
+                    decision_context_id=item.decision_context_id,
+                    account_id=account_id,
+                    created_at=item.created_at,
+                    symbol=item.symbol,
+                    source_type=item.source_type or "unknown",
+                    actual_decision_type=getattr(
+                        item.decision_type, "value", str(item.decision_type)
+                    ),
+                    loss_cut_shadow=dict(shadow),
+                )
+            )
+        rows.sort(key=lambda r: r.created_at, reverse=True)
+        if limit is not None:
+            rows = rows[:limit]
+        return rows
 
     async def list_recent_core_eligibility_reasons(
         self,

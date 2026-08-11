@@ -191,6 +191,31 @@ class CoreEligibilitySample:
     쓰인다."""
 
 
+@dataclass(frozen=True, slots=True)
+class LossCutShadowObservationRow:
+    """``decision_json.loss_cut_shadow`` 관측 1건의 inspection용 원시 표본.
+
+    이 row 자체는 이미 기록된 값을 그대로 옮긴 것뿐이다 — 여기서 어떤
+    계산도 하지 않는다(집계는 호출자인 API route가 수행).
+    ``account_id``는 ``decision_contexts`` JOIN으로 resolve된 값이다
+    (``trade_decisions`` 테이블 자체에는 ``account_id`` 컬럼이 없음).
+    """
+
+    trade_decision_id: UUID
+    decision_context_id: UUID
+    account_id: UUID
+    created_at: datetime
+    symbol: str
+    source_type: str
+    actual_decision_type: str
+    """관측 당시 실제 결정(``trade_decisions.decision_type``) — shadow
+    판정과 무관하게 실제로 내려진 결정 그대로다."""
+    loss_cut_shadow: dict[str, object]
+    """``decision_json.loss_cut_shadow``를 그대로 담은 dict(``account_id``/
+    ``instrument_id``/``average_price``/``market_price``/``loss_pct``/
+    ``triggered``/``tier``/``skipped_reason``/``shadow_only`` 등)."""
+
+
 class ClientRepository(Protocol):
     async def add(self, client: ClientEntity) -> ClientEntity:
         ...
@@ -645,6 +670,32 @@ class TradeDecisionRepository(Protocol):
         관측 metadata만 얹는다(``docs/00_foundational_design/detailed_
         design/13_loss_cut_policy_specification_and_config_path_
         design.md`` §3.6 shadow 단계).
+        """
+        ...
+
+    async def list_loss_cut_shadow_observations(
+        self,
+        account_id: UUID,
+        *,
+        start_date: date | None = None,
+        end_date: date | None = None,
+        source_type: str | None = None,
+        triggered: bool | None = None,
+        tier: str | None = None,
+        symbol: str | None = None,
+        before: datetime | None = None,
+        limit: int | None = None,
+    ) -> Sequence[LossCutShadowObservationRow]:
+        """``decision_json.loss_cut_shadow``가 기록된 TD를 최신순으로 조회한다.
+
+        읽기 전용 inspection 전용 메서드다 — 계산·집계는 전혀 하지 않고,
+        이미 저장된 값을 필터링해 그대로 반환한다(집계는 호출자인 API
+        route가 수행). ``account_id``는 ``decision_contexts`` JOIN으로
+        resolve한다(``list_recent_core_eligibility_reasons()``와 동일한
+        join 경로). ``start_date``/``end_date``는 KST 기준
+        ``created_at`` 날짜에 적용한다. ``before``는 ``created_at`` 기준
+        cursor pagination용(``before`` 이전 행만). ``limit``이 ``None``이면
+        건수 제한 없이 전부 반환한다(summary 집계용).
         """
         ...
 

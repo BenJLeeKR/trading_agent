@@ -109,7 +109,46 @@ downside shock, holding_profile 만료)이다. 이 사실은
   재현됨 — 이번 변경과 무관)로 이 컨테이너에서는 실행 확인이
   불가능했다. 코드는 이미 테스트로 검증된 `sync_execution_sizing()`과
   바이트 단위로 동일한 `jsonb_set` 패턴이라 리스크는 낮다고 판단.
-- 상태: **완료**(2026-08-11, 이번 PR — shadow 관측 구현).
+- 상태: **완료**(2026-08-11, PR #228 — shadow 관측 구현).
+
+### 2단계 후속 — Shadow 관측 inspection/read API 보강(완료)
+
+- 왜: 2단계가 제공한 read path(`GET /trade-decisions` +
+  `scripts/dump_loss_cut_shadow_observations.py`)만으로는 "몇 건
+  발동했는지/soft-hard 비율/source_type별 차이/실제 결정과의
+  엇갈림"을 운영자가 raw JSON을 뒤지지 않고 빠르게 확인하기
+  어려웠다 — 3단계(누적 실측)에 필요한 최소 inspection 도구다.
+  **정책 도입이 아니라 이미 기록된 데이터의 조회/집계 read path
+  추가**다.
+- 산출물:
+  - `GET /trade-decisions/loss-cut-shadow/summary` — 계좌×기간 기준
+    전체 표본 수/`triggered`·soft·hard 건수/`source_type`별
+    분포/실제 `decision_type` 분포/`shadow_only` 카운트/
+    `trigger_rate`.
+  - `GET /trade-decisions/loss-cut-shadow/samples` — 개별 관측
+    원시 행(`triggered`/`tier`/`source_type`/`symbol` 필터,
+    `before`+`limit` cursor pagination).
+  - `TradeDecisionRepository.list_loss_cut_shadow_observations()`
+    (신규 repository read 메서드, Protocol/Postgres/InMemory 3종
+    구현) — `decision_json ? 'loss_cut_shadow'`인 TD를
+    `decision_contexts` JOIN으로 계좌 필터링해 조회. 계산은 전혀
+    하지 않고, 집계(카운트)는 route에서 수행(`realized_pnl`
+    summary와 동일한 "repository가 원시 행을 주고 route가 Python
+    으로 합산" 관례 재사용).
+  - 신규 테이블/마이그레이션 없음 — 기존 `decision_json`을 그대로
+    읽는다.
+- 검증: `py_compile`, `accept architecture`/`backend-runtime`/
+  `db-structure`/`no-bypass`/`docs` PASS, 신규 API/repository 단위
+  테스트(`tests/api/test_loss_cut_shadow_inspection.py`,
+  `tests/repositories/test_memory_loss_cut_shadow_observations.py`)
+  dev-validation container에서 PASS. Postgres 통합 테스트
+  (`tests/repositories/test_postgres_trade_decisions.py::
+  test_list_loss_cut_shadow_observations_filters_by_account_and_tier`)
+  는 추가했으나 이 세션의 두 검증 환경 모두 DB 접근 문제로 실행
+  확인은 못 했다(dev-validation container는 `network_mode=none`,
+  `agent_trading-app-1`은 기존 asyncpg 루프 스코프 버그) — 2단계와
+  동일한 환경 한계.
+- 상태: **완료**(2026-08-11, 이번 PR).
 
 ### 3단계 — Shadow 누적 실측(미착수)
 
@@ -117,7 +156,9 @@ downside shock, holding_profile 만료)이다. 이 사실은
   가능하다.
 - 산출물(예정): 누적 이력(JSONL 또는 유사 구조, 기존
   `regime_conditional_signal_shadow_history.jsonl`류 관례 재사용),
-  주기적 실측 보고.
+  주기적 실측 보고. read path는 이번에 추가한 summary/samples
+  API를 그대로 재사용할 수 있다 — 별도 조회 도구를 새로 만들
+  필요는 없다.
 - 상태: **미착수**.
 
 ### 4단계 — 정책 확정(미착수)

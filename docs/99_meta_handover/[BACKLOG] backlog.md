@@ -6583,3 +6583,28 @@ investigation.md`로 이동하고, 정책 명세 문서 번호를 14→13으로
   사용자 승인이 필요한 운영 변경이다(env 파일 직접 수정 금지 원칙
   포함). 몇 건/며칠치 표본이 모이면 4단계(정책 확정) 착수가
   가능한지 기준도 아직 없다.
+
+**[2026-08-11 KST 신설, Loss-cut shadow inspection/read API 보강
+완료 — read path 추가, 정식 정책 도입 아님]** 상세:
+`docs/40_action_plans/loss_cut_policy_and_config_path_action_plan.md`
+"2단계 후속".
+
+- `GET /trade-decisions/loss-cut-shadow/summary` +
+  `GET /trade-decisions/loss-cut-shadow/samples` +
+  `TradeDecisionRepository.list_loss_cut_shadow_observations()`
+  (신규 read 메서드) 추가. 신규 테이블/계산 엔진/write 경로 없음.
+- **신규 backlog 3 — DB 접근 가능한 검증 환경 부재**: 이번 턴에
+  추가한 postgres 통합 테스트(`test_list_loss_cut_shadow_
+  observations_filters_by_account_and_tier`)를 이 세션에서는 끝내
+  검증하지 못했다 — dev-validation container는 `network_mode=none`
+  이라 DB 접근 자체가 없고, `agent_trading-app-1`은 기존(무관한)
+  asyncpg 루프 스코프 버그가 있다. 두 DB 관련 backlog(루프 스코프
+  버그, DB 접근 가능한 검증 환경 부재)를 함께 해결하는 것을 다음
+  세션 후보로 추천한다 — 이 저장소의 postgres 통합 테스트 전반이
+  같은 사각지대에 있다.
+- **신규로 답한 질문**: `source_type`/`instrument_id` 필터
+  범위 — `symbol`(기존 인덱스 컬럼)로 충분하다고 판단해
+  `instrument_id`는 별도 query param으로 노출하지 않았다(응답
+  body에는 그대로 포함). `decision_type` 필터는 summary의 분포
+  집계로 충분하다고 보고 samples 필터에는 넣지 않았다 — 필요해지면
+  추가 가능한 낮은 리스크 확장.

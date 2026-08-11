@@ -247,6 +247,13 @@ orchestrator.py`)로 만들었다 — 어떤 `object.__setattr__` 호출도
   택했다 — 신규 테이블 없음.
 - 상세 근거/검증 결과: `docs/40_action_plans/loss_cut_policy_and_
   config_path_action_plan.md` 2단계.
+- **read path 보강(2026-08-11 후속)**: `GET /trade-decisions`만으로는
+  운영자가 raw JSON을 뒤져야 했던 문제를 `GET /trade-decisions/
+  loss-cut-shadow/summary`(계좌×기간 집계)와 `GET /trade-decisions/
+  loss-cut-shadow/samples`(개별 관측 표본, cursor pagination)로
+  보강했다 — 신규 계산 엔진이나 신규 write 경로는 추가하지 않았고,
+  `decision_json.loss_cut_shadow`를 그대로 읽어 집계만 한다(상세:
+  action plan "2단계 후속").
 
 ## 4. 설정 경로 설계 초안
 
