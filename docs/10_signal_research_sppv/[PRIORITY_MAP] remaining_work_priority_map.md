@@ -11592,3 +11592,21 @@ loss-cut 정책 도입 아님.**
 - **이후 우선순위는 변경 없음**: `SPPV-3`가 여전히 다음 주력
   작업이다. 이 read path는 3단계(shadow 누적 실측) 착수 시 그대로
   재사용할 수 있다.
+
+## Loss-cut shadow 관측 일자별 breakdown API 추가 — 정책 도입 아님, read path 확장(2026-08-11 KST)
+
+위 항목의 `summary`/`samples`에 `GET /trade-decisions/loss-cut-shadow/
+daily`(계좌×기간 기준 날짜별 `total_observation_count`/`triggered_
+count`/`soft_trigger_count`/`hard_trigger_count`/`shadow_only_count`/
+`trigger_rate`, KST 날짜 기준)를 추가했다. **이번 작업도 read path
+추가다 — 실주문 결정 변경 없음, 정식 loss-cut 정책 도입 아님.**
+
+- 신규 repository/SQL 없음 — 기존 `list_loss_cut_shadow_
+  observations()`가 반환한 원시 행을 route에서 KST 날짜로
+  그룹핑만 한다.
+- `source_type`/`actual_decision_type` 날짜별 세부 분포는 응답
+  크기 억제를 위해 이번 턴 범위에서 제외(필요 시 `summary`를 해당
+  날짜 하루로 좁혀 호출).
+- **이후 우선순위는 변경 없음**: `SPPV-3`가 여전히 다음 주력
+  작업이다. 3단계(shadow 누적 실측)는 이제 summary/samples/daily
+  3종 read path를 모두 갖췄다.

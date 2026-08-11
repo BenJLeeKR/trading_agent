@@ -148,6 +148,34 @@ downside shock, holding_profile 만료)이다. 이 사실은
   확인은 못 했다(dev-validation container는 `network_mode=none`,
   `agent_trading-app-1`은 기존 asyncpg 루프 스코프 버그) — 2단계와
   동일한 환경 한계.
+- 상태: **완료**(2026-08-11, PR #229).
+
+### 2단계 후속 2 — Shadow 관측 일자별 breakdown API 추가(완료)
+
+- 왜: `summary`는 기간 전체를 하나의 숫자로 합산하므로 "어느 날짜에
+  trigger가 몰렸는지"/"soft·hard 비율이 날짜별로 어떻게 바뀌는지"를
+  볼 수 없었다 — 3단계(누적 실측)의 시계열 추이 확인에 필요한
+  최소 read path다. **정책 변경이 아니라 기존 read path의 일자별
+  breakdown 확장**이다.
+- 산출물:
+  - `GET /trade-decisions/loss-cut-shadow/daily` — 계좌×기간 기준
+    날짜별(`trade_date`, KST) `total_observation_count`/
+    `triggered_count`/`soft_trigger_count`/`hard_trigger_count`/
+    `shadow_only_count`/`trigger_rate`. `source_type`/`triggered`
+    선택 필터.
+  - 신규 repository/SQL 없음 — 기존
+    `list_loss_cut_shadow_observations()`가 반환한 원시 행을
+    `created_at`의 KST 날짜로 route에서 그룹핑만 한다(`summary`와
+    동일한 "원시 행 재사용 + route 후처리" 패턴). `realized-pnl/
+    daily-summary`처럼 활동이 없는 날짜는 응답에서 생략한다.
+  - `source_type_counts`/`actual_decision_type_counts` 같은 날짜별
+    세부 분포는 응답 크기 억제를 위해 이번 턴 범위에서 제외했다
+    (필요하면 `summary`를 해당 날짜 하루로 좁혀 호출).
+- 검증: `py_compile`, `accept architecture`/`backend-runtime`/
+  `db-structure`/`no-bypass`/`docs` PASS, 신규 API 테스트 4건
+  (날짜 분리, `triggered` 필터, 빈 결과, UTC→KST 날짜 경계) 전부
+  dev-validation container에서 PASS. 신규 repository 코드가 없어
+  DB 접근이 필요한 검증 항목 자체가 없다.
 - 상태: **완료**(2026-08-11, 이번 PR).
 
 ### 3단계 — Shadow 누적 실측(미착수)
@@ -156,7 +184,7 @@ downside shock, holding_profile 만료)이다. 이 사실은
   가능하다.
 - 산출물(예정): 누적 이력(JSONL 또는 유사 구조, 기존
   `regime_conditional_signal_shadow_history.jsonl`류 관례 재사용),
-  주기적 실측 보고. read path는 이번에 추가한 summary/samples
+  주기적 실측 보고. read path는 이번에 추가한 summary/samples/daily
   API를 그대로 재사용할 수 있다 — 별도 조회 도구를 새로 만들
   필요는 없다.
 - 상태: **미착수**.

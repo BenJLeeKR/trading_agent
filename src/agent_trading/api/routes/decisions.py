@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 import json
-from datetime import date, datetime
+from datetime import date, datetime, timedelta, timezone
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -18,6 +18,8 @@ from agent_trading.api.schemas import (
     CandidateIntentDistributionItem,
     DecisionContextDetail,
     LossCutShadowCountItem,
+    LossCutShadowDailyItem,
+    LossCutShadowDailyResponse,
     LossCutShadowSampleView,
     LossCutShadowSamplesResponse,
     LossCutShadowSummaryResponse,
@@ -638,6 +640,7 @@ async def get_watch_diagnostics(
 
 
 _LOSS_CUT_SHADOW_SAMPLES_DEFAULT_LIMIT = 50
+_KST = timezone(timedelta(hours=9))
 
 
 def _parse_query_uuid(value: str, *, field: str) -> UUID:
@@ -728,6 +731,91 @@ async def get_loss_cut_shadow_summary(
             LossCutShadowCountItem(key=key, count=count)
             for key, count in sorted(decision_type_counter.items())
         ],
+    )
+
+
+@router.get(
+    "/trade-decisions/loss-cut-shadow/daily",
+    response_model=LossCutShadowDailyResponse,
+)
+async def get_loss_cut_shadow_daily(
+    account_id: str = Query(..., description="Account UUID"),
+    start_date: date = Query(..., description="Start date (YYYY-MM-DD, KST)"),
+    end_date: date = Query(..., description="End date (YYYY-MM-DD, KST)"),
+    source_type: str | None = Query(None, description="Optional source_type filter"),
+    triggered: bool | None = Query(None, description="Optional triggered filter"),
+    repos: RepositoryContainer = Depends(get_repos),
+) -> LossCutShadowDailyResponse:
+    """계좌×기간 기준 loss-cut shadow 관측을 **날짜별로** 나눠 집계한다.
+
+    ``summary``가 기간 전체를 하나의 숫자로 합산하는 것과 달리, 이
+    endpoint는 같은 원시 관측을 ``created_at``의 KST 날짜로 묶어
+    날짜별 추이(어느 날 trigger가 몰렸는지, soft/hard 비율이 날짜별로
+    어떻게 바뀌는지)를 보여준다. ``summary``와 마찬가지로
+    ``list_loss_cut_shadow_observations()``가 반환한 원시 행을 그대로
+    집계할 뿐 — 계산은 하지 않는다. 관측이 있었던 날짜만
+    ``days``에 포함되고(활동 없는 날짜는 생략), ``source_type``별/
+    ``actual_decision_type``별 세부 분포는 응답 크기를 억제하기 위해
+    이 endpoint에서는 제공하지 않는다 — 특정 날짜의 세부 분포가
+    필요하면 ``summary``를 그 하루로 좁혀 호출하면 된다.
+    """
+    if start_date > end_date:
+        raise HTTPException(
+            status_code=400, detail="start_date must be on or before end_date"
+        )
+    aid = _parse_query_uuid(account_id, field="account_id")
+
+    rows = await repos.trade_decisions.list_loss_cut_shadow_observations(
+        aid,
+        start_date=start_date,
+        end_date=end_date,
+        source_type=source_type,
+        triggered=triggered,
+        limit=None,
+    )
+
+    grouped: dict[date, list] = {}
+    for row in rows:
+        trade_date = row.created_at.astimezone(_KST).date()
+        grouped.setdefault(trade_date, []).append(row)
+
+    days: list[LossCutShadowDailyItem] = []
+    for trade_date in sorted(grouped):
+        day_rows = grouped[trade_date]
+        total = len(day_rows)
+        triggered_count = 0
+        soft_count = 0
+        hard_count = 0
+        shadow_only_count = 0
+        for row in day_rows:
+            shadow = row.loss_cut_shadow
+            if shadow.get("triggered") is True:
+                triggered_count += 1
+            if shadow.get("tier") == "soft":
+                soft_count += 1
+            elif shadow.get("tier") == "hard":
+                hard_count += 1
+            if shadow.get("shadow_only") is True:
+                shadow_only_count += 1
+        days.append(
+            LossCutShadowDailyItem(
+                trade_date=trade_date,
+                total_observation_count=total,
+                triggered_count=triggered_count,
+                soft_trigger_count=soft_count,
+                hard_trigger_count=hard_count,
+                shadow_only_count=shadow_only_count,
+                trigger_rate=(triggered_count / total) if total > 0 else None,
+            )
+        )
+
+    return LossCutShadowDailyResponse(
+        account_id=aid,
+        start_date=start_date,
+        end_date=end_date,
+        source_type=source_type,
+        triggered=triggered,
+        days=days,
     )
 
 

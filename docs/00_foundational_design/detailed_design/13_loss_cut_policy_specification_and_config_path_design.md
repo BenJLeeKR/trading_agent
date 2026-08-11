@@ -254,6 +254,11 @@ orchestrator.py`)로 만들었다 — 어떤 `object.__setattr__` 호출도
   보강했다 — 신규 계산 엔진이나 신규 write 경로는 추가하지 않았고,
   `decision_json.loss_cut_shadow`를 그대로 읽어 집계만 한다(상세:
   action plan "2단계 후속").
+- **일자별 breakdown 추가(2026-08-11 추가 후속)**: `summary`가
+  기간 전체를 하나의 숫자로만 합산하는 한계를 `GET /trade-decisions/
+  loss-cut-shadow/daily`로 보강했다 — 신규 repository/SQL 없이
+  기존 `list_loss_cut_shadow_observations()`의 원시 행을 route에서
+  KST 날짜로 그룹핑만 한다(상세: action plan "2단계 후속 2").
 
 ## 4. 설정 경로 설계 초안
 
