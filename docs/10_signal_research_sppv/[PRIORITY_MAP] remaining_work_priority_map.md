@@ -11422,3 +11422,17 @@ BUY 경로 리팩터링 단위를 아래처럼 고정한다.
 재기동)는 장 종료 후로 미룬다. 다음 장중 실측 시
 `SUBMIT_PIPELINE_TRACE`(신규)와 `SUBMIT_BUDGET_TRACE`(scheduler/
 blocked만 잔존)를 함께 확인해 최종 검증한다.
+
+## B축(downstream 하향) — 안 A 최소 구현 착수(2026-08-11 KST)
+
+B축 상태를 "구조 재설계 후보"(비교/설계만 완료)에서 **"안 A
+(risk_off+bullish_trend 완화) 최소 구현 착수"**로 갱신한다.
+`src/agent_trading/services/strategy_selection.py`에서
+`bullish_trend and risk_off` 조합만 분리해 모멘텀 계열을
+`allowed_strategies`에서 완전 배제하지 않고 완화된 허용으로
+전환했다(신규 태그 `risk_off_bullish_trend_relaxed`).
+`bearish_trend`/`range_bound`/`event_driven_unstable`의 risk_off
+처리, held_position/SELL/EXIT/REDUCE 경로는 변경 없음. 직전 턴
+보고의 `risk_on` 통과율 수치 오류(35.4% → 정정 후 91.8%)도 함께
+정정했다. 상세: `docs/20_system_analysis/buy_path_variable_gate_matrix.md`
+§31. 실제 배포 후 사후 성과는 아직 미확정 — 다음 실측 대상.
