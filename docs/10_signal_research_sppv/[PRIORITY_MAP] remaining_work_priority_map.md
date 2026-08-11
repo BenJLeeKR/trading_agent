@@ -11375,3 +11375,37 @@ BUY 경로 리팩터링 단위를 아래처럼 고정한다.
 **구현 보류 — 비교/설계만 문서화.** 다음 우선 구현 후보는 안 A,
 장기 아키텍처 트랙 후보는 안 D. 상세 backlog 항목:
 `docs/99_meta_handover/[BACKLOG] backlog.md` #17.
+
+## 안 D(분석/제출 2단계 분리) 1차 설계 완료 (2026-08-11 KST, 장중)
+
+위 비교에서 장기 트랙으로 분류했던 안 D를 실제로 구현 가능한
+수준까지 설계했다. 상세는
+`docs/20_system_analysis/submit_budget_two_stage_design_2026-08-11.md`.
+
+핵심 요지:
+
+- `DecisionOrchestratorService.assemble_and_submit()`이 이미 내부적으로
+  `_run_decision_pipeline()`(분석)과 `ExecutionService.
+  run_execution_pipeline()`(제출)로 나뉘어 있고, 공개 `assemble()`
+  메서드가 분석 전용 경로로 이미 재사용 가능하다는 사실을 확인 —
+  당초 우려했던 것보다 구현 난이도가 낮다.
+- 1차 권장 구조는 persistent queue 없는 **same-cycle 경량 2단계**
+  (Pass 1: 전 symbol 병렬 분석 → Pass 1.5: actionable 후보만 추려
+  dedupe+우선순위 정렬 → Pass 2: budget 여유 안에서만 순차 실제 제출).
+  DB schema 변경 없음.
+- `ExecutionService.run_execution_pipeline()`이 호출 시점에 quote/cash/
+  duplicate/stale snapshot을 이미 재검증하므로, 2단계 분리에 따른
+  staleness 위험 대부분은 기존 guard가 그대로 흡수한다. 신규로
+  필요한 재검증은 held position 변화와 market session 종료 두 가지뿐.
+- 부수 발견: 현재 구조는 budget에 막힌 candidate도 AI(assemble)를
+  동일하게 실행한다 — budget 차단은 "AI 비용 절감"이 아니라 "제출만
+  차단"이다. 또한 `execution_attempts.started_at==completed_at` 0초
+  기록은 실제 AI가 즉시 끝났다는 뜻이 아니라, 코드가 시작/종료
+  시각에 동일 변수를 stamping해서 생기는 관측 착시다(별도 수정 필요).
+
+**이번 턴 결정**: 설계까지만 완료, 구현은 보류. 이유: (1) 작성
+시점이 장중(KST 09:35경)이라 주문 제출 경계 변경을 지금 배포하는
+것은 부적절, (2) 이번 턴은 full pytest가 금지돼 있어
+`assemble()`/`assemble_and_submit()` 부수효과 diff를 완전히
+검증할 수 없음. 구현은 장 종료 후 전용 턴에서, 관련 테스트 확장과
+함께 진행한다.
