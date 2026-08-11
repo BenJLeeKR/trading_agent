@@ -1811,13 +1811,25 @@ class TestInstruments:
         app.dependency_overrides.clear()
 
 
+_INDEX_MEMBERSHIP_STALENESS_KST = timezone(timedelta(hours=9))
+"""``routes/instruments.py::get_index_membership_staleness()``가 ``today``를
+
+``datetime.now(_KST).date()``(KST)로 계산하므로, 이 클래스의 fixture가
+"오늘"을 만들 때도 반드시 같은 기준(KST)을 써야 한다. UTC로 계산하면
+UTC 15:00~23:59(KST로는 이미 다음 날) 구간에서 KST 기준 "오늘"보다
+하루 이르게 계산되어 ``age_days``가 1만큼 어긋난다 — 실제 라우트
+버그가 아니라 테스트 fixture의 timezone 불일치였다(2026-08-11 확인)."""
+
+
 class TestIndexMembershipStaleness:
     """UNIV-4: ``GET /instruments/index-membership/staleness`` (read-only 감시)."""
 
     def test_returns_not_stale_when_recent(self) -> None:
         repos = build_in_memory_repositories()
         instrument_id = uuid4()
-        recent_date = (datetime.now(timezone.utc) - timedelta(days=5)).date()
+        recent_date = (
+            datetime.now(_INDEX_MEMBERSHIP_STALENESS_KST) - timedelta(days=5)
+        ).date()
         asyncio.run(
             repos.instrument_index_memberships.sync_current_memberships(
                 instrument_id,
@@ -1854,7 +1866,9 @@ class TestIndexMembershipStaleness:
     def test_respects_custom_threshold_days(self) -> None:
         repos = build_in_memory_repositories()
         instrument_id = uuid4()
-        old_date = (datetime.now(timezone.utc) - timedelta(days=10)).date()
+        old_date = (
+            datetime.now(_INDEX_MEMBERSHIP_STALENESS_KST) - timedelta(days=10)
+        ).date()
         asyncio.run(
             repos.instrument_index_memberships.sync_current_memberships(
                 instrument_id,
@@ -1882,7 +1896,10 @@ class TestIndexMembershipStaleness:
         # 무시되고 실제 wall-clock "오늘"이 쓰인다(routes/instruments.py) — 그래서
         # 이 값을 하드코딩하면 그날 하루만 age_days == 0이 맞고 이후로는 계속
         # 깨진다. 상대 날짜(오늘)로 계산해 항상 age_days == 0이 되게 한다.
-        reflected_date = datetime.now(timezone.utc).date()
+        # 라우트가 KST 기준 "오늘"을 쓰므로(``_KST = timezone(timedelta(hours=9))``),
+        # 여기서도 반드시 KST로 계산해야 한다 — UTC로 계산하면 UTC 15:00~23:59
+        # (KST로는 이미 다음 날) 구간에서 하루 어긋난다(2026-08-11 확인).
+        reflected_date = datetime.now(_INDEX_MEMBERSHIP_STALENESS_KST).date()
         asyncio.run(
             repos.instrument_index_memberships.sync_current_memberships(
                 instrument_id,
