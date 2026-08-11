@@ -103,6 +103,15 @@ run_with_timeout() {
   timeout "$seconds" "$@"
 }
 
+run_dev_validation_with_timeout() {
+  local seconds="$1"
+  shift
+  local docker_exec_script="$ROOT_DIR/scripts/harness/docker_dev_exec.sh"
+  [[ -x "$docker_exec_script" ]] || fail "dev validation container 스크립트를 실행할 수 없습니다: $docker_exec_script"
+  print_workspace_context "dev_validation_container" "0"
+  timeout "$seconds" bash "$docker_exec_script" "$@"
+}
+
 run_python_with_timeout() {
   local seconds="$1"
   shift
@@ -110,8 +119,7 @@ run_python_with_timeout() {
   require_known_workspace_role
 
   if [[ "$WORKSPACE_ROLE" == "dev" ]]; then
-    print_workspace_context "host_python3" "0"
-    timeout "$seconds" python3 "$@"
+    run_dev_validation_with_timeout "$seconds" python3 "$@"
     return
   fi
 
@@ -217,6 +225,7 @@ readme = root / "README.md"
 harness_readme = root / "scripts" / "harness" / "README.md"
 agents = root / "AGENTS.md"
 makefile = root / "Makefile"
+run_sh = root / "scripts" / "harness" / "run.sh"
 
 required_files = [workflow, workflow_dir, readme, harness_readme, agents, makefile]
 missing_files = [path for path in required_files if not path.exists()]
@@ -590,6 +599,13 @@ contract_checks = [
     ("readme_declares_ci_harness", contains(readme, "CI 검증 기준", ".github/workflows/harness.yml", "bash scripts/harness/run.sh", "Require Harness on main", "Safe harness contracts")),
     ("harness_readme_declares_ci_harness", contains(harness_readme, "CI 공동 사용 원칙", "safe", "workflow_dispatch", "deploy_main", "allow_market_hours_deploy", "09:00-15:30 KST", "HARNESS_ALLOW_HEAVY=1", "Require Harness on main", "Safe harness contracts")),
     ("workflow_fetches_full_history_for_diff_contracts", contains(workflow, "fetch-depth: 0")),
+    ("dev_validation_dockerfile_present", (root / "Dockerfile.dev-validation").exists()),
+    ("dev_validation_exec_script_present", (root / "scripts" / "harness" / "docker_dev_exec.sh").exists()),
+    ("dev_validation_run_sh_routes_dev_python", contains(run_sh, "run_dev_validation_with_timeout", 'print_workspace_context "dev_validation_container" "0"', 'bash "$docker_exec_script"', 'if [[ "$WORKSPACE_ROLE" == "dev" ]]')),
+    ("dev_validation_backend_file_routes_dev_python", contains(run_sh, 'if os.environ.get("HARNESS_WORKSPACE_ROLE") == "dev":', 'docker_dev_exec.sh')),
+    ("readme_declares_dev_validation_container", contains(readme, "docker_dev_exec.sh", "dev validation container")),
+    ("harness_readme_declares_dev_validation_container", contains(harness_readme, "docker_dev_exec.sh", "dev validation container", "Dozzle", "--network none")),
+    ("agents_declares_dev_validation_container", contains(agents, "docker_dev_exec.sh", "dev validation container")),
     ("agents_declares_ci_harness", contains(agents, ".github/workflows/harness.yml", "bash scripts/harness/run.sh")),
     ("makefile_declares_accept_ci", contains(makefile, "accept-ci:", "bash scripts/harness/run.sh accept ci")),
 ]
@@ -638,6 +654,11 @@ metrics = {
     "node20_target_action_count": len(node20_target_action_hits),
     "pip_install_command_count": len(pip_install_lines),
     "pip_install_without_constraints_count": len(pip_install_without_constraints),
+    "dev_validation_dockerfile_present_count": int((root / "Dockerfile.dev-validation").exists()),
+    "dev_validation_exec_script_present_count": int((root / "scripts" / "harness" / "docker_dev_exec.sh").exists()),
+    "dev_validation_ci_contract_count": int(
+        contains(run_sh, "run_dev_validation_with_timeout", "docker_dev_exec.sh", 'if [[ "$WORKSPACE_ROLE" == "dev" ]]')
+    ),
     "ci_contract_failed_count": len(failed_contract_checks),
 }
 
@@ -674,6 +695,9 @@ informational_metrics = {
     "runtime_tracked_file_count",
     "node20_target_action_count",
     "pip_install_command_count",
+    "dev_validation_dockerfile_present_count",
+    "dev_validation_exec_script_present_count",
+    "dev_validation_ci_contract_count",
 }
 passed = all(
     value == 0
@@ -1515,10 +1539,12 @@ semantic_checks = [
     ("harness_readme_declares_metrics", contains(root / "scripts" / "harness" / "README.md", "accept backend-file", "tests_run_count", "secret_key_hit_count")),
     ("harness_readme_declares_validation_layers", contains(root / "scripts" / "harness" / "README.md", "L0", "L6", "check quick", "make check-quick", "check changed", "make check-changed", "type-check backend", "make type-check-backend", "security scan", "make security-scan")),
     ("harness_readme_declares_api_run", contains(root / "scripts" / "harness" / "README.md", "run api-postgres", "INSPECTION_API_TOKEN")),
+    ("harness_readme_declares_dev_validation_container", contains(root / "scripts" / "harness" / "README.md", "docker_dev_exec.sh", "dev validation container", "--network none", "Dozzle")),
     ("harness_readme_declares_compat_aliases", contains(root / "scripts" / "harness" / "README.md", "docs-check", "env-check", "호환 alias")),
     ("harness_readme_routes_to_definition_of_done", contains(root / "scripts" / "harness" / "README.md", "definition_of_done.md", "완료를 주장")),
     ("harness_readme_declares_no_bypass", contains(root / "scripts" / "harness" / "README.md", "accept no-bypass", "hard_bypass_count", "review_bypass_count")),
     ("root_agents_declares_api_run", contains(root / "AGENTS.md", "run api-inmemory", "run api-postgres")),
+    ("root_agents_declares_dev_validation_container", contains(root / "AGENTS.md", "docker_dev_exec.sh", "dev validation container")),
     ("fixture_policy_present", contains(root / "tests" / "fixtures" / "README.md", "data/", "logs/", "tmp/")),
     ("pytest_config_single_source", absent(root / "pytest.ini") and contains(root / "pyproject.toml", "[tool.pytest.ini_options]", 'asyncio_default_fixture_loop_scope = "module"', "markers = [")),
 ]
@@ -1634,6 +1660,11 @@ expected = {
     "npm": read_first_line(root / "admin_ui" / ".npm-version"),
     "postgres": read_first_line(root / ".postgres-version"),
 }
+dev_validation_dockerfile = root / "Dockerfile.dev-validation"
+dev_validation_dockerfile_text = dev_validation_dockerfile.read_text() if dev_validation_dockerfile.exists() else ""
+dev_validation_exec_script = root / "scripts" / "harness" / "docker_dev_exec.sh"
+dev_validation_exec_text = dev_validation_exec_script.read_text() if dev_validation_exec_script.exists() else ""
+run_sh_text = (root / "scripts" / "harness" / "run.sh").read_text() if (root / "scripts" / "harness" / "run.sh").exists() else ""
 
 required_files = [
     root / ".python-version",
@@ -1711,11 +1742,21 @@ static_checks.append(("pyproject_ruff_config", "[tool.ruff]" in pyproject and "[
 static_checks.append(("admin_dockerfile_node_pin", f"FROM node:{expected['node']}-slim AS build" in admin_dockerfile))
 static_checks.append(("npm_engine_strict", npmrc == "engine-strict=true"))
 static_checks.append(("gitignore_excludes_env", re.search(r"(?m)^\.env$", gitignore) is not None))
+static_checks.append(("dev_validation_dockerfile_present", dev_validation_dockerfile.exists()))
+static_checks.append(("dev_validation_dockerfile_python_pin", bool(expected["python"]) and f"FROM python:{expected['python']}-slim" in dev_validation_dockerfile_text))
+static_checks.append(("dev_validation_dockerfile_uses_requirements_lock", "requirements.lock" in dev_validation_dockerfile_text and "--constraint requirements.lock" in dev_validation_dockerfile_text))
+static_checks.append(("dev_validation_dockerfile_installs_dev_extra", '-e ".[dev]"' in dev_validation_dockerfile_text))
+static_checks.append(("dev_validation_exec_script_present", dev_validation_exec_script.exists()))
+static_checks.append(("dev_validation_exec_script_executable", dev_validation_exec_script.exists() and os.access(dev_validation_exec_script, os.X_OK)))
+static_checks.append(("dev_validation_exec_script_uses_network_none", '--network "$NETWORK_MODE"' in dev_validation_exec_text and 'HARNESS_DEV_NETWORK_MODE:-none' in dev_validation_exec_text))
+static_checks.append(("dev_validation_exec_script_declares_dozzle_labels", "com.agent-trading.visibility=dozzle" in dev_validation_exec_text and "com.agent-trading.role=dev-validation" in dev_validation_exec_text))
+static_checks.append(("dev_validation_exec_script_mounts_dev_workspace_only", '/workspace/agent_trading_dev' in dev_validation_exec_text and '-v "$ROOT_DIR:/app:rw"' in dev_validation_exec_text))
+static_checks.append(("run_sh_routes_dev_python_to_container", "run_dev_validation_with_timeout" in run_sh_text and 'if [[ "$WORKSPACE_ROLE" == "dev" ]]' in run_sh_text and 'print_workspace_context "dev_validation_container" "0"' in run_sh_text))
 
 code, output = run_command(["docker", "exec", "agent_trading-app-1", "python3", "-m", "ruff", "--version"])
 if code != 0:
     code, output = run_command(["python3", "-m", "ruff", "--version"])
-static_checks.append(("ruff_executable", code == 0 and output.strip() == "ruff 0.16.0"))
+static_checks.append(("ruff_executable", code == 0 and "ruff 0.16.0" in output))
 
 try:
     package_json = json.loads((root / "admin_ui" / "package.json").read_text())
@@ -1819,6 +1860,7 @@ metrics = {
     "required_file_missing_count": len(missing_files),
     "runtime_version_mismatch_count": len(runtime_mismatches),
     "static_pin_failed_count": len(failed_static_checks),
+    "dev_validation_contract_failed_count": len([name for name in failed_static_checks if name.startswith("dev_validation_") or name == "run_sh_routes_dev_python_to_container"]),
     "lockfile_failed_count": len(failed_lock_checks),
     "env_example_key_count": len(env_example_keys),
     "advisory_env_example_key_missing_count": len(advisory_missing_env_example_keys),
@@ -1931,6 +1973,8 @@ def run_command(command: list[str], timeout_seconds: int = safe_timeout) -> tupl
     return completed.returncode, completed.stdout.strip()
 
 def python_command(args: list[str]) -> list[str]:
+    if os.environ.get("HARNESS_WORKSPACE_ROLE") == "dev":
+        return ["bash", str(root / "scripts" / "harness" / "docker_dev_exec.sh"), "python3", *args]
     code, names = run_command(["docker", "ps", "--format", "{{.Names}}"], timeout_seconds=10)
     if code == 0 and "agent_trading-app-1" in set(names.splitlines()):
         return ["docker", "exec", "-w", "/app", "agent_trading-app-1", "python3", *args]
@@ -2182,6 +2226,11 @@ def run_command(command: list[str], timeout_seconds: int = safe_timeout) -> tupl
     return completed.returncode, completed.stdout.strip()
 
 def python_command(args: list[str]) -> tuple[list[str], str]:
+    if os.environ.get("HARNESS_WORKSPACE_ROLE") == "dev":
+        return (
+            ["bash", str(root / "scripts" / "harness" / "docker_dev_exec.sh"), "python3", *args],
+            "dev-validation-container",
+        )
     code, names = run_command(["docker", "ps", "--format", "{{.Names}}"], timeout_seconds=10)
     if code == 0 and "agent_trading-app-1" in set(names.splitlines()):
         return (
@@ -2241,6 +2290,11 @@ required_env_example_keys = {
     "DATABASE_USER",
     "DATABASE_PASSWORD",
 }
+dev_validation_dockerfile = (root / "Dockerfile.dev-validation")
+dev_validation_dockerfile_text = dev_validation_dockerfile.read_text() if dev_validation_dockerfile.exists() else ""
+dev_validation_exec_script = root / "scripts" / "harness" / "docker_dev_exec.sh"
+dev_validation_exec_text = dev_validation_exec_script.read_text() if dev_validation_exec_script.exists() else ""
+run_sh_text = (root / "scripts" / "harness" / "run.sh").read_text() if (root / "scripts" / "harness" / "run.sh").exists() else ""
 
 static_checks = [
     ("pyproject_python_range", 'requires-python = ">=3.14,<3.15"' in pyproject),
@@ -2250,10 +2304,20 @@ static_checks = [
     ("requirements_lock_ruff_pin", re.search(r"(?m)^ruff==0\.16\.0$", requirements_lock) is not None),
     ("pyproject_ruff_config", "[tool.ruff]" in pyproject and "[tool.ruff.lint]" in pyproject),
     ("env_example_backend_keys", required_env_example_keys.issubset(env_example_keys)),
+    ("dev_validation_dockerfile_present", dev_validation_dockerfile.exists()),
+    ("dev_validation_dockerfile_python_pin", bool(expected_python) and f"FROM python:{expected_python}-slim" in dev_validation_dockerfile_text),
+    ("dev_validation_dockerfile_uses_requirements_lock", "requirements.lock" in dev_validation_dockerfile_text and "--constraint requirements.lock" in dev_validation_dockerfile_text),
+    ("dev_validation_dockerfile_installs_dev_extra", '-e ".[dev]"' in dev_validation_dockerfile_text),
+    ("dev_validation_exec_script_present", dev_validation_exec_script.exists()),
+    ("dev_validation_exec_script_executable", dev_validation_exec_script.exists() and os.access(dev_validation_exec_script, os.X_OK)),
+    ("dev_validation_exec_script_uses_network_none", '--network "$NETWORK_MODE"' in dev_validation_exec_text and 'HARNESS_DEV_NETWORK_MODE:-none' in dev_validation_exec_text),
+    ("dev_validation_exec_script_declares_dozzle_labels", "com.agent-trading.visibility=dozzle" in dev_validation_exec_text and "com.agent-trading.role=dev-validation" in dev_validation_exec_text),
+    ("dev_validation_exec_script_mounts_dev_workspace_only", '/workspace/agent_trading_dev' in dev_validation_exec_text and '-v "$ROOT_DIR:/app:rw"' in dev_validation_exec_text),
+    ("run_sh_routes_dev_python_to_container", "run_dev_validation_with_timeout" in run_sh_text and 'if [[ "$WORKSPACE_ROLE" == "dev" ]]' in run_sh_text and 'print_workspace_context "dev_validation_container" "0"' in run_sh_text),
 ]
 ruff_command, _ruff_source = python_command(["-m", "ruff", "--version"])
 ruff_code, ruff_output = run_command(ruff_command)
-static_checks.append(("ruff_executable", ruff_code == 0 and ruff_output.strip() == "ruff 0.16.0"))
+static_checks.append(("ruff_executable", ruff_code == 0 and "ruff 0.16.0" in ruff_output))
 failed_static_checks = [name for name, ok in static_checks if not ok]
 missing_env_example_keys = sorted(required_env_example_keys - env_example_keys)
 
@@ -2364,6 +2428,7 @@ failed_factory_checks = [
 metrics = {
     "required_file_missing_count": len(missing_files),
     "static_contract_failed_count": len(failed_static_checks),
+    "dev_validation_contract_failed_count": len([name for name in failed_static_checks if name.startswith("dev_validation_") or name == "run_sh_routes_dev_python_to_container"]),
     "runtime_version_mismatch_count": len(runtime_version_mismatches),
     "runtime_probe_failed_count": 0 if probe_code == 0 and not probe_parse_failed else 1,
     "import_failed_count": len(import_failures) if isinstance(import_failures, list) else 1,

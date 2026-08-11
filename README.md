@@ -255,6 +255,9 @@ bash scripts/harness/docker_compose_env.sh up -d db api
 | `make accept-ops-report SUMMARY_JSON=...` | 운영 `summary_json` 커버리지 판정기 실행 (`accept ops-report`) |
 | `make dump-ops-report DATE=...` | `operations_day_runs.summary_json` 파일 덤프 — `HARNESS_ALLOW_OPS_DUMP=1` 필요 |
 | `make admin-test-one TEST=...` | 단일 Admin UI 테스트 selector 실행 |
+| `make dev-validation-image` | dev validation container 이미지 재빌드 후 Python 버전 확인 |
+| `make dev-validation-python` | dev validation container에서 Python 버전 확인 |
+| `make dev-validation-exec CMD='...'` | dev validation container에서 임의 명령 1회 실행 |
 | `make heavy-full-test` | 전체 로컬 테스트 실행 — `HARNESS_ALLOW_HEAVY=1` 없이는 차단 |
 | `make heavy-docker-test` | Docker 컨테이너에서 전체 테스트 실행 — `HARNESS_ALLOW_HEAVY=1` 없이는 차단 |
 | `make heavy-smoke` | smoke 테스트 실행 — `HARNESS_ALLOW_HEAVY=1` 없이는 차단 |
@@ -293,6 +296,7 @@ L4/L5 계층의 전체 테스트, smoke, Admin UI 전체 빌드/테스트는 기
 - PostgreSQL 서버 버전은 [`.postgres-version`](./.postgres-version) 기준으로 확인한다.
 - 환경 기준 검증은 `make accept-env` 또는 `bash scripts/harness/run.sh accept env`를 사용한다. `make env-check`와 `bash scripts/harness/run.sh env-check`는 호환 alias다.
 - 운영 비밀값은 저장소 `.env`가 아니라 `/etc/agent_trading/*.env`에 저장하고, Docker/배포 표준 경로는 `bash scripts/harness/docker_compose_env.sh ...`가 이를 읽는다.
+- `/workspace/agent_trading_dev`의 Python 검증은 host `python3` 대신 `bash scripts/harness/docker_dev_exec.sh ...` 기반 dev validation container를 사용한다. 이 컨테이너는 `/workspace/agent_trading_dev`만 mount하고 기본 `--network none`과 Dozzle 식별 label을 사용한다.
 
 ## Agent Role Boundaries
 

@@ -31,6 +31,7 @@
 - 코드나 문서를 수정하지 않는 read-only 분석 턴이라도, 조회 범위·사용한 명령·미확인 사항을 분리해서 보고한다.
 - `.env` 파일은 직접 수정하지 않는다. 환경변수 변경이 필요하면 `.env.example` 수정안 또는 사용자가 직접 적용할 변경 내용을 제시한다.
 - 운영 비밀값은 저장소 `.env` 대신 `/etc/agent_trading/*.env`에 둔다. Docker/배포 표준 명령은 `bash scripts/harness/docker_compose_env.sh ...`로 외부 env를 로드한다.
+- `/workspace/agent_trading_dev`의 Python 검증은 host `python3`를 정답 판정기로 쓰지 않고 `bash scripts/harness/docker_dev_exec.sh ...` 기반 dev validation container를 사용한다.
 - `.env` 파일의 키값, 토큰, 비밀번호, 계좌 정보, API secret은 출력하거나 보고서에 노출하지 않는다.
 - 토큰, 인증 정보, secret 후보가 포함될 수 있는 원격 URL, 명령 출력, 로그 조각은 그대로 보고하지 않는다.
 

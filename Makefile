@@ -3,6 +3,7 @@ SHELL := /usr/bin/bash
 
 .PHONY: install run migrate test lint smoke \
         harness-status check-quick check-full check-changed type-check-backend type-check-frontend security-scan env-check check-file test-one test-file lint-path docs-check accept-docs accept-ci accept-env accept-db-structure accept-architecture accept-style accept-no-bypass accept-backend-file accept-backend-runtime accept-admin-ui accept-ops-report dump-ops-report admin-test-one \
+        dev-validation-image dev-validation-python dev-validation-exec \
         heavy-full-test heavy-docker-test heavy-smoke heavy-admin-build heavy-admin-test-all \
         full-test docker-test-safe smoke-safe smoke-all admin-build admin-test-all \
         docker-up docker-down docker-build docker-migrate docker-test docker-shell \
@@ -123,6 +124,16 @@ dump-ops-report:
 admin-test-one:
 	@test -n "$(TEST)" || (echo "사용법: make admin-test-one TEST=src/path/file.test.tsx" >&2; exit 1)
 	bash scripts/harness/run.sh admin-test-one "$(TEST)"
+
+dev-validation-image:
+	HARNESS_DEV_REBUILD_IMAGE=1 bash scripts/harness/docker_dev_exec.sh python3 --version
+
+dev-validation-python:
+	bash scripts/harness/docker_dev_exec.sh python3 --version
+
+dev-validation-exec:
+	@test -n "$(CMD)" || (echo "사용법: make dev-validation-exec CMD='python3 -m pytest tests/path.py -v'" >&2; exit 1)
+	bash -lc 'bash scripts/harness/docker_dev_exec.sh $(CMD)'
 
 heavy-full-test:
 	bash scripts/harness/run.sh full-test

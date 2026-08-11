@@ -71,6 +71,9 @@ GitHub Actions도 사람과 AI가 쓰는 동일한 하네스를 사용한다. CI
 | 단일 pytest 파일 | `bash scripts/harness/run.sh test-file <tests/path.py>` | `make test-file TEST=<tests/path.py>` |
 | 경로별 ruff | `bash scripts/harness/run.sh lint-path <path>` | `make lint-path TARGET=<path>` |
 | 단일 Admin UI 테스트 | `bash scripts/harness/run.sh admin-test-one <selector>` | `make admin-test-one TEST=<selector>` |
+| dev validation 이미지 재빌드 | `HARNESS_DEV_REBUILD_IMAGE=1 bash scripts/harness/docker_dev_exec.sh python3 --version` | `make dev-validation-image` |
+| dev validation Python 확인 | `bash scripts/harness/docker_dev_exec.sh python3 --version` | `make dev-validation-python` |
+| dev validation 임의 명령 | `bash scripts/harness/docker_dev_exec.sh <command...>` | `make dev-validation-exec CMD='<command...>'` |
 
 `docs-check`와 `env-check`는 각각 `accept docs`, `accept env`의 호환 alias다. 신규 문서와 보고에서는 `accept ...` 이름을 우선 사용한다.
 
@@ -89,6 +92,8 @@ GitHub Actions도 사람과 AI가 쓰는 동일한 하네스를 사용한다. CI
 `check quick`은 커밋 전 기본 스냅샷용 계층 묶음이다. 현재 범위는 `accept docs`, `accept ci`, `accept no-bypass`, `accept env`, `accept backend-runtime`, `accept frontend`, `lint-path src/agent_trading`, `git diff --check`이며 전체 테스트, 전체 빌드, DB 연결, 외부 네트워크 호출을 실행하지 않는다.
 
 Docker/배포 표준 명령은 `bash scripts/harness/docker_compose_env.sh ...`를 사용하며, 이 래퍼가 `/etc/agent_trading/*.env`를 우선 로드한다.
+
+`/workspace/agent_trading_dev`의 Python 검증은 host `python3` 대신 `bash scripts/harness/docker_dev_exec.sh ...`가 띄우는 dev validation container를 사용한다. 이 컨테이너는 운영 컨테이너를 재사용하지 않고 `/workspace/agent_trading_dev`만 `/app`에 mount하며, 기본 `--network none`과 Dozzle 식별 label을 사용한다. 종료 후 더 오래 관찰해야 할 때만 `HARNESS_DEV_KEEP_CONTAINER=1`로 `--rm` 제거를 허용한다.
 
 현재 2026-07-29 기준 계측은 다음과 같다.
 
