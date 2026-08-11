@@ -4,10 +4,11 @@
 > 않는다. 기존 held_position 청산 경로에 실제로 연결하는 구현(아래에서
 > "B단계"로 지칭)은 이 문서의 범위 밖이며, 별도 착수 턴에서 이 문서를
 > 근거로 진행한다.
-> **선행 조사**: [`13_loss_cut_policy_investigation.md`](./13_loss_cut_policy_investigation.md) —
+> **선행 조사**: [`loss_cut_policy_investigation.md`](../../20_system_analysis/loss_cut_policy_investigation.md)(`docs/20_system_analysis/`) —
 > 현재 운영 코드에 손실률 기반 Loss-cut이 없다는 사실 확인, 정책안 3종(A/B/C)
 > 1차 비교, 설정 경로가 `env`가 아니라 `config_versions` 계열이어야 하는
-> 이유의 1차 근거. 이 문서는 그 결론을 **구현 직전까지 구체화**한다.
+> 이유의 1차 근거(설계 조사/현황 분석 문서). 이 설계 문서는 그 결론을
+> **구현 직전 수준까지 구체화**한다.
 > **선례**: [`06_config_schema.md`](./06_config_schema.md) §9,
 > [`config_version_admin.py`](../../../src/agent_trading/services/config_version_admin.py) —
 > `risk.max_single_position_pct`를 `config_versions` + Admin API/CLI로
@@ -27,15 +28,15 @@
 
 현재 운영 코드는 보유 포지션의 청산을 **신호 기반**(AI risk_opinion/
 risk_score, thesis invalidation, edge collapse, downside shock,
-holding_profile 만료)으로만 결정한다([사실], `13_loss_cut_policy_
-investigation.md` §1.3). 매수가(평균단가) 대비 손실률이 얼마든 이 값만
+holding_profile 만료)으로만 결정한다([사실], `loss_cut_policy_
+investigation.md`(`docs/20_system_analysis/`) §1.3). 매수가(평균단가) 대비 손실률이 얼마든 이 값만
 가지고 청산을 강제하는 경로는 없다. 사용자가 요청한 것은 "-10% 넘으면
 더 손실 나기 전에 처분"이라는 **정량 손절 규칙**이며, 이 문서는 그
 규칙의 명세(threshold 구조, 적용 범위, 기존 로직과의 합성 규칙, 기준
 가격, 재진입 제한)와, 그 규칙을 운영자가 안전하게 바꿀 수 있는 설정
 경로를 확정 가능한 수준까지 구체화한다.
 
-## 2. 현재 코드 기준 현황 (요약, 상세는 §13 문서 참고)
+## 2. 현재 코드 기준 현황 (요약, 상세는 선행 조사 문서 참고)
 
 ### 2.1 청산 판정이 실제로 일어나는 위치와 순서 [사실]
 
@@ -129,7 +130,7 @@ ENABLED=false`, 기본 꺼짐, 순수 게이팅 함수)이 이번 설계가 따�
 
 | 옵션 | 판단 |
 |---|---|
-| 전량 청산만 | 단순하지만, `-10%`를 살짝 넘는 순간 전량 처분은 "손실 회피"이지 "기대값 개선"이 아닐 수 있다(`13_loss_cut_policy_investigation.md` §2 안 A 비판 그대로 적용) |
+| 전량 청산만 | 단순하지만, `-10%`를 살짝 넘는 순간 전량 처분은 "손실 회피"이지 "기대값 개선"이 아닐 수 있다(`loss_cut_policy_investigation.md`(docs/20_system_analysis/) §2 안 A 비판 그대로 적용) |
 | 부분 축소만 | 손실이 계속 깊어지는 tail 위험을 막지 못한다 |
 | **2단계(soft→hard)** | soft 임계치(예: -7%)에서 **부분 축소(REDUCE)**, hard 임계치(예: -12%)에서 **전량 청산(EXIT)** — tail 위험은 막되, 일시적 조정에 즉시 전량 반응하지 않는다 |
 
@@ -198,7 +199,7 @@ guard를 1번(`_check_held_position_sell_override`) 바로 다음, 4번
   average_price * 100`(계산 기준가로 `average_price`를 쓰고,
   이동평균 원가 `position_cost_basis_state.average_cost`는 쓰지
   않는다 — 두 값을 섞으면 "기준에 따라 손실률이 달라지는" 혼란이
-  생기므로 단일 소스로 고정한다, `13_loss_cut_policy_investigation.md`
+  생기므로 단일 소스로 고정한다, `loss_cut_policy_investigation.md`(docs/20_system_analysis/)
   §4에서 이미 지적한 원칙 그대로).
 
 ### 3.5 재진입/재발동 제한(cooldown) — [추천] 기존 `metadata_json["holding_profile_policy"]` 재사용

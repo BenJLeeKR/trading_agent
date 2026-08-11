@@ -11470,9 +11470,11 @@ B축 상태를 "구조 재설계 후보"(비교/설계만 완료)에서 **"안 A
   "설계 조사/정책 결정 대기" 상태로 유지한다** — 안 C(shadow)
   착수 여부와 정책안/설정 경로 최종 확정은 별도 착수 턴에서
   사용자 판단을 거쳐야 한다.
-- 상세: `docs/00_foundational_design/detailed_design/13_loss_cut_
-  policy_investigation.md`(신규). 후속 질문은
-  `docs/99_meta_handover/[BACKLOG] backlog.md`에 분리 등록했다.
+- 상세: `docs/20_system_analysis/loss_cut_policy_investigation.md`
+  (설계 조사/현황 분석 문서, 2026-08-11 문서 체계 정리로
+  `docs/00_foundational_design/detailed_design/`에서 이동됨). 후속
+  질문은 `docs/99_meta_handover/[BACKLOG] backlog.md`에 분리
+  등록했다.
 
 **이후 우선순위**: 이 조사는 신규 축으로 옆에 등록될 뿐, 진행 중이던
 1순위 트랙을 대체하지 않는다. **이 조사 완료 이후 다음 주력 작업은
@@ -11502,10 +11504,31 @@ conditional_entry_signal_v1.md` 참고)으로 재개한다.** Loss-cut
   계약 초안을 작성했다. shadow 실험용 `env`(`LOSS_CUT_SHADOW_
   ENABLED`)는 "관측 로그 여부만 제어, 실거래 결정에는 절대 개입하지
   않는다"는 엄격한 경계로 제한했다.
-- 상세: `docs/00_foundational_design/detailed_design/14_loss_cut_
-  policy_specification_and_config_path_design.md`(신규),
-  `docs/40_action_plans/loss_cut_policy_and_config_path_action_
-  plan.md`(신규).
+- 상세: `docs/00_foundational_design/detailed_design/13_loss_cut_
+  policy_specification_and_config_path_design.md`(2026-08-11 문서
+  체계 정리로 번호를 14→13으로 정리, 옆의 조사 문서가
+  `docs/20_system_analysis/`로 이동해 detailed_design 시리즈 번호가
+  당겨짐), `docs/40_action_plans/loss_cut_policy_and_config_path_
+  action_plan.md`.
 - **이후 우선순위는 변경 없음**: 이번 항목은 설계를 한 단계 더
   구체화했을 뿐 착수 승인이 아니다. `SPPV-3` 미해결 항목이 여전히
   다음 주력 작업이다.
+
+## Loss-cut 문서 체계 정리 — 경로/번호만 재배치, 정책 내용 변경 없음(2026-08-11 KST, 문서 정리 전용)
+
+위 두 항목이 만든 문서 배치가 문서 역할과 어긋나 있어(조사/분석
+문서가 `detailed_design/`에, 구현 직전 수준 설계 문서와 나란히
+번호만 다르게 있었음) 경로/번호만 정리했다. **정책 결론/내용은
+전혀 바뀌지 않았다.**
+
+- `docs/00_foundational_design/detailed_design/13_loss_cut_policy_
+  investigation.md`(조사/분석 문서) → `docs/20_system_analysis/
+  loss_cut_policy_investigation.md`로 이동(파일명에서 "조사"
+  성격이 드러나도록 번호 접두어 제거).
+- `docs/00_foundational_design/detailed_design/14_loss_cut_policy_
+  specification_and_config_path_design.md`(정책 명세/설정 경로
+  설계 문서) → 같은 디렉터리 내에서 `13_loss_cut_policy_
+  specification_and_config_path_design.md`로 번호만 정리(조사
+  문서가 빠지며 시리즈 번호가 14→13으로 당겨짐).
+- 이 두 항목(위 "정책/설정 경로 설계 조사 완료"·"정책 명세 초안
+  완료")의 `상세:` 참조 경로도 실제 경로 기준으로 갱신했다.

@@ -1,8 +1,8 @@
 # 손실률 기반 Loss-cut 정책/설정 경로 도입 — 실행 계획
 
 > **문서 성격**: 설계·실행 계획 문서다. 이 문서 자체는 어떤 코드도 변경하지 않는다. 구현 지시가 아니라 "무엇을, 왜, 어떤 순서로, 어떻게 검증할지"를 확정하는 계획이다.
-> **상세 설계**: [`14_loss_cut_policy_specification_and_config_path_design.md`](../00_foundational_design/detailed_design/14_loss_cut_policy_specification_and_config_path_design.md)
-> **선행 조사**: [`13_loss_cut_policy_investigation.md`](../00_foundational_design/detailed_design/13_loss_cut_policy_investigation.md)
+> **상세 설계**: [`13_loss_cut_policy_specification_and_config_path_design.md`](../00_foundational_design/detailed_design/13_loss_cut_policy_specification_and_config_path_design.md)
+> **선행 조사(설계 조사/현황 분석)**: [`loss_cut_policy_investigation.md`](../20_system_analysis/loss_cut_policy_investigation.md)
 > **연관 선례**: `risk.max_single_position_pct`의 `config_versions` + Admin API/CLI 관리 경로(PR #216 계열, [`06_config_schema.md`](../00_foundational_design/detailed_design/06_config_schema.md) §9)
 
 ## 1. 문제 배경
@@ -11,7 +11,7 @@
 (Loss-cut) 규칙이 없다. 보유 포지션 청산은 전부 신호 기반(AI
 risk_opinion/risk_score, thesis invalidation, edge collapse,
 downside shock, holding_profile 만료)이다. 이 사실은
-`13_loss_cut_policy_investigation.md`에서 소스 기준으로 확인했고,
+`loss_cut_policy_investigation.md`(`docs/20_system_analysis/`)에서 소스 기준으로 확인했고,
 이번 문서가 다루는 것은 그 다음 단계 — **정책 명세를 구현 직전
 수준까지 구체화**하는 것이다. 아직 기존 held_position 청산 경로에
 실제로 연결하는 구현(B단계)은 하지 않는다.
@@ -33,9 +33,10 @@ downside shock, holding_profile 만료)이다. 이 사실은
 
 ### 0단계 — 정책 조사(완료)
 
-- 산출물: `13_loss_cut_policy_investigation.md` — 현재 코드에
-  손실률 기반 loss-cut 없음을 확인, 정책안 3종(A/B/C) 1차 비교,
-  설정 경로가 `env`가 아니라 `config_versions`여야 하는 1차 근거.
+- 산출물: `loss_cut_policy_investigation.md`(`docs/20_system_analysis/`,
+  설계 조사/현황 분석 문서) — 현재 코드에 손실률 기반 loss-cut 없음을
+  확인, 정책안 3종(A/B/C) 1차 비교, 설정 경로가 `env`가 아니라
+  `config_versions`여야 하는 1차 근거.
 - 상태: **완료**(2026-08-11, PR #226).
 
 ### 1단계 — 정책 명세 + 설정 경로 설계 초안(이번 턴, 완료)
@@ -44,8 +45,9 @@ downside shock, holding_profile 만료)이다. 이 사실은
   threshold 구조, source_type 차등 여부, 기존 로직과의 합성/우선순위
   규칙, 기준 가격, cooldown, config 스키마, API/CLI 계약까지
   구체화해야 B단계 착수가 가능하다.
-- 산출물: `14_loss_cut_policy_specification_and_config_path_
-  design.md` — 2단계(soft/hard) 정책 구조 추천, guard 삽입 위치
+- 산출물: `13_loss_cut_policy_specification_and_config_path_
+  design.md`(`docs/00_foundational_design/detailed_design/`, 정책
+  명세/설정 경로 설계 문서) — 2단계(soft/hard) 정책 구조 추천, guard 삽입 위치
   구체 지정(`_check_held_position_sell_override`와
   `_check_held_position_exit_hysteresis_gate` 사이), 기존
   hysteresis escape-hatch 키워드(`"stop_loss"`/`"drawdown"`) 재사용
@@ -131,7 +133,7 @@ downside shock, holding_profile 만료)이다. 이 사실은
 
 ## 5. 남은 리스크 / 후속 확인 필요 사항
 
-`14_loss_cut_policy_specification_and_config_path_design.md` §6과
+`13_loss_cut_policy_specification_and_config_path_design.md` §6과
 동일 — 이 문서에서 중복 나열하지 않는다. 핵심만 재인용:
 
 - soft/hard 임계치 구체 숫자 미확정(shadow 실측 필요).

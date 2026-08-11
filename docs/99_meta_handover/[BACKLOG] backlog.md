@@ -6473,8 +6473,8 @@ B축을 정밀 재분석했다. read-only(코드/DB 조회만, 문서 수정 외
 
 **[2026-08-11 KST 신설, 손실률 기반 Loss-cut 정책 후속 질문 —
 설계 조사 완료, 착수는 정책 결정 대기]** 설계 조사 상세는
-`docs/00_foundational_design/detailed_design/13_loss_cut_policy_
-investigation.md`, priority 반영은 `[PRIORITY_MAP] remaining_work_
+`docs/20_system_analysis/loss_cut_policy_investigation.md`(설계
+조사/현황 분석 문서), priority 반영은 `[PRIORITY_MAP] remaining_work_
 priority_map.md`(2026-08-11 항목). 아래 4개는 착수 전 반드시
 확정해야 할 후속 질문이며, 어느 것도 아직 결정되지 않았다.
 
@@ -6505,8 +6505,9 @@ priority_map.md`(2026-08-11 항목). 아래 4개는 착수 전 반드시
 **[2026-08-11 KST 갱신, Loss-cut 정책 명세 초안(A) + 설정 경로
 설계 초안 완료 — 위 4개 질문 중 2개는 초안 수준으로 답변, 2개는
 여전히 열려 있음]** 상세:
-`docs/00_foundational_design/detailed_design/14_loss_cut_policy_
-specification_and_config_path_design.md`.
+`docs/00_foundational_design/detailed_design/13_loss_cut_policy_
+specification_and_config_path_design.md`(정책 명세/설정 경로
+설계 문서).
 
 - **정책안 확정(부분 진전)**: 안 A/B/C 중 "지금 켤 안"이 아니라
   "목표로 삼을 구조"로 2단계(soft/hard) 형태를 초안 확정했다. 다만
@@ -6537,3 +6538,11 @@ specification_and_config_path_design.md`.
   loss_cut_policy_and_config_path_action_plan.md` 2단계(shadow
   계산기 구현) — 착수 전 사용자 승인 및 shadow 관측 표본 크기
   기준 확정이 선행돼야 한다.
+
+**[2026-08-11 KST 갱신, Loss-cut 문서 체계 정리 — 경로/번호만
+재배치, 위 backlog 질문 내용은 전혀 바뀌지 않음]** 조사/분석 문서를
+`docs/00_foundational_design/detailed_design/13_loss_cut_policy_
+investigation.md` → `docs/20_system_analysis/loss_cut_policy_
+investigation.md`로 이동하고, 정책 명세 문서 번호를 14→13으로
+정리했다(자세한 이유는 `[PRIORITY_MAP]`의 같은 날짜 항목 참고).
+위 두 항목의 파일 경로 참조만 갱신했다.
