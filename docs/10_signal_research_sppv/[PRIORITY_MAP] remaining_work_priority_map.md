@@ -11332,3 +11332,46 @@ BUY 경로 리팩터링 단위를 아래처럼 고정한다.
 
 즉 "BUY 경로 전체 리팩터링"을 한 묶음으로 보지 않고,
 **R1부터 순차적으로 닫아가는 staged refactor 트랙**으로 전환한다.
+
+## submit budget reservation 구조 수정안 비교 (2026-08-11 KST)
+
+`2026-08-10`/`2026-08-11` 장중 `SUBMIT_BUDGET_TRACE` 실측으로,
+`SCHEDULER_MAX_GENERAL_BUY_SUBMIT_PER_DAY=5`가 체감상 더 작게
+동작한 원인이 daily budget 오독이 아니라 **`run_decision_loop.py`의
+`general_submit_inflight_count`가 AI 최종 판단 전에 submit slot을
+선점하는 구조**임이 확정됐다(`2026-08-11` 첫 cycle: 실제
+`SUBMITTED` 1건, `submit_budget_consumed_core` 차단 5건, 전부
+`consumed=1, inflight=4, effective=5, max=5` 동일 조합).
+
+### 비교한 수정안 4개
+
+| 안 | 개념 | 문제 해결력 | 안전성 | 수정 범위 | 판정 |
+|---|---|---|---|---|---|
+| A | reservation을 AI 최종 판단 이후(실제 submit 직전)로 이동 | 직접 해소 | 안전(재검증 지점만 이동) | 중간 — `execution_service.py`/submit 경로까지 budget lock을 threading해야 함 | **우선 구현 후보** |
+| B | budget 계산에서 inflight 제외/약화 | 증상만 완화, 근본 미해결 | **위험** — semaphore(5)만큼 동시 BUY 후보가 재검증 없이 통과해 daily cap 초과 가능 | 작음 | **채택 금지** |
+| C | semaphore와 budget 분리(예: semaphore 하향) | 완화에 그침, 근본 미해결 | 안전하지만 부작용 있음 | 작음 | 부작용(사이클당 처리량 저하) 대비 효과 낮음 |
+| D | 분석(병렬)/제출(직렬) 2단계 큐 완전 분리 | 근본 해결(안티패턴 자체 제거) | 안전(설계상 가장 바름) | **큼** — per-symbol transaction/파이프라인 재구성 필요 | 구조적으로 맞으나 이번 범위 초과 |
+
+### 판단
+
+- **가장 작은 수정으로 가장 큰 효과**: 안 A. budget 판정 로직
+  (`evaluate_symbol_submit_lane`) 자체는 그대로 두고, 그 판정을
+  호출하는 시점만 "AI 실행 전"에서 "AI가 BUY로 확정한 직후, 실제
+  submit 직전"으로 옮기면 된다. 다만 이 이동이 `execution_service.py`/
+  `OrderManager` 쪽 주문 제출 경로까지 lock/counter를 넘겨야 해서
+  `src/AGENTS.md`의 주문 제출 경계 변경 원칙(근거+테스트 필수)에
+  따라 **전용 구현 턴 + 회귀 테스트**가 필요하다고 판단했다.
+- **가장 구조적으로 바른 안**: 안 D(분석/제출 2단계 완전 분리).
+  다만 현재 `_run_one_cycle`이 AI 판단과 주문 제출을 하나의
+  per-symbol transaction으로 묶고 있어, 이를 분리하려면 파이프라인
+  자체를 재구성해야 하는 **별도 아키텍처 트랙**급 작업이다.
+- **채택 금지**: 안 B. inflight를 빼면 "실제 소비량"이 아니라
+  "동시에 통과시킨 후보 수"가 daily cap을 넘길 수 있는 새로운
+  위험을 만든다 — "주문이 덜 나가는 것을 안전으로 착각하지 말라"는
+  원칙과 반대로, 이번엔 "더 나가는 쪽"의 안전을 해칠 수 있다.
+
+### 이번 턴 결정
+
+**구현 보류 — 비교/설계만 문서화.** 다음 우선 구현 후보는 안 A,
+장기 아키텍처 트랙 후보는 안 D. 상세 backlog 항목:
+`docs/99_meta_handover/[BACKLOG] backlog.md` #17.
