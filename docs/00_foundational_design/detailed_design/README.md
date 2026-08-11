@@ -67,6 +67,12 @@
    - idempotency, out-of-order/중복/정정 처리, 장애 복구 계약
    - 실행 계획: [`docs/40_action_plans/kis_realized_pnl_moving_average_action_plan.md`](../../40_action_plans/kis_realized_pnl_moving_average_action_plan.md)
 
+13. `13_loss_cut_policy_investigation.md` (설계 조사, 정책 결정 대기 — 구현 미착수)
+   - 손실률 기반(매수가 대비 -N%) Loss-cut 정책 도입 여부 조사
+   - 현재 운영 코드에는 이런 정량 손절이 없음을 소스 기준으로 재확인
+   - 정책안 3종(하드 손절/단계형/관측용 shadow) 비교, 설정 경로(`env` vs `config_versions`+Admin API) 비교
+   - 후속: [`docs/99_meta_handover/[BACKLOG] backlog.md`](../../99_meta_handover/%5BBACKLOG%5D%20backlog.md)
+
 ## 설계 원칙
 
 - 실전/모의 환경은 논리적으로만이 아니라 설정, 자격증명, 계좌, 라우팅 수준에서 분리한다.

@@ -11436,3 +11436,49 @@ B축 상태를 "구조 재설계 후보"(비교/설계만 완료)에서 **"안 A
 보고의 `risk_on` 통과율 수치 오류(35.4% → 정정 후 91.8%)도 함께
 정정했다. 상세: `docs/20_system_analysis/buy_path_variable_gate_matrix.md`
 §31. 실제 배포 후 사후 성과는 아직 미확정 — 다음 실측 대상.
+
+## 손실률 기반 Loss-cut 정책/설정 경로 설계 조사 완료 — 신규 축 등록, 착수는 정책 결정 대기(2026-08-11 KST, read-only)
+
+`max_single_position_pct=10→5` 실 적용 이후, 사용자가 별도로 제기한
+"매수가 대비 -N% 손실률 기준 정량 손절(Loss-cut)"을 운영 코드에 새로
+도입할지 설계 관점에서 조사했다. 코드/DB 변경 없음(read-only).
+
+- **현재 상태 재확인**: `average_price`/`unrealized_pnl`은 표시·BUY
+  참조가·집중도(%)·사이징·사후 회계에만 쓰이고, 손실률을 계산해
+  SELL/EXIT를 트리거하는 코드는 운영 경로 어디에도 없다. 유일한
+  관련 문자열 매칭(`reverse_trade_hysteresis.py:445`의 `"stop_loss"`
+  키워드)도 숫자 연산이 아니라 AI가 생성한 텍스트에 그 단어가
+  있는지 보는 정성적 게이트다. `scripts/validate_r3b_stop_loss_
+  ablation.py`는 스크립트 자체 docstring이 명시하듯 운영 코드에
+  손절 임계값을 추가하지 않는 read-only shadow 시뮬레이션이고,
+  `risk.per_position_loss_limit_pct`는 `06_config_schema.md`에만
+  선언되고 실제로 읽는 코드가 없는 죽은 config 키다.
+- **정책안 3종 비교**: 안 A(단순 하드 손절)/안 B(단계형)/안 C(관측용
+  shadow) 비교 결과, A/B는 이 프로젝트가 이미 확정한 "손실 0이
+  아니라 허용 손실 제약 아래 기대값 극대화" 목표(07-14 근본
+  재정렬)와 충돌할 위험이 있고 되돌리기 전에 이미 비용이 발생하는
+  구조라 **지금 즉시 구현은 비추천**. **안 C(shadow, 실주문 미개입)
+  만 지금 착수해도 안전**하지만, 이번 턴 범위(설계 조사)에는
+  포함하지 않았다.
+- **설정 경로 비교**: `.env`가 아니라 **`config_versions` + Admin
+  API/CLI**가 맞다 — 이미 같은 `risk.*` 네임스페이스의
+  `max_single_position_pct`가 이 경로로 성공적으로 운영 중이고,
+  Loss-cut도 audit trail·환경별 분리·replay·self-service·확장성
+  전부에서 동일한 이유로 config version 계열이 우세하다.
+- **손실률 기반 Loss-cut은 현재 운영 코드에 없는 별도의 정책 축이며,
+  이번 조사로 새로 등록한다.** 다만 **즉시 구현 착수로 올리지 않고
+  "설계 조사/정책 결정 대기" 상태로 유지한다** — 안 C(shadow)
+  착수 여부와 정책안/설정 경로 최종 확정은 별도 착수 턴에서
+  사용자 판단을 거쳐야 한다.
+- 상세: `docs/00_foundational_design/detailed_design/13_loss_cut_
+  policy_investigation.md`(신규). 후속 질문은
+  `docs/99_meta_handover/[BACKLOG] backlog.md`에 분리 등록했다.
+
+**이후 우선순위**: 이 조사는 신규 축으로 옆에 등록될 뿐, 진행 중이던
+1순위 트랙을 대체하지 않는다. **이 조사 완료 이후 다음 주력 작업은
+`SPPV-3`의 남은 미해결 항목(알파 자체 예측력 재정의 검증 축, 위
+"1순위 묶음" §SPPV-2.18 이후 상세는 `plans/[DESIGN] signal_
+predictive_power_validation.md` 및 `plans/[DESIGN] regime_
+conditional_entry_signal_v1.md` 참고)으로 재개한다.** Loss-cut
+구현 착수는 정책 결정이 난 뒤 별도 턴에서 진행한다 — 지금 이
+문서만으로 착수 승인을 의미하지 않는다.
