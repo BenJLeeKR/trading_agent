@@ -14,10 +14,17 @@ from agent_trading.domain.entities import (
     DecisionContextEntity,
     PositionCostBasisStateEntity,
     RealizedPnlDailyAggregateEntity,
+    RealizedPnlEventEntity,
     StrategyEntity,
     TradeDecisionEntity,
 )
-from agent_trading.domain.enums import DecisionType, EntryStyle, Environment, OrderSide
+from agent_trading.domain.enums import (
+    DecisionType,
+    EntryStyle,
+    Environment,
+    OrderSide,
+    RealizedPnlFeeTaxSource,
+)
 from agent_trading.repositories.bootstrap import build_in_memory_repositories
 
 
@@ -612,3 +619,233 @@ def test_loss_cut_shadow_by_instrument_empty_when_nothing_triggered() -> None:
 
     assert response.status_code == 200
     assert response.json()["items"] == []
+
+
+def _make_realized_pnl_event(
+    *,
+    account_id,
+    instrument_id,
+    fill_timestamp,
+    realized_pnl_net,
+) -> RealizedPnlEventEntity:
+    return RealizedPnlEventEntity(
+        realized_pnl_event_id=uuid4(),
+        account_id=account_id,
+        instrument_id=instrument_id,
+        fill_event_id=uuid4(),
+        broker_order_id=uuid4(),
+        order_request_id=uuid4(),
+        sell_quantity=Decimal("5"),
+        sell_price=Decimal("90000"),
+        avg_cost_basis_before=Decimal("100000"),
+        fee=Decimal("100"),
+        tax=Decimal("50"),
+        fee_tax_source=RealizedPnlFeeTaxSource.REPORTED,
+        realized_pnl_gross=realized_pnl_net + Decimal("150"),
+        realized_pnl_net=realized_pnl_net,
+        position_quantity_after=Decimal("5"),
+        computation_run_id=uuid4(),
+        fill_timestamp=fill_timestamp,
+    )
+
+
+async def test_loss_cut_shadow_sample_timeline_lists_events_after_shadow() -> None:
+    repos = build_in_memory_repositories()
+    account_id, strategy_id, decision_context_id, now = _seed_common(repos)
+    instrument_id = uuid4()
+
+    decision = _make_decision(
+        decision_context_id=decision_context_id,
+        strategy_id=strategy_id,
+        symbol="005930",
+        created_at=now,
+        source_type="held_position",
+        decision_type=DecisionType.HOLD,
+        loss_cut_shadow=_shadow_payload(
+            triggered=True, tier="hard", loss_pct="15", instrument_id=instrument_id
+        ),
+    )
+    repos.trade_decisions._items[decision.trade_decision_id] = decision
+
+    before_event = await repos.realized_pnl_events.add(
+        _make_realized_pnl_event(
+            account_id=account_id,
+            instrument_id=instrument_id,
+            fill_timestamp=now - timedelta(hours=1),
+            realized_pnl_net=Decimal("-1000"),
+        )
+    )
+    after_event_1 = await repos.realized_pnl_events.add(
+        _make_realized_pnl_event(
+            account_id=account_id,
+            instrument_id=instrument_id,
+            fill_timestamp=now + timedelta(hours=1),
+            realized_pnl_net=Decimal("-30000"),
+        )
+    )
+    after_event_2 = await repos.realized_pnl_events.add(
+        _make_realized_pnl_event(
+            account_id=account_id,
+            instrument_id=instrument_id,
+            fill_timestamp=now + timedelta(hours=2),
+            realized_pnl_net=Decimal("-5000"),
+        )
+    )
+
+    app = create_app(repos=repos, auth_enabled=False)
+    with TestClient(app) as tc:
+        response = tc.get(
+            f"/trade-decisions/loss-cut-shadow/samples/{decision.trade_decision_id}/timeline",
+            params={"account_id": str(account_id)},
+        )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["sample"]["trade_decision_id"] == str(decision.trade_decision_id)
+    assert body["sample"]["triggered"] is True
+    assert body["sample"]["tier"] == "hard"
+    assert body["sample"]["symbol"] == "005930"
+
+    # shadow 시점 이전 이벤트는 제외되고, 이후 2건만 시간순으로 나온다.
+    events = body["realized_events"]
+    assert len(events) == 2
+    assert events[0]["realized_pnl_event_id"] == str(after_event_1.realized_pnl_event_id)
+    assert events[1]["realized_pnl_event_id"] == str(after_event_2.realized_pnl_event_id)
+    assert events[0]["seconds_after_shadow"] == 3600.0
+    assert events[1]["seconds_after_shadow"] == 7200.0
+    assert before_event.realized_pnl_event_id not in {
+        e["realized_pnl_event_id"] for e in events
+    }
+
+
+async def test_loss_cut_shadow_sample_timeline_respects_event_limit() -> None:
+    repos = build_in_memory_repositories()
+    account_id, strategy_id, decision_context_id, now = _seed_common(repos)
+    instrument_id = uuid4()
+
+    decision = _make_decision(
+        decision_context_id=decision_context_id,
+        strategy_id=strategy_id,
+        symbol="005930",
+        created_at=now,
+        source_type="held_position",
+        decision_type=DecisionType.HOLD,
+        loss_cut_shadow=_shadow_payload(
+            triggered=True, tier="hard", loss_pct="15", instrument_id=instrument_id
+        ),
+    )
+    repos.trade_decisions._items[decision.trade_decision_id] = decision
+
+    for i in range(3):
+        await repos.realized_pnl_events.add(
+            _make_realized_pnl_event(
+                account_id=account_id,
+                instrument_id=instrument_id,
+                fill_timestamp=now + timedelta(hours=i + 1),
+                realized_pnl_net=Decimal("-1000"),
+            )
+        )
+
+    app = create_app(repos=repos, auth_enabled=False)
+    with TestClient(app) as tc:
+        response = tc.get(
+            f"/trade-decisions/loss-cut-shadow/samples/{decision.trade_decision_id}/timeline",
+            params={"account_id": str(account_id), "event_limit": 1},
+        )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert len(body["realized_events"]) == 1
+    assert body["realized_event_limit"] == 1
+
+
+async def test_loss_cut_shadow_sample_timeline_no_events_returns_empty_list() -> None:
+    repos = build_in_memory_repositories()
+    account_id, strategy_id, decision_context_id, now = _seed_common(repos)
+
+    decision = _make_decision(
+        decision_context_id=decision_context_id,
+        strategy_id=strategy_id,
+        symbol="005930",
+        created_at=now,
+        source_type="held_position",
+        decision_type=DecisionType.HOLD,
+        loss_cut_shadow=_shadow_payload(triggered=False, tier=None, loss_pct="2"),
+    )
+    repos.trade_decisions._items[decision.trade_decision_id] = decision
+
+    app = create_app(repos=repos, auth_enabled=False)
+    with TestClient(app) as tc:
+        response = tc.get(
+            f"/trade-decisions/loss-cut-shadow/samples/{decision.trade_decision_id}/timeline",
+            params={"account_id": str(account_id)},
+        )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["realized_events"] == []
+    assert body["sample"]["triggered"] is False
+
+
+async def test_loss_cut_shadow_sample_timeline_404_for_unknown_trade_decision() -> None:
+    repos = build_in_memory_repositories()
+    account_id, _strategy_id, _decision_context_id, _now = _seed_common(repos)
+
+    app = create_app(repos=repos, auth_enabled=False)
+    with TestClient(app) as tc:
+        response = tc.get(
+            f"/trade-decisions/loss-cut-shadow/samples/{uuid4()}/timeline",
+            params={"account_id": str(account_id)},
+        )
+
+    assert response.status_code == 404
+
+
+async def test_loss_cut_shadow_sample_timeline_404_for_missing_shadow() -> None:
+    repos = build_in_memory_repositories()
+    account_id, strategy_id, decision_context_id, now = _seed_common(repos)
+
+    decision = _make_decision(
+        decision_context_id=decision_context_id,
+        strategy_id=strategy_id,
+        symbol="005930",
+        created_at=now,
+        source_type="core",
+        decision_type=DecisionType.HOLD,
+        loss_cut_shadow=None,
+    )
+    repos.trade_decisions._items[decision.trade_decision_id] = decision
+
+    app = create_app(repos=repos, auth_enabled=False)
+    with TestClient(app) as tc:
+        response = tc.get(
+            f"/trade-decisions/loss-cut-shadow/samples/{decision.trade_decision_id}/timeline",
+            params={"account_id": str(account_id)},
+        )
+
+    assert response.status_code == 404
+
+
+async def test_loss_cut_shadow_sample_timeline_404_for_account_mismatch() -> None:
+    repos = build_in_memory_repositories()
+    _account_id, strategy_id, decision_context_id, now = _seed_common(repos)
+
+    decision = _make_decision(
+        decision_context_id=decision_context_id,
+        strategy_id=strategy_id,
+        symbol="005930",
+        created_at=now,
+        source_type="held_position",
+        decision_type=DecisionType.HOLD,
+        loss_cut_shadow=_shadow_payload(triggered=True, tier="hard", loss_pct="15"),
+    )
+    repos.trade_decisions._items[decision.trade_decision_id] = decision
+
+    app = create_app(repos=repos, auth_enabled=False)
+    with TestClient(app) as tc:
+        response = tc.get(
+            f"/trade-decisions/loss-cut-shadow/samples/{decision.trade_decision_id}/timeline",
+            params={"account_id": str(uuid4())},
+        )
+
+    assert response.status_code == 404

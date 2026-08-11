@@ -232,6 +232,58 @@ downside shock, holding_profile 만료)이다. 이 사실은
   (종목별 집계+join 정상 동작, cost-basis 없는 종목 null 처리, 미발동
   종목 제외) 전부 dev-validation container에서 PASS. 신규
   repository 코드가 없어 DB 접근이 필요한 검증 항목 자체가 없다.
+- 상태: **완료**(2026-08-11, PR #231).
+
+### 2단계 후속 4 — Shadow sample × 이후 realized event 타임라인 API 추가(완료)
+
+- 왜: `by-instrument`는 종목 단위 누계만 보여줄 뿐, 개별 shadow
+  sample 1건을 기준으로 "그 이후 실제 매도가 있었는지/언제/얼마에
+  청산됐는지"를 시간순으로 확인할 수 없었다 — 3단계 실측 착수 전
+  개별 사례를 깊게 들여다볼 최소 read path다. **새 손익 계산/새
+  trigger 판정이 아니라, 이미 저장된 shadow sample과 이미 저장된
+  realized event를 시간순으로 나열만 하는 read-only 타임라인**이다.
+- 판단(코드 기준):
+  1. route: `trade-decisions/loss-cut-shadow/samples/{trade_decision_
+     id}/timeline` — 형제 endpoint(`samples`)의 하위 리소스로 배치.
+     `performance` 계열로 옮길 이유 없음(주 리소스가 shadow sample).
+  2. 연결 기준: `account_id + instrument_id + fill_timestamp >=
+     sample.created_at`(오름차순). `trade_date` 단위가 아니라
+     `fill_timestamp`(정밀 timestamp)를 쓴 이유는 하루 안에도 여러
+     건의 sample/event가 있을 수 있어 날짜 단위로는 순서를 못
+     가르기 때문이다.
+  3. **후속 참고 타임라인이지 정확한 인과 매칭이 아니다** — 응답
+     스키마 docstring에 명시. "이 event가 이 shadow 때문에
+     발생했다"는 주장을 하지 않는다.
+  4. 이번 턴 범위: 사용자가 우선 추천한 **방향 A(단일 sample 상세
+     타임라인)**를 그대로 채택 — 방향 B(`samples` 목록 전체에
+     `next_realized_event_at` 등을 붙이는 방식)보다 범위가 작고
+     (기존 `samples` 계약을 넓히지 않음), 한 sample을 사람이 깊게
+     읽기에 더 적합하다고 판단.
+  5. "loss-cut을 적용했으면 얼마를 아꼈는지" 계산은 여전히 범위
+     밖 — 반사실적 시뮬레이션이라 "정답 계산기 금지" 원칙 위배.
+  6. 해석 제한: 응답에 판정 필드 없음. `seconds_after_shadow`만
+     단순 시간차(뺄셈)로 제공 — 그 이상의 상관/인과 해석 없음.
+- 산출물:
+  - `GET /trade-decisions/loss-cut-shadow/samples/{trade_decision_id}/
+    timeline` — sample 상세 + 그 이후 realized event 최대
+    `event_limit`건(기본 5, 최대 50). `account_id` 쿼리로 소유
+    검증(불일치 시 404 — 다른 계좌 존재 여부 비노출). sample이
+    없거나 shadow 관측이 없으면 404.
+  - **신규 repository 메서드 1개**(최소): `RealizedPnlEventRepository.
+    list_by_account_and_instrument_since()` — 기존
+    `list_by_account_and_instrument()`(최신순, `before` 커서)와
+    정렬 방향이 반대(오름차순, `since` 이후)라 별도 메서드가
+    필요했다. Protocol/Postgres/InMemory 3종 구현.
+  - 신규 테이블/마이그레이션/계산 엔진 없음.
+- 검증: `py_compile`, `accept architecture`/`backend-runtime`/
+  `db-structure`/`no-bypass`/`docs` PASS, 신규 API 테스트 6건
+  (이후 이벤트만 시간순 조회, event_limit 적용, 이벤트 없음, 존재하지
+  않는 trade_decision 404, shadow 없는 TD 404, 계좌 불일치 404)
+  전부 dev-validation container에서 PASS. 신규 postgres
+  repository 메서드는 이 세션의 두 검증 환경(DB 없는
+  dev-validation container, 기존 asyncpg 루프 버그의
+  `agent_trading-app-1`) 모두에서 실행 확인이 안 되는 기존
+  한계가 그대로 적용된다(PR #229/#231에서 이미 문서화됨).
 - 상태: **완료**(2026-08-11, 이번 PR).
 
 ### 3단계 — Shadow 누적 실측(미착수)
@@ -241,8 +293,8 @@ downside shock, holding_profile 만료)이다. 이 사실은
 - 산출물(예정): 누적 이력(JSONL 또는 유사 구조, 기존
   `regime_conditional_signal_shadow_history.jsonl`류 관례 재사용),
   주기적 실측 보고. read path는 이번에 추가한 summary/samples/daily/
-  by-instrument API를 그대로 재사용할 수 있다 — 별도 조회 도구를
-  새로 만들 필요는 없다.
+  by-instrument/timeline API를 그대로 재사용할 수 있다 — 별도
+  조회 도구를 새로 만들 필요는 없다.
 - 상태: **미착수**.
 
 ### 4단계 — 정책 확정(미착수)

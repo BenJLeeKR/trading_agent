@@ -26,6 +26,9 @@ from agent_trading.api.schemas import (
     LossCutShadowSampleView,
     LossCutShadowSamplesResponse,
     LossCutShadowSummaryResponse,
+    LossCutShadowTimelineRealizedEventView,
+    LossCutShadowTimelineResponse,
+    LossCutShadowTimelineSampleView,
     PaginatedTradeDecisionsResponse,
     TradeDecisionDetail,
     WatchDiagnosticsEvidenceStrengthItem,
@@ -990,6 +993,115 @@ async def list_loss_cut_shadow_samples(
         limit=limit,
         before=before,
         items=items,
+    )
+
+
+_LOSS_CUT_SHADOW_TIMELINE_DEFAULT_EVENT_LIMIT = 5
+_LOSS_CUT_SHADOW_TIMELINE_MAX_EVENT_LIMIT = 50
+
+
+@router.get(
+    "/trade-decisions/loss-cut-shadow/samples/{trade_decision_id}/timeline",
+    response_model=LossCutShadowTimelineResponse,
+)
+async def get_loss_cut_shadow_sample_timeline(
+    trade_decision_id: str,
+    account_id: str = Query(..., description="Account UUID (ownership check)"),
+    event_limit: int = Query(
+        _LOSS_CUT_SHADOW_TIMELINE_DEFAULT_EVENT_LIMIT,
+        ge=1,
+        le=_LOSS_CUT_SHADOW_TIMELINE_MAX_EVENT_LIMIT,
+        description="Maximum realized PnL events to return after the shadow sample",
+    ),
+    repos: RepositoryContainer = Depends(get_repos),
+) -> LossCutShadowTimelineResponse:
+    """shadow sample 1건과 그 이후 같은 계좌×종목의 realized PnL event를
+
+    시간순으로 나란히 보여준다. **후속 참고 타임라인이지 인과 매칭이
+    아니다** — ``realized_events``에 나온 이벤트가 이 shadow sample
+    "때문에" 발생했다는 뜻이 아니다. 새 손익 계산이나 새 trigger
+    판정은 하지 않는다 — ``trade_decisions.decision_json.loss_cut_
+    shadow``와 ``realized_pnl_events``를 그대로 읽어 시간순으로만
+    나열한다.
+
+    연결 기준: ``account_id + instrument_id + fill_timestamp >=
+    sample.created_at``(오름차순, ``event_limit``건까지). ``account_id``
+    쿼리 파라미터는 이 sample이 호출자가 알고 있는 계좌 소유인지
+    확인하는 용도다 — 일치하지 않으면 404(다른 계좌의 존재 여부를
+    노출하지 않기 위해 403이 아니라 404).
+    """
+    td_id = _parse_query_uuid(trade_decision_id, field="trade_decision_id")
+    aid = _parse_query_uuid(account_id, field="account_id")
+
+    decision = await repos.trade_decisions.get(td_id)
+    if decision is None:
+        raise HTTPException(status_code=404, detail="trade_decision not found")
+
+    shadow = (decision.decision_json or {}).get("loss_cut_shadow")
+    if shadow is None:
+        raise HTTPException(
+            status_code=404,
+            detail="no loss_cut_shadow observation recorded for this trade_decision_id",
+        )
+
+    context = await repos.decision_contexts.get(decision.decision_context_id)
+    if context is None or context.account_id != aid:
+        raise HTTPException(status_code=404, detail="trade_decision not found")
+
+    instrument_id_raw = shadow.get("instrument_id")
+    if not instrument_id_raw:
+        # skipped_reason이 있는 관측(가격 미확보 등)은 instrument_id가
+        # 없을 수 있다 — realized event와 연결할 키가 없으므로 빈
+        # 타임라인으로 응답한다(에러 아님, 정상적으로 발생 가능한 상태).
+        realized_events: list = []
+    else:
+        instrument_id = UUID(instrument_id_raw)
+        events = await repos.realized_pnl_events.list_by_account_and_instrument_since(
+            aid,
+            instrument_id,
+            since=decision.created_at,
+            limit=event_limit,
+        )
+        realized_events = [
+            LossCutShadowTimelineRealizedEventView(
+                realized_pnl_event_id=event.realized_pnl_event_id,
+                fill_event_id=event.fill_event_id,
+                fill_timestamp=event.fill_timestamp,
+                sell_quantity=event.sell_quantity,
+                sell_price=event.sell_price,
+                avg_cost_basis_before=event.avg_cost_basis_before,
+                realized_pnl_net=event.realized_pnl_net,
+                position_quantity_after=event.position_quantity_after,
+                broker_order_id=event.broker_order_id,
+                computation_run_id=event.computation_run_id,
+                seconds_after_shadow=(
+                    event.fill_timestamp - decision.created_at
+                ).total_seconds(),
+            )
+            for event in events
+        ]
+
+    sample = LossCutShadowTimelineSampleView(
+        trade_decision_id=decision.trade_decision_id,
+        account_id=aid,
+        decision_context_id=decision.decision_context_id,
+        symbol=decision.symbol,
+        instrument_id=UUID(instrument_id_raw) if instrument_id_raw else None,
+        created_at=decision.created_at,
+        source_type=decision.source_type or "unknown",
+        actual_decision_type=_safe_enum_str(decision.decision_type),
+        triggered=shadow.get("triggered"),
+        tier=shadow.get("tier"),
+        loss_pct=shadow.get("loss_pct"),
+        average_price=shadow.get("average_price"),
+        market_price=shadow.get("market_price"),
+        shadow_only=shadow.get("shadow_only"),
+    )
+
+    return LossCutShadowTimelineResponse(
+        sample=sample,
+        realized_events=realized_events,
+        realized_event_limit=event_limit,
     )
 
 

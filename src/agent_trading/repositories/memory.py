@@ -1197,6 +1197,24 @@ class InMemoryRealizedPnlEventRepository:
         items.sort(key=lambda item: item.fill_timestamp, reverse=True)
         return tuple(items[:limit])
 
+    async def list_by_account_and_instrument_since(
+        self,
+        account_id: UUID,
+        instrument_id: UUID,
+        *,
+        since: datetime,
+        limit: int = 20,
+    ) -> Sequence[RealizedPnlEventEntity]:
+        items = [
+            item
+            for item in self._items.values()
+            if item.account_id == account_id
+            and item.instrument_id == instrument_id
+            and item.fill_timestamp >= since
+        ]
+        items.sort(key=lambda item: item.fill_timestamp)
+        return tuple(items[:limit])
+
 
 class InMemoryRealizedPnlDailyAggregateRepository:
     def __init__(self) -> None:
