@@ -11568,3 +11568,27 @@ conditional_entry_signal_v1.md` 참고)으로 재개한다.** Loss-cut
   못 했다.
 - **이후 우선순위는 변경 없음**: `SPPV-3`가 여전히 다음 주력
   작업이다. 3단계(shadow 누적 실측)는 표본 축적 대기 상태다.
+
+## Loss-cut shadow inspection/read API 보강 완료 — 정책 도입 아님, read path 추가(2026-08-11 KST)
+
+위 항목이 완료한 shadow 관측 구현의 read path를 보강했다. **이번
+작업도 shadow 관측 read path 추가다 — 실주문 결정 변경 없음, 정식
+loss-cut 정책 도입 아님.**
+
+- `GET /trade-decisions/loss-cut-shadow/summary`(계좌×기간 집계:
+  전체 표본 수/`triggered`·soft·hard 건수/`source_type`별 분포/
+  실제 `decision_type` 분포/`trigger_rate`) + `GET /trade-decisions/
+  loss-cut-shadow/samples`(개별 관측 표본, `tier`/`triggered`/
+  `source_type`/`symbol` 필터 + `before`/`limit` cursor
+  pagination)를 `decisions.py`(기존 `watch-diagnostics`/
+  `candidate-alignment-diagnostics`와 같은 파일·같은 톤)에
+  추가했다.
+- `TradeDecisionRepository.list_loss_cut_shadow_observations()`
+  (신규 read 메서드, Protocol/Postgres/InMemory 3종 구현) —
+  `decision_contexts` JOIN으로 계좌 필터링, `decision_json`은
+  그대로 읽기만 한다. 집계(카운트)는 route에서 수행 —
+  `realized_pnl` summary와 동일한 관례.
+- 신규 테이블/마이그레이션/계산 엔진 없음.
+- **이후 우선순위는 변경 없음**: `SPPV-3`가 여전히 다음 주력
+  작업이다. 이 read path는 3단계(shadow 누적 실측) 착수 시 그대로
+  재사용할 수 있다.
