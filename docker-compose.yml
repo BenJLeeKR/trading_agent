@@ -354,6 +354,16 @@ services:
       # false로 하위 호환 보존, 명시적으로 true로 설정해야만 §5개 조건을
       # 모두 만족하는 매우 좁은 근소부족 사례에 한해 예외 통과 적용.
       EV_GATE_NEAR_MISS_OVERRIDE_ENABLED: "${EV_GATE_NEAR_MISS_OVERRIDE_ENABLED:-false}"
+      # loss-cut shadow 관측 전용 스위치(§13/DecisionOrchestrator._maybe_
+      # evaluate_loss_cut_shadow) — 위 R3b alpha/EV near-miss 스위치와 동일한
+      # 이유로 이 화이트리스트에 선언돼 있지 않아 `/etc/agent_trading/runtime.env`에
+      # 값을 설정해도 이 컨테이너의 실제 run_decision_loop.py 프로세스에는 전달되지
+      # 않았다. 실제 주문에는 영향을 주지 않는 관측 전용 shadow 로직이며, 기본값은
+      # 각 config 모듈의 기본값(loss_cut_shadow_enabled=False, soft=7, hard=12)과
+      # 동일하게 유지해 하위 호환을 보존한다.
+      LOSS_CUT_SHADOW_ENABLED: "${LOSS_CUT_SHADOW_ENABLED:-false}"
+      LOSS_CUT_SHADOW_SOFT_THRESHOLD_PCT: "${LOSS_CUT_SHADOW_SOFT_THRESHOLD_PCT:-7}"
+      LOSS_CUT_SHADOW_HARD_THRESHOLD_PCT: "${LOSS_CUT_SHADOW_HARD_THRESHOLD_PCT:-12}"
       # core universe(decision_loop_intraday) 크기 상한(SPPV-2.102~2.105) —
       # 이 화이트리스트에 선언돼 있지 않으면 호스트 `.env` 값이 이 컨테이너
       # 실제 프로세스에는 전달되지 않는다(위 R3b alpha 스위치와 동일 이슈).
