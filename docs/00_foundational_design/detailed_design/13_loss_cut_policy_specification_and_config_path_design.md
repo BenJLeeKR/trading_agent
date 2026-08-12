@@ -267,6 +267,15 @@ orchestrator.py`)로 만들었다 — 어떤 `object.__setattr__` 호출도
   — 신규 repository 메서드 없이 기존 3개 read 메서드를 조합만
   했고, 두 값을 인과관계로 해석하지 않는다(상세: action plan
   "2단계 후속 3").
+- **sample × 이후 realized event 타임라인 추가(2026-08-11 추가
+  후속)**: `GET /trade-decisions/loss-cut-shadow/samples/
+  {trade_decision_id}/timeline`로 shadow sample 1건과 그 이후
+  같은 `account_id + instrument_id`의 realized event(fill_timestamp
+  오름차순, 최대 `event_limit`건)를 나란히 보여준다 — 신규
+  repository 메서드 1개(`RealizedPnlEventRepository.list_by_
+  account_and_instrument_since()`, 정렬 방향이 반대라 기존 메서드
+  재사용 불가)만 추가했고, 후속 참고 타임라인일 뿐 인과 매칭이
+  아니다(상세: action plan "2단계 후속 4").
 
 ## 4. 설정 경로 설계 초안
 

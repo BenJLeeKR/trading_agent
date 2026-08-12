@@ -11630,3 +11630,20 @@ count`/`soft_trigger_count`/`hard_trigger_count`/`shadow_only_count`/
   작업이다. 3단계(shadow 누적 실측) 착수 시 이 4종
   (summary/samples/daily/by-instrument) read path를 그대로
   재사용할 수 있다.
+
+## Loss-cut shadow sample × 이후 realized event 타임라인 API 추가 — 정책 도입 아님, 새 계산 없음(2026-08-11 KST)
+
+`GET /trade-decisions/loss-cut-shadow/samples/{trade_decision_id}/
+timeline`을 추가해 shadow sample 1건과 그 이후 같은 종목의
+realized event를 시간순으로 보여준다. **이번 작업도 read path
+추가다 — 실주문 결정 변경 없음, 정식 loss-cut 정책 도입 아님.**
+
+- 신규 repository 메서드 1개(`RealizedPnlEventRepository.list_by_
+  account_and_instrument_since()`) — 기존 메서드와 정렬 방향(오름
+  차순 vs 최신순)이 반대라 최소한으로 추가했다.
+- **후속 참고 타임라인이지 인과 매칭이 아니다** — 응답에 "이
+  event가 이 shadow 때문에 발생했다" 같은 판정 필드는 없다.
+- **이후 우선순위는 변경 없음**: `SPPV-3`가 여전히 다음 주력
+  작업이다. 3단계(shadow 누적 실측) 착수 시 이 5종
+  (summary/samples/daily/by-instrument/timeline) read path를
+  그대로 재사용할 수 있다.

@@ -6650,3 +6650,29 @@ inspection API 추가 완료 — read path 확장, 새 계산 없음, 정식
   3단계 실측 중 확인되면, "shadow 시점 이후 첫 realized event"
   근사 매칭 로직을 별도로 설계해야 한다 — 이번 턴에서는 의도적으로
   미루었다.
+
+**[2026-08-11 KST 신설, Loss-cut shadow sample × 이후 realized
+event 타임라인 API 추가 완료 — 위 "신규 backlog"(방향 A) 항목
+해소, read path 확장, 정식 정책 도입 아님]** 상세:
+`docs/40_action_plans/loss_cut_policy_and_config_path_action_plan.md`
+"2단계 후속 4".
+
+- 바로 위 항목이 "이번 턴에서는 의도적으로 미루었다"고 남긴
+  방향 A(샘플별 nearest realized event 매칭)를 이번 턴에 구현했다:
+  `GET /trade-decisions/loss-cut-shadow/samples/{trade_decision_id}/
+  timeline`.
+- 신규 repository 메서드 1개(`RealizedPnlEventRepository.list_by_
+  account_and_instrument_since()`, Protocol/Postgres/InMemory
+  3종) — 기존 `list_by_account_and_instrument()`와 정렬 방향이
+  반대(오름차순 vs 최신순)라 재사용 불가해 최소 추가했다.
+- **신규 backlog — postgres 신규 메서드 미검증**: 이번에 추가한
+  `PostgresRealizedPnlEventRepository.list_by_account_and_
+  instrument_since()`는 이 세션의 두 검증 환경(DB 없는
+  dev-validation container, 기존 asyncpg 루프 버그가 있는
+  `agent_trading-app-1`) 모두에서 실행 확인이 안 됐다 —
+  PR #229/#231에서 이미 등록된 "DB 접근 가능한 검증 환경 부재"
+  backlog와 동일 원인. 별도 repository 단위 테스트는 in-memory
+  구현만 API 테스트로 간접 검증됐고, postgres SQL 자체는 코드
+  리뷰 수준으로만 검증됐다(기존 `list_by_account_and_instrument()`
+  와 거의 동일한 쿼리 구조 — WHERE 부등호 방향과 ORDER BY 방향만
+  반전).

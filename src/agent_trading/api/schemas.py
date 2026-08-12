@@ -1066,6 +1066,66 @@ class LossCutShadowByInstrumentResponse(BaseModel):
     items: list[LossCutShadowByInstrumentItem]
 
 
+class LossCutShadowTimelineSampleView(BaseModel):
+    """`GET /trade-decisions/loss-cut-shadow/samples/{trade_decision_id}/timeline`
+
+    응답의 shadow sample 부분 — `samples`의 개별 항목과 동일한 필드다."""
+
+    trade_decision_id: UUID
+    account_id: UUID
+    decision_context_id: UUID
+    symbol: str
+    instrument_id: UUID | None = None
+    created_at: datetime
+    source_type: str
+    actual_decision_type: str
+    triggered: bool | None = None
+    tier: str | None = None
+    loss_pct: Decimal | None = None
+    average_price: Decimal | None = None
+    market_price: Decimal | None = None
+    shadow_only: bool | None = None
+
+
+class LossCutShadowTimelineRealizedEventView(BaseModel):
+    """shadow sample 이후 같은 종목에서 실제로 발생한 realized PnL event 1건.
+
+    ``realized_pnl_events``를 그대로 읽은 값이다 — 계산 없음.
+    ``seconds_after_shadow``만 sample의 ``created_at``과의 단순
+    시간차(뺄셈)이고, 그 외 판정/해석은 없다."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    realized_pnl_event_id: UUID
+    fill_event_id: UUID
+    fill_timestamp: datetime
+    sell_quantity: Decimal
+    sell_price: Decimal
+    avg_cost_basis_before: Decimal
+    realized_pnl_net: Decimal
+    position_quantity_after: Decimal
+    broker_order_id: UUID
+    computation_run_id: UUID
+    seconds_after_shadow: float
+    """``(fill_timestamp - sample.created_at).total_seconds()``. 항상
+    0 이상이다(``since=sample.created_at``으로 조회했으므로)."""
+
+
+class LossCutShadowTimelineResponse(BaseModel):
+    """`GET /trade-decisions/loss-cut-shadow/samples/{trade_decision_id}/timeline` 응답.
+
+    **후속 참고 타임라인이지 인과 매칭이 아니다.** ``realized_events``에
+    담긴 이벤트가 이 shadow sample "때문에" 발생했다는 뜻이 아니다 —
+    같은 계좌×종목에서 이 sample 시점 이후 실제로 기록된 realized
+    event를 시간순으로 나열할 뿐이다. "이 shadow가 손실을 막았다/
+    적중했다" 같은 판정은 이 응답에 없다.
+    """
+
+    sample: LossCutShadowTimelineSampleView
+    realized_events: list[LossCutShadowTimelineRealizedEventView]
+    realized_event_limit: int
+
+
 class CandidateAlignmentStatusItem(BaseModel):
     """Deterministic candidate와 최종 decision의 정렬 상태 분포."""
 

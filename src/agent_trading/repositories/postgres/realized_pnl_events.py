@@ -146,3 +146,22 @@ class PostgresRealizedPnlEventRepository:
                 limit,
             )
         return tuple(row_to_entity(row, RealizedPnlEventEntity) for row in rows)
+
+    async def list_by_account_and_instrument_since(
+        self,
+        account_id: UUID,
+        instrument_id: UUID,
+        *,
+        since: datetime,
+        limit: int = 20,
+    ) -> Sequence[RealizedPnlEventEntity]:
+        rows = await self._tx.connection.fetch(
+            "SELECT * FROM trading.realized_pnl_events "
+            "WHERE account_id = $1 AND instrument_id = $2 AND fill_timestamp >= $3 "
+            "ORDER BY fill_timestamp ASC LIMIT $4",
+            account_id,
+            instrument_id,
+            since,
+            limit,
+        )
+        return tuple(row_to_entity(row, RealizedPnlEventEntity) for row in rows)

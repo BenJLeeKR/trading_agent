@@ -955,6 +955,23 @@ class RealizedPnlEventRepository(Protocol):
         """
         ...
 
+    async def list_by_account_and_instrument_since(
+        self,
+        account_id: UUID,
+        instrument_id: UUID,
+        *,
+        since: datetime,
+        limit: int = 20,
+    ) -> Sequence[RealizedPnlEventEntity]:
+        """``fill_timestamp >= since``인 이벤트를 오름차순(가장 오래된
+
+        것부터)으로 반환한다 — loss-cut shadow sample 이후 실제로 어떤
+        realized event가 이어졌는지 시간순으로 보기 위한 read-only
+        조회다. ``list_by_account_and_instrument()``(최신순, ``before``
+        커서)와는 정렬 방향과 경계 조건이 반대다 — 계산은 하지 않는다.
+        """
+        ...
+
 
 class RealizedPnlDailyAggregateRepository(Protocol):
     """조회 성능용 일자 집계 캐시 저장소.
