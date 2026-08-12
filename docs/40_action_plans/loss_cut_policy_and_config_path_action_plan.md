@@ -448,6 +448,76 @@ downside shock, holding_profile 만료)이다. 이 사실은
   import-graph 매칭은 이 신규 테스트 파일을 자동으로 잡지 못해
   별도로 확인함). 신규 repository 코드가 없어 DB 접근이 필요한
   검증 항목 자체가 없다.
+- 상태: **완료**(2026-08-12, PR #235).
+
+### 2단계 후속 8 — Shadow missing first event × realized PnL recompute queue 대사 API 추가(완료)
+
+- 왜: 운영자가 지금까지는 (1) `missing-first-event-causes`에서
+  `recompute_required` 비중 확인 → (2)
+  `missing-first-event-samples?cause=recompute_required`로 sample
+  목록 확인 → (3) 별도로 `/performance/realized-pnl/recompute-
+  queue`를 또 조회해 수작업 대조하는 3단계를 거쳐야 했다 — 이 세
+  단계를 한 번에 줄이는 최소 read path다. **새로운 판단 로직/자동
+  복구 로직/queue write가 아니라, 이미 저장된 두 read path(missing
+  sample, recompute queue)를 계좌×종목 기준으로 나란히 놓는 운영
+  대사(reconciliation) inspection**이다.
+- **join 기준**: `account_id + instrument_id`. `trade_decision_id`
+  와 특정 queue 항목을 1:1로 매칭하지 않는다 — 하나의 종목에
+  queue pending이 여러 건 걸려 있을 수 있고(`queue_pending_
+  count`/`queue_reason_codes`로 노출), sample `created_at`과 queue
+  `requested_at`의 선후 관계는 참고 정보로만 제공한다(자동 해석
+  없음).
+- **`recompute_required` vs `queue_pending`은 서로 다른 축**임을
+  명시적으로 구분한다(응답 스키마 docstring에도 명시):
+  1. `queue_pending_match_count` — `recompute_required=true` +
+     queue pending 있음.
+  2. `queue_pending_missing_count` — `recompute_required=true`인데
+     queue pending 없음(queue가 없다고 바로 버그로 단정하지 않음,
+     inspection 결과만 보여줌).
+  3. `queue_pending_extra_count` — `recompute_required`가 true가
+     아닌데도 queue pending이 있음(두 축이 어긋나는 신호).
+  4. 종목당 queue pending 다건 여부는 `queue_pending_count`로 항상
+     노출.
+- 모집단은 `missing-first-event-samples`와 동일(`triggered=true`
+  + first realized event 없음, **cause로 필터링하지 않음** — case
+  3을 보려면 recompute_required 이외 cause에서도 queue 상태를
+  봐야 하기 때문). cause 판정은 `_classify_missing_first_event_
+  cause()`를 그대로 재사용.
+- 산출물:
+  - `GET /trade-decisions/loss-cut-shadow/missing-first-event-
+    recompute-cross-check` — 계좌×기간(+선택 `source_type`/`tier`/
+    `before`/`limit`) 기준 top-level summary(`sample_count`/
+    `queue_pending_match_count`/`queue_pending_missing_count`/
+    `queue_pending_extra_count`/`recompute_required_queue_match_
+    rate`) + sample별 행(`trade_decision_id`/`created_at`/
+    `symbol`/`instrument_id`/`source_type`/`actual_decision_type`/
+    `tier`/`cause`/`recompute_required`/`position_quantity`/
+    `queue_pending`/`queue_pending_count`/`queue_oldest_requested_
+    at`/`queue_reason_codes`/`has_first_realized_event`(항상
+    `false`)).
+  - 정렬/페이지네이션: 기존 `samples`/`missing-first-event-
+    samples`와 동일한 `created_at` 내림차순 + `before`/`limit`.
+  - **신규 repository 메서드 0개** — 기존 `list_loss_cut_shadow_
+    observations()`/`realized_pnl_events.list_by_account_and_
+    instrument_since()`/`position_cost_basis_states.get()`/
+    `realized_pnl_recompute_queue.list_pending()` 4개만 조합했다.
+    큐 스캔 방식은 `/performance/realized-pnl/recompute-queue`
+    (`realized_pnl.py`)와 동일하게 `list_pending()`(계좌 필터
+    없음)을 스캔 깊이 100건까지 가져온 뒤 애플리케이션 레벨에서
+    `account_id`로 필터링한다 — 이 방식의 한계(스캔 깊이를 넘는
+    오래된 pending은 놓칠 수 있음)도 기존 endpoint와 동일하게
+    그대로 물려받는다(새로 만든 제약이 아니다).
+  - 신규 테이블/마이그레이션/계산 엔진 없음.
+- 한계(응답 스키마에도 명시): **운영 대사 inspection이지 인과
+  확정 도구가 아니다.**
+- 검증: `py_compile`, `accept architecture`/`backend-runtime`/
+  `db-structure`/`no-bypass`/`docs` PASS, 신규 API 테스트 4건
+  (match/missing/extra 3케이스 + `queue_pending_count`/
+  `queue_reason_codes` 정확도, 다른 계좌의 queue 항목이 섞이지
+  않는지, `limit`/`before` cursor, 빈 모집단) 전부
+  dev-validation container에서 PASS(`test-file`로 직접 실행).
+  신규 repository 코드가 없어 DB 접근이 필요한 검증 항목 자체가
+  없다.
 - 상태: **완료**(2026-08-12, 이번 PR).
 
 ### 3단계 — Shadow 누적 실측(미착수)
@@ -459,8 +529,8 @@ downside shock, holding_profile 만료)이다. 이 사실은
   주기적 실측 보고. read path는 이번에 추가한
   summary/samples/daily/by-instrument/timeline/first-realized-
   event-latency/missing-first-event-causes/missing-first-event-
-  samples API를 그대로 재사용할 수 있다 — 별도 조회 도구를 새로
-  만들 필요는 없다.
+  samples/missing-first-event-recompute-cross-check API를 그대로
+  재사용할 수 있다 — 별도 조회 도구를 새로 만들 필요는 없다.
 - 상태: **미착수**.
 
 ### 4단계 — 정책 확정(미착수)

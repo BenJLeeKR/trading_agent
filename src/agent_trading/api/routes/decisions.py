@@ -31,6 +31,8 @@ from agent_trading.api.schemas import (
     LossCutShadowMissingGroupBreakdownItem,
     LossCutShadowMissingSamplesResponse,
     LossCutShadowMissingSampleView,
+    LossCutShadowRecomputeCrossCheckResponse,
+    LossCutShadowRecomputeCrossCheckSampleView,
     LossCutShadowSampleView,
     LossCutShadowSamplesResponse,
     LossCutShadowSummaryResponse,
@@ -1597,6 +1599,187 @@ async def list_loss_cut_shadow_missing_first_event_samples(
         source_type=source_type,
         tier=tier,
         cause=cause,
+        limit=limit,
+        before=before,
+        items=items,
+    )
+
+
+# 큐 전체를 스캔하는 기본 깊이 — `/performance/realized-pnl/recompute-queue`
+# (realized_pnl.py)의 `_DEFAULT_RECOMPUTE_QUEUE_LIMIT`과 동일한 값·동일한
+# 한계(계좌 필터가 없는 `list_pending()`을 애플리케이션 레벨에서 필터링)를
+# 그대로 따른다.
+_LOSS_CUT_SHADOW_RECOMPUTE_QUEUE_SCAN_LIMIT = 100
+_LOSS_CUT_SHADOW_RECOMPUTE_CROSS_CHECK_DEFAULT_LIMIT = 50
+
+
+@router.get(
+    "/trade-decisions/loss-cut-shadow/missing-first-event-recompute-cross-check",
+    response_model=LossCutShadowRecomputeCrossCheckResponse,
+)
+async def get_loss_cut_shadow_missing_first_event_recompute_cross_check(
+    account_id: str = Query(..., description="Account UUID"),
+    start_date: date = Query(..., description="Start date (YYYY-MM-DD, KST)"),
+    end_date: date = Query(..., description="End date (YYYY-MM-DD, KST)"),
+    source_type: str | None = Query(None, description="Optional source_type filter"),
+    tier: str | None = Query(None, description="Optional tier filter (soft|hard)"),
+    before: datetime | None = Query(
+        None, description="Optional — only samples created before this instant"
+    ),
+    limit: int = Query(
+        _LOSS_CUT_SHADOW_RECOMPUTE_CROSS_CHECK_DEFAULT_LIMIT,
+        ge=1,
+        le=500,
+        description="Maximum samples to return",
+    ),
+    repos: RepositoryContainer = Depends(get_repos),
+) -> LossCutShadowRecomputeCrossCheckResponse:
+    """missing-first-event sample들과 realized PnL recompute queue를
+
+    ``account_id + instrument_id`` 기준으로 나란히 대사(reconciliation)
+    한다. **운영 대사 inspection이지 인과 확정 도구가 아니다** —
+    ``trade_decision_id``와 특정 queue 항목을 1:1로 인과 매칭하지
+    않는다. ``recompute_required``(``position_cost_basis_state``,
+    sample 관점)와 ``queue_pending``(``realized_pnl_recompute_
+    queue``, 큐 관점)는 서로 다른 축이라 항상 같이 움직이지 않을 수
+    있다 — 이 둘이 어긋나는 케이스(``queue_pending_missing_count``/
+    ``queue_pending_extra_count``)를 드러내는 것이 이 endpoint의
+    핵심 목적이다.
+
+    모집단은 ``missing-first-event-samples``와 동일하다(``triggered=
+    true``이고 first realized event가 없는 sample 전체, cause로
+    필터링하지 않음 — recompute_required가 아닌 cause에서도 queue
+    pending이 걸려 있는지 보려면 cause를 좁히면 안 되기 때문이다).
+    cause 판정은 ``_classify_missing_first_event_cause()``를 그대로
+    재사용한다. 정렬/페이지네이션은 ``missing-first-event-samples``
+    와 동일하게 ``created_at`` 내림차순 + ``before``/``limit``.
+
+    queue 쪽은 ``realized_pnl_recompute_queue.list_pending()``이
+    계좌 필터를 지원하지 않으므로(``/performance/realized-pnl/
+    recompute-queue``와 동일한 한계), 최근
+    ``_LOSS_CUT_SHADOW_RECOMPUTE_QUEUE_SCAN_LIMIT``건을 스캔한 뒤
+    애플리케이션 레벨에서 ``account_id + instrument_id``로 필터링한다
+    — 큐 전체 미해결 건수가 이 스캔 깊이를 넘으면 오래된 pending
+    항목을 놓칠 수 있다(기존 recompute-queue endpoint와 동일한
+    한계, 새로 만든 제약이 아니다).
+    """
+    if start_date > end_date:
+        raise HTTPException(
+            status_code=400, detail="start_date must be on or before end_date"
+        )
+    aid = _parse_query_uuid(account_id, field="account_id")
+
+    queue_items = await repos.realized_pnl_recompute_queue.list_pending(
+        limit=_LOSS_CUT_SHADOW_RECOMPUTE_QUEUE_SCAN_LIMIT
+    )
+    queue_by_instrument: dict[UUID, list] = {}
+    for queue_item in queue_items:
+        if queue_item.account_id != aid:
+            continue
+        queue_by_instrument.setdefault(queue_item.instrument_id, []).append(queue_item)
+
+    rows = await repos.trade_decisions.list_loss_cut_shadow_observations(
+        aid,
+        start_date=start_date,
+        end_date=end_date,
+        source_type=source_type,
+        tier=tier,
+        triggered=True,
+        before=before,
+        limit=None,
+    )
+
+    sample_count = 0
+    queue_pending_match_count = 0
+    queue_pending_missing_count = 0
+    queue_pending_extra_count = 0
+    items: list[LossCutShadowRecomputeCrossCheckSampleView] = []
+
+    for row in rows:
+        shadow = row.loss_cut_shadow
+        instrument_id_raw = shadow.get("instrument_id")
+
+        is_missing = True
+        if instrument_id_raw:
+            events = await repos.realized_pnl_events.list_by_account_and_instrument_since(
+                aid,
+                UUID(instrument_id_raw),
+                since=row.created_at,
+                limit=1,
+            )
+            is_missing = not events
+        if not is_missing:
+            continue
+
+        sample_count += 1
+
+        classification = await _classify_missing_first_event_cause(
+            repos, account_id=aid, instrument_id_raw=instrument_id_raw
+        )
+        cost_basis_state = classification.cost_basis_state
+        recompute_required = (
+            cost_basis_state.recompute_required if cost_basis_state is not None else None
+        )
+
+        instrument_id = UUID(instrument_id_raw) if instrument_id_raw else None
+        matching_queue_items = (
+            queue_by_instrument.get(instrument_id, []) if instrument_id is not None else []
+        )
+        queue_pending = len(matching_queue_items) > 0
+
+        if recompute_required is True and queue_pending:
+            queue_pending_match_count += 1
+        elif recompute_required is True and not queue_pending:
+            queue_pending_missing_count += 1
+        elif recompute_required is not True and queue_pending:
+            queue_pending_extra_count += 1
+
+        if len(items) < limit:
+            oldest_requested_at = (
+                min(
+                    (q.requested_at for q in matching_queue_items if q.requested_at is not None),
+                    default=None,
+                )
+                if matching_queue_items
+                else None
+            )
+            reason_codes = sorted({q.reason_code for q in matching_queue_items})
+            items.append(
+                LossCutShadowRecomputeCrossCheckSampleView(
+                    trade_decision_id=row.trade_decision_id,
+                    created_at=row.created_at,
+                    symbol=row.symbol,
+                    instrument_id=instrument_id,
+                    source_type=row.source_type,
+                    actual_decision_type=row.actual_decision_type,
+                    tier=shadow.get("tier"),
+                    cause=classification.cause,
+                    recompute_required=recompute_required,
+                    position_quantity=(
+                        cost_basis_state.quantity if cost_basis_state is not None else None
+                    ),
+                    queue_pending=queue_pending,
+                    queue_pending_count=len(matching_queue_items),
+                    queue_oldest_requested_at=oldest_requested_at,
+                    queue_reason_codes=reason_codes,
+                    has_first_realized_event=False,
+                )
+            )
+
+    match_denominator = queue_pending_match_count + queue_pending_missing_count
+    return LossCutShadowRecomputeCrossCheckResponse(
+        account_id=aid,
+        start_date=start_date,
+        end_date=end_date,
+        source_type=source_type,
+        tier=tier,
+        sample_count=sample_count,
+        queue_pending_match_count=queue_pending_match_count,
+        queue_pending_missing_count=queue_pending_missing_count,
+        queue_pending_extra_count=queue_pending_extra_count,
+        recompute_required_queue_match_rate=(
+            queue_pending_match_count / match_denominator if match_denominator > 0 else None
+        ),
         limit=limit,
         before=before,
         items=items,

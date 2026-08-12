@@ -1281,6 +1281,79 @@ class LossCutShadowMissingSamplesResponse(BaseModel):
     items: list[LossCutShadowMissingSampleView]
 
 
+class LossCutShadowRecomputeCrossCheckSampleView(BaseModel):
+    """`GET /trade-decisions/loss-cut-shadow/missing-first-event-
+
+    recompute-cross-check`의 개별 행 — missing sample 1건 + 그
+    계좌×종목의 realized PnL recompute queue 상태를 나란히 보여준다.
+    ``recompute_required``(``position_cost_basis_state``, sample
+    관점)와 ``queue_pending``(``realized_pnl_recompute_queue``,
+    큐 관점)는 **서로 다른 축**이다 — 둘이 항상 같이 움직인다고
+    가정하지 않는다(이 endpoint의 핵심 존재 이유이기도 하다).
+    """
+
+    trade_decision_id: UUID
+    created_at: datetime
+    symbol: str
+    instrument_id: UUID | None = None
+    source_type: str
+    actual_decision_type: str
+    tier: str | None = None
+    cause: str
+    recompute_required: bool | None = None
+    position_quantity: Decimal | None = None
+    queue_pending: bool
+    """이 계좌×종목에 대해 ``realized_pnl_recompute_queue``에 미해결
+    (``resolved_at IS NULL``) 항목이 1건이라도 있으면 ``True``."""
+    queue_pending_count: int
+    queue_oldest_requested_at: datetime | None = None
+    """가장 오래된 pending 항목의 ``requested_at``. 참고 정보일 뿐 —
+    ``created_at``과의 선후 관계를 이 응답이 자동으로 해석하지
+    않는다."""
+    queue_reason_codes: list[str]
+    has_first_realized_event: bool = False
+
+
+class LossCutShadowRecomputeCrossCheckResponse(BaseModel):
+    """`GET /trade-decisions/loss-cut-shadow/missing-first-event-
+    recompute-cross-check` 응답.
+
+    **운영 대사(reconciliation) inspection이지 인과 확정 도구가
+    아니다.** ``account_id + instrument_id`` 기준으로 missing
+    sample과 recompute queue를 나란히 놓을 뿐이며, ``trade_decision_
+    id``와 특정 queue 항목을 1:1로 인과 매칭하지 않는다. 하나의
+    종목에 queue pending이 여러 건 걸려 있을 수 있고, sample
+    ``created_at``과 queue ``requested_at``의 선후 관계도 참고
+    정보로만 제공한다.
+    """
+
+    account_id: UUID
+    start_date: date
+    end_date: date
+    source_type: str | None = None
+    tier: str | None = None
+    sample_count: int
+    """모집단 — 기간 내 ``triggered=true``이고 first realized event가
+    없는(모든 cause 포함) shadow sample 총 건수."""
+    queue_pending_match_count: int
+    """``recompute_required=true``이면서 같은 계좌×종목에 queue
+    pending도 있는 sample 수(케이스 1)."""
+    queue_pending_missing_count: int
+    """``recompute_required=true``인데 queue에는 pending이 없는
+    sample 수(케이스 2) — queue가 없다고 바로 버그로 단정하지
+    않는다, inspection 결과만 보여준다."""
+    queue_pending_extra_count: int
+    """``recompute_required``가 true가 아닌데도 같은 계좌×종목에
+    queue pending이 있는 sample 수(케이스 3) — ``recompute_
+    required``와 queue pending이 서로 다른 축임을 보여주는 신호."""
+    recompute_required_queue_match_rate: float | None = None
+    """``queue_pending_match_count / (queue_pending_match_count +
+    queue_pending_missing_count)``. 분모가 0이면 ``None``."""
+    limit: int
+    before: datetime | None = None
+    items: list[LossCutShadowRecomputeCrossCheckSampleView]
+
+
 class CandidateAlignmentStatusItem(BaseModel):
     """Deterministic candidate와 최종 decision의 정렬 상태 분포."""
 
