@@ -1231,6 +1231,56 @@ class LossCutShadowMissingFirstEventCausesResponse(BaseModel):
     by_decision_type: list[LossCutShadowMissingGroupBreakdownItem]
 
 
+class LossCutShadowMissingSampleView(BaseModel):
+    """`GET /trade-decisions/loss-cut-shadow/missing-first-event-samples`의
+
+    개별 행 — first realized event가 안 잡힌 shadow sample 1건.
+    ``cause``는 ``missing-first-event-causes``와 **완전히 동일한**
+    판정 함수(``_classify_missing_first_event_cause()``)로 계산한
+    값이라, 두 endpoint 사이에 판정 불일치가 생기지 않는다.
+    ``has_first_realized_event``는 이 endpoint 자체가 "missing" 표본만
+    다루므로 항상 ``False``다 — 응답을 보는 사람이 별도 설명 없이도
+    "이 표본은 first realized event가 없다"는 것을 필드만 보고 알 수
+    있게 명시적으로 둔다."""
+
+    trade_decision_id: UUID
+    created_at: datetime
+    symbol: str
+    instrument_id: UUID | None = None
+    source_type: str
+    actual_decision_type: str
+    tier: str | None = None
+    triggered: bool | None = None
+    loss_pct: Decimal | None = None
+    shadow_only: bool | None = None
+    cause: str
+    recompute_required: bool | None = None
+    """``position_cost_basis_state.recompute_required`` — state가
+    없으면(``missing_position_state``/``missing_instrument_linkage``
+    bucket) ``None``."""
+    position_quantity: Decimal | None = None
+    """``position_cost_basis_state.quantity`` — state가 없으면 ``None``."""
+    has_first_realized_event: bool = False
+
+
+class LossCutShadowMissingSamplesResponse(BaseModel):
+    """`GET /trade-decisions/loss-cut-shadow/missing-first-event-samples` 응답.
+
+    **개별 사례 drilldown이지 인과 확정 도구가 아니다** — 각 row는
+    ``missing-first-event-causes``가 집계하는 것과 같은 모집단·같은
+    판정 규칙을 그대로 원시 행 단위로 보여줄 뿐이다."""
+
+    account_id: UUID
+    start_date: date
+    end_date: date
+    source_type: str | None = None
+    tier: str | None = None
+    cause: str | None = None
+    limit: int
+    before: datetime | None = None
+    items: list[LossCutShadowMissingSampleView]
+
+
 class CandidateAlignmentStatusItem(BaseModel):
     """Deterministic candidate와 최종 decision의 정렬 상태 분포."""
 

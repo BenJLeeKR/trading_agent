@@ -394,6 +394,60 @@ downside shock, holding_profile 만료)이다. 이 사실은
   빈 표본, `tier` 필터) 전부 dev-validation container에서 PASS.
   신규 repository 코드가 없어 DB 접근이 필요한 검증 항목 자체가
   없다.
+- 상태: **완료**(2026-08-12, PR #234).
+
+### 2단계 후속 7 — Shadow missing first event 원인별 sample drilldown API 추가(완료)
+
+- 왜: `missing-first-event-causes`는 bucket별 **집계**만 보여줄 뿐,
+  "그 bucket에 속한 실제 sample이 무엇인지"를 바로 조회할 수
+  없었다 — 운영자가 집계에서 이상 신호(예: `recompute_required`가
+  많음)를 확인한 뒤 실제 케이스로 즉시 drilldown할 최소 read
+  path다. **새로운 매매 판단이나 causality 해석이 아니라, 이미
+  분류된 원인 bucket을 원시 sample 행 단위로 나열하는 개별 사례
+  inspection**이다.
+- **cause 판정 규칙 재사용(가장 중요)**: `missing-first-event-
+  causes`가 쓰던 `_classify_missing_first_event_cause()`를 그대로
+  공유한다 — 중복 구현 없음. 이 함수의 반환형을
+  `_MissingCauseClassification`(`cause` + `cost_basis_state`)
+  dataclass로 바꿔, drilldown endpoint가 같은 조회를 다시 하지
+  않고도 `recompute_required`/`position_quantity`를 얻을 수 있게
+  했다(causes endpoint의 카운팅 로직은 `.cause`만 쓰도록 호출부만
+  갱신 — 판정 로직 자체는 한 글자도 바뀌지 않았다). 두 endpoint
+  가 같은 표본에 대해 항상 같은 cause를 내는지 교차 테스트로
+  직접 확인했다(`test_missing_first_event_samples_filters_by_
+  cause_matches_causes_endpoint`).
+- 산출물:
+  - `GET /trade-decisions/loss-cut-shadow/missing-first-event-samples`
+    — 계좌×기간(+선택 `source_type`/`tier`/`cause`/`before`/
+    `limit`) 기준 missing sample 원시 행 목록. 각 행:
+    `trade_decision_id`/`created_at`/`symbol`/`instrument_id`/
+    `source_type`/`actual_decision_type`/`tier`/`triggered`/
+    `loss_pct`/`shadow_only`/`cause`/`recompute_required`/
+    `position_quantity`/`has_first_realized_event`(항상 `false` —
+    이 endpoint 자체가 missing 표본만 다루므로 명시적으로 고정).
+  - 정렬/페이지네이션: 기존 `samples` endpoint와 동일하게
+    `created_at` 내림차순(최신순) + `before`/`limit` cursor.
+    `before`는 `list_loss_cut_shadow_observations()` 자체의 커서
+    파라미터를 그대로 전달하고, `limit`은 missing/cause 조건을
+    만족하는 행 개수 기준으로 적용한다(원시 조회 행 개수 기준이
+    아님 — missing이 아닌 행은 세지 않음).
+  - 신규 repository 메서드 0개 — 기존 3개(`list_loss_cut_shadow_
+    observations()`/`realized_pnl_events.list_by_account_and_
+    instrument_since()`/`position_cost_basis_states.get()`)만
+    조합했다.
+  - 신규 테이블/마이그레이션/계산 엔진 없음.
+- 한계(응답 스키마에도 명시): **개별 사례 drilldown이지 인과
+  확정 도구가 아니다** — `missing-first-event-causes`와 동일한
+  한계를 그대로 물려받는다.
+- 검증: `py_compile`, `accept architecture`/`backend-runtime`/
+  `db-structure`/`no-bypass`/`docs` PASS, 신규 API 테스트 4건
+  (missing 행 + cause/position 정보 정상 조회, causes endpoint와
+  cause count 교차 일치 확인, `limit`/`before` cursor 동작,
+  잘못된 `cause` 값 400) 전부 dev-validation container에서
+  PASS(`test-file`로 직접 실행 — `accept backend-file`의
+  import-graph 매칭은 이 신규 테스트 파일을 자동으로 잡지 못해
+  별도로 확인함). 신규 repository 코드가 없어 DB 접근이 필요한
+  검증 항목 자체가 없다.
 - 상태: **완료**(2026-08-12, 이번 PR).
 
 ### 3단계 — Shadow 누적 실측(미착수)
@@ -404,8 +458,9 @@ downside shock, holding_profile 만료)이다. 이 사실은
   `regime_conditional_signal_shadow_history.jsonl`류 관례 재사용),
   주기적 실측 보고. read path는 이번에 추가한
   summary/samples/daily/by-instrument/timeline/first-realized-
-  event-latency/missing-first-event-causes API를 그대로 재사용할
-  수 있다 — 별도 조회 도구를 새로 만들 필요는 없다.
+  event-latency/missing-first-event-causes/missing-first-event-
+  samples API를 그대로 재사용할 수 있다 — 별도 조회 도구를 새로
+  만들 필요는 없다.
 - 상태: **미착수**.
 
 ### 4단계 — 정책 확정(미착수)

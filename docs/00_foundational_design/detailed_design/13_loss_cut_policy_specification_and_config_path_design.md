@@ -297,6 +297,16 @@ orchestrator.py`)로 만들었다 — 어떤 `object.__setattr__` 호출도
   되기 때문). 신규 repository 메서드 0개(기존 3개 조합). **원인
   분류 inspection이지 인과 확정 도구가 아니다** — 상세: action
   plan "2단계 후속 6".
+- **missing first event 원인별 sample drilldown 추가(2026-08-12
+  추가 후속)**: `GET /trade-decisions/loss-cut-shadow/missing-
+  first-event-samples`로 위 causes endpoint가 집계한 것과 **같은
+  판정 함수**(`_classify_missing_first_event_cause()`, 반환형을
+  `_MissingCauseClassification` dataclass로 확장해 `cost_basis_
+  state`도 같이 넘김)를 그대로 재사용해 개별 sample 행을
+  `cause`로 필터링해 보여준다. 정렬/페이지네이션은 기존 `samples`
+  endpoint와 동일한 `created_at` 내림차순 + `before`/`limit`
+  cursor. 신규 repository 메서드 0개. **개별 사례 drilldown이지
+  인과 확정 도구가 아니다** — 상세: action plan "2단계 후속 7".
 
 ## 4. 설정 경로 설계 초안
 

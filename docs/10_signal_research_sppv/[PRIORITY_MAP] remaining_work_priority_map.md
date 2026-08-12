@@ -11689,3 +11689,20 @@ loss-cut 정책 도입 아님.**
   (summary/samples/daily/by-instrument/timeline/first-realized-
   event-latency/missing-first-event-causes) read path를 그대로
   재사용할 수 있다.
+
+## Loss-cut shadow missing first event 원인별 sample drilldown API 추가 — 정책 도입 아님, 새 계산 없음(2026-08-12 KST)
+
+`GET /trade-decisions/loss-cut-shadow/missing-first-event-samples`
+를 추가해 위 항목의 원인 bucket에 속한 실제 sample 목록을
+`cause` 필터로 drilldown 조회할 수 있게 했다. **이번 작업도 read
+path 추가다 — 실주문 결정 변경 없음, 정식 loss-cut 정책 도입
+아님.**
+
+- `causes` endpoint가 쓰던 `_classify_missing_first_event_cause()`
+  를 그대로 재사용(공통 helper) — 두 endpoint의 cause 판정이
+  항상 일치하는지 교차 테스트로 직접 확인했다.
+- 신규 repository 메서드 0개. 정렬/페이지네이션은 기존 `samples`
+  endpoint와 동일한 `created_at` 내림차순 + `before`/`limit`.
+- **이후 우선순위는 변경 없음**: `SPPV-3`가 여전히 다음 주력
+  작업이다. 3단계(shadow 누적 실측) 착수 시 이 8종 read path를
+  그대로 재사용할 수 있다.
