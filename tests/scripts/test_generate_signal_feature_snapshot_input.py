@@ -588,9 +588,16 @@ async def test_resolve_frozen_universe_materializes_new_run(monkeypatch) -> None
             ),
         )
     )
+    # 실제 서비스는 compose 이후 커버리지 관측(SPPV-2.151 §139.4)을 위해
+    # count_core_eligible()도 호출한다. 이 테스트는 새 freeze run을 materialize
+    # 하는 경로를 검증하므로, compose 결과 1건에 맞춘 최소값만 둔다.
+    count_core_eligible_mock = AsyncMock(return_value=1)
     monkeypatch.setattr(
         "scripts.generate_signal_feature_snapshot_input.UniverseSelectionService",
-        lambda *args, **kwargs: SimpleNamespace(compose=compose_mock),
+        lambda *args, **kwargs: SimpleNamespace(
+            compose=compose_mock,
+            count_core_eligible=count_core_eligible_mock,
+        ),
     )
 
     result = await _resolve_frozen_universe(
