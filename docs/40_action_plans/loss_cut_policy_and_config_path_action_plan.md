@@ -592,6 +592,78 @@ downside shock, holding_profile 만료)이다. 이 사실은
   매칭은 이 테스트 파일을 자동으로 잡지 못해 별도로 확인함).
   신규 repository 코드가 없어 DB 접근이 필요한 검증 항목 자체가
   없다.
+- 상태: **완료**(2026-08-12, PR #237).
+
+### 2단계 후속 10 — queue_write_path_suspected batch timeline API 추가(완료)
+
+- 왜: `recompute-missing-queue-causes`가 `queue_write_path_
+  suspected`로 분류한 sample들을 확인하려면 지금까지는 단일
+  `.../timeline` endpoint를 **건건이** 눌러야 했다 — 의심 표본이
+  여러 건일 때 "이후 realized event가 실제로 붙었는지/얼마나
+  늦게 붙었는지/아직도 비어 있는지"를 한 번에 보는 최소 batch
+  read path다. **새로운 판단 로직/자동복구가 아니라, 기존 단일
+  timeline endpoint의 조회 규칙을 여러 sample에 반복 적용해
+  나열만 하는 batch inspection**이다.
+- **모집단 정의(중요한 설계 결정)**: `triggered=true` +
+  `recompute_required=true` + queue pending 없음 + cause 판정이
+  `queue_write_path_suspected`. `recompute-missing-queue-causes`와
+  달리 **"first realized event 없음"을 population 게이트로 쓰지
+  않는다** — 이 endpoint의 목적이 "이전에 queue_write_path_
+  suspected로 분류됐을 sample들 중 이후 실제로 event가 붙었는지"
+  를 확인하는 것이므로, event 유무로 population을 거르면 모든
+  표본이 항상 "event 없음"으로만 남아 endpoint 목적 자체가
+  성립하지 않는다. 그래서 두 endpoint를 정확히 같은 순간에
+  호출하면 population이 일치하지만, 시간이 지나 일부 표본에
+  event가 생기면 이 endpoint의 population이 causes endpoint보다
+  (이미 해소된 표본을 포함해) 더 넓을 수 있다 — 이 차이 자체가
+  이 endpoint가 답하려는 질문이다. (구현 중 이 population 게이트를
+  그대로 재사용하려다 `timeline_with_events_count`가 항상 0이
+  되는 구조적 모순을 테스트로 발견해 수정했다 — 아래 검증 참고.)
+- **단일 timeline endpoint와 공유한 규칙**: realized event 선정을
+  `_fetch_realized_events_after_shadow()` 공통 helper로 추출해
+  단일 `.../timeline`과 이번 batch endpoint가 **완전히 동일한
+  조회**(`account_id + instrument_id + fill_timestamp >=
+  sample.created_at`, 오름차순, `event_limit`건까지)를 쓴다 —
+  기존 단일 endpoint도 이 helper를 쓰도록 리팩터링해 중복 구현이
+  생기지 않게 했다(리팩터링 후 기존 111건 회귀 테스트 재확인,
+  아래 검증 참고).
+- 산출물:
+  - `GET /trade-decisions/loss-cut-shadow/queue-write-path-
+    suspected-timelines` — 계좌×기간(+선택 `source_type`/`tier`/
+    `before`/`limit`/`event_limit`) 기준 top-level summary
+    (`sample_count`/`event_limit`/`timeline_with_events_count`/
+    `timeline_without_events_count`/`first_event_found_rate`/
+    `max_observed_latency_seconds`/`avg_first_event_latency_
+    seconds`) + sample별 batch timeline(`trade_decision_id`/
+    `created_at`/`symbol`/`instrument_id`/`source_type`/
+    `actual_decision_type`/`tier`/`cause`(항상 `"queue_write_
+    path_suspected"`)/`recompute_required`(항상 `true`)/
+    `queue_pending`(항상 `false`)/`has_first_realized_event`
+    (항상 `false`)/`timeline_event_count`/`first_event_found`/
+    `first_event_latency_seconds`/`events[]`).
+  - **응답 크기 제어**: sample 개수는 `limit`(기본 50, 최대 200 —
+    sample당 최대 `event_limit`건의 event를 함께 담으므로
+    samples 계열의 500보다 낮게 잡음), sample당 event 개수는
+    `event_limit`(단일 timeline endpoint와 동일한 기본 5/최대 50).
+  - `timeline_without_events_count`가 0이 아니면 summary에서
+    바로 눈에 띄게 노출 — "queue에도 없고 이후 event도 아직
+    없다"는 중요한 운영 신호이기 때문.
+  - **신규 repository 메서드 0개** — 기존 4개(단일 timeline
+    endpoint가 이미 쓰는 `list_by_account_and_instrument_since()`
+    포함)만 조합했다.
+  - 신규 테이블/마이그레이션/계산 엔진 없음.
+- 한계(응답 스키마에도 명시): **인과 확정 도구가 아니다** —
+  "queue write path가 실제로 고장났다"/"이 event가 바로 그
+  shadow의 결과다" 같은 결론을 내리지 않는다.
+- 검증: `py_compile`, `accept architecture`/`backend-runtime`/
+  `db-structure`/`no-bypass`/`docs` PASS, 신규 API 테스트 4건
+  (event 있는/없는 sample 혼재 시 batch 집계 정확성 — 초기 구현의
+  population 게이트 버그를 이 테스트가 직접 잡아냄, `event_limit`
+  적용, 빈 모집단, 스캔 한계 도달 sample 제외) 전부
+  dev-validation container에서 PASS(`test-file`로 직접 실행).
+  기존 단일 timeline 리팩터링 회귀 확인은 `tests/api/test_
+  inspection.py` 111건 재실행으로 확인. 신규 repository 코드가
+  없어 DB 접근이 필요한 검증 항목 자체가 없다.
 - 상태: **완료**(2026-08-12, 이번 PR).
 
 ### 3단계 — Shadow 누적 실측(미착수)
@@ -604,8 +676,9 @@ downside shock, holding_profile 만료)이다. 이 사실은
   summary/samples/daily/by-instrument/timeline/first-realized-
   event-latency/missing-first-event-causes/missing-first-event-
   samples/missing-first-event-recompute-cross-check/recompute-
-  missing-queue-causes API를 그대로 재사용할 수 있다 — 별도 조회
-  도구를 새로 만들 필요는 없다.
+  missing-queue-causes/queue-write-path-suspected-timelines API를
+  그대로 재사용할 수 있다 — 별도 조회 도구를 새로 만들 필요는
+  없다.
 - 상태: **미착수**.
 
 ### 4단계 — 정책 확정(미착수)
