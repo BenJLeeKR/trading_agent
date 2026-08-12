@@ -11788,3 +11788,33 @@ timeline-summary`를 추가해 위 raw batch 결과를 종목별/지연구간별
 - **이후 우선순위는 변경 없음**: `SPPV-3`가 여전히 다음 주력
   작업이다. 3단계(shadow 누적 실측) 착수 시 이 12종 read path를
   그대로 재사용할 수 있다.
+
+## AI 토큰 낭비 방지 — BUY daily cap/SELL no-position 차단 위치 설계 조사 완료(2026-08-12 KST, read-only, 구현 미착수)
+
+D안(§`docs/40_action_plans/submit_budget_two_stage_design_2026-08-
+11.md`) 장중 실측에서 "daily BUY 예산 소진 이후에도 general lane
+후보에 AI 4-agent 판단이 계속 실행돼 토큰이 낭비되는" 현상이
+확인되어, **어디서 막는 것이 토큰 절감과 기록 체계(로그/guardrail/
+execution_attempts/사후분석 SQL) 보존을 동시에 만족하는지** 코드
+기준으로 조사했다. 상세: 위 문서 "12. AI 토큰 낭비 방지 — 차단
+위치 재설계 조사".
+
+- 이번 턴은 **차단 위치 선정 + 기록 체계 영향 분석**만이다 —
+  코드 변경 없음, 구현은 다음 턴으로 대기.
+- 핵심 발견: BUY daily cap exhausted는 이미 `pre_ai_gate.py`에
+  `GENERAL_BUY_BUDGET_EXHAUSTED` 분기가 존재하지만, D안 Pass 1이
+  `remaining_general_buy_budget=None`을 고정 전달해 이 분기를
+  의도적으로 무력화하고 있었다 — 실제 차단은 AI 판단이 100% 끝난
+  뒤인 Pass 2에서만 일어난다.
+- SELL no-position(`NO_HELD_POSITION`)은 이미 Pre-AI gate 최상단,
+  AI 호출 전 최선의 위치에서 정상 차단되고 있음을 확인 — 이쪽은
+  변경 불필요.
+- 추천안: BUY도 같은 Pre-AI gate에서 차단하되, 판정 기준을
+  symbol-level 동적 값이 아니라 **scheduler가 cycle 시작 전에
+  확정하는 cycle-level 고정값**(`allow_general_submit`)으로
+  한정 — D안이 고친 "cycle 내 다건 동시 경합 phantom 차단" 문제를
+  재도입하지 않기 위함.
+- **다음 주력 작업**: 위 추천안(Pre-AI gate 조건 분기 추가)의 실제
+  구현 + dev validation container 테스트 보강 + 장중 실측 — 별도
+  구현 턴에서 진행. `SPPV-3`(3단계 shadow 누적 실측)와는 독립
+  트랙이며 우선순위 변경 없음.

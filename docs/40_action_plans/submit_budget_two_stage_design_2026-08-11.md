@@ -510,3 +510,166 @@ python3 -m pytest ...`, `network_mode=none`)에서 실행/보강했다.
 Pass 2 순차화로 인한 cycle 소요시간 증가폭은 이번 테스트 보강으로도
 검증되지 않는다(실제 LLM/DB 붙는 장중 실측이 필요한 영역) — 여전히
 다음 장중 실측 대상.
+
+## 12. AI 토큰 낭비 방지 — 차단 위치 재설계 조사 (2026-08-12 KST, read-only 설계 조사)
+
+§10/§11의 D안 배포 이후 장중 실측(별도 세션)에서 phantom 차단은
+사라졌으나, **daily BUY 예산 소진 이후에도 general lane 후보 종목에
+대해 AI 4-agent 판단(`assemble()`)이 계속 실행되어 토큰이 낭비되는
+현상**이 확인됐다. 이번 조사는 **코드 변경 없이** 차단 위치만
+선정하고 기록 체계 영향을 분석한다(구현은 다음 턴).
+
+### 12.1 현재 차단 위치 — 코드 기준 정리
+
+**A. BUY daily cap exhausted**
+
+- `scripts/run_ops_scheduler.py`가 cycle 시작 **전에** 당일 DB
+  제출 건수를 조회해 `allow_general_submit`/`max_general_submits_
+  this_cycle`(= 남은 daily budget)을 **1회 확정**하고, 이를
+  `--allow-general-submit`/`--no-allow-general-submit` CLI 플래그로
+  `run_decision_loop.py` subprocess에 넘긴다(`run_ops_scheduler.py`
+  최종 `allow_general_submit = general_budget_ok` 대입부, `max_
+  general_submits_this_cycle=remaining_general_submit_budget`).
+- 그러나 `run_decision_loop.py`의 D안 Pass 1 진입 분기
+  (`_process_one()`, general lane 조건
+  `if submit and not dry_run and item_source_type != "held_position":`)
+  는 `_execute_symbol_cycle(..., remaining_general_buy_budget=None, ...)`로
+  **항상 `None`을 고정 전달**한다. 이 값은 `pre_ai_gate.
+  evaluate_pre_ai_validation_result()`의 `GENERAL_BUY_BUDGET_
+  EXHAUSTED` 분기(`remaining_general_buy_budget is not None and
+  <= 0 and not has_held_position`)를 여는 유일한 트리거인데, `None`
+  고정이므로 **general lane에서는 이 분기가 절대 발동하지 않는다.**
+  이는 D안 설계 당시 "Pass 1은 예산과 무관하게 분석만 한다"는
+  의도적 선택이었다(§3/§10 참조) — 버그가 아니라 **트레이드오프의
+  부작용**이다.
+- 실제 차단은 오직 **Pass 2**(`_run_general_lane_pass2()` →
+  `submit_lane_gate` 하위 로직)에서만 일어난다: 후보가 이미
+  `assemble()`을 마치고 `pending_candidates_sink`에 적재된 **이후**,
+  budget이 없으면 `SUBMIT_BUDGET_TRACE blocked` + `SUBMIT_PIPELINE_
+  TRACE submit_skipped reason=budget_exhausted`를 남기고
+  `_general_lane_dropped_result()`로 SKIPPED 처리한다.
+- 결론: **AI 판단(4-agent 또는 pre-agent short-circuit)이 100%
+  이미 끝난 뒤에야 예산 소진이 확인된다.** 이는 scheduler → submit
+  lane gate → Pass 2 → translation → execution 중 **Pass 2** 단계에
+  해당한다.
+
+**B. SELL no-position**
+
+- `pre_ai_gate.evaluate_pre_ai_validation_result()`는 `source_type
+  == "held_position"`이고 `matched_qty is None or matched_qty <= 0`이면
+  **`PipelineStopReason.NO_HELD_POSITION`으로 즉시 차단**한다
+  (`pre_ai_gate.py:349-351`).
+- 이 함수는 `run_decision_loop.py`의 `_run_one_cycle()` **최상단**
+  (request 조립보다도, `orchestrator.assemble()` 호출보다도 먼저,
+  `_run_one_cycle():1803` 시점)에서 호출되고, `pre_ai_skip_reason`이
+  설정되면 `orchestrator.assemble()`(1984행 이후)에 도달하기 전에
+  **`return serialized`로 조기 종료**한다(1803~1872행). 즉 **SELL
+  no-position은 이미 Pre-AI gate에서, AI 호출 전 최선의 위치에서
+  차단되고 있다.**
+- 이 경로는 `_record_pre_ai_guardrail_evaluation()`을 통해
+  `guardrail_evaluations`(`rule_set_version=pre_ai_gate_v1`,
+  `blocking_rule_codes=[no_held_position]`)에 정상 기록된다.
+- 실측(2026-08-12, `trading.guardrail_evaluations` SELECT):
+  당일 `rule_set_version='pre_ai_gate_v1'` 레코드는 1건
+  (`holding_profile_earliest_reentry_guard`)뿐이고 `no_held_position`은
+  0건 — 이는 결함이 아니라, **held_position 유니버스 자체가
+  `position_snapshots.quantity > 0`인 종목만 편입**하기 때문에
+  정상 경로에서는 애초에 발동할 상황이 거의 없고(스냅샷 staleness에
+  대한 방어용 안전판으로만 작동), 오늘 하루 그런 staleness 사례가
+  없었다는 뜻으로 해석된다.
+
+### 12.2 설계안 비교
+
+| 안 | 설명 | 토큰 절감 | 기존 기록 체계 충돌 위험 | 운영 의미론 충돌 위험 | 구현 난이도 | 검증 난이도 | 추천 |
+|---|---|---|---|---|---|---|---|
+| 안 1 | BUY cap exhausted를 **Pre-AI gate**에서 차단 (기존 `GENERAL_BUY_BUDGET_EXHAUSTED` 분기 재사용) | 최대 — cap 소진 이후 모든 남은 cycle의 general lane `assemble()` 자체를 스킵 | 낮음 — `guardrail_evaluations`에 정상 기록되는 **기존에 이미 존재하는 stop_reason**을 재사용하는 것뿐. 단, `SUBMIT_BUDGET_TRACE blocked` 로그 건수가 급감(§12.3) | **낮음, 단 판정 기준을 symbol-level 동적 값이 아니라 cycle-level 고정값(`allow_general_submit`)으로 한정해야만** — 아래 12.4 참조 | 낮음 — `run_decision_loop.py:3196-3208` 분기에 조건 하나만 추가 | 낮음 — 기존 pre_ai_gate 단위 테스트 패턴 그대로 재사용 가능 | **추천** |
+| 안 2 | BUY cap exhausted를 **Pass 1 직후/Pass 1.5 직전** 전용 gate에서 차단 | **없음** — `assemble()`은 Pass 1에서 이미 다 끝난 뒤이므로 이 시점에 막아도 AI 비용은 이미 지불됨. 사실상 **현재(D안) 상태와 동일** | 없음(현행 유지) | 없음(현행 유지) | 없음(이미 구현됨) | 없음(이미 검증됨, §11) | 비추천(목적 달성 안 됨) |
+| 안 3 | BUY cap exhausted를 **scheduler-level**에서 general-lane symbol 실행 자체를 skip | 안 1과 이론상 동일 | **높음** — universe 전체를 훑는 `source_type` 분포 로깅, `deterministic_trigger` override 사전계산, `r3b_alpha_percentile` 사전계산, cycle risk-off shadow projection 등 여러 cycle 단위 집계 로직과 강하게 얽혀 있어 `held_position_count`/`processed_source_counts` 등 기존 관측 지표의 의미가 함께 바뀔 위험 | 높음 — held_position/overlay 등 서로 다른 source_type이 뒤섞인 단일 universe 순회 로직을 쪼개야 함 | 높음 | 높음 | 비추천(안 1과 이득은 같은데 위험만 큼) |
+| 안 4 | SELL no-position을 **Pre-AI gate 또는 별도 pre-execution gate**에서 차단 | 이미 최대치 확보(현행) | 없음(현행 유지, 이미 `guardrail_evaluations` 기록됨) | 없음 — snapshot 자체는 게이트 위치와 무관하게 동일한 최신 조회 결과를 사용하므로, 위치를 옮겨도 stale snapshot 리스크 자체는 늘지도 줄지도 않음(§12.1-B) | 없음(이미 구현됨) | 없음 | **현행 유지 추천, 코드 변경 불필요** |
+
+### 12.3 기록 체계 영향 분석 (핵심)
+
+| 항목 | 현재(Pass 2에서 차단) | 안 1 적용 시(Pre-AI gate에서 차단) |
+|---|---|---|
+| `SubmitResult.status` | `SKIPPED` | `SKIPPED` (동일) |
+| `error_phase` | **설정 안 됨**(`_general_lane_dropped_result()`가 `error_phase` 인자를 넘기지 않음 — `None`) | `"pre_ai_gate"` (명시적 — 오히려 개선) |
+| `stop_reason` | `general_buy_budget_exhausted`(`submit_budget_consumed_reason()`이 생성하는 `submit_budget_consumed_core`류 문자열, source_type별로 이름이 갈림) | `general_buy_budget_exhausted`(`PipelineStopReason.GENERAL_BUY_BUDGET_EXHAUSTED`, source_type 무관 고정 문자열 — **기존 사후분석 SQL이 찾던 이름과 다르므로 SQL 갱신 필요**, 아래 참고) |
+| `guardrail_evaluations` 기록 여부 | **기록 안 됨** — `_general_lane_dropped_result()`는 `repos.guardrail_evaluations.add(...)`를 호출하지 않음(2026-08-12 장중 실측에서 직접 확인: 로그 14건 vs DB 0건) | **기록됨** — `_record_pre_ai_guardrail_evaluation()`이 호출되어 `rule_set_version=pre_ai_gate_v1`, `blocking_rule_codes=[general_buy_budget_exhausted]`로 남음 (**개선**) |
+| `execution_attempts` 기록 여부 | 기록 안 됨(Pass 2 drop 경로는 `execution_attempts.add(...)`를 호출하지 않음) | 기록 안 됨(Pre-AI gate 경로도 `execution_attempts`에는 쓰지 않음 — pre_ai_gate 스킵은 원래부터 `execution_attempts`가 아니라 `guardrail_evaluations`에만 남기는 기존 관례, `no_held_position` 등 다른 pre-ai skip과 동일 취급이므로 **새로 생기는 손실 아님**) |
+| `trade_decisions` 생성 여부/시점 | **생성 안 됨** — Pass 1의 `assemble()`이 이미 `trade_decisions` row를 만든 뒤(실측: `candidate_enqueued`) Pass 2가 그 이후 시점에 drop하므로, trade_decisions 자체는 이미 존재(단 order로 이어지지 않음) | **생성 안 됨(더 이른 시점)** — Pre-AI gate가 `assemble()` 호출 자체를 막으므로 `trade_decisions` row가 아예 생성되지 않음 — **이 부분이 유일한 실질적 데이터 손실**: "이 종목이 이 시각에 BUY 후보로 평가됐었다"는 사실 자체가 DB에서 사라진다(로그에만 `SUBMIT_PIPELINE_TRACE`류 skip 기록으로 남음) |
+| `SUBMIT_PIPELINE_TRACE`에 남는지 | `candidate_enqueued` → 이후 `submit_skipped reason=budget_exhausted` 2단계로 남음 | `analysis_complete` 자체가 안 남고, 대신 `[SYMBOL_DONE] ... pre_ai_skip_reason=general_buy_budget_exhausted` 로그로 남음(형식 다름 — **사후 로그 파싱 스크립트가 있다면 patterns 갱신 필요**) |
+| `SUBMIT_BUDGET_TRACE`에 남는지 | `blocked` 이벤트로 남음(source_type/symbol/counts 포함) | **`blocked` 이벤트 급감** — cycle-level `allow_general_submit=False`로 이미 걸러진 심볼은 Pass 2까지 아예 도달하지 않으므로 `blocked` 로그 자체가 발생하지 않음. `lane_enter`(legacy 진단 스냅샷, 모든 심볼에 대해 무조건 찍힘)는 **영향 없음 — 그대로 유지** |
+| 사후 분석 SQL 영향 | `execution_attempts`/`guardrail_evaluations` 기준 SQL은 이미 0건이라 변화 없음(기존 결함, §D안 실측에서 별도 확인됨) | `guardrail_evaluations WHERE rule_set_version='pre_ai_gate_v1' AND 'general_buy_budget_exhausted' = ANY(blocking_rule_codes)`로 daily-cap 차단 건수를 **DB에서 처음으로 신뢰성 있게 집계 가능**해짐(현재는 로그 grep이 유일한 방법). 다만 **"오늘 daily cap 소진 이후 몇 개 후보가 있었는지"를 로그의 `SUBMIT_BUDGET_TRACE blocked` 건수로 세던 기존 방식은 이 안 적용 후 숫자가 크게 줄어드므로, 그 SQL/스크립트를 쓰는 사람에게 반드시 공지 필요** |
+
+### 12.4 안 1 구체적 적용 방식 — 왜 기존 phantom 차단 버그를 재현하지 않는가
+
+기존(D안 이전) phantom 차단 버그의 원인은 "여러 후보가 **같은 cycle 내에서 동시에** AI 분석을 마치는 시점에, 아직 확정되지 않은 동시성 상태(`inflight count`)를 근거로 각자 개별 판정"한 데 있었다(레이스). 안 1은 이 레이스 지점을 건드리지 않는다:
+
+- 판정 기준을 symbol-level 동적 값(`submit_budget_consumed_count`,
+  in-flight 등 cycle 도중에 변하는 값)이 아니라, **scheduler가 cycle
+  시작 전에 DB 실측으로 1회 확정한 cycle-level 상수**
+  (`allow_general_submit` / `max_general_submits_this_cycle`)로
+  한정한다.
+- 구체적으로: `run_decision_loop.py:3196-3208`(Pass 1 진입 분기)에서
+  `remaining_general_buy_budget=None` 고정 대신, **`allow_general_
+  submit`이 이미 `False`인 경우에만** `remaining_general_buy_budget=0`을
+  넘기고, `True`인 경우(cycle 시작 시점에 예산이 남아있던 경우)는
+  기존과 동일하게 `None`을 유지한다.
+- `allow_general_submit=True`인 cycle에서는 오늘처럼 Pass 1이 전원
+  분석하고 Pass 1.5/Pass 2가 dedupe·우선순위·순차소비를 그대로
+  담당한다 — **D안이 고친 "cycle 내 다건 동시 경합" 케이스는 전혀
+  건드리지 않는다.**
+- `allow_general_submit=False`인 cycle(= 그 cycle 전체에 daily
+  budget이 이미 0인 것이 시작 전부터 확정된 상태)에서만 general
+  lane 심볼이 Pre-AI gate에서 즉시 스킵된다 — 이 경우는 애초에
+  "동시 경합"이 성립할 수 없는 상태(경합할 예산 자체가 없음)이므로
+  레이스가 발생할 여지가 없다.
+
+### 12.5 최종 추천안
+
+1. **BUY daily cap exhausted 차단 추천 위치**: **Pre-AI gate**
+   (`pre_ai_gate.evaluate_pre_ai_validation_result()`의 기존 `GENERAL_
+   BUY_BUDGET_EXHAUSTED` 분기를 그대로 재사용), 단 트리거 조건을
+   symbol-level 동적 값이 아니라 **cycle-level `allow_general_submit`
+   고정값**으로 한정(§12.4).
+2. **SELL no-position 차단 추천 위치**: **현행 유지** — 이미 Pre-AI
+   gate(`NO_HELD_POSITION`)에서, AI 호출 전 최선의 위치에서 차단되고
+   있음을 확인. 코드 변경 불필요.
+3. **같은 gate에 둘지**: **예, 같은 gate**(`pre_ai_gate.py`의
+   `evaluate_pre_ai_validation_result()` 단일 함수) — 이미 `source_
+   type`별 분기(`held_position` → SELL 경로 / 그 외 → BUY 경로)로
+   자연스럽게 나뉘어 있고, `guardrail_evaluations`의 `rule_set_
+   version=pre_ai_gate_v1` 하나로 두 차단 유형을 통일된 방식으로
+   기록할 수 있다.
+4. **근거**:
+   - **토큰 절감**: daily cap 소진 이후 남은 모든 cycle에서 general
+     lane 심볼의 `assemble()`(4-agent 또는 pre-agent short-circuit)
+     호출 자체가 사라짐 — 2026-08-12 실측 기준 10:12~14:23 사이
+     14회 이상의 완전히 낭비된 AI 판단을 제거할 수 있었을 것으로
+     추정(로그 기준 추정치, 실측 재현은 안 됨 — §12.6 미확인 사항).
+   - **운영 의미론**: cycle-level 고정값만 사용하므로 D안이 해결한
+     "동시 경합 phantom 차단" 문제를 재도입하지 않음(§12.4).
+   - **관측성**: `execution_attempts`는 원래도 pre-ai skip에 쓰이지
+     않는 필드라 손실 없음. `guardrail_evaluations` 기록은 오히려
+     Pass 2 drop 경로(현재 0건 기록)보다 **개선**된다. 단, `trade_
+     decisions` row가 아예 생성되지 않게 되는 것과 `SUBMIT_BUDGET_
+     TRACE blocked` 로그 건수 급감은 **실질적인 변화**이므로, 이
+     로그/테이블을 근거로 삼는 기존 사후분석 스크립트가 있다면
+     반드시 갱신이 필요하다(§12.3에 명시).
+   - **구현 리스크**: 기존 함수/파라미터를 그대로 재사용하고 조건
+     분기 하나만 추가하는 수준이라 낮음.
+
+### 12.6 미확인 사항
+
+- 안 1을 실제로 적용했을 때 daily cap 소진 이후 cycle에서 정확히
+  몇 %의 AI 호출이 절감되는지는 이번 read-only 조사에서 실측되지
+  않았다(코드 변경 금지 제약) — 다음 구현 턴에서 실제 반영 후
+  장중 실측 필요.
+- `trade_decisions` row 미생성이 다른 하류 분석(예: B축/EV gate
+  관련 과거 분석에서 "이 시각에 이 종목이 후보였다"는 사실 자체를
+  trade_decisions 존재 여부로 판단하는 쿼리가 있는지)에 영향을
+  주는지는 이번 턴 범위에서 전수 확인하지 못했다.
+- `SUBMIT_BUDGET_TRACE blocked`/`SUBMIT_PIPELINE_TRACE submit_
+  skipped` 로그를 소비하는 기존 운영 대시보드/알림이 있는지는
+  코드 검색만으로는 확인되지 않았다 — 있다면 안 1 적용 전 별도
+  확인 필요.
