@@ -11666,3 +11666,26 @@ event까지 걸린 시간(초)의 분포(min/max/avg/median/p90)와
   작업이다. 3단계(shadow 누적 실측) 착수 시 이 6종
   (summary/samples/daily/by-instrument/timeline/first-realized-
   event-latency) read path를 그대로 재사용할 수 있다.
+
+## Loss-cut shadow missing first event 원인 bucket 분류 API 추가 — 정책 도입 아님, 새 계산 없음(2026-08-12 KST)
+
+`GET /trade-decisions/loss-cut-shadow/missing-first-event-causes`
+를 추가해 first realized event가 안 잡힌 sample들을 6개 원인
+bucket(`missing_instrument_linkage`/`recompute_required`/
+`missing_position_state`/`still_holding_position`/`position_
+closed_but_no_realized_event`/`other_unclassified`)으로 분류한다.
+**이번 작업도 read path 추가다 — 실주문 결정 변경 없음, 정식
+loss-cut 정책 도입 아님.**
+
+- 신규 repository 메서드 0개 — 기존 `list_loss_cut_shadow_
+  observations()`/`realized_pnl_events.list_by_account_and_
+  instrument_since()`/`position_cost_basis_states.get()` 3개
+  조합만 했다.
+- **원인 분류 inspection이지 인과 확정 도구가 아니다** — bucket
+  precedence(정합성 경고인 `recompute_required`가 `still_holding_
+  position`보다 항상 먼저)를 코드 docstring/문서에 명시했다.
+- **이후 우선순위는 변경 없음**: `SPPV-3`가 여전히 다음 주력
+  작업이다. 3단계(shadow 누적 실측) 착수 시 이 7종
+  (summary/samples/daily/by-instrument/timeline/first-realized-
+  event-latency/missing-first-event-causes) read path를 그대로
+  재사용할 수 있다.

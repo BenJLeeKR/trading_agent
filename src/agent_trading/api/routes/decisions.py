@@ -25,6 +25,9 @@ from agent_trading.api.schemas import (
     LossCutShadowDailyItem,
     LossCutShadowDailyResponse,
     LossCutShadowFirstEventLatencyResponse,
+    LossCutShadowMissingCauseBreakdownItem,
+    LossCutShadowMissingFirstEventCausesResponse,
+    LossCutShadowMissingGroupBreakdownItem,
     LossCutShadowSampleView,
     LossCutShadowSamplesResponse,
     LossCutShadowSummaryResponse,
@@ -1217,6 +1220,215 @@ async def get_loss_cut_shadow_first_realized_event_latency(
         latency_seconds_p90=_p90(latencies_seconds),
         first_realized_event_pnl_net_avg=_decimal_avg(first_event_pnl_nets),
         first_realized_event_pnl_net_median=_decimal_median(first_event_pnl_nets),
+    )
+
+
+# --- missing-first-event-causes bucket 상수 ---
+# precedence: 위에서 아래 순서로 먼저 만족하는 bucket에 배정한다.
+_MISSING_CAUSE_INSTRUMENT_LINKAGE = "missing_instrument_linkage"
+_MISSING_CAUSE_RECOMPUTE_REQUIRED = "recompute_required"
+_MISSING_CAUSE_MISSING_POSITION_STATE = "missing_position_state"
+_MISSING_CAUSE_STILL_HOLDING = "still_holding_position"
+_MISSING_CAUSE_POSITION_CLOSED_NO_EVENT = "position_closed_but_no_realized_event"
+_MISSING_CAUSE_OTHER_UNCLASSIFIED = "other_unclassified"
+
+_MISSING_CAUSE_PRECEDENCE = (
+    _MISSING_CAUSE_INSTRUMENT_LINKAGE,
+    _MISSING_CAUSE_RECOMPUTE_REQUIRED,
+    _MISSING_CAUSE_MISSING_POSITION_STATE,
+    _MISSING_CAUSE_STILL_HOLDING,
+    _MISSING_CAUSE_POSITION_CLOSED_NO_EVENT,
+    _MISSING_CAUSE_OTHER_UNCLASSIFIED,
+)
+
+
+async def _classify_missing_first_event_cause(
+    repos: RepositoryContainer,
+    *,
+    account_id: UUID,
+    instrument_id_raw: str | None,
+) -> str:
+    """missing 표본 1건의 원인 bucket을 판정한다(읽기 전용, 판단 없음).
+
+    precedence(위에서부터 먼저 만족하는 것으로 확정):
+
+    1. ``missing_instrument_linkage`` — shadow payload에 ``instrument_id``
+       가 없어(구형 관측 등) 이후 어떤 조회도 할 근거가 없음.
+    2. ``recompute_required`` — ``position_cost_basis_state.recompute_
+       required is True``. ledger 자체가 신뢰 불가 상태이므로, quantity
+       기준 보유 여부 판단(3/4)보다 **먼저** 이 상태를 알려야 한다는
+       판단 — recompute_required가 True인 상태에서 quantity를 보고
+       "청산됐다/보유 중이다"라고 단정하면 잘못된 결론으로 이어질 수
+       있다.
+    3. ``missing_position_state`` — 계좌×종목 ``position_cost_basis_
+       state``가 아예 없음(한 번도 ledger에 반영된 적 없음) — 보유
+       여부를 이 값으로는 판단할 수 없다.
+    4. ``still_holding_position`` — ``quantity > 0``(ledger 기준 아직
+       보유 중) — 아직 청산이 안 됐으니 realized event가 없는 것이
+       자연스럽다.
+    5. ``position_closed_but_no_realized_event`` — ``quantity <= 0``
+       (ledger 기준 이미 청산됨)인데 realized event가 안 보임 — ledger/
+       recompute 누락 가능성, 데이터 정합성 의심 신호.
+    6. ``other_unclassified`` — 위 어느 것도 명확히 해당하지 않음(코드
+       경로상 도달 가능성은 낮지만, 애매한 값을 억지로 분류하지 않기
+       위한 안전망).
+    """
+    if not instrument_id_raw:
+        return _MISSING_CAUSE_INSTRUMENT_LINKAGE
+
+    instrument_id = UUID(instrument_id_raw)
+    cost_basis_state = await repos.position_cost_basis_states.get(
+        account_id, instrument_id
+    )
+    if cost_basis_state is None:
+        return _MISSING_CAUSE_MISSING_POSITION_STATE
+    if cost_basis_state.recompute_required:
+        return _MISSING_CAUSE_RECOMPUTE_REQUIRED
+    if cost_basis_state.quantity > 0:
+        return _MISSING_CAUSE_STILL_HOLDING
+    if cost_basis_state.quantity <= 0:
+        return _MISSING_CAUSE_POSITION_CLOSED_NO_EVENT
+    return _MISSING_CAUSE_OTHER_UNCLASSIFIED
+
+
+def _build_group_breakdown(
+    sample_counter: dict[str, int], missing_counter: dict[str, int]
+) -> list[LossCutShadowMissingGroupBreakdownItem]:
+    items: list[LossCutShadowMissingGroupBreakdownItem] = []
+    for key in sorted(sample_counter):
+        total = sample_counter[key]
+        missing = missing_counter.get(key, 0)
+        items.append(
+            LossCutShadowMissingGroupBreakdownItem(
+                group_value=key,
+                sample_count=total,
+                missing_first_event_count=missing,
+                missing_first_event_rate=(missing / total) if total > 0 else None,
+            )
+        )
+    return items
+
+
+@router.get(
+    "/trade-decisions/loss-cut-shadow/missing-first-event-causes",
+    response_model=LossCutShadowMissingFirstEventCausesResponse,
+)
+async def get_loss_cut_shadow_missing_first_event_causes(
+    account_id: str = Query(..., description="Account UUID"),
+    start_date: date = Query(..., description="Start date (YYYY-MM-DD, KST)"),
+    end_date: date = Query(..., description="End date (YYYY-MM-DD, KST)"),
+    source_type: str | None = Query(None, description="Optional source_type filter"),
+    tier: str | None = Query(None, description="Optional tier filter (soft|hard)"),
+    repos: RepositoryContainer = Depends(get_repos),
+) -> LossCutShadowMissingFirstEventCausesResponse:
+    """first realized event가 안 잡힌 shadow sample들을 원인 bucket으로
+
+    분류한다. **원인 분류 inspection이지 인과 확정 도구가 아니다** —
+    각 bucket은 이미 저장된 값(shadow payload/``position_cost_basis_
+    state``/realized event 존재 여부)만으로 코드상 재현 가능한 규칙
+    으로 분류한 것이고, 새로운 매매 판단이나 causality 해석은 하지
+    않는다. ``first-realized-event-latency``와 동일하게 모집단은
+    ``triggered=true`` sample로 고정한다(``triggered=false``에는
+    "이후 첫 event"를 물을 이유가 없다). bucket precedence는
+    ``_classify_missing_first_event_cause()`` docstring 참고.
+    """
+    if start_date > end_date:
+        raise HTTPException(
+            status_code=400, detail="start_date must be on or before end_date"
+        )
+    aid = _parse_query_uuid(account_id, field="account_id")
+
+    rows = await repos.trade_decisions.list_loss_cut_shadow_observations(
+        aid,
+        start_date=start_date,
+        end_date=end_date,
+        source_type=source_type,
+        tier=tier,
+        triggered=True,
+        limit=None,
+    )
+
+    sample_count = len(rows)
+    cause_counts: dict[str, int] = {cause: 0 for cause in _MISSING_CAUSE_PRECEDENCE}
+
+    source_type_sample_counts: dict[str, int] = {}
+    source_type_missing_counts: dict[str, int] = {}
+    tier_sample_counts: dict[str, int] = {}
+    tier_missing_counts: dict[str, int] = {}
+    decision_type_sample_counts: dict[str, int] = {}
+    decision_type_missing_counts: dict[str, int] = {}
+
+    missing_count = 0
+
+    for row in rows:
+        group_source_type = row.source_type
+        group_tier = row.loss_cut_shadow.get("tier") or "none"
+        group_decision_type = row.actual_decision_type
+
+        source_type_sample_counts[group_source_type] = (
+            source_type_sample_counts.get(group_source_type, 0) + 1
+        )
+        tier_sample_counts[group_tier] = tier_sample_counts.get(group_tier, 0) + 1
+        decision_type_sample_counts[group_decision_type] = (
+            decision_type_sample_counts.get(group_decision_type, 0) + 1
+        )
+
+        instrument_id_raw = row.loss_cut_shadow.get("instrument_id")
+        is_missing = True
+        if instrument_id_raw:
+            events = await repos.realized_pnl_events.list_by_account_and_instrument_since(
+                aid,
+                UUID(instrument_id_raw),
+                since=row.created_at,
+                limit=1,
+            )
+            is_missing = not events
+
+        if not is_missing:
+            continue
+
+        missing_count += 1
+        source_type_missing_counts[group_source_type] = (
+            source_type_missing_counts.get(group_source_type, 0) + 1
+        )
+        tier_missing_counts[group_tier] = tier_missing_counts.get(group_tier, 0) + 1
+        decision_type_missing_counts[group_decision_type] = (
+            decision_type_missing_counts.get(group_decision_type, 0) + 1
+        )
+
+        cause = await _classify_missing_first_event_cause(
+            repos, account_id=aid, instrument_id_raw=instrument_id_raw
+        )
+        cause_counts[cause] += 1
+
+    cause_breakdown = [
+        LossCutShadowMissingCauseBreakdownItem(
+            cause=cause,
+            count=cause_counts[cause],
+            rate=(cause_counts[cause] / missing_count) if missing_count > 0 else 0.0,
+        )
+        for cause in _MISSING_CAUSE_PRECEDENCE
+    ]
+
+    return LossCutShadowMissingFirstEventCausesResponse(
+        account_id=aid,
+        start_date=start_date,
+        end_date=end_date,
+        source_type=source_type,
+        tier=tier,
+        sample_count=sample_count,
+        missing_first_event_count=missing_count,
+        missing_first_event_rate=(
+            missing_count / sample_count if sample_count > 0 else None
+        ),
+        cause_breakdown=cause_breakdown,
+        by_source_type=_build_group_breakdown(
+            source_type_sample_counts, source_type_missing_counts
+        ),
+        by_tier=_build_group_breakdown(tier_sample_counts, tier_missing_counts),
+        by_decision_type=_build_group_breakdown(
+            decision_type_sample_counts, decision_type_missing_counts
+        ),
     )
 
 

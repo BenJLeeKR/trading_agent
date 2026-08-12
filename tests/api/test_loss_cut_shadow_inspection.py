@@ -1061,3 +1061,306 @@ async def test_first_realized_event_latency_all_missing_events() -> None:
     assert body["missing_first_event_count"] == 1
     assert body["missing_first_event_rate"] == 1.0
     assert body["latency_seconds_min"] is None
+
+
+def _get_cause_count(body: dict, cause: str) -> int:
+    for item in body["cause_breakdown"]:
+        if item["cause"] == cause:
+            return item["count"]
+    raise AssertionError(f"cause {cause} not found in cause_breakdown")
+
+
+async def test_missing_first_event_causes_classifies_all_precedence_buckets() -> None:
+    repos = build_in_memory_repositories()
+    account_id, strategy_id, decision_context_id, now = _seed_common(repos)
+
+    # 1) missing_instrument_linkage: shadow payload에 instrument_id가 없음.
+    linkage_decision = _make_decision(
+        decision_context_id=decision_context_id,
+        strategy_id=strategy_id,
+        symbol="000001",
+        created_at=now,
+        source_type="held_position",
+        decision_type=DecisionType.HOLD,
+        loss_cut_shadow={
+            "triggered": True,
+            "tier": "hard",
+            "shadow_only": True,
+        },
+    )
+
+    # 2) recompute_required: cost_basis_state가 있고 recompute_required=True.
+    recompute_instrument = uuid4()
+    recompute_decision = _make_decision(
+        decision_context_id=decision_context_id,
+        strategy_id=strategy_id,
+        symbol="000002",
+        created_at=now,
+        source_type="held_position",
+        decision_type=DecisionType.HOLD,
+        loss_cut_shadow=_shadow_payload(
+            triggered=True, tier="hard", loss_pct="15", instrument_id=recompute_instrument
+        ),
+    )
+    repos.position_cost_basis_states._items[(account_id, recompute_instrument)] = (
+        PositionCostBasisStateEntity(
+            account_id=account_id,
+            instrument_id=recompute_instrument,
+            quantity=Decimal("0"),
+            average_cost=Decimal("100000"),
+            recompute_required=True,
+        )
+    )
+
+    # 3) missing_position_state: cost_basis_state 자체가 없음.
+    no_state_instrument = uuid4()
+    no_state_decision = _make_decision(
+        decision_context_id=decision_context_id,
+        strategy_id=strategy_id,
+        symbol="000003",
+        created_at=now,
+        source_type="held_position",
+        decision_type=DecisionType.HOLD,
+        loss_cut_shadow=_shadow_payload(
+            triggered=True, tier="hard", loss_pct="15", instrument_id=no_state_instrument
+        ),
+    )
+
+    # 4) still_holding_position: quantity > 0.
+    holding_instrument = uuid4()
+    holding_decision = _make_decision(
+        decision_context_id=decision_context_id,
+        strategy_id=strategy_id,
+        symbol="000004",
+        created_at=now,
+        source_type="core",
+        decision_type=DecisionType.WATCH,
+        loss_cut_shadow=_shadow_payload(
+            triggered=True, tier="soft", loss_pct="8", instrument_id=holding_instrument
+        ),
+    )
+    repos.position_cost_basis_states._items[(account_id, holding_instrument)] = (
+        PositionCostBasisStateEntity(
+            account_id=account_id,
+            instrument_id=holding_instrument,
+            quantity=Decimal("10"),
+            average_cost=Decimal("90000"),
+            recompute_required=False,
+        )
+    )
+
+    # 5) position_closed_but_no_realized_event: quantity <= 0, recompute_required=False.
+    closed_instrument = uuid4()
+    closed_decision = _make_decision(
+        decision_context_id=decision_context_id,
+        strategy_id=strategy_id,
+        symbol="000005",
+        created_at=now,
+        source_type="held_position",
+        decision_type=DecisionType.EXIT,
+        loss_cut_shadow=_shadow_payload(
+            triggered=True, tier="hard", loss_pct="15", instrument_id=closed_instrument
+        ),
+    )
+    repos.position_cost_basis_states._items[(account_id, closed_instrument)] = (
+        PositionCostBasisStateEntity(
+            account_id=account_id,
+            instrument_id=closed_instrument,
+            quantity=Decimal("0"),
+            average_cost=Decimal("0"),
+            recompute_required=False,
+        )
+    )
+
+    # matched: first realized event가 실제로 존재 — missing 집계에서 제외돼야 한다.
+    matched_instrument = uuid4()
+    matched_decision = _make_decision(
+        decision_context_id=decision_context_id,
+        strategy_id=strategy_id,
+        symbol="000006",
+        created_at=now,
+        source_type="held_position",
+        decision_type=DecisionType.HOLD,
+        loss_cut_shadow=_shadow_payload(
+            triggered=True, tier="soft", loss_pct="9", instrument_id=matched_instrument
+        ),
+    )
+
+    for decision in (
+        linkage_decision,
+        recompute_decision,
+        no_state_decision,
+        holding_decision,
+        closed_decision,
+        matched_decision,
+    ):
+        repos.trade_decisions._items[decision.trade_decision_id] = decision
+
+    await repos.realized_pnl_events.add(
+        _make_realized_pnl_event(
+            account_id=account_id,
+            instrument_id=matched_instrument,
+            fill_timestamp=now + timedelta(seconds=60),
+            realized_pnl_net=Decimal("-100"),
+        )
+    )
+
+    app = create_app(repos=repos, auth_enabled=False)
+    with TestClient(app) as tc:
+        response = tc.get(
+            "/trade-decisions/loss-cut-shadow/missing-first-event-causes",
+            params={
+                "account_id": str(account_id),
+                "start_date": (now - timedelta(days=1)).date().isoformat(),
+                "end_date": (now + timedelta(days=1)).date().isoformat(),
+            },
+        )
+
+    assert response.status_code == 200
+    body = response.json()
+
+    assert body["sample_count"] == 6
+    assert body["missing_first_event_count"] == 5
+    assert body["missing_first_event_rate"] == pytest.approx(5 / 6)
+
+    assert _get_cause_count(body, "missing_instrument_linkage") == 1
+    assert _get_cause_count(body, "recompute_required") == 1
+    assert _get_cause_count(body, "missing_position_state") == 1
+    assert _get_cause_count(body, "still_holding_position") == 1
+    assert _get_cause_count(body, "position_closed_but_no_realized_event") == 1
+    assert _get_cause_count(body, "other_unclassified") == 0
+
+    source_type_rows = {r["group_value"]: r for r in body["by_source_type"]}
+    assert source_type_rows["held_position"]["sample_count"] == 5
+    assert source_type_rows["held_position"]["missing_first_event_count"] == 4
+    assert source_type_rows["core"]["sample_count"] == 1
+    assert source_type_rows["core"]["missing_first_event_count"] == 1
+
+    tier_rows = {r["group_value"]: r for r in body["by_tier"]}
+    assert tier_rows["hard"]["sample_count"] == 4
+    assert tier_rows["soft"]["sample_count"] == 2
+
+    decision_type_rows = {r["group_value"]: r for r in body["by_decision_type"]}
+    assert decision_type_rows["hold"]["sample_count"] == 4
+    assert decision_type_rows["watch"]["sample_count"] == 1
+    assert decision_type_rows["exit"]["sample_count"] == 1
+
+
+def test_missing_first_event_causes_recompute_required_takes_precedence_over_holding() -> None:
+    """recompute_required=True이면서 quantity > 0(보유 중)이어도
+
+    recompute_required bucket으로 먼저 분류돼야 한다(precedence 확인)."""
+    repos = build_in_memory_repositories()
+    account_id, strategy_id, decision_context_id, now = _seed_common(repos)
+    instrument_id = uuid4()
+
+    decision = _make_decision(
+        decision_context_id=decision_context_id,
+        strategy_id=strategy_id,
+        symbol="005930",
+        created_at=now,
+        source_type="held_position",
+        decision_type=DecisionType.HOLD,
+        loss_cut_shadow=_shadow_payload(
+            triggered=True, tier="hard", loss_pct="15", instrument_id=instrument_id
+        ),
+    )
+    repos.trade_decisions._items[decision.trade_decision_id] = decision
+    repos.position_cost_basis_states._items[(account_id, instrument_id)] = (
+        PositionCostBasisStateEntity(
+            account_id=account_id,
+            instrument_id=instrument_id,
+            quantity=Decimal("10"),  # 보유 중이지만
+            average_cost=Decimal("100000"),
+            recompute_required=True,  # recompute_required가 우선한다.
+        )
+    )
+
+    app = create_app(repos=repos, auth_enabled=False)
+    with TestClient(app) as tc:
+        response = tc.get(
+            "/trade-decisions/loss-cut-shadow/missing-first-event-causes",
+            params={
+                "account_id": str(account_id),
+                "start_date": now.date().isoformat(),
+                "end_date": now.date().isoformat(),
+            },
+        )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert _get_cause_count(body, "recompute_required") == 1
+    assert _get_cause_count(body, "still_holding_position") == 0
+
+
+def test_missing_first_event_causes_empty_sample_set() -> None:
+    repos = build_in_memory_repositories()
+    account_id, _strategy_id, _decision_context_id, now = _seed_common(repos)
+
+    app = create_app(repos=repos, auth_enabled=False)
+    with TestClient(app) as tc:
+        response = tc.get(
+            "/trade-decisions/loss-cut-shadow/missing-first-event-causes",
+            params={
+                "account_id": str(account_id),
+                "start_date": now.date().isoformat(),
+                "end_date": now.date().isoformat(),
+            },
+        )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["sample_count"] == 0
+    assert body["missing_first_event_count"] == 0
+    assert body["missing_first_event_rate"] is None
+    assert body["by_source_type"] == []
+    assert all(item["count"] == 0 for item in body["cause_breakdown"])
+
+
+def test_missing_first_event_causes_filters_by_tier() -> None:
+    repos = build_in_memory_repositories()
+    account_id, strategy_id, decision_context_id, now = _seed_common(repos)
+
+    hard_instrument = uuid4()
+    soft_instrument = uuid4()
+    hard_decision = _make_decision(
+        decision_context_id=decision_context_id,
+        strategy_id=strategy_id,
+        symbol="005930",
+        created_at=now,
+        source_type="held_position",
+        decision_type=DecisionType.HOLD,
+        loss_cut_shadow=_shadow_payload(
+            triggered=True, tier="hard", loss_pct="15", instrument_id=hard_instrument
+        ),
+    )
+    soft_decision = _make_decision(
+        decision_context_id=decision_context_id,
+        strategy_id=strategy_id,
+        symbol="000660",
+        created_at=now,
+        source_type="held_position",
+        decision_type=DecisionType.WATCH,
+        loss_cut_shadow=_shadow_payload(
+            triggered=True, tier="soft", loss_pct="8", instrument_id=soft_instrument
+        ),
+    )
+    for decision in (hard_decision, soft_decision):
+        repos.trade_decisions._items[decision.trade_decision_id] = decision
+
+    app = create_app(repos=repos, auth_enabled=False)
+    with TestClient(app) as tc:
+        response = tc.get(
+            "/trade-decisions/loss-cut-shadow/missing-first-event-causes",
+            params={
+                "account_id": str(account_id),
+                "start_date": now.date().isoformat(),
+                "end_date": now.date().isoformat(),
+                "tier": "hard",
+            },
+        )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["sample_count"] == 1
+    assert body["tier"] == "hard"
