@@ -4,6 +4,7 @@
 > **상세 설계**: [`13_loss_cut_policy_specification_and_config_path_design.md`](../00_foundational_design/detailed_design/13_loss_cut_policy_specification_and_config_path_design.md)
 > **선행 조사(설계 조사/현황 분석)**: [`loss_cut_policy_investigation.md`](../20_system_analysis/loss_cut_policy_investigation.md)
 > **연관 선례**: `risk.max_single_position_pct`의 `config_versions` + Admin API/CLI 관리 경로(PR #216 계열, [`06_config_schema.md`](../00_foundational_design/detailed_design/06_config_schema.md) §9)
+> **운영 inspection 해석 가이드**: [`loss_cut_shadow_inspection_operations_guide.md`](loss_cut_shadow_inspection_operations_guide.md) — 아래 2단계에서 구현한 12개 inspection API를 운영자가 어떤 순서로 보고 어떻게 해석할지 정리한 문서(정책 실행 가이드 아님)
 
 ## 1. 문제 배경
 
@@ -735,6 +736,26 @@ downside shock, holding_profile 만료)이다. 이 사실은
   기존 raw endpoint 리팩터링 회귀 확인은 `tests/api/test_
   inspection.py` 111건 재실행으로 확인. 신규 repository 코드가
   없어 DB 접근이 필요한 검증 항목 자체가 없다.
+- 상태: **완료**(2026-08-12, PR #239).
+
+### 2단계 후속 12 — Shadow inspection API 운영 해석 가이드 작성(완료)
+
+- 왜: 12개 inspection API가 갖춰진 뒤에는 API를 더 늘리는 것보다,
+  운영자가 이 API들을 **어떤 순서로 보고 어떻게 해석할지**가 더
+  중요해졌다. **API 추가/수정이 아니라 문서화 전용 턴**이다 —
+  코드/schema/repository/runtime을 전혀 건드리지 않았다.
+- 산출물: [`loss_cut_shadow_inspection_operations_guide.md`](loss_cut_shadow_inspection_operations_guide.md)
+  — API별 역할 요약표, 운영 질문별 권장 조회 순서, 핵심 판단
+  체크리스트, 성급히 단정하면 안 되는 것 목록, 6개 운영 시나리오별
+  읽는 법, 운영 액션 레벨(Observe/Investigate/Escalate/Do Not
+  Conclude Yet), 현재 구조적 한계, "다음 단계" 구분을 포함한다.
+- **이 문서는 loss-cut 정책 실행 가이드가 아니다** — 정책 ON/OFF
+  결정이나 임계치 확정을 이 문서가 대신하지 않는다는 점을 문서
+  첫머리에 명시했다.
+- 검증: `bash scripts/harness/run.sh accept docs` PASS. 이번 턴은
+  문서 작성 전용이라 코드 검증(`accept architecture`/`backend-
+  runtime`/`db-structure`/`no-bypass`/`test-file` 등)은 대상
+  변경분이 없어 실행하지 않았다.
 - 상태: **완료**(2026-08-12, 이번 PR).
 
 ### 3단계 — Shadow 누적 실측(미착수)
@@ -750,6 +771,8 @@ downside shock, holding_profile 만료)이다. 이 사실은
   missing-queue-causes/queue-write-path-suspected-timelines/
   queue-write-path-suspected-timeline-summary API를 그대로
   재사용할 수 있다 — 별도 조회 도구를 새로 만들 필요는 없다.
+  실측 진행 시 [`loss_cut_shadow_inspection_operations_guide.md`](loss_cut_shadow_inspection_operations_guide.md)
+  의 권장 조회 순서/체크리스트를 그대로 활용할 수 있다.
 - 상태: **미착수**.
 
 ### 4단계 — 정책 확정(미착수)

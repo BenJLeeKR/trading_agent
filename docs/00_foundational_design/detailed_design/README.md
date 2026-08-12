@@ -73,6 +73,7 @@
    - `risk.loss_cut` config_json 스키마 초안 + Admin API/CLI 입력 계약 초안, shadow 전용 `env` 허용 범위
    - 선행 조사(설계 조사/현황 분석): [`docs/20_system_analysis/loss_cut_policy_investigation.md`](../../20_system_analysis/loss_cut_policy_investigation.md) — 현재 운영 코드에 정량 손절이 없음을 소스 기준으로 확인, 정책안 3종(하드 손절/단계형/관측용 shadow) 비교
    - 실행 계획: [`docs/40_action_plans/loss_cut_policy_and_config_path_action_plan.md`](../../40_action_plans/loss_cut_policy_and_config_path_action_plan.md)
+   - shadow inspection API 운영 해석 가이드(정책 실행 가이드 아님): [`docs/40_action_plans/loss_cut_shadow_inspection_operations_guide.md`](../../40_action_plans/loss_cut_shadow_inspection_operations_guide.md)
 
 ## 설계 원칙
 

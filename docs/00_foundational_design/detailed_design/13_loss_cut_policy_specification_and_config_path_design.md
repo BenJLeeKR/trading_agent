@@ -360,6 +360,13 @@ orchestrator.py`)로 만들었다 — 어떤 `object.__setattr__` 호출도
   `limit`은 `items` 표시 건수만 줄인다). 신규 repository 메서드
   0개. **운영 summary inspection이지 인과 확정 도구가 아니다** —
   상세: action plan "2단계 후속 11".
+- **운영 inspection 해석 가이드 작성(2026-08-12 추가 후속, 문서
+  전용 — 코드 변경 없음)**: 위 12개 inspection API가 갖춰진 뒤,
+  API 추가보다 "운영자가 이 API들을 어떤 순서로 보고 어떻게
+  해석할지"가 더 중요해져 [`loss_cut_shadow_inspection_operations_
+  guide.md`](../../40_action_plans/loss_cut_shadow_inspection_operations_guide.md)
+  를 작성했다. **정책 실행 가이드가 아니라 inspection 해석
+  가이드**다 — 상세: action plan "2단계 후속 12".
 
 ## 4. 설정 경로 설계 초안
 
