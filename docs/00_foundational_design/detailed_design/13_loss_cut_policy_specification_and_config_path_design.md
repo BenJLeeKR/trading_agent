@@ -307,6 +307,17 @@ orchestrator.py`)로 만들었다 — 어떤 `object.__setattr__` 호출도
   endpoint와 동일한 `created_at` 내림차순 + `before`/`limit`
   cursor. 신규 repository 메서드 0개. **개별 사례 drilldown이지
   인과 확정 도구가 아니다** — 상세: action plan "2단계 후속 7".
+- **recompute queue 대사 cross-check 추가(2026-08-12 추가
+  후속)**: `GET /trade-decisions/loss-cut-shadow/missing-first-
+  event-recompute-cross-check`로 missing sample과 realized PnL
+  recompute queue(`realized_pnl_recompute_queue.list_pending()`)를
+  `account_id + instrument_id` 기준으로 나란히 놓는다.
+  `recompute_required`(sample 관점)와 `queue_pending`(큐 관점)이
+  서로 다른 축임을 3케이스(match/missing/extra)로 명시적으로
+  구분한다. `trade_decision_id`와 특정 queue 항목을 1:1로 인과
+  매칭하지 않는다 — **운영 대사 inspection이지 인과 확정 도구가
+  아니다.** 신규 repository 메서드 0개(기존 4개 조합) — 상세:
+  action plan "2단계 후속 8".
 
 ## 4. 설정 경로 설계 초안
 

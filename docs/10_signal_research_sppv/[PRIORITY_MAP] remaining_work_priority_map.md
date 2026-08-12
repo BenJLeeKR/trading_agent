@@ -11706,3 +11706,23 @@ path 추가다 — 실주문 결정 변경 없음, 정식 loss-cut 정책 도입
 - **이후 우선순위는 변경 없음**: `SPPV-3`가 여전히 다음 주력
   작업이다. 3단계(shadow 누적 실측) 착수 시 이 8종 read path를
   그대로 재사용할 수 있다.
+
+## Loss-cut shadow missing first event × realized PnL recompute queue 대사 API 추가 — 정책 도입 아님, 새 계산 없음(2026-08-12 KST)
+
+`GET /trade-decisions/loss-cut-shadow/missing-first-event-
+recompute-cross-check`를 추가해 missing sample과 recompute queue를
+`account_id + instrument_id` 기준으로 나란히 대사한다. **이번
+작업도 read path 추가다 — 실주문 결정 변경 없음, 정식 loss-cut
+정책 도입 아님.**
+
+- `recompute_required`(sample)와 `queue_pending`(큐)이 서로 다른
+  축임을 match/missing/extra 3케이스로 명시적으로 구분했다.
+- 신규 repository 메서드 0개 — 기존 4개(`list_loss_cut_shadow_
+  observations()`/`realized_pnl_events.list_by_account_and_
+  instrument_since()`/`position_cost_basis_states.get()`/
+  `realized_pnl_recompute_queue.list_pending()`)만 조합.
+- **운영 대사 inspection이지 인과 확정 도구가 아니다** —
+  `trade_decision_id`와 queue 항목을 1:1로 매칭하지 않는다.
+- **이후 우선순위는 변경 없음**: `SPPV-3`가 여전히 다음 주력
+  작업이다. 3단계(shadow 누적 실측) 착수 시 이 9종 read path를
+  그대로 재사용할 수 있다.
