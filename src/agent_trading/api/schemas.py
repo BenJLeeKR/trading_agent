@@ -1126,6 +1126,53 @@ class LossCutShadowTimelineResponse(BaseModel):
     realized_event_limit: int
 
 
+class LossCutShadowFirstEventLatencyResponse(BaseModel):
+    """`GET /trade-decisions/loss-cut-shadow/first-realized-event-latency` 응답.
+
+    **후속 사건 지연 분포이지 정책 효과 판정기가 아니다.** 각
+    ``triggered=true`` shadow sample에 대해 같은 계좌×종목에서 그
+    이후 가장 먼저 기록된 realized PnL event까지의 시간차
+    (초 단위)를 모아 분포 통계만 낸 것이다. "이 shadow가 유효했다"/
+    "손절 정책이 필요하다" 같은 결론을 이 응답이 내리지 않는다 —
+    지연 시간이 길든 짧든 그 자체로 shadow의 적중/실패를 의미하지
+    않는다(예: 청산 대신 보유를 지속했다가 다른 이유로 매도했을
+    수도 있다).
+
+    표본 자체가 인과적으로 매칭된 것도 아니다 — 각 sample 이후
+    "가장 먼저 발생한" realized event일 뿐, 그 event가 이 sample
+    때문에 발생했다는 보장은 없다(``timeline`` endpoint와 동일한
+    한계).
+    """
+
+    account_id: UUID
+    start_date: date
+    end_date: date
+    source_type: str | None = None
+    tier: str | None = None
+    sample_count: int
+    """``triggered=true``이고(``tier`` 필터가 있으면 그것도 만족하는)
+    shadow sample 총 건수 — 분포 계산의 모집단."""
+    matched_first_event_count: int
+    missing_first_event_count: int
+    missing_first_event_rate: float | None = None
+    """``missing_first_event_count / sample_count``. ``sample_count``가
+    0이면 ``None``."""
+    latency_seconds_min: float | None = None
+    latency_seconds_max: float | None = None
+    latency_seconds_avg: float | None = None
+    latency_seconds_median: float | None = None
+    latency_seconds_p90: float | None = None
+    """지연 통계는 ``matched_first_event_count`` 표본 위에서만
+    계산된다(0건이면 전부 ``None``). 표본이 1~2건뿐이면 ``p90``이
+    ``max``와 같거나 근접해 통계적으로 큰 의미가 없을 수 있다 —
+    해석은 표본 크기를 함께 확인한 사람이 해야 한다."""
+    first_realized_event_pnl_net_avg: Decimal | None = None
+    first_realized_event_pnl_net_median: Decimal | None = None
+    """첫 realized event의 ``realized_pnl_net`` 평균/중앙값 — 참고
+    정보일 뿐이며, "이 손실은 shadow 때문" 같은 해석을 뒷받침하지
+    않는다."""
+
+
 class CandidateAlignmentStatusItem(BaseModel):
     """Deterministic candidate와 최종 decision의 정렬 상태 분포."""
 

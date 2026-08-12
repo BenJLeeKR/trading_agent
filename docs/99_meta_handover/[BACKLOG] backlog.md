@@ -6676,3 +6676,25 @@ event 타임라인 API 추가 완료 — 위 "신규 backlog"(방향 A) 항목
   리뷰 수준으로만 검증됐다(기존 `list_by_account_and_instrument()`
   와 거의 동일한 쿼리 구조 — WHERE 부등호 방향과 ORDER BY 방향만
   반전).
+
+**[2026-08-12 KST 신설, Loss-cut shadow → 첫 realized event 지연
+분포 API 추가 완료 — read path 확장, 새 계산 없음, 정식 정책
+도입 아님]** 상세:
+`docs/40_action_plans/loss_cut_policy_and_config_path_action_plan.md`
+"2단계 후속 5".
+
+- `GET /trade-decisions/loss-cut-shadow/first-realized-event-latency`
+  추가. 신규 repository 메서드 0개 — `timeline`(PR #232)이 이미
+  추가한 `list_by_account_and_instrument_since(limit=1)`을 표본
+  전체에 반복 적용만 했다.
+- 모집단은 `triggered=true`로 내부 고정(쿼리로 끄고 켤 수 없음) —
+  `triggered=false` sample에는 "이후 첫 event"를 물을 이유가
+  없다는 판단.
+- `missing_first_event_count`/`missing_first_event_rate` 둘 다
+  응답에 포함, `first_realized_event_pnl_net_{avg,median}`도
+  추가 쿼리 없이 포함 가능해 참고 필드로 넣었다(caveat 명시).
+- **의도적으로 범위 밖에 둔 것**: 개별 sample 사례 첨부(이미
+  `timeline`/`samples`가 제공), by-tier 분리 breakdown(필요하면
+  `tier` query param으로 개별 호출해 대체 가능 — endpoint를 2번
+  호출하는 것과 응답 하나에 soft/hard를 다 담는 것 사이에서 전자를
+  택해 응답 스키마를 단순하게 유지).

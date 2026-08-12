@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import json
+import statistics
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 from uuid import UUID
@@ -23,6 +24,7 @@ from agent_trading.api.schemas import (
     LossCutShadowCountItem,
     LossCutShadowDailyItem,
     LossCutShadowDailyResponse,
+    LossCutShadowFirstEventLatencyResponse,
     LossCutShadowSampleView,
     LossCutShadowSamplesResponse,
     LossCutShadowSummaryResponse,
@@ -1102,6 +1104,119 @@ async def get_loss_cut_shadow_sample_timeline(
         sample=sample,
         realized_events=realized_events,
         realized_event_limit=event_limit,
+    )
+
+
+@router.get(
+    "/trade-decisions/loss-cut-shadow/first-realized-event-latency",
+    response_model=LossCutShadowFirstEventLatencyResponse,
+)
+async def get_loss_cut_shadow_first_realized_event_latency(
+    account_id: str = Query(..., description="Account UUID"),
+    start_date: date = Query(..., description="Start date (YYYY-MM-DD, KST)"),
+    end_date: date = Query(..., description="End date (YYYY-MM-DD, KST)"),
+    source_type: str | None = Query(None, description="Optional source_type filter"),
+    tier: str | None = Query(None, description="Optional tier filter (soft|hard)"),
+    repos: RepositoryContainer = Depends(get_repos),
+) -> LossCutShadowFirstEventLatencyResponse:
+    """``triggered=true`` shadow sample 이후 첫 realized event까지의
+
+    지연(초) 분포를 낸다. **후속 사건 지연 분포이지 정책 효과
+    판정기가 아니다** — 지연이 짧다/길다는 사실 자체가 shadow의
+    적중 여부를 뜻하지 않는다. 모집단은 항상 ``triggered=true``인
+    sample로 고정한다(``triggered=false`` sample에는 "이후 첫
+    event"를 물을 이유가 없다). 각 sample마다
+    ``realized_pnl_events.list_by_account_and_instrument_since(
+    since=sample.created_at, limit=1)``로 가장 먼저 발생한 event
+    1건만 가져온다 — ``timeline`` endpoint와 동일한 조회를 표본
+    전체에 반복해 분포만 집계할 뿐, 새 계산/판정은 없다.
+    """
+    if start_date > end_date:
+        raise HTTPException(
+            status_code=400, detail="start_date must be on or before end_date"
+        )
+    aid = _parse_query_uuid(account_id, field="account_id")
+
+    rows = await repos.trade_decisions.list_loss_cut_shadow_observations(
+        aid,
+        start_date=start_date,
+        end_date=end_date,
+        source_type=source_type,
+        tier=tier,
+        triggered=True,
+        limit=None,
+    )
+
+    sample_count = len(rows)
+    latencies_seconds: list[float] = []
+    first_event_pnl_nets: list[Decimal] = []
+    missing_count = 0
+
+    for row in rows:
+        instrument_id_raw = row.loss_cut_shadow.get("instrument_id")
+        if not instrument_id_raw:
+            missing_count += 1
+            continue
+        events = await repos.realized_pnl_events.list_by_account_and_instrument_since(
+            aid,
+            UUID(instrument_id_raw),
+            since=row.created_at,
+            limit=1,
+        )
+        if not events:
+            missing_count += 1
+            continue
+        first_event = events[0]
+        latencies_seconds.append(
+            (first_event.fill_timestamp - row.created_at).total_seconds()
+        )
+        first_event_pnl_nets.append(first_event.realized_pnl_net)
+
+    matched_count = len(latencies_seconds)
+
+    def _median(values: list[float]) -> float | None:
+        return statistics.median(values) if values else None
+
+    def _p90(values: list[float]) -> float | None:
+        if not values:
+            return None
+        if len(values) == 1:
+            return values[0]
+        return statistics.quantiles(values, n=10, method="inclusive")[8]
+
+    def _decimal_avg(values: list[Decimal]) -> Decimal | None:
+        return (sum(values, Decimal("0")) / len(values)) if values else None
+
+    def _decimal_median(values: list[Decimal]) -> Decimal | None:
+        if not values:
+            return None
+        ordered = sorted(values)
+        mid = len(ordered) // 2
+        if len(ordered) % 2 == 1:
+            return ordered[mid]
+        return (ordered[mid - 1] + ordered[mid]) / 2
+
+    return LossCutShadowFirstEventLatencyResponse(
+        account_id=aid,
+        start_date=start_date,
+        end_date=end_date,
+        source_type=source_type,
+        tier=tier,
+        sample_count=sample_count,
+        matched_first_event_count=matched_count,
+        missing_first_event_count=missing_count,
+        missing_first_event_rate=(
+            missing_count / sample_count if sample_count > 0 else None
+        ),
+        latency_seconds_min=min(latencies_seconds) if latencies_seconds else None,
+        latency_seconds_max=max(latencies_seconds) if latencies_seconds else None,
+        latency_seconds_avg=(
+            statistics.fmean(latencies_seconds) if latencies_seconds else None
+        ),
+        latency_seconds_median=_median(latencies_seconds),
+        latency_seconds_p90=_p90(latencies_seconds),
+        first_realized_event_pnl_net_avg=_decimal_avg(first_event_pnl_nets),
+        first_realized_event_pnl_net_median=_decimal_median(first_event_pnl_nets),
     )
 
 

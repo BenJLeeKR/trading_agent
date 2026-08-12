@@ -4,6 +4,7 @@ from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 from uuid import uuid4
 
+import pytest
 from fastapi.testclient import TestClient
 
 from agent_trading.api.app import create_app
@@ -849,3 +850,214 @@ async def test_loss_cut_shadow_sample_timeline_404_for_account_mismatch() -> Non
         )
 
     assert response.status_code == 404
+
+
+async def test_first_realized_event_latency_computes_distribution_stats() -> None:
+    repos = build_in_memory_repositories()
+    account_id, strategy_id, decision_context_id, now = _seed_common(repos)
+
+    # sample 1: hard, 첫 event 100초 뒤
+    instrument_a = uuid4()
+    sample_a = _make_decision(
+        decision_context_id=decision_context_id,
+        strategy_id=strategy_id,
+        symbol="005930",
+        created_at=now,
+        source_type="held_position",
+        decision_type=DecisionType.HOLD,
+        loss_cut_shadow=_shadow_payload(
+            triggered=True, tier="hard", loss_pct="15", instrument_id=instrument_a
+        ),
+    )
+    # sample 2: soft, 첫 event 300초 뒤
+    instrument_b = uuid4()
+    sample_b = _make_decision(
+        decision_context_id=decision_context_id,
+        strategy_id=strategy_id,
+        symbol="000660",
+        created_at=now,
+        source_type="held_position",
+        decision_type=DecisionType.WATCH,
+        loss_cut_shadow=_shadow_payload(
+            triggered=True, tier="soft", loss_pct="8", instrument_id=instrument_b
+        ),
+    )
+    # sample 3: hard, 이후 event 없음
+    instrument_c = uuid4()
+    sample_c = _make_decision(
+        decision_context_id=decision_context_id,
+        strategy_id=strategy_id,
+        symbol="035420",
+        created_at=now,
+        source_type="held_position",
+        decision_type=DecisionType.HOLD,
+        loss_cut_shadow=_shadow_payload(
+            triggered=True, tier="hard", loss_pct="20", instrument_id=instrument_c
+        ),
+    )
+    for decision in (sample_a, sample_b, sample_c):
+        repos.trade_decisions._items[decision.trade_decision_id] = decision
+
+    await repos.realized_pnl_events.add(
+        _make_realized_pnl_event(
+            account_id=account_id,
+            instrument_id=instrument_a,
+            fill_timestamp=now + timedelta(seconds=100),
+            realized_pnl_net=Decimal("-1000"),
+        )
+    )
+    # a 종목에 event가 하나 더 있어도 "가장 먼저" 것만 써야 한다.
+    await repos.realized_pnl_events.add(
+        _make_realized_pnl_event(
+            account_id=account_id,
+            instrument_id=instrument_a,
+            fill_timestamp=now + timedelta(seconds=9000),
+            realized_pnl_net=Decimal("-9999"),
+        )
+    )
+    await repos.realized_pnl_events.add(
+        _make_realized_pnl_event(
+            account_id=account_id,
+            instrument_id=instrument_b,
+            fill_timestamp=now + timedelta(seconds=300),
+            realized_pnl_net=Decimal("-2000"),
+        )
+    )
+
+    app = create_app(repos=repos, auth_enabled=False)
+    with TestClient(app) as tc:
+        response = tc.get(
+            "/trade-decisions/loss-cut-shadow/first-realized-event-latency",
+            params={
+                "account_id": str(account_id),
+                "start_date": (now - timedelta(days=1)).date().isoformat(),
+                "end_date": (now + timedelta(days=1)).date().isoformat(),
+            },
+        )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["sample_count"] == 3
+    assert body["matched_first_event_count"] == 2
+    assert body["missing_first_event_count"] == 1
+    assert body["missing_first_event_rate"] == pytest.approx(1 / 3)
+    assert body["latency_seconds_min"] == 100.0
+    assert body["latency_seconds_max"] == 300.0
+    assert body["latency_seconds_avg"] == pytest.approx(200.0)
+    assert body["latency_seconds_median"] == pytest.approx(200.0)
+    assert Decimal(body["first_realized_event_pnl_net_avg"]) == Decimal("-1500")
+    assert Decimal(body["first_realized_event_pnl_net_median"]) == Decimal("-1500")
+
+
+async def test_first_realized_event_latency_filters_by_tier() -> None:
+    repos = build_in_memory_repositories()
+    account_id, strategy_id, decision_context_id, now = _seed_common(repos)
+    instrument_id = uuid4()
+
+    decision = _make_decision(
+        decision_context_id=decision_context_id,
+        strategy_id=strategy_id,
+        symbol="005930",
+        created_at=now,
+        source_type="held_position",
+        decision_type=DecisionType.HOLD,
+        loss_cut_shadow=_shadow_payload(
+            triggered=True, tier="hard", loss_pct="15", instrument_id=instrument_id
+        ),
+    )
+    repos.trade_decisions._items[decision.trade_decision_id] = decision
+    await repos.realized_pnl_events.add(
+        _make_realized_pnl_event(
+            account_id=account_id,
+            instrument_id=instrument_id,
+            fill_timestamp=now + timedelta(seconds=50),
+            realized_pnl_net=Decimal("-500"),
+        )
+    )
+
+    app = create_app(repos=repos, auth_enabled=False)
+    with TestClient(app) as tc:
+        soft_only = tc.get(
+            "/trade-decisions/loss-cut-shadow/first-realized-event-latency",
+            params={
+                "account_id": str(account_id),
+                "start_date": now.date().isoformat(),
+                "end_date": now.date().isoformat(),
+                "tier": "soft",
+            },
+        )
+        hard_only = tc.get(
+            "/trade-decisions/loss-cut-shadow/first-realized-event-latency",
+            params={
+                "account_id": str(account_id),
+                "start_date": now.date().isoformat(),
+                "end_date": now.date().isoformat(),
+                "tier": "hard",
+            },
+        )
+
+    assert soft_only.json()["sample_count"] == 0
+    assert hard_only.json()["sample_count"] == 1
+    assert hard_only.json()["matched_first_event_count"] == 1
+    assert hard_only.json()["latency_seconds_min"] == 50.0
+
+
+async def test_first_realized_event_latency_empty_sample_set_returns_nulls() -> None:
+    repos = build_in_memory_repositories()
+    account_id, _strategy_id, _decision_context_id, now = _seed_common(repos)
+
+    app = create_app(repos=repos, auth_enabled=False)
+    with TestClient(app) as tc:
+        response = tc.get(
+            "/trade-decisions/loss-cut-shadow/first-realized-event-latency",
+            params={
+                "account_id": str(account_id),
+                "start_date": now.date().isoformat(),
+                "end_date": now.date().isoformat(),
+            },
+        )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["sample_count"] == 0
+    assert body["matched_first_event_count"] == 0
+    assert body["missing_first_event_count"] == 0
+    assert body["missing_first_event_rate"] is None
+    assert body["latency_seconds_min"] is None
+    assert body["latency_seconds_avg"] is None
+    assert body["first_realized_event_pnl_net_avg"] is None
+
+
+async def test_first_realized_event_latency_all_missing_events() -> None:
+    repos = build_in_memory_repositories()
+    account_id, strategy_id, decision_context_id, now = _seed_common(repos)
+
+    decision = _make_decision(
+        decision_context_id=decision_context_id,
+        strategy_id=strategy_id,
+        symbol="005930",
+        created_at=now,
+        source_type="held_position",
+        decision_type=DecisionType.HOLD,
+        loss_cut_shadow=_shadow_payload(triggered=True, tier="hard", loss_pct="15"),
+    )
+    repos.trade_decisions._items[decision.trade_decision_id] = decision
+
+    app = create_app(repos=repos, auth_enabled=False)
+    with TestClient(app) as tc:
+        response = tc.get(
+            "/trade-decisions/loss-cut-shadow/first-realized-event-latency",
+            params={
+                "account_id": str(account_id),
+                "start_date": now.date().isoformat(),
+                "end_date": now.date().isoformat(),
+            },
+        )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["sample_count"] == 1
+    assert body["matched_first_event_count"] == 0
+    assert body["missing_first_event_count"] == 1
+    assert body["missing_first_event_rate"] == 1.0
+    assert body["latency_seconds_min"] is None
