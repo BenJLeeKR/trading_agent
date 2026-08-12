@@ -333,6 +333,19 @@ orchestrator.py`)로 만들었다 — 어떤 `object.__setattr__` 호출도
   `queue_write_path_suspected`처럼 "의심"까지만 표현하고
   "확정"하지 않는다. 신규 repository 메서드 0개(기존 4개 조합) —
   상세: action plan "2단계 후속 9".
+- **queue_write_path_suspected batch timeline 추가(2026-08-12
+  추가 후속)**: `GET /trade-decisions/loss-cut-shadow/queue-write-
+  path-suspected-timelines`로 위 endpoint가 `queue_write_path_
+  suspected`로 분류한 sample들을 여러 건 한 번에 모아 각 sample
+  이후 realized event 타임라인을 batch로 보여준다. 단일
+  `.../timeline` endpoint와 **동일한 event 선정 규칙**(공통 helper
+  `_fetch_realized_events_after_shadow()`로 통합)을 재사용한다.
+  이 endpoint는 "first realized event 없음"을 population 게이트로
+  쓰지 않는다는 점이 `recompute-missing-queue-causes`와 다르다 —
+  "이후 event가 실제로 붙었는지"를 확인하는 것이 목적이므로 event
+  유무로 population을 거르면 목적이 성립하지 않기 때문이다. 신규
+  repository 메서드 0개. **batch inspection이지 인과 확정 도구가
+  아니다** — 상세: action plan "2단계 후속 10".
 
 ## 4. 설정 경로 설계 초안
 

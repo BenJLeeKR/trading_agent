@@ -31,6 +31,8 @@ from agent_trading.api.schemas import (
     LossCutShadowMissingGroupBreakdownItem,
     LossCutShadowMissingSamplesResponse,
     LossCutShadowMissingSampleView,
+    LossCutShadowQueueWritePathSuspectedTimelineItem,
+    LossCutShadowQueueWritePathSuspectedTimelinesResponse,
     LossCutShadowRecomputeCrossCheckResponse,
     LossCutShadowRecomputeCrossCheckSampleView,
     LossCutShadowRecomputeMissingQueueCausesResponse,
@@ -1017,6 +1019,53 @@ _LOSS_CUT_SHADOW_TIMELINE_DEFAULT_EVENT_LIMIT = 5
 _LOSS_CUT_SHADOW_TIMELINE_MAX_EVENT_LIMIT = 50
 
 
+async def _fetch_realized_events_after_shadow(
+    repos: RepositoryContainer,
+    *,
+    account_id: UUID,
+    instrument_id_raw: str | None,
+    since: datetime,
+    event_limit: int,
+) -> list[LossCutShadowTimelineRealizedEventView]:
+    """shadow sample 1건 이후 같은 계좌×종목의 realized PnL event를
+
+    시간순으로 가져온다 — 단일 ``.../timeline`` endpoint와 batch
+    endpoint(``queue-write-path-suspected-timelines``)가 **반드시
+    같은 event 선정 규칙**을 쓰도록 이 함수 하나만 공유한다. 연결
+    기준은 ``account_id + instrument_id + fill_timestamp >= since``
+    (오름차순, ``event_limit``건까지) — 두 endpoint 사이에 판정
+    불일치가 생기지 않게 한다.
+    """
+    if not instrument_id_raw:
+        # skipped_reason이 있는 관측(가격 미확보 등)은 instrument_id가
+        # 없을 수 있다 — realized event와 연결할 키가 없으므로 빈
+        # 타임라인으로 응답한다(에러 아님, 정상적으로 발생 가능한 상태).
+        return []
+    instrument_id = UUID(instrument_id_raw)
+    events = await repos.realized_pnl_events.list_by_account_and_instrument_since(
+        account_id,
+        instrument_id,
+        since=since,
+        limit=event_limit,
+    )
+    return [
+        LossCutShadowTimelineRealizedEventView(
+            realized_pnl_event_id=event.realized_pnl_event_id,
+            fill_event_id=event.fill_event_id,
+            fill_timestamp=event.fill_timestamp,
+            sell_quantity=event.sell_quantity,
+            sell_price=event.sell_price,
+            avg_cost_basis_before=event.avg_cost_basis_before,
+            realized_pnl_net=event.realized_pnl_net,
+            position_quantity_after=event.position_quantity_after,
+            broker_order_id=event.broker_order_id,
+            computation_run_id=event.computation_run_id,
+            seconds_after_shadow=(event.fill_timestamp - since).total_seconds(),
+        )
+        for event in events
+    ]
+
+
 @router.get(
     "/trade-decisions/loss-cut-shadow/samples/{trade_decision_id}/timeline",
     response_model=LossCutShadowTimelineResponse,
@@ -1066,37 +1115,13 @@ async def get_loss_cut_shadow_sample_timeline(
         raise HTTPException(status_code=404, detail="trade_decision not found")
 
     instrument_id_raw = shadow.get("instrument_id")
-    if not instrument_id_raw:
-        # skipped_reason이 있는 관측(가격 미확보 등)은 instrument_id가
-        # 없을 수 있다 — realized event와 연결할 키가 없으므로 빈
-        # 타임라인으로 응답한다(에러 아님, 정상적으로 발생 가능한 상태).
-        realized_events: list = []
-    else:
-        instrument_id = UUID(instrument_id_raw)
-        events = await repos.realized_pnl_events.list_by_account_and_instrument_since(
-            aid,
-            instrument_id,
-            since=decision.created_at,
-            limit=event_limit,
-        )
-        realized_events = [
-            LossCutShadowTimelineRealizedEventView(
-                realized_pnl_event_id=event.realized_pnl_event_id,
-                fill_event_id=event.fill_event_id,
-                fill_timestamp=event.fill_timestamp,
-                sell_quantity=event.sell_quantity,
-                sell_price=event.sell_price,
-                avg_cost_basis_before=event.avg_cost_basis_before,
-                realized_pnl_net=event.realized_pnl_net,
-                position_quantity_after=event.position_quantity_after,
-                broker_order_id=event.broker_order_id,
-                computation_run_id=event.computation_run_id,
-                seconds_after_shadow=(
-                    event.fill_timestamp - decision.created_at
-                ).total_seconds(),
-            )
-            for event in events
-        ]
+    realized_events = await _fetch_realized_events_after_shadow(
+        repos,
+        account_id=aid,
+        instrument_id_raw=instrument_id_raw,
+        since=decision.created_at,
+        event_limit=event_limit,
+    )
 
     sample = LossCutShadowTimelineSampleView(
         trade_decision_id=decision.trade_decision_id,
@@ -2048,6 +2073,217 @@ async def get_loss_cut_shadow_recompute_missing_queue_causes(
             source_type_sample_counts
         ),
         by_tier=_build_recompute_missing_queue_group_breakdown(tier_sample_counts),
+        limit=limit,
+        before=before,
+        items=items,
+    )
+
+
+_LOSS_CUT_SHADOW_QUEUE_WRITE_PATH_TIMELINES_DEFAULT_LIMIT = 50
+
+
+@router.get(
+    "/trade-decisions/loss-cut-shadow/queue-write-path-suspected-timelines",
+    response_model=LossCutShadowQueueWritePathSuspectedTimelinesResponse,
+)
+async def list_loss_cut_shadow_queue_write_path_suspected_timelines(
+    account_id: str = Query(..., description="Account UUID"),
+    start_date: date = Query(..., description="Start date (YYYY-MM-DD, KST)"),
+    end_date: date = Query(..., description="End date (YYYY-MM-DD, KST)"),
+    source_type: str | None = Query(None, description="Optional source_type filter"),
+    tier: str | None = Query(None, description="Optional tier filter (soft|hard)"),
+    before: datetime | None = Query(
+        None, description="Optional — only samples created before this instant"
+    ),
+    limit: int = Query(
+        _LOSS_CUT_SHADOW_QUEUE_WRITE_PATH_TIMELINES_DEFAULT_LIMIT,
+        ge=1,
+        le=200,
+        description="Maximum samples to return",
+    ),
+    event_limit: int = Query(
+        _LOSS_CUT_SHADOW_TIMELINE_DEFAULT_EVENT_LIMIT,
+        ge=1,
+        le=_LOSS_CUT_SHADOW_TIMELINE_MAX_EVENT_LIMIT,
+        description="Maximum realized PnL events to return per sample",
+    ),
+    repos: RepositoryContainer = Depends(get_repos),
+) -> LossCutShadowQueueWritePathSuspectedTimelinesResponse:
+    """``recompute-missing-queue-causes``가 ``queue_write_path_
+
+    suspected``로 분류한 sample들만 모아, 각 sample 이후 realized
+    event 타임라인을 batch로 보여준다. **이 batch endpoint는 단일
+    ``.../timeline`` endpoint를 건건이 눌러보는 수작업을 줄이기
+    위한 것이지, 인과 확정 도구가 아니다** — "queue write path가
+    실제로 고장났다"/"이 event가 바로 그 shadow의 결과다" 같은
+    결론을 내리지 않는다. 의심 표본과 그 이후 관측된 realized
+    event들, 시간차를 나란히 보여줄 뿐이다.
+
+    모집단: ``triggered=true`` + ``recompute_required=true`` +
+    queue pending 없음 + cause 판정이 ``queue_write_path_suspected``
+    인 sample. cause 판정은 ``_classify_missing_first_event_cause()``/
+    ``_classify_recompute_missing_queue_cause()``를 그대로 재사용한다
+    (중복 구현 없음).
+
+    **``recompute-missing-queue-causes``와 유일하게 다른 점**: 이
+    endpoint는 "first realized event 없음"을 population 게이트로
+    쓰지 않는다 — 이 endpoint의 목적이 "이전에 queue_write_path_
+    suspected로 분류됐을 sample들 중 이후 실제로 event가 붙었는지"
+    를 보는 것이므로, event 유무로 population을 걸러내면 그 목적
+    자체가 성립하지 않는다(그러면 모든 표본이 항상 "event 없음"
+    으로만 남는다). 그래서 두 endpoint를 정확히 같은 순간에 호출
+    하면 population이 일치하지만, 시간이 지나 일부 표본에 event가
+    생기면 이 endpoint의 population이 causes endpoint보다(이미
+    해소된 표본을 포함해) 더 넓을 수 있다 — 이 차이 자체가 이
+    endpoint가 답하려는 질문이다.
+
+    **realized event 선정 규칙은 단일 ``.../timeline`` endpoint와
+    완전히 동일하다** — ``_fetch_realized_events_after_shadow()``
+    공통 helper를 그대로 재사용한다: ``account_id + instrument_id +
+    fill_timestamp >= sample.created_at``(오름차순), sample당
+    ``event_limit``건까지.
+
+    **응답 크기 제어**: sample 개수는 ``limit``(기본 50, 최대
+    200 — 단일 sample당 최대 ``event_limit``건의 event를 함께
+    담으므로 samples 계열의 500보다 낮게 잡았다)으로, sample당
+    event 개수는 ``event_limit``(단일 timeline endpoint와 동일한
+    기본 5/최대 50)으로 각각 통제한다.
+    """
+    if start_date > end_date:
+        raise HTTPException(
+            status_code=400, detail="start_date must be on or before end_date"
+        )
+    aid = _parse_query_uuid(account_id, field="account_id")
+
+    queue_items = await repos.realized_pnl_recompute_queue.list_pending(
+        limit=_LOSS_CUT_SHADOW_RECOMPUTE_QUEUE_SCAN_LIMIT
+    )
+    queue_scan_limit_reached = len(queue_items) >= _LOSS_CUT_SHADOW_RECOMPUTE_QUEUE_SCAN_LIMIT
+    queue_by_instrument: dict[UUID, list] = {}
+    for queue_item in queue_items:
+        if queue_item.account_id != aid:
+            continue
+        queue_by_instrument.setdefault(queue_item.instrument_id, []).append(queue_item)
+
+    rows = await repos.trade_decisions.list_loss_cut_shadow_observations(
+        aid,
+        start_date=start_date,
+        end_date=end_date,
+        source_type=source_type,
+        tier=tier,
+        triggered=True,
+        before=before,
+        limit=None,
+    )
+
+    now = datetime.now(timezone.utc)
+    sample_count = 0
+    timeline_with_events_count = 0
+    timeline_without_events_count = 0
+    found_latencies: list[float] = []
+    items: list[LossCutShadowQueueWritePathSuspectedTimelineItem] = []
+
+    # 주의: 이 endpoint는 ``recompute-missing-queue-causes``와 달리
+    # "first realized event 없음"을 population 게이트로 쓰지 않는다
+    # — 이 endpoint의 존재 이유가 "이전에 queue_write_path_suspected
+    # 로 분류됐을 sample들 중 이후 실제로 event가 붙었는지"를 보는
+    # 것이므로, event 유무로 population을 걸러내면 그 목적 자체가
+    # 성립하지 않는다(모든 표본이 항상 event 없음으로만 남게 된다).
+    # 대신 recompute_required/queue pending 없음/recency 판정은
+    # causes endpoint와 완전히 동일하게 재사용한다 — 그래서 두
+    # endpoint를 정확히 같은 순간에 호출하면 population이 일치하지만,
+    # 시간이 지나 일부 표본에 event가 생기면 이 endpoint의 population
+    # 이 causes endpoint보다(이미 해소된 표본을 포함해) 더 넓을 수
+    # 있다 — 이게 바로 이 endpoint가 answer하려는 질문이다.
+    for row in rows:
+        shadow = row.loss_cut_shadow
+        instrument_id_raw = shadow.get("instrument_id")
+
+        classification = await _classify_missing_first_event_cause(
+            repos, account_id=aid, instrument_id_raw=instrument_id_raw
+        )
+        cost_basis_state = classification.cost_basis_state
+        recompute_required = (
+            cost_basis_state.recompute_required if cost_basis_state is not None else None
+        )
+        if recompute_required is not True:
+            continue
+
+        instrument_id = UUID(instrument_id_raw) if instrument_id_raw else None
+        matching_queue_items = (
+            queue_by_instrument.get(instrument_id, []) if instrument_id is not None else []
+        )
+        if matching_queue_items:
+            continue
+
+        reference_time = (
+            cost_basis_state.updated_at
+            if cost_basis_state is not None and cost_basis_state.updated_at is not None
+            else row.created_at
+        )
+        recompute_missing_cause = _classify_recompute_missing_queue_cause(
+            instrument_id_raw=instrument_id_raw,
+            queue_scan_limit_reached=queue_scan_limit_reached,
+            reference_time=reference_time,
+            now=now,
+        )
+        if recompute_missing_cause != _RECOMPUTE_MISSING_QUEUE_CAUSE_WRITE_PATH_SUSPECTED:
+            continue
+
+        sample_count += 1
+        if sample_count > limit:
+            continue
+
+        events = await _fetch_realized_events_after_shadow(
+            repos,
+            account_id=aid,
+            instrument_id_raw=instrument_id_raw,
+            since=row.created_at,
+            event_limit=event_limit,
+        )
+        first_event_found = len(events) > 0
+        first_event_latency_seconds = events[0].seconds_after_shadow if events else None
+
+        if first_event_found:
+            timeline_with_events_count += 1
+            found_latencies.append(first_event_latency_seconds)
+        else:
+            timeline_without_events_count += 1
+
+        items.append(
+            LossCutShadowQueueWritePathSuspectedTimelineItem(
+                trade_decision_id=row.trade_decision_id,
+                created_at=row.created_at,
+                symbol=row.symbol,
+                instrument_id=instrument_id,
+                source_type=row.source_type,
+                actual_decision_type=row.actual_decision_type,
+                tier=shadow.get("tier"),
+                cause=recompute_missing_cause,
+                timeline_event_count=len(events),
+                first_event_found=first_event_found,
+                first_event_latency_seconds=first_event_latency_seconds,
+                events=events,
+            )
+        )
+
+    return LossCutShadowQueueWritePathSuspectedTimelinesResponse(
+        account_id=aid,
+        start_date=start_date,
+        end_date=end_date,
+        source_type=source_type,
+        tier=tier,
+        sample_count=sample_count,
+        event_limit=event_limit,
+        timeline_with_events_count=timeline_with_events_count,
+        timeline_without_events_count=timeline_without_events_count,
+        first_event_found_rate=(
+            timeline_with_events_count / sample_count if sample_count > 0 else None
+        ),
+        max_observed_latency_seconds=(max(found_latencies) if found_latencies else None),
+        avg_first_event_latency_seconds=(
+            statistics.fmean(found_latencies) if found_latencies else None
+        ),
         limit=limit,
         before=before,
         items=items,

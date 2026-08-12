@@ -11745,3 +11745,26 @@ pending 없음" 케이스만 모아 5개 bucket으로 분류한다. **이번
 - **이후 우선순위는 변경 없음**: `SPPV-3`가 여전히 다음 주력
   작업이다. 3단계(shadow 누적 실측) 착수 시 이 10종 read path를
   그대로 재사용할 수 있다.
+
+## Loss-cut shadow queue_write_path_suspected batch timeline API 추가 — 정책 도입 아님, 새 계산 없음(2026-08-12 KST)
+
+`GET /trade-decisions/loss-cut-shadow/queue-write-path-suspected-
+timelines`를 추가해 위 `queue_write_path_suspected` bucket 표본들을
+여러 건 한 번에 모아 이후 realized event 타임라인을 batch로 보여
+준다. **이번 작업도 read path 추가다 — 실주문 결정 변경 없음, 정식
+loss-cut 정책 도입 아님.**
+
+- 단일 `.../timeline` endpoint와 event 선정 규칙을 공통 helper
+  (`_fetch_realized_events_after_shadow()`)로 통합해 완전히
+  동일하게 재사용 — 기존 단일 endpoint도 이 helper로 리팩터링.
+- **중요한 설계 결정**: 이 endpoint는 "first realized event
+  없음"을 population 게이트로 쓰지 않는다(`recompute-missing-
+  queue-causes`와 다른 점) — event 유무로 population을 거르면
+  "이후 event가 붙었는지" 확인이라는 목적 자체가 성립하지 않기
+  때문. 구현 중 이 게이트를 그대로 재사용하려다
+  `timeline_with_events_count`가 항상 0이 되는 구조적 모순을
+  테스트로 발견해 제거했다.
+- 신규 repository 메서드 0개.
+- **이후 우선순위는 변경 없음**: `SPPV-3`가 여전히 다음 주력
+  작업이다. 3단계(shadow 누적 실측) 착수 시 이 11종 read path를
+  그대로 재사용할 수 있다.

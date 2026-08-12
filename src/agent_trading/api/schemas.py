@@ -1444,6 +1444,81 @@ class LossCutShadowRecomputeMissingQueueCausesResponse(BaseModel):
     items: list[LossCutShadowRecomputeMissingQueueSampleView]
 
 
+class LossCutShadowQueueWritePathSuspectedTimelineItem(BaseModel):
+    """`GET /trade-decisions/loss-cut-shadow/queue-write-path-suspected-
+
+    timelines`의 개별 행 — `recompute-missing-queue-causes`가
+    ``queue_write_path_suspected``로 분류한 sample 1건과, 단일
+    ``.../timeline`` endpoint와 **동일한 규칙**으로 조회한 그 이후
+    realized event 목록을 함께 담는다. ``cause``는 이 endpoint의
+    모집단 정의상 항상 ``"queue_write_path_suspected"``다."""
+
+    trade_decision_id: UUID
+    created_at: datetime
+    symbol: str
+    instrument_id: UUID | None = None
+    source_type: str
+    actual_decision_type: str
+    tier: str | None = None
+    cause: str = "queue_write_path_suspected"
+    recompute_required: bool = True
+    queue_pending: bool = False
+    has_first_realized_event: bool = False
+    timeline_event_count: int
+    first_event_found: bool
+    """``events``에 1건 이상 있으면 ``True`` — "이후 realized event를
+    찾았는지" 여부만 나타낸다. 이 event가 shadow 때문에 발생했다는
+    인과 확정이 아니다."""
+    first_event_latency_seconds: float | None = None
+    """``events[0].seconds_after_shadow``(찾았으면). 못 찾았으면
+    ``None`` — "얼마나 늦게 붙었는지 모른다"를 그대로 표현한다."""
+    events: list[LossCutShadowTimelineRealizedEventView]
+
+
+class LossCutShadowQueueWritePathSuspectedTimelinesResponse(BaseModel):
+    """`GET /trade-decisions/loss-cut-shadow/queue-write-path-suspected-
+    timelines` 응답.
+
+    **`recompute-missing-queue-causes`(cause=``queue_write_path_
+    suspected``)의 후속 batch inspection이다** — 그 bucket에 속한
+    sample들을 건건이 단일 ``.../timeline``으로 열어보는 수작업을
+    줄이기 위한 것이다. **인과 확정 도구가 아니다** — "이 event가
+    이 shadow 때문에 발생했다"/"queue write path가 고장났다" 같은
+    결론을 내리지 않는다. 각 sample의 이후 realized event를
+    나열할 뿐이다.
+    """
+
+    account_id: UUID
+    start_date: date
+    end_date: date
+    source_type: str | None = None
+    tier: str | None = None
+    sample_count: int
+    """모집단 — ``triggered=true`` + ``recompute_required=true`` +
+    queue pending 없음 + cause 판정이 ``queue_write_path_suspected``
+    인 sample 총 건수. **``recompute-missing-queue-causes``와 달리
+    "first realized event 없음"을 게이트로 쓰지 않는다** — 이후
+    event가 실제로 붙었는지를 보는 것이 이 endpoint의 목적이라
+    event 유무로 population을 거르면 목적이 성립하지 않기 때문이다."""
+    event_limit: int
+    timeline_with_events_count: int
+    timeline_without_events_count: int
+    """0이 아니면 그 자체가 중요한 운영 신호다 — "queue에도 없고
+    이후 realized event도 아직 없다"는 뜻이라, `recompute_required`
+    상태가 얼마나 오래 방치되고 있는지 확인해볼 만하다."""
+    first_event_found_rate: float | None = None
+    """``timeline_with_events_count / sample_count``. ``sample_
+    count``가 0이면 ``None``."""
+    max_observed_latency_seconds: float | None = None
+    avg_first_event_latency_seconds: float | None = None
+    """이후 event를 찾은 sample들의 ``first_event_latency_seconds``
+    최댓값/평균값. 못 찾은 sample은 이 통계에서 제외한다(값이
+    없다는 것과 0이라는 것을 구분하기 위함)."""
+    limit: int
+    before: datetime | None = None
+    items: list[LossCutShadowQueueWritePathSuspectedTimelineItem]
+
+
 class CandidateAlignmentStatusItem(BaseModel):
     """Deterministic candidate와 최종 decision의 정렬 상태 분포."""
 
