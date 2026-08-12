@@ -398,6 +398,9 @@ async def test_sync_instruments_promotes_placeholder_row_to_master_row() -> None
         deactivate_market_code=None,
         membership_repo=repos.instrument_index_memberships,
         membership_effective_from=datetime(2026, 6, 24).date(),
+        # index membership 반영은 `--sync-index-memberships` opt-in 경로다.
+        # 이 테스트가 검증하는 대상이 그 경로이므로 명시적으로 켠다.
+        sync_index_memberships=True,
     )
 
     promoted = await repos.instruments.get_by_symbol("005930", "KRX")
@@ -450,6 +453,9 @@ async def test_sync_instruments_backfills_index_membership_table_even_on_skip() 
         deactivate_market_code=None,
         membership_repo=repos.instrument_index_memberships,
         membership_effective_from=datetime(2026, 6, 19).date(),
+        # skip 경로에서도 membership backfill이 도는지 확인하는 테스트이므로
+        # `--sync-index-memberships` opt-in을 켠 상태로 호출한다.
+        sync_index_memberships=True,
     )
 
     memberships = await repos.instrument_index_memberships.list_active_by_instrument(existing.instrument_id)
