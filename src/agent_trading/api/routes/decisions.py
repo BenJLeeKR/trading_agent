@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import json
 import statistics
+from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 from uuid import UUID
@@ -28,6 +29,8 @@ from agent_trading.api.schemas import (
     LossCutShadowMissingCauseBreakdownItem,
     LossCutShadowMissingFirstEventCausesResponse,
     LossCutShadowMissingGroupBreakdownItem,
+    LossCutShadowMissingSamplesResponse,
+    LossCutShadowMissingSampleView,
     LossCutShadowSampleView,
     LossCutShadowSamplesResponse,
     LossCutShadowSummaryResponse,
@@ -42,7 +45,11 @@ from agent_trading.api.schemas import (
     WatchDiagnosticsSampleItem,
     WatchDiagnosticsSourceTypeItem,
 )
-from agent_trading.domain.entities import AgentRunEntity, GuardrailEvaluationEntity
+from agent_trading.domain.entities import (
+    AgentRunEntity,
+    GuardrailEvaluationEntity,
+    PositionCostBasisStateEntity,
+)
 from agent_trading.repositories.container import RepositoryContainer
 from agent_trading.repositories.contracts import TradeDecisionRow
 from agent_trading.repositories.filters import OrderQuery
@@ -1242,13 +1249,30 @@ _MISSING_CAUSE_PRECEDENCE = (
 )
 
 
+@dataclass(frozen=True, slots=True)
+class _MissingCauseClassification:
+    """``_classify_missing_first_event_cause()``의 판정 결과.
+
+    ``cost_basis_state``를 함께 담아, 호출자(예: ``missing-first-
+    event-samples``)가 ``recompute_required``/``quantity``를 보려고
+    같은 조회를 다시 하지 않아도 되게 한다."""
+
+    cause: str
+    cost_basis_state: PositionCostBasisStateEntity | None
+
+
 async def _classify_missing_first_event_cause(
     repos: RepositoryContainer,
     *,
     account_id: UUID,
     instrument_id_raw: str | None,
-) -> str:
+) -> _MissingCauseClassification:
     """missing 표본 1건의 원인 bucket을 판정한다(읽기 전용, 판단 없음).
+
+    ``missing-first-event-causes``와 ``missing-first-event-samples``
+    endpoint가 **반드시 같은 판정 규칙**을 쓰도록 이 함수 하나만
+    공유한다 — 두 endpoint가 각자 판정 로직을 중복 구현하면 미묘하게
+    달라질 위험이 있어, 이 함수를 유일한 판정 지점으로 둔다.
 
     precedence(위에서부터 먼저 만족하는 것으로 확정):
 
@@ -1274,21 +1298,27 @@ async def _classify_missing_first_event_cause(
        위한 안전망).
     """
     if not instrument_id_raw:
-        return _MISSING_CAUSE_INSTRUMENT_LINKAGE
+        return _MissingCauseClassification(
+            cause=_MISSING_CAUSE_INSTRUMENT_LINKAGE, cost_basis_state=None
+        )
 
     instrument_id = UUID(instrument_id_raw)
     cost_basis_state = await repos.position_cost_basis_states.get(
         account_id, instrument_id
     )
     if cost_basis_state is None:
-        return _MISSING_CAUSE_MISSING_POSITION_STATE
+        return _MissingCauseClassification(
+            cause=_MISSING_CAUSE_MISSING_POSITION_STATE, cost_basis_state=None
+        )
     if cost_basis_state.recompute_required:
-        return _MISSING_CAUSE_RECOMPUTE_REQUIRED
-    if cost_basis_state.quantity > 0:
-        return _MISSING_CAUSE_STILL_HOLDING
-    if cost_basis_state.quantity <= 0:
-        return _MISSING_CAUSE_POSITION_CLOSED_NO_EVENT
-    return _MISSING_CAUSE_OTHER_UNCLASSIFIED
+        cause = _MISSING_CAUSE_RECOMPUTE_REQUIRED
+    elif cost_basis_state.quantity > 0:
+        cause = _MISSING_CAUSE_STILL_HOLDING
+    elif cost_basis_state.quantity <= 0:
+        cause = _MISSING_CAUSE_POSITION_CLOSED_NO_EVENT
+    else:
+        cause = _MISSING_CAUSE_OTHER_UNCLASSIFIED
+    return _MissingCauseClassification(cause=cause, cost_basis_state=cost_basis_state)
 
 
 def _build_group_breakdown(
@@ -1396,10 +1426,10 @@ async def get_loss_cut_shadow_missing_first_event_causes(
             decision_type_missing_counts.get(group_decision_type, 0) + 1
         )
 
-        cause = await _classify_missing_first_event_cause(
+        classification = await _classify_missing_first_event_cause(
             repos, account_id=aid, instrument_id_raw=instrument_id_raw
         )
-        cause_counts[cause] += 1
+        cause_counts[classification.cause] += 1
 
     cause_breakdown = [
         LossCutShadowMissingCauseBreakdownItem(
@@ -1429,6 +1459,147 @@ async def get_loss_cut_shadow_missing_first_event_causes(
         by_decision_type=_build_group_breakdown(
             decision_type_sample_counts, decision_type_missing_counts
         ),
+    )
+
+
+_LOSS_CUT_SHADOW_MISSING_SAMPLES_DEFAULT_LIMIT = 50
+
+
+@router.get(
+    "/trade-decisions/loss-cut-shadow/missing-first-event-samples",
+    response_model=LossCutShadowMissingSamplesResponse,
+)
+async def list_loss_cut_shadow_missing_first_event_samples(
+    account_id: str = Query(..., description="Account UUID"),
+    start_date: date = Query(..., description="Start date (YYYY-MM-DD, KST)"),
+    end_date: date = Query(..., description="End date (YYYY-MM-DD, KST)"),
+    source_type: str | None = Query(None, description="Optional source_type filter"),
+    tier: str | None = Query(None, description="Optional tier filter (soft|hard)"),
+    cause: str | None = Query(
+        None,
+        description=(
+            "Optional cause bucket filter — one of: "
+            + ", ".join(_MISSING_CAUSE_PRECEDENCE)
+        ),
+    ),
+    before: datetime | None = Query(
+        None, description="Optional — only samples created before this instant"
+    ),
+    limit: int = Query(
+        _LOSS_CUT_SHADOW_MISSING_SAMPLES_DEFAULT_LIMIT,
+        ge=1,
+        le=500,
+        description="Maximum samples to return",
+    ),
+    repos: RepositoryContainer = Depends(get_repos),
+) -> LossCutShadowMissingSamplesResponse:
+    """first realized event가 안 잡힌 shadow sample들을 개별 행으로
+
+    나열한다(``missing-first-event-causes``의 drilldown). **개별
+    사례 inspection이지 인과 확정 도구가 아니다.**
+
+    ``cause``는 ``missing-first-event-causes``와 **완전히 동일한**
+    판정 함수(``_classify_missing_first_event_cause()``)를 그대로
+    재사용해 계산한다 — 판정 규칙이 두 endpoint 사이에서 중복
+    구현으로 미묘하게 어긋날 여지를 없앤다. ``cause`` 필터를 주면
+    그 bucket에 속한 표본만 남긴다.
+
+    정렬/페이지네이션은 기존 ``samples`` endpoint와 동일하게
+    ``created_at`` 내림차순(최신순) + ``before``/``limit`` cursor
+    방식을 쓴다 — ``before``는 ``list_loss_cut_shadow_observations()``
+    자체의 커서 파라미터를 그대로 전달한다(추가 필터링 없이 repository
+    레벨에서 이미 적용됨). missing/cause 판정은 fetch된 행에 대해서만
+    수행하므로, ``limit``은 "missing/cause 조건을 만족하는 행" 개수
+    기준으로 적용된다 — repository가 반환하는 원시 행 수 기준이
+    아니다(missing이 아닌 행은 세지 않는다).
+    """
+    if start_date > end_date:
+        raise HTTPException(
+            status_code=400, detail="start_date must be on or before end_date"
+        )
+    if cause is not None and cause not in _MISSING_CAUSE_PRECEDENCE:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"Invalid cause: {cause}. "
+                f"Must be one of: {', '.join(_MISSING_CAUSE_PRECEDENCE)}"
+            ),
+        )
+    aid = _parse_query_uuid(account_id, field="account_id")
+
+    rows = await repos.trade_decisions.list_loss_cut_shadow_observations(
+        aid,
+        start_date=start_date,
+        end_date=end_date,
+        source_type=source_type,
+        tier=tier,
+        triggered=True,
+        before=before,
+        limit=None,
+    )
+
+    items: list[LossCutShadowMissingSampleView] = []
+    for row in rows:
+        if len(items) >= limit:
+            break
+
+        shadow = row.loss_cut_shadow
+        instrument_id_raw = shadow.get("instrument_id")
+
+        is_missing = True
+        if instrument_id_raw:
+            events = await repos.realized_pnl_events.list_by_account_and_instrument_since(
+                aid,
+                UUID(instrument_id_raw),
+                since=row.created_at,
+                limit=1,
+            )
+            is_missing = not events
+        if not is_missing:
+            continue
+
+        classification = await _classify_missing_first_event_cause(
+            repos, account_id=aid, instrument_id_raw=instrument_id_raw
+        )
+        if cause is not None and classification.cause != cause:
+            continue
+
+        cost_basis_state = classification.cost_basis_state
+        items.append(
+            LossCutShadowMissingSampleView(
+                trade_decision_id=row.trade_decision_id,
+                created_at=row.created_at,
+                symbol=row.symbol,
+                instrument_id=UUID(instrument_id_raw) if instrument_id_raw else None,
+                source_type=row.source_type,
+                actual_decision_type=row.actual_decision_type,
+                tier=shadow.get("tier"),
+                triggered=shadow.get("triggered"),
+                loss_pct=shadow.get("loss_pct"),
+                shadow_only=shadow.get("shadow_only"),
+                cause=classification.cause,
+                recompute_required=(
+                    cost_basis_state.recompute_required
+                    if cost_basis_state is not None
+                    else None
+                ),
+                position_quantity=(
+                    cost_basis_state.quantity if cost_basis_state is not None else None
+                ),
+                has_first_realized_event=False,
+            )
+        )
+
+    return LossCutShadowMissingSamplesResponse(
+        account_id=aid,
+        start_date=start_date,
+        end_date=end_date,
+        source_type=source_type,
+        tier=tier,
+        cause=cause,
+        limit=limit,
+        before=before,
+        items=items,
     )
 
 

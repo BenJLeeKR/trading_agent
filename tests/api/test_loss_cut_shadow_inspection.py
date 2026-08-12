@@ -1364,3 +1364,243 @@ def test_missing_first_event_causes_filters_by_tier() -> None:
     body = response.json()
     assert body["sample_count"] == 1
     assert body["tier"] == "hard"
+
+
+async def test_missing_first_event_samples_lists_missing_rows_with_cause_and_position_info() -> None:
+    repos = build_in_memory_repositories()
+    account_id, strategy_id, decision_context_id, now = _seed_common(repos)
+
+    holding_instrument = uuid4()
+    holding_decision = _make_decision(
+        decision_context_id=decision_context_id,
+        strategy_id=strategy_id,
+        symbol="005930",
+        created_at=now,
+        source_type="held_position",
+        decision_type=DecisionType.HOLD,
+        loss_cut_shadow=_shadow_payload(
+            triggered=True, tier="hard", loss_pct="15", instrument_id=holding_instrument
+        ),
+    )
+    repos.trade_decisions._items[holding_decision.trade_decision_id] = holding_decision
+    repos.position_cost_basis_states._items[(account_id, holding_instrument)] = (
+        PositionCostBasisStateEntity(
+            account_id=account_id,
+            instrument_id=holding_instrument,
+            quantity=Decimal("10"),
+            average_cost=Decimal("90000"),
+            recompute_required=False,
+        )
+    )
+
+    # matched sample — 응답에 나타나면 안 된다.
+    matched_instrument = uuid4()
+    matched_decision = _make_decision(
+        decision_context_id=decision_context_id,
+        strategy_id=strategy_id,
+        symbol="000660",
+        created_at=now,
+        source_type="held_position",
+        decision_type=DecisionType.HOLD,
+        loss_cut_shadow=_shadow_payload(
+            triggered=True, tier="soft", loss_pct="9", instrument_id=matched_instrument
+        ),
+    )
+    repos.trade_decisions._items[matched_decision.trade_decision_id] = matched_decision
+    await repos.realized_pnl_events.add(
+        _make_realized_pnl_event(
+            account_id=account_id,
+            instrument_id=matched_instrument,
+            fill_timestamp=now + timedelta(seconds=60),
+            realized_pnl_net=Decimal("-100"),
+        )
+    )
+
+    app = create_app(repos=repos, auth_enabled=False)
+    with TestClient(app) as tc:
+        response = tc.get(
+            "/trade-decisions/loss-cut-shadow/missing-first-event-samples",
+            params={
+                "account_id": str(account_id),
+                "start_date": (now - timedelta(days=1)).date().isoformat(),
+                "end_date": (now + timedelta(days=1)).date().isoformat(),
+            },
+        )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert len(body["items"]) == 1
+    item = body["items"][0]
+    assert item["trade_decision_id"] == str(holding_decision.trade_decision_id)
+    assert item["symbol"] == "005930"
+    assert item["instrument_id"] == str(holding_instrument)
+    assert item["source_type"] == "held_position"
+    assert item["actual_decision_type"] == "hold"
+    assert item["tier"] == "hard"
+    assert item["triggered"] is True
+    assert item["cause"] == "still_holding_position"
+    assert item["recompute_required"] is False
+    assert Decimal(item["position_quantity"]) == Decimal("10")
+    assert item["has_first_realized_event"] is False
+
+
+def test_missing_first_event_samples_filters_by_cause_matches_causes_endpoint() -> None:
+    """``cause`` 필터가 ``missing-first-event-causes``와 동일한 판정을
+
+    쓰는지 교차 확인한다 — 같은 표본 집합에 대해 causes endpoint의
+    특정 bucket count와 samples endpoint의 해당 cause 필터 결과
+    건수가 반드시 일치해야 한다."""
+    repos = build_in_memory_repositories()
+    account_id, strategy_id, decision_context_id, now = _seed_common(repos)
+
+    recompute_instrument = uuid4()
+    recompute_decision = _make_decision(
+        decision_context_id=decision_context_id,
+        strategy_id=strategy_id,
+        symbol="005930",
+        created_at=now,
+        source_type="held_position",
+        decision_type=DecisionType.HOLD,
+        loss_cut_shadow=_shadow_payload(
+            triggered=True, tier="hard", loss_pct="15", instrument_id=recompute_instrument
+        ),
+    )
+    repos.trade_decisions._items[recompute_decision.trade_decision_id] = recompute_decision
+    repos.position_cost_basis_states._items[(account_id, recompute_instrument)] = (
+        PositionCostBasisStateEntity(
+            account_id=account_id,
+            instrument_id=recompute_instrument,
+            quantity=Decimal("0"),
+            average_cost=Decimal("100000"),
+            recompute_required=True,
+        )
+    )
+
+    holding_instrument = uuid4()
+    holding_decision = _make_decision(
+        decision_context_id=decision_context_id,
+        strategy_id=strategy_id,
+        symbol="000660",
+        created_at=now,
+        source_type="held_position",
+        decision_type=DecisionType.WATCH,
+        loss_cut_shadow=_shadow_payload(
+            triggered=True, tier="soft", loss_pct="8", instrument_id=holding_instrument
+        ),
+    )
+    repos.trade_decisions._items[holding_decision.trade_decision_id] = holding_decision
+    repos.position_cost_basis_states._items[(account_id, holding_instrument)] = (
+        PositionCostBasisStateEntity(
+            account_id=account_id,
+            instrument_id=holding_instrument,
+            quantity=Decimal("5"),
+            average_cost=Decimal("50000"),
+            recompute_required=False,
+        )
+    )
+
+    app = create_app(repos=repos, auth_enabled=False)
+    params_common = {
+        "account_id": str(account_id),
+        "start_date": (now - timedelta(days=1)).date().isoformat(),
+        "end_date": (now + timedelta(days=1)).date().isoformat(),
+    }
+    with TestClient(app) as tc:
+        causes_response = tc.get(
+            "/trade-decisions/loss-cut-shadow/missing-first-event-causes",
+            params=params_common,
+        )
+        samples_response = tc.get(
+            "/trade-decisions/loss-cut-shadow/missing-first-event-samples",
+            params={**params_common, "cause": "recompute_required"},
+        )
+
+    causes_body = causes_response.json()
+    samples_body = samples_response.json()
+
+    recompute_cause_count = next(
+        item["count"]
+        for item in causes_body["cause_breakdown"]
+        if item["cause"] == "recompute_required"
+    )
+    assert recompute_cause_count == 1
+    assert len(samples_body["items"]) == recompute_cause_count
+    assert samples_body["items"][0]["trade_decision_id"] == str(
+        recompute_decision.trade_decision_id
+    )
+    assert samples_body["items"][0]["cause"] == "recompute_required"
+
+
+def test_missing_first_event_samples_respects_limit_and_before_cursor() -> None:
+    repos = build_in_memory_repositories()
+    account_id, strategy_id, decision_context_id, now = _seed_common(repos)
+
+    decisions = []
+    for i in range(3):
+        instrument_id = uuid4()
+        decision = _make_decision(
+            decision_context_id=decision_context_id,
+            strategy_id=strategy_id,
+            symbol=f"00000{i}",
+            created_at=now + timedelta(hours=i),
+            source_type="held_position",
+            decision_type=DecisionType.HOLD,
+            loss_cut_shadow=_shadow_payload(
+                triggered=True, tier="hard", loss_pct="15", instrument_id=instrument_id
+            ),
+        )
+        repos.trade_decisions._items[decision.trade_decision_id] = decision
+        decisions.append(decision)
+
+    app = create_app(repos=repos, auth_enabled=False)
+    with TestClient(app) as tc:
+        limited = tc.get(
+            "/trade-decisions/loss-cut-shadow/missing-first-event-samples",
+            params={
+                "account_id": str(account_id),
+                "start_date": (now - timedelta(days=1)).date().isoformat(),
+                "end_date": (now + timedelta(days=1)).date().isoformat(),
+                "limit": 1,
+            },
+        )
+        before_cursor = tc.get(
+            "/trade-decisions/loss-cut-shadow/missing-first-event-samples",
+            params={
+                "account_id": str(account_id),
+                "start_date": (now - timedelta(days=1)).date().isoformat(),
+                "end_date": (now + timedelta(days=1)).date().isoformat(),
+                "before": (now + timedelta(hours=2)).isoformat(),
+            },
+        )
+
+    assert len(limited.json()["items"]) == 1
+    # 최신순이므로 limit=1이면 가장 최근(hours=2) 표본만 나와야 한다.
+    assert limited.json()["items"][0]["trade_decision_id"] == str(
+        decisions[2].trade_decision_id
+    )
+
+    # before=now+2h면 hours=2 표본은 제외되고 hours=0,1만 남아야 한다.
+    before_ids = {item["trade_decision_id"] for item in before_cursor.json()["items"]}
+    assert before_ids == {
+        str(decisions[0].trade_decision_id),
+        str(decisions[1].trade_decision_id),
+    }
+
+
+def test_missing_first_event_samples_invalid_cause_returns_400() -> None:
+    repos = build_in_memory_repositories()
+    account_id, _strategy_id, _decision_context_id, now = _seed_common(repos)
+
+    app = create_app(repos=repos, auth_enabled=False)
+    with TestClient(app) as tc:
+        response = tc.get(
+            "/trade-decisions/loss-cut-shadow/missing-first-event-samples",
+            params={
+                "account_id": str(account_id),
+                "start_date": now.date().isoformat(),
+                "end_date": now.date().isoformat(),
+                "cause": "not_a_real_cause",
+            },
+        )
+
+    assert response.status_code == 400
