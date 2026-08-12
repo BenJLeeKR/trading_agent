@@ -337,6 +337,63 @@ downside shock, holding_profile 만료)이다. 이 사실은
   평균·중앙값, `tier` 필터, 빈 표본, 전부 event 없는 경우) 전부
   dev-validation container에서 PASS. 신규 repository 코드가 없어
   DB 접근이 필요한 검증 항목 자체가 없다.
+- 상태: **완료**(2026-08-12, PR #233).
+
+### 2단계 후속 6 — Shadow missing first event 원인 bucket 분류 API 추가(완료)
+
+- 왜: `first-realized-event-latency`는 "missing" 건수/비율만 낼 뿐
+  **왜 missing인지**(아직 보유 중인지, ledger가 recompute 대기
+  상태인지, 데이터 정합성이 의심되는지)를 구분하지 못했다 — 3단계
+  실측 착수 전 운영자가 missing 표본을 바로 분류해서 볼 수 있는
+  최소 read path다. **새로운 매매 판단이나 causality 해석이
+  아니라, 이미 저장된 값(shadow payload/`position_cost_basis_
+  state`/realized event 존재 여부)만으로 코드상 재현 가능한 규칙
+  으로 분류하는 원인 분류 inspection**이다.
+- bucket 정의와 판정 기준(코드: `_classify_missing_first_event_
+  cause()`, `src/agent_trading/api/routes/decisions.py`):
+
+  | bucket | 판정 기준 |
+  |---|---|
+  | `missing_instrument_linkage` | shadow payload에 `instrument_id`가 없음(구형 관측 등) |
+  | `recompute_required` | `position_cost_basis_state.recompute_required is True` |
+  | `missing_position_state` | 계좌×종목 `position_cost_basis_state`가 아예 없음 |
+  | `still_holding_position` | `position_cost_basis_state.quantity > 0`(ledger 기준 아직 보유 중) |
+  | `position_closed_but_no_realized_event` | `quantity <= 0`(ledger 기준 이미 청산)인데 realized event가 안 보임 — ledger/recompute 누락 의심 |
+  | `other_unclassified` | 위 어느 것도 명확히 해당하지 않음(현재 코드 경로상 도달 가능성은 낮음) |
+
+  **precedence(위에서부터 먼저 만족하는 것으로 확정)**:
+  `missing_instrument_linkage` → `recompute_required` →
+  `missing_position_state` → `still_holding_position` →
+  `position_closed_but_no_realized_event` → `other_unclassified`.
+  `recompute_required`가 `still_holding_position`보다 먼저인
+  이유: `recompute_required=true`면 ledger의 `quantity` 자체가
+  신뢰 불가 상태이므로, 그 값을 근거로 "보유 중이다"라고 먼저
+  단정하면 잘못된 결론이 될 수 있다 — 정합성 경고를 항상 먼저
+  드러낸다.
+- 산출물:
+  - `GET /trade-decisions/loss-cut-shadow/missing-first-event-causes`
+    — 계좌×기간(+선택 `source_type`/`tier`) 기준 `sample_count`/
+    `missing_first_event_count`/`missing_first_event_rate`/
+    `cause_breakdown[]`(bucket별 count+비율, 분모는 missing 표본
+    전체) + `by_source_type[]`/`by_tier[]`/`by_decision_type[]`
+    (그룹별 `sample_count`/`missing_first_event_count`/그룹 **안**
+    에서의 missing 비율 — 특정 그룹에서 missing이 쏠리는지 비교
+    하는 용도).
+  - 신규 repository 메서드 0개 — 기존 `list_loss_cut_shadow_
+    observations()`/`realized_pnl_events.list_by_account_and_
+    instrument_since()`/`position_cost_basis_states.get()` 3개
+    조합만 했다.
+  - 신규 테이블/마이그레이션/계산 엔진 없음.
+- 한계(응답 스키마에도 명시): **원인 분류 inspection이지 인과
+  확정 도구가 아니다.** "이 shadow가 유효했다"/"이 종목은 손절이
+  정답이었다" 같은 결론을 내리지 않는다.
+- 검증: `py_compile`, `accept architecture`/`backend-runtime`/
+  `db-structure`/`no-bypass`/`docs` PASS, 신규 API 테스트 4건
+  (6개 bucket 전체 분류 + source_type/tier/decision_type breakdown,
+  recompute_required가 still_holding보다 우선하는 precedence 확인,
+  빈 표본, `tier` 필터) 전부 dev-validation container에서 PASS.
+  신규 repository 코드가 없어 DB 접근이 필요한 검증 항목 자체가
+  없다.
 - 상태: **완료**(2026-08-12, 이번 PR).
 
 ### 3단계 — Shadow 누적 실측(미착수)
@@ -347,8 +404,8 @@ downside shock, holding_profile 만료)이다. 이 사실은
   `regime_conditional_signal_shadow_history.jsonl`류 관례 재사용),
   주기적 실측 보고. read path는 이번에 추가한
   summary/samples/daily/by-instrument/timeline/first-realized-
-  event-latency API를 그대로 재사용할 수 있다 — 별도 조회 도구를
-  새로 만들 필요는 없다.
+  event-latency/missing-first-event-causes API를 그대로 재사용할
+  수 있다 — 별도 조회 도구를 새로 만들 필요는 없다.
 - 상태: **미착수**.
 
 ### 4단계 — 정책 확정(미착수)

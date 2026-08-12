@@ -285,6 +285,18 @@ orchestrator.py`)로 만들었다 — 어떤 `object.__setattr__` 호출도
   전체에 반복 적용할 뿐, 신규 repository 메서드 없음. 후속 사건
   지연 분포일 뿐 정책 효과 판정이 아니다(상세: action plan
   "2단계 후속 5").
+- **missing first event 원인 bucket 분류 추가(2026-08-12 추가
+  후속)**: `GET /trade-decisions/loss-cut-shadow/missing-first-
+  event-causes`로 first realized event가 안 잡힌 sample들을
+  `missing_instrument_linkage`/`recompute_required`/`missing_
+  position_state`/`still_holding_position`/`position_closed_
+  but_no_realized_event`/`other_unclassified` 6개 bucket으로
+  분류한다(precedence는 이 순서 그대로 — `recompute_required`가
+  `still_holding_position`보다 먼저인 이유는 ledger 자체가 신뢰
+  불가 상태이면 quantity 값으로 보유 여부를 먼저 단정하면 안
+  되기 때문). 신규 repository 메서드 0개(기존 3개 조합). **원인
+  분류 inspection이지 인과 확정 도구가 아니다** — 상세: action
+  plan "2단계 후속 6".
 
 ## 4. 설정 경로 설계 초안
 

@@ -1173,6 +1173,64 @@ class LossCutShadowFirstEventLatencyResponse(BaseModel):
     않는다."""
 
 
+class LossCutShadowMissingCauseBreakdownItem(BaseModel):
+    """``missing-first-event-causes``의 원인 bucket 1건.
+
+    ``rate``는 이 bucket count를 **missing 표본 전체**(``missing_
+    first_event_count``)로 나눈 값이다 — 전체 sample 대비 비율이
+    아니다."""
+
+    cause: str
+    count: int
+    rate: float
+
+
+class LossCutShadowMissingGroupBreakdownItem(BaseModel):
+    """``by_source_type``/``by_tier``/``by_decision_type`` 공통 1행.
+
+    ``group_value``는 그룹 키(예: ``"held_position"``, ``"hard"``,
+    ``"hold"``)다. ``missing_first_event_rate``는 이 그룹 **안에서**
+    (``sample_count`` 대비) missing 비율이다 — 특정 그룹에서 missing이
+    유독 많은지 비교하기 위한 필드다."""
+
+    group_value: str
+    sample_count: int
+    missing_first_event_count: int
+    missing_first_event_rate: float | None = None
+
+
+class LossCutShadowMissingFirstEventCausesResponse(BaseModel):
+    """`GET /trade-decisions/loss-cut-shadow/missing-first-event-causes` 응답.
+
+    **원인 분류 inspection이지 인과 확정 도구가 아니다.** 각 bucket은
+    이미 저장된 shadow sample/realized event/position 상태 값만으로
+    코드상 재현 가능한 규칙으로 분류한 것이고, 새로운 매매 판단이나
+    causality 해석은 하지 않는다. bucket 판정 우선순위(precedence)는
+    ``missing_instrument_linkage`` → ``recompute_required`` →
+    ``missing_position_state`` → ``still_holding_position`` →
+    ``position_closed_but_no_realized_event`` →
+    ``other_unclassified`` 순이다(자세한 판정 기준은 route
+    docstring/설계 문서 참고).
+    """
+
+    account_id: UUID
+    start_date: date
+    end_date: date
+    source_type: str | None = None
+    tier: str | None = None
+    sample_count: int
+    """``triggered=true``이고(필터가 있으면 그것도 만족하는) shadow
+    sample 총 건수 — 분류 대상 모집단."""
+    missing_first_event_count: int
+    missing_first_event_rate: float | None = None
+    """``missing_first_event_count / sample_count``. ``sample_count``가
+    0이면 ``None``."""
+    cause_breakdown: list[LossCutShadowMissingCauseBreakdownItem]
+    by_source_type: list[LossCutShadowMissingGroupBreakdownItem]
+    by_tier: list[LossCutShadowMissingGroupBreakdownItem]
+    by_decision_type: list[LossCutShadowMissingGroupBreakdownItem]
+
+
 class CandidateAlignmentStatusItem(BaseModel):
     """Deterministic candidate와 최종 decision의 정렬 상태 분포."""
 
