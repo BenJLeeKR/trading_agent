@@ -673,3 +673,123 @@ Pass 2 순차화로 인한 cycle 소요시간 증가폭은 이번 테스트 보�
   skipped` 로그를 소비하는 기존 운영 대시보드/알림이 있는지는
   코드 검색만으로는 확인되지 않았다 — 있다면 안 1 적용 전 별도
   확인 필요.
+
+## 13. 안 1(Pre-AI gate) 구현 완료 (2026-08-12 KST, 코드 구현 턴)
+
+§12에서 추천안으로 정리한 "안 1"을 실제로 구현했다. **§12.4 기준을
+그대로 코드로 옮긴 것**이며, 새로운 우회 경로나 별도 gate를
+추가하지 않았다.
+
+### 13.1 실제 변경
+
+`scripts/run_decision_loop.py`의 `_process_one()` 내부, general
+BUY lane 진입 분기(`if submit and not dry_run and item_source_type
+!= "held_position":`)에서:
+
+```python
+remaining_general_buy_budget=(
+    0 if not allow_general_submit else None
+),
+```
+
+- `allow_general_submit`은 이 cycle 전체에 대해 `run_ops_scheduler.
+  py`가 cycle 시작 **전** DB 실측으로 1회 확정해 CLI 플래그로 넘긴
+  cycle-level 상수다 — symbol별로 변하는 값이 아니다.
+- `allow_general_submit=False`인 cycle에서만 `remaining_general_
+  buy_budget=0`을 전달해 `pre_ai_gate.evaluate_pre_ai_validation_
+  result()`의 기존 `GENERAL_BUY_BUDGET_EXHAUSTED` 분기를 연다.
+- `allow_general_submit=True`인 cycle에서는 기존과 동일하게 `None`을
+  유지 — D안의 Pass 1.5/Pass 2 dedupe·우선순위·순차소비 동작은
+  전혀 건드리지 않는다.
+- `held_position` source_type은 애초에 이 분기(`if submit and not
+  dry_run and item_source_type != "held_position":`)에 들어오지
+  않고 기존 `else` 분기(`evaluate_symbol_submit_lane()` 기반)를
+  그대로 타므로 **무영향**이다.
+- 부가 변경: 이 분기에서 나가는 `SUBMIT_PIPELINE_TRACE` 로그를
+  결과가 `status=SKIPPED, error_phase=pre_ai_gate`인 경우와
+  아닌 경우로 분리했다 — 전자는 `analysis_complete`(분석이 실제로
+  끝났다는 뜻) 대신 `pre_ai_skipped`로 남겨, 로그만 보고도 AI가
+  실행되지 않았음을 바로 알 수 있게 했다.
+
+### 13.2 왜 phantom 차단을 재도입하지 않는가
+
+기존(D안 이전) phantom 차단의 원인은 "같은 cycle 안에서 여러
+후보가 동시에 분석을 마치는 시점의 동적 in-flight 카운터"에 의존한
+판정이었다. 이번 구현은 그 동적 값을 전혀 참조하지 않는다 —
+`allow_general_submit`은 cycle 시작 전에 이미 고정된 값이므로,
+같은 cycle 안에서 동시에 도착하는 여러 candidate 간 경합이 이
+판정에 전혀 영향을 주지 않는다. `allow_general_submit=True`인
+cycle에서는 오늘처럼 Pass 1이 전원 분석하고 Pass 1.5/Pass 2가
+경합을 그대로 처리한다.
+
+### 13.3 기록 체계 확인 결과 (구현 반영 후 재확인)
+
+- `guardrail_evaluations`: `_run_one_cycle()`의 pre-ai 분기가
+  `_record_pre_ai_guardrail_evaluation()`을 그대로 호출하므로
+  `rule_set_version=pre_ai_gate_v1`, `blocking_rule_codes=
+  [general_buy_budget_exhausted]`로 기록됨 — 코드 경로 재확인 완료
+  (§12.1-A에서 이미 확인한 기존 함수를 그대로 재사용).
+- `SubmitResult`: `status=SKIPPED`, `error_phase=pre_ai_gate`,
+  `stop_reason=general_buy_budget_exhausted`로 직렬화됨 — 신규
+  테스트 `test_assemble_not_called_when_general_buy_budget_
+  exhausted_pre_ai`로 직접 확인.
+- `trade_decisions`: row가 생성되지 않음(§12.3에서 예견한 그대로) —
+  `assemble()`이 호출되지 않으므로 이를 생성하는 코드 경로 자체에
+  도달하지 않는다.
+- `SUBMIT_BUDGET_TRACE blocked`: `allow_general_submit=False`로
+  걸러진 심볼은 Pass 2까지 도달하지 않으므로 이 로그가 발생하지
+  않는다 — **의도된 결과**(감소가 아니라 해당 원인에 대해서는
+  소멸). `lane_enter`(legacy 진단 스냅샷)는 무조건 찍히는 로그라
+  영향 없음.
+- `SUBMIT_PIPELINE_TRACE`: `candidate_enqueued`/`analysis_complete`
+  자체가 발생하지 않고, 새로 추가한 `pre_ai_skipped` 이벤트로
+  대체됨(§13.1) — "해당 symbol은 analysis_complete 이전에 잘린다"는
+  §12의 요구사항을 로그 형식으로도 명확히 구분했다.
+
+### 13.4 테스트 보강 결과 (dev validation container 기준)
+
+`tests/scripts/test_run_decision_loop.py`에 3건 추가, 전체
+130건 dev validation container(`bash scripts/harness/docker_dev_
+exec.sh pytest tests/scripts/test_run_decision_loop.py -q`)에서
+PASS:
+
+- `test_assemble_not_called_when_general_buy_budget_exhausted_
+  pre_ai` — 무보유 + `remaining_general_buy_budget=0`이면
+  `orchestrator.assemble()`이 `assert_not_awaited()`로 확인될
+  만큼 전혀 호출되지 않음을 직접 증명(AI 토큰 미소모의 가장 직접적
+  증거).
+- `TestPreAiGeneralBuyBudgetExhaustedDispatch.test_allow_general_
+  submit_false_forces_zero_budget_for_general_lane_only` —
+  `_run_loop()`을 실제로 구동해 `_run_one_cycle()`에 전달되는
+  kwargs를 캡처, general lane(core) 심볼은 `remaining_general_buy_
+  budget=0`을, held_position 심볼은 (같은 cycle의
+  `max_general_submits_this_cycle=3`을 그대로 반영한) 별도 계산값을
+  받아 서로 다른 코드 경로를 탄다는 것을 증명. held_position은
+  애초에 `defer_actionable_for_pass2=False`로 이 변경의 분기 자체에
+  들어가지 않음도 함께 확인.
+- `test_allow_general_submit_true_keeps_existing_pass1_behavior` —
+  `allow_general_submit=True`일 때는 general lane도 여전히
+  `remaining_general_buy_budget=None`을 받아 D안 기존 동작이
+  그대로 유지됨을 증명.
+- 기존 `test_pre_ai_skip_when_general_buy_budget_exhausted_and_
+  no_position`(§12 조사 이전부터 존재)이 pre_ai_gate 단의 최종
+  차단 자체(`status=SKIPPED`, `guardrail_evaluations` 기록)를 이미
+  검증하고 있었다 — 이번 구현은 그 분기를 general lane에서 실제로
+  열어주는 배선(dispatch) 쪽만 새로 검증했다.
+- `accept style`/`accept no-bypass`(`hard_bypass_count=0`)/
+  `accept architecture` 모두 PASS. `accept backend-file scripts/
+  run_decision_loop.py`는 §11과 동일하게 `scripts/`가 스코프 밖
+  (`invalid_path_scope`)이라 N/A.
+
+### 13.5 다음 장중 실측에서 확인해야 할 항목
+
+- daily cap 소진 이후 cycle에서 실제로 AI 호출(assemble) 횟수가
+  줄어드는지, 로그(`SUBMIT_PIPELINE_TRACE pre_ai_skipped` 건수)로
+  직접 확인.
+- `guardrail_evaluations`에 `general_buy_budget_exhausted`가 실제
+  운영 DB에 기록되기 시작하는지(이전에는 0건이었음, §12.1-A).
+- `SUBMIT_BUDGET_TRACE blocked`가 실제로 소멸하는지, 그리고 이
+  로그를 근거로 쓰던 사후분석이 있다면 갱신 여부 확인.
+- `allow_general_submit=True`로 유지되는 cycle(예산이 남아있는
+  이른 시간대)에서 D안의 다건 동시 경합 처리(§4-1)가 여전히 동일하게
+  동작하는지 재확인.

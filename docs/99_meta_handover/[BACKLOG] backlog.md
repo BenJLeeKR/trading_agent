@@ -6718,3 +6718,21 @@ event 타임라인 API 추가 완료 — 위 "신규 backlog"(방향 A) 항목
   로그 건수를 daily-cap 소진 지표로 쓰던 기존 사후분석 방식이
   있다면, 안 1 적용 후 이 건수가 급감하므로(대부분 Pre-AI gate에서
   더 일찍 걸러짐) 그 방식을 쓰는 쪽에 갱신 공지가 필요하다.
+
+## AI 토큰 낭비 방지 — BUY daily cap Pre-AI gate 구현 완료(2026-08-12 KST)
+
+위 "신규 backlog"(구현 항목) 해소. 상세: `docs/40_action_plans/
+submit_budget_two_stage_design_2026-08-11.md` "13. 안 1(Pre-AI
+gate) 구현 완료", `[PRIORITY_MAP]` 동일 날짜 항목.
+
+- `allow_general_submit=False` cycle-level 고정값 기준으로 general
+  BUY lane만 Pre-AI gate에서 차단하도록 구현, held_position/SELL
+  경로 무영향을 신규 테스트로 확인.
+- **남은 backlog(부수 확인 미완)**: `trade_decisions` row 미생성이
+  다른 하류 분석/SQL에 영향을 주는지, `SUBMIT_BUDGET_TRACE blocked`
+  건수 급감을 근거로 쓰던 기존 사후분석이 있는지는 이번 구현 턴
+  에서도 전수 확인되지 않았다(코드 검색만으로는 확인 불가) — 실제
+  장중 운영 후 관측 필요.
+- **신규 backlog**: 다음 장중 실측에서 daily cap 소진 이후 실제
+  AI 호출 감소량 확인, `guardrail_evaluations`에 `general_buy_
+  budget_exhausted` 신규 기록 여부 확인.

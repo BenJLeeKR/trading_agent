@@ -3198,23 +3198,53 @@ async def _run_loop(
                         # budget 확인/소비는 이 함수 밖(cycle 메인 루프의
                         # Pass 1.5/Pass 2)에서만 일어난다 — 상세 설계는
                         # docs/40_action_plans/submit_budget_two_stage_design_2026-08-11.md.
+                        #
+                        # 2026-08-12 KST 추가: scheduler가 cycle 시작 **전**에
+                        # DB 실측으로 이미 확정한 cycle-level `allow_general_
+                        # submit=False`(당일 daily budget이 이 cycle 전체에
+                        # 대해 0으로 고정된 상태)인 경우에만 예외적으로
+                        # `remaining_general_buy_budget=0`을 넘겨 pre_ai_gate의
+                        # 기존 GENERAL_BUY_BUDGET_EXHAUSTED 분기를 열어
+                        # assemble() 호출 전에 차단한다. `allow_general_submit`은
+                        # symbol별로 변하는 동적 값이 아니라 이 cycle 전체에
+                        # 대해 이미 고정된 상수이므로, D안이 제거한 "cycle 내
+                        # 동시 경합 phantom 차단"을 재도입하지 않는다 — 상세
+                        # 근거는 위 설계 문서 "12. AI 토큰 낭비 방지" 참조.
                         result = await _execute_symbol_cycle(
                             symbol_submit=False,
                             symbol_dry_run=False,
                             symbol_dry_run_reason=None,
-                            remaining_general_buy_budget=None,
+                            remaining_general_buy_budget=(
+                                0 if not allow_general_submit else None
+                            ),
                             defer_actionable_for_pass2=True,
                             pending_candidates_sink=pending_general_candidates,
                         )
-                        logger.info(
-                            "SUBMIT_PIPELINE_TRACE analysis_complete cycle=%d symbol=%s "
-                            "source_type=%s decision_type=%s trade_decision_id=%s "
-                            "pending_pass2=%s duration_seconds=%s",
-                            cycle_count, item.symbol, item_source_type,
-                            result.get("decision_type"), result.get("trade_decision_id"),
-                            result.get("status") == "PENDING_PASS2",
-                            result.get("duration_seconds"),
-                        )
+                        if (
+                            result.get("status") == "SKIPPED"
+                            and result.get("error_phase") == "pre_ai_gate"
+                        ):
+                            # allow_general_submit=False로 pre_ai_gate가
+                            # assemble() 이전에 차단한 경우 — "analysis_
+                            # complete"는 분석이 실제로 수행됐다는 뜻이므로
+                            # 오해를 막기 위해 별도 이벤트로 남긴다.
+                            logger.info(
+                                "SUBMIT_PIPELINE_TRACE pre_ai_skipped cycle=%d symbol=%s "
+                                "source_type=%s stop_reason=%s duration_seconds=%s",
+                                cycle_count, item.symbol, item_source_type,
+                                result.get("stop_reason"),
+                                result.get("duration_seconds"),
+                            )
+                        else:
+                            logger.info(
+                                "SUBMIT_PIPELINE_TRACE analysis_complete cycle=%d symbol=%s "
+                                "source_type=%s decision_type=%s trade_decision_id=%s "
+                                "pending_pass2=%s duration_seconds=%s",
+                                cycle_count, item.symbol, item_source_type,
+                                result.get("decision_type"), result.get("trade_decision_id"),
+                                result.get("status") == "PENDING_PASS2",
+                                result.get("duration_seconds"),
+                            )
                     else:
                         lane_decision = evaluate_symbol_submit_lane(
                             submit=submit,
