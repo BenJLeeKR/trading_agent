@@ -1519,6 +1519,89 @@ class LossCutShadowQueueWritePathSuspectedTimelinesResponse(BaseModel):
     items: list[LossCutShadowQueueWritePathSuspectedTimelineItem]
 
 
+class LossCutShadowQueueWritePathSuspectedByInstrumentItem(BaseModel):
+    """``by_instrument`` 1행 — 종목별로 ``queue_write_path_suspected``
+
+    sample이 얼마나 몰리는지, 그중 이후 realized event가 붙은 비율과
+    지연 시간을 보여준다. "어느 종목부터 더 봐야 하는지" 판단하는
+    용도다."""
+
+    instrument_id: UUID
+    symbol: str
+    sample_count: int
+    timeline_with_events_count: int
+    timeline_without_events_count: int
+    first_event_found_rate: float | None = None
+    avg_first_event_latency_seconds: float | None = None
+    max_observed_latency_seconds: float | None = None
+    latest_sample_created_at: datetime
+
+
+class LossCutShadowQueueWritePathSuspectedLatencyBucketItem(BaseModel):
+    """``by_latency_bucket`` 1행 — 지연구간별 sample 분포.
+
+    ``bucket`` 값은 다음 5개로 고정된다(``_first_event_latency_
+    bucket()`` 참고):
+
+    - ``no_event_found``: 이후 realized event를 아직 못 찾음
+    - ``under_10m``: 첫 event까지 600초(10분) 미만
+    - ``10m_to_1h``: 600초 이상 ~ 3600초(1시간) 미만
+    - ``1h_to_1d``: 3600초 이상 ~ 86400초(1일) 미만
+    - ``over_1d``: 86400초 이상
+    """
+
+    bucket: str
+    count: int
+    rate: float
+    """``count / sample_count``. ``sample_count``가 0이면 ``0.0``."""
+
+
+class LossCutShadowQueueWritePathSuspectedGroupBreakdownItem(BaseModel):
+    """``by_source_type``/``by_tier`` 공통 1행."""
+
+    group_value: str
+    sample_count: int
+    timeline_with_events_count: int
+    timeline_without_events_count: int
+    first_event_found_rate: float | None = None
+
+
+class LossCutShadowQueueWritePathSuspectedTimelineSummaryResponse(BaseModel):
+    """`GET /trade-decisions/loss-cut-shadow/queue-write-path-suspected-
+    timeline-summary` 응답.
+
+    **`queue-write-path-suspected-timelines`(raw batch inspection)의
+    결과를 종목별/지연구간별/해소 여부 기준으로 요약한 것이다** —
+    이 endpoint 자체는 새 계산을 하지 않는다. raw endpoint와
+    **완전히 동일한 모집단·event 선정 규칙**(``_collect_queue_
+    write_path_suspected_samples()`` 공통 helper)을 공유하므로, 같은
+    조회 조건으로 두 endpoint를 호출하면 top-level 수치가 항상
+    일치한다(raw는 ``limit``으로 표시 건수만 줄일 뿐 top-level
+    집계는 전체 모집단 기준이다). **운영 summary inspection이지
+    인과 확정 도구가 아니다.**
+    """
+
+    account_id: UUID
+    start_date: date
+    end_date: date
+    source_type: str | None = None
+    tier: str | None = None
+    sample_count: int
+    event_limit: int
+    timeline_with_events_count: int
+    timeline_without_events_count: int
+    """0이 아니면 그 자체가 중요한 운영 신호다 — "queue에도 없고
+    이후 realized event도 아직 없다"는 뜻."""
+    first_event_found_rate: float | None = None
+    max_observed_latency_seconds: float | None = None
+    avg_first_event_latency_seconds: float | None = None
+    median_first_event_latency_seconds: float | None = None
+    by_instrument: list[LossCutShadowQueueWritePathSuspectedByInstrumentItem]
+    by_latency_bucket: list[LossCutShadowQueueWritePathSuspectedLatencyBucketItem]
+    by_source_type: list[LossCutShadowQueueWritePathSuspectedGroupBreakdownItem]
+    by_tier: list[LossCutShadowQueueWritePathSuspectedGroupBreakdownItem]
+
+
 class CandidateAlignmentStatusItem(BaseModel):
     """Deterministic candidate와 최종 decision의 정렬 상태 분포."""
 

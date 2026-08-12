@@ -2356,6 +2356,62 @@ async def test_queue_write_path_suspected_timelines_respects_event_limit() -> No
     assert len(body["items"][0]["events"]) == 1
 
 
+async def test_queue_write_path_suspected_timelines_top_level_stats_cover_full_population_beyond_limit() -> None:
+    """``limit``이 ``items`` 표시 건수만 줄이고, top-level 집계
+
+    (``sample_count``/``timeline_with_events_count`` 등)는 전체
+    모집단 기준으로 유지되는지 확인한다 — 그래야 이 raw endpoint와
+    ``queue-write-path-suspected-timeline-summary``의 수치가 항상
+    일치한다."""
+    repos = build_in_memory_repositories()
+    account_id, strategy_id, decision_context_id, now = _seed_common(repos)
+    old_updated_at = datetime.now(timezone.utc) - timedelta(hours=3)
+
+    for i in range(3):
+        instrument_id = uuid4()
+        decision = _make_decision(
+            decision_context_id=decision_context_id,
+            strategy_id=strategy_id,
+            symbol=f"00000{i}",
+            created_at=now,
+            source_type="held_position",
+            decision_type=DecisionType.HOLD,
+            loss_cut_shadow=_shadow_payload(
+                triggered=True, tier="hard", loss_pct="15", instrument_id=instrument_id
+            ),
+        )
+        repos.trade_decisions._items[decision.trade_decision_id] = decision
+        repos.position_cost_basis_states._items[(account_id, instrument_id)] = (
+            PositionCostBasisStateEntity(
+                account_id=account_id,
+                instrument_id=instrument_id,
+                quantity=Decimal("0"),
+                average_cost=Decimal("100000"),
+                recompute_required=True,
+                updated_at=old_updated_at,
+            )
+        )
+
+    app = create_app(repos=repos, auth_enabled=False)
+    with TestClient(app) as tc:
+        response = tc.get(
+            "/trade-decisions/loss-cut-shadow/queue-write-path-suspected-timelines",
+            params={
+                "account_id": str(account_id),
+                "start_date": (now - timedelta(days=1)).date().isoformat(),
+                "end_date": (now + timedelta(days=1)).date().isoformat(),
+                "limit": 1,
+            },
+        )
+
+    assert response.status_code == 200
+    body = response.json()
+    # 모집단은 3건이지만 items는 limit=1로 1건만 표시된다.
+    assert body["sample_count"] == 3
+    assert body["timeline_without_events_count"] == 3
+    assert len(body["items"]) == 1
+
+
 async def test_queue_write_path_suspected_timelines_empty_population() -> None:
     repos = build_in_memory_repositories()
     account_id, _strategy_id, _decision_context_id, now = _seed_common(repos)
@@ -2438,3 +2494,330 @@ async def test_queue_write_path_suspected_timelines_excludes_scan_limit_suspecte
     body = response.json()
     assert body["sample_count"] == 0
     assert body["items"] == []
+
+
+async def test_queue_write_path_suspected_timeline_summary_matches_raw_endpoint_top_level() -> None:
+    """같은 조회 조건으로 raw batch endpoint와 summary endpoint를
+
+    호출하면 top-level 수치가 항상 일치해야 한다(공통 helper 재사용
+    확인)."""
+    repos = build_in_memory_repositories()
+    account_id, strategy_id, decision_context_id, now = _seed_common(repos)
+    old_updated_at = datetime.now(timezone.utc) - timedelta(hours=3)
+
+    with_event_instrument = uuid4()
+    with_event_decision = _make_decision(
+        decision_context_id=decision_context_id,
+        strategy_id=strategy_id,
+        symbol="000001",
+        created_at=now,
+        source_type="held_position",
+        decision_type=DecisionType.HOLD,
+        loss_cut_shadow=_shadow_payload(
+            triggered=True, tier="hard", loss_pct="15", instrument_id=with_event_instrument
+        ),
+    )
+    repos.trade_decisions._items[with_event_decision.trade_decision_id] = with_event_decision
+    repos.position_cost_basis_states._items[(account_id, with_event_instrument)] = (
+        PositionCostBasisStateEntity(
+            account_id=account_id,
+            instrument_id=with_event_instrument,
+            quantity=Decimal("0"),
+            average_cost=Decimal("100000"),
+            recompute_required=True,
+            updated_at=old_updated_at,
+        )
+    )
+    await repos.realized_pnl_events.add(
+        _make_realized_pnl_event(
+            account_id=account_id,
+            instrument_id=with_event_instrument,
+            fill_timestamp=now + timedelta(hours=2),
+            realized_pnl_net=Decimal("-3000"),
+        )
+    )
+
+    without_event_instrument = uuid4()
+    without_event_decision = _make_decision(
+        decision_context_id=decision_context_id,
+        strategy_id=strategy_id,
+        symbol="000002",
+        created_at=now,
+        source_type="core",
+        decision_type=DecisionType.WATCH,
+        loss_cut_shadow=_shadow_payload(
+            triggered=True, tier="soft", loss_pct="8", instrument_id=without_event_instrument
+        ),
+    )
+    repos.trade_decisions._items[without_event_decision.trade_decision_id] = (
+        without_event_decision
+    )
+    repos.position_cost_basis_states._items[(account_id, without_event_instrument)] = (
+        PositionCostBasisStateEntity(
+            account_id=account_id,
+            instrument_id=without_event_instrument,
+            quantity=Decimal("0"),
+            average_cost=Decimal("100000"),
+            recompute_required=True,
+            updated_at=old_updated_at,
+        )
+    )
+
+    app = create_app(repos=repos, auth_enabled=False)
+    params = {
+        "account_id": str(account_id),
+        "start_date": (now - timedelta(days=1)).date().isoformat(),
+        "end_date": (now + timedelta(days=1)).date().isoformat(),
+    }
+    with TestClient(app) as tc:
+        raw = tc.get(
+            "/trade-decisions/loss-cut-shadow/queue-write-path-suspected-timelines",
+            params=params,
+        )
+        summary = tc.get(
+            "/trade-decisions/loss-cut-shadow/queue-write-path-suspected-timeline-summary",
+            params=params,
+        )
+
+    raw_body = raw.json()
+    summary_body = summary.json()
+
+    assert raw_body["sample_count"] == summary_body["sample_count"] == 2
+    assert (
+        raw_body["timeline_with_events_count"]
+        == summary_body["timeline_with_events_count"]
+        == 1
+    )
+    assert (
+        raw_body["timeline_without_events_count"]
+        == summary_body["timeline_without_events_count"]
+        == 1
+    )
+    assert raw_body["first_event_found_rate"] == summary_body["first_event_found_rate"]
+    assert (
+        raw_body["max_observed_latency_seconds"]
+        == summary_body["max_observed_latency_seconds"]
+        == pytest.approx(7200.0)
+    )
+    assert (
+        raw_body["avg_first_event_latency_seconds"]
+        == summary_body["avg_first_event_latency_seconds"]
+    )
+    assert summary_body["median_first_event_latency_seconds"] == pytest.approx(7200.0)
+
+
+async def test_queue_write_path_suspected_timeline_summary_by_instrument_and_latency_bucket() -> None:
+    repos = build_in_memory_repositories()
+    account_id, strategy_id, decision_context_id, now = _seed_common(repos)
+    old_updated_at = datetime.now(timezone.utc) - timedelta(hours=3)
+
+    # instrument A: 1건 발생, 5분 뒤(under_10m).
+    instrument_a = uuid4()
+    decision_a = _make_decision(
+        decision_context_id=decision_context_id,
+        strategy_id=strategy_id,
+        symbol="000001",
+        created_at=now,
+        source_type="held_position",
+        decision_type=DecisionType.HOLD,
+        loss_cut_shadow=_shadow_payload(
+            triggered=True, tier="hard", loss_pct="15", instrument_id=instrument_a
+        ),
+    )
+    repos.trade_decisions._items[decision_a.trade_decision_id] = decision_a
+    repos.position_cost_basis_states._items[(account_id, instrument_a)] = (
+        PositionCostBasisStateEntity(
+            account_id=account_id,
+            instrument_id=instrument_a,
+            quantity=Decimal("0"),
+            average_cost=Decimal("100000"),
+            recompute_required=True,
+            updated_at=old_updated_at,
+        )
+    )
+    await repos.realized_pnl_events.add(
+        _make_realized_pnl_event(
+            account_id=account_id,
+            instrument_id=instrument_a,
+            fill_timestamp=now + timedelta(minutes=5),
+            realized_pnl_net=Decimal("-500"),
+        )
+    )
+
+    # instrument B: 2건 발생 — 1건은 2일 뒤(over_1d), 1건은 event 없음.
+    instrument_b = uuid4()
+    decision_b1 = _make_decision(
+        decision_context_id=decision_context_id,
+        strategy_id=strategy_id,
+        symbol="000002",
+        created_at=now,
+        source_type="core",
+        decision_type=DecisionType.WATCH,
+        loss_cut_shadow=_shadow_payload(
+            triggered=True, tier="soft", loss_pct="8", instrument_id=instrument_b
+        ),
+    )
+    # 이 decision은 아래에서 기록할 realized event(now+2일)보다 나중에
+    # 생성되므로, "그 이후" event가 없어 timeline_without_events에
+    # 들어가야 한다.
+    decision_b2 = _make_decision(
+        decision_context_id=decision_context_id,
+        strategy_id=strategy_id,
+        symbol="000002",
+        created_at=now + timedelta(days=3),
+        source_type="core",
+        decision_type=DecisionType.WATCH,
+        loss_cut_shadow=_shadow_payload(
+            triggered=True, tier="soft", loss_pct="9", instrument_id=instrument_b
+        ),
+    )
+    repos.trade_decisions._items[decision_b1.trade_decision_id] = decision_b1
+    repos.trade_decisions._items[decision_b2.trade_decision_id] = decision_b2
+    repos.position_cost_basis_states._items[(account_id, instrument_b)] = (
+        PositionCostBasisStateEntity(
+            account_id=account_id,
+            instrument_id=instrument_b,
+            quantity=Decimal("0"),
+            average_cost=Decimal("100000"),
+            recompute_required=True,
+            updated_at=old_updated_at,
+        )
+    )
+    await repos.realized_pnl_events.add(
+        _make_realized_pnl_event(
+            account_id=account_id,
+            instrument_id=instrument_b,
+            fill_timestamp=now + timedelta(days=2),
+            realized_pnl_net=Decimal("-700"),
+        )
+    )
+
+    app = create_app(repos=repos, auth_enabled=False)
+    with TestClient(app) as tc:
+        response = tc.get(
+            "/trade-decisions/loss-cut-shadow/queue-write-path-suspected-timeline-summary",
+            params={
+                "account_id": str(account_id),
+                "start_date": (now - timedelta(days=1)).date().isoformat(),
+                "end_date": (now + timedelta(days=4)).date().isoformat(),
+            },
+        )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["sample_count"] == 3
+
+    by_instrument = {item["symbol"]: item for item in body["by_instrument"]}
+    assert by_instrument["000001"]["sample_count"] == 1
+    assert by_instrument["000001"]["timeline_with_events_count"] == 1
+    assert by_instrument["000002"]["sample_count"] == 2
+    assert by_instrument["000002"]["timeline_with_events_count"] == 1
+    assert by_instrument["000002"]["timeline_without_events_count"] == 1
+
+    bucket_counts = {item["bucket"]: item["count"] for item in body["by_latency_bucket"]}
+    assert bucket_counts["under_10m"] == 1
+    assert bucket_counts["over_1d"] == 1
+    assert bucket_counts["no_event_found"] == 1
+    assert bucket_counts["10m_to_1h"] == 0
+    assert bucket_counts["1h_to_1d"] == 0
+
+    source_type_rows = {r["group_value"]: r for r in body["by_source_type"]}
+    assert source_type_rows["held_position"]["sample_count"] == 1
+    assert source_type_rows["core"]["sample_count"] == 2
+
+    tier_rows = {r["group_value"]: r for r in body["by_tier"]}
+    assert tier_rows["hard"]["sample_count"] == 1
+    assert tier_rows["soft"]["sample_count"] == 2
+
+
+async def test_queue_write_path_suspected_timeline_summary_latency_bucket_boundaries() -> None:
+    """경계값(정확히 600초/3600초/86400초)이 어느 bucket으로
+
+    분류되는지 확인한다 — 각 구간은 하한 포함(``<`` 비교)이다."""
+    repos = build_in_memory_repositories()
+    account_id, strategy_id, decision_context_id, now = _seed_common(repos)
+    old_updated_at = datetime.now(timezone.utc) - timedelta(hours=3)
+
+    boundary_seconds = [599, 600, 3599, 3600, 86399, 86400]
+    for i, seconds in enumerate(boundary_seconds):
+        instrument_id = uuid4()
+        decision = _make_decision(
+            decision_context_id=decision_context_id,
+            strategy_id=strategy_id,
+            symbol=f"B{i}",
+            created_at=now,
+            source_type="held_position",
+            decision_type=DecisionType.HOLD,
+            loss_cut_shadow=_shadow_payload(
+                triggered=True, tier="hard", loss_pct="15", instrument_id=instrument_id
+            ),
+        )
+        repos.trade_decisions._items[decision.trade_decision_id] = decision
+        repos.position_cost_basis_states._items[(account_id, instrument_id)] = (
+            PositionCostBasisStateEntity(
+                account_id=account_id,
+                instrument_id=instrument_id,
+                quantity=Decimal("0"),
+                average_cost=Decimal("100000"),
+                recompute_required=True,
+                updated_at=old_updated_at,
+            )
+        )
+        await repos.realized_pnl_events.add(
+            _make_realized_pnl_event(
+                account_id=account_id,
+                instrument_id=instrument_id,
+                fill_timestamp=now + timedelta(seconds=seconds),
+                realized_pnl_net=Decimal("-100"),
+            )
+        )
+
+    app = create_app(repos=repos, auth_enabled=False)
+    with TestClient(app) as tc:
+        response = tc.get(
+            "/trade-decisions/loss-cut-shadow/queue-write-path-suspected-timeline-summary",
+            params={
+                "account_id": str(account_id),
+                "start_date": (now - timedelta(days=1)).date().isoformat(),
+                "end_date": (now + timedelta(days=2)).date().isoformat(),
+            },
+        )
+
+    assert response.status_code == 200
+    body = response.json()
+    bucket_counts = {item["bucket"]: item["count"] for item in body["by_latency_bucket"]}
+    # 599 -> under_10m, 600 -> 10m_to_1h, 3599 -> 10m_to_1h, 3600 -> 1h_to_1d,
+    # 86399 -> 1h_to_1d, 86400 -> over_1d
+    assert bucket_counts["under_10m"] == 1
+    assert bucket_counts["10m_to_1h"] == 2
+    assert bucket_counts["1h_to_1d"] == 2
+    assert bucket_counts["over_1d"] == 1
+    assert bucket_counts["no_event_found"] == 0
+
+
+async def test_queue_write_path_suspected_timeline_summary_empty_population() -> None:
+    repos = build_in_memory_repositories()
+    account_id, _strategy_id, _decision_context_id, now = _seed_common(repos)
+
+    app = create_app(repos=repos, auth_enabled=False)
+    with TestClient(app) as tc:
+        response = tc.get(
+            "/trade-decisions/loss-cut-shadow/queue-write-path-suspected-timeline-summary",
+            params={
+                "account_id": str(account_id),
+                "start_date": now.date().isoformat(),
+                "end_date": now.date().isoformat(),
+            },
+        )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["sample_count"] == 0
+    assert body["first_event_found_rate"] is None
+    assert body["max_observed_latency_seconds"] is None
+    assert body["avg_first_event_latency_seconds"] is None
+    assert body["median_first_event_latency_seconds"] is None
+    assert body["by_instrument"] == []
+    assert body["by_source_type"] == []
+    assert body["by_tier"] == []
+    assert all(item["count"] == 0 for item in body["by_latency_bucket"])
