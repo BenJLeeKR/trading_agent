@@ -664,6 +664,77 @@ downside shock, holding_profile 만료)이다. 이 사실은
   기존 단일 timeline 리팩터링 회귀 확인은 `tests/api/test_
   inspection.py` 111건 재실행으로 확인. 신규 repository 코드가
   없어 DB 접근이 필요한 검증 항목 자체가 없다.
+- 상태: **완료**(2026-08-12, PR #238).
+
+### 2단계 후속 11 — queue_write_path_suspected batch timeline summary API 추가(완료)
+
+- 왜: `queue-write-path-suspected-timelines`(raw batch)는 sample별
+  event 목록까지는 보여주지만, "어떤 종목에서 이 케이스가 많이
+  발생하는지/보통 얼마나 늦게 붙는지/지연 시간이 특정 구간에
+  몰리는지"를 한 번에 보려면 raw 결과를 운영자가 직접 다시
+  집계해야 했다 — 이 endpoint가 그 요약을 대신한다. **새로운
+  계산이 아니라, raw endpoint와 완전히 동일한 모집단·event 선정
+  규칙으로 얻은 값을 종목별/지연구간별/해소 여부 기준으로 다시
+  묶어 보여주는 운영 summary inspection**이다.
+- **raw endpoint와의 관계(가장 중요한 설계 결정)**: raw endpoint의
+  population/event-fetch 로직을 `_collect_queue_write_path_
+  suspected_samples()` 공통 helper로 추출해, raw endpoint와 이번
+  summary endpoint가 **하나의 함수만** 공유하도록 리팩터링했다.
+  이 리팩터링 과정에서 raw endpoint의 기존 버그를 발견해 함께
+  고쳤다: 기존 raw endpoint는 `sample_count`/`timeline_with_
+  events_count` 등 top-level 집계를 `limit`으로 잘린 첫 N건에
+  대해서만 계산하고 있었다(전체 모집단이 아니라 표시되는 페이지
+  분량만 집계) — 이러면 raw와 summary를 같은 조건으로 호출해도
+  모집단이 `limit`보다 크면 수치가 어긋난다. 지금은 raw
+  endpoint도 top-level 집계를 **항상 전체 모집단 기준**으로
+  계산하고, `limit`은 `items` 표시 건수만 줄이도록 수정했다(신규
+  테스트로 이 수정을 직접 검증).
+- **모집단 정의**: raw endpoint와 동일 — `triggered=true` +
+  `recompute_required=true` + queue pending 없음 + cause 판정이
+  `queue_write_path_suspected`. 이 summary endpoint는 `limit`/
+  `before` 쿼리 파라미터를 두지 않는다(요청 스펙에도 없음) —
+  항상 전체 모집단을 집계한다.
+- **지연구간(latency bucket) 정의**(코드:
+  `_first_event_latency_bucket()`, 하한 포함 `<` 비교로 재현
+  가능):
+
+  | bucket | 정의 |
+  |---|---|
+  | `no_event_found` | 이후 realized event를 아직 못 찾음 |
+  | `under_10m` | 첫 event까지 600초(10분) 미만 |
+  | `10m_to_1h` | 600초 이상 ~ 3600초(1시간) 미만 |
+  | `1h_to_1d` | 3600초 이상 ~ 86400초(1일) 미만 |
+  | `over_1d` | 86400초 이상 |
+
+- 산출물:
+  - `GET /trade-decisions/loss-cut-shadow/queue-write-path-
+    suspected-timeline-summary` — 계좌×기간(+선택 `source_type`/
+    `tier`/`event_limit`) 기준 top-level summary(`sample_count`/
+    `event_limit`/`timeline_with_events_count`/`timeline_without_
+    events_count`/`first_event_found_rate`/`max_observed_latency_
+    seconds`/`avg_first_event_latency_seconds`/`median_first_
+    event_latency_seconds`) + `by_instrument[]`(종목별
+    `instrument_id`/`symbol`/`sample_count`/`timeline_with_events_
+    count`/`timeline_without_events_count`/`first_event_found_
+    rate`/`avg_first_event_latency_seconds`/`max_observed_latency_
+    seconds`/`latest_sample_created_at`) + `by_latency_bucket[]`
+    + `by_source_type[]`/`by_tier[]`(그룹별 동일 형태의 집계).
+  - **신규 repository 메서드 0개** — 기존 4개(raw endpoint와
+    완전히 동일)만 조합했다.
+  - 신규 테이블/마이그레이션/계산 엔진 없음.
+- 한계(응답 스키마에도 명시): **운영 summary inspection이지 인과
+  확정 도구가 아니다.**
+- 검증: `py_compile`, `accept architecture`/`backend-runtime`/
+  `db-structure`/`no-bypass`/`docs` PASS, 신규 API 테스트 5건
+  (raw endpoint와 top-level 수치 정확히 일치 확인, `by_instrument`/
+  `by_latency_bucket`/`by_source_type`/`by_tier` breakdown 정확도,
+  지연구간 경계값(599/600/3599/3600/86399/86400초) 분류 확인, raw
+  endpoint의 `limit` 초과 시 top-level 집계가 전체 모집단을
+  유지하는지 확인하는 회귀 테스트, 빈 모집단) 전부
+  dev-validation container에서 PASS(`test-file`로 직접 실행).
+  기존 raw endpoint 리팩터링 회귀 확인은 `tests/api/test_
+  inspection.py` 111건 재실행으로 확인. 신규 repository 코드가
+  없어 DB 접근이 필요한 검증 항목 자체가 없다.
 - 상태: **완료**(2026-08-12, 이번 PR).
 
 ### 3단계 — Shadow 누적 실측(미착수)
@@ -676,9 +747,9 @@ downside shock, holding_profile 만료)이다. 이 사실은
   summary/samples/daily/by-instrument/timeline/first-realized-
   event-latency/missing-first-event-causes/missing-first-event-
   samples/missing-first-event-recompute-cross-check/recompute-
-  missing-queue-causes/queue-write-path-suspected-timelines API를
-  그대로 재사용할 수 있다 — 별도 조회 도구를 새로 만들 필요는
-  없다.
+  missing-queue-causes/queue-write-path-suspected-timelines/
+  queue-write-path-suspected-timeline-summary API를 그대로
+  재사용할 수 있다 — 별도 조회 도구를 새로 만들 필요는 없다.
 - 상태: **미착수**.
 
 ### 4단계 — 정책 확정(미착수)

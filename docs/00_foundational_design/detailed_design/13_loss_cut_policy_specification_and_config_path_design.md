@@ -346,6 +346,20 @@ orchestrator.py`)로 만들었다 — 어떤 `object.__setattr__` 호출도
   유무로 population을 거르면 목적이 성립하지 않기 때문이다. 신규
   repository 메서드 0개. **batch inspection이지 인과 확정 도구가
   아니다** — 상세: action plan "2단계 후속 10".
+- **queue_write_path_suspected batch timeline summary 추가
+  (2026-08-12 추가 후속)**: `GET /trade-decisions/loss-cut-shadow/
+  queue-write-path-suspected-timeline-summary`로 위 raw batch
+  endpoint의 결과를 종목별(`by_instrument`)/지연구간별
+  (`by_latency_bucket`: `no_event_found`/`under_10m`/`10m_to_1h`/
+  `1h_to_1d`/`over_1d`, 하한 포함 `<` 비교로 재현 가능)/`source_
+  type`·`tier`별로 요약한다. raw endpoint의 population/event-fetch
+  로직을 `_collect_queue_write_path_suspected_samples()` 공통
+  helper로 추출해 두 endpoint가 완전히 동일한 계산을 공유하며,
+  이 리팩터링 과정에서 raw endpoint가 top-level 집계를 `limit`으로
+  잘린 페이지 분량에만 계산하던 기존 결함을 함께 고쳤다(이제
+  `limit`은 `items` 표시 건수만 줄인다). 신규 repository 메서드
+  0개. **운영 summary inspection이지 인과 확정 도구가 아니다** —
+  상세: action plan "2단계 후속 11".
 
 ## 4. 설정 경로 설계 초안
 

@@ -11768,3 +11768,23 @@ loss-cut 정책 도입 아님.**
 - **이후 우선순위는 변경 없음**: `SPPV-3`가 여전히 다음 주력
   작업이다. 3단계(shadow 누적 실측) 착수 시 이 11종 read path를
   그대로 재사용할 수 있다.
+
+## Loss-cut shadow queue_write_path_suspected batch timeline summary API 추가 — 정책 도입 아님, 새 계산 없음(2026-08-12 KST)
+
+`GET /trade-decisions/loss-cut-shadow/queue-write-path-suspected-
+timeline-summary`를 추가해 위 raw batch 결과를 종목별/지연구간별/
+`source_type`·`tier`별로 요약한다. **이번 작업도 read path 추가다
+— 실주문 결정 변경 없음, 정식 loss-cut 정책 도입 아님.**
+
+- raw endpoint의 population/event-fetch 로직을 `_collect_queue_
+  write_path_suspected_samples()` 공통 helper로 추출해 두
+  endpoint가 완전히 동일한 계산을 공유 — 이 과정에서 raw
+  endpoint가 top-level 집계를 `limit`으로 잘린 페이지 분량에만
+  계산하던 기존 결함을 발견해 함께 고쳤다(이제 `limit`은 표시
+  건수만 줄인다).
+- 지연구간(`no_event_found`/`under_10m`/`10m_to_1h`/`1h_to_1d`/
+  `over_1d`)은 하한 포함 `<` 비교로 재현 가능하게 고정.
+- 신규 repository 메서드 0개.
+- **이후 우선순위는 변경 없음**: `SPPV-3`가 여전히 다음 주력
+  작업이다. 3단계(shadow 누적 실측) 착수 시 이 12종 read path를
+  그대로 재사용할 수 있다.
