@@ -518,6 +518,80 @@ downside shock, holding_profile 만료)이다. 이 사실은
   dev-validation container에서 PASS(`test-file`로 직접 실행).
   신규 repository 코드가 없어 DB 접근이 필요한 검증 항목 자체가
   없다.
+- 상태: **완료**(2026-08-12, PR #236).
+
+### 2단계 후속 9 — recompute queue missing 케이스 원인 분류 API 추가(완료)
+
+- 왜: `missing-first-event-recompute-cross-check`는 "recompute_
+  required=true인데 queue pending이 없다"는 **불일치 자체**만
+  탐지한다(`queue_pending_missing_count`). 이 endpoint는 그 중
+  queue missing 케이스만 모아 **왜 queue pending이 안 보이는지**를
+  운영 관점에서 분류한다 — cross-check가 "불일치 탐지"라면, 이
+  endpoint는 "그 중 queue missing 케이스 분류"다. **새로운 판단
+  로직/자동복구가 아니라, 이미 저장된 값(shadow payload/`position_
+  cost_basis_state`/queue 스캔 결과)만으로 코드상 재현 가능한
+  규칙으로 분류하는 원인 분류 inspection**이다.
+- **모집단**: `triggered=true` + first realized event 없음 +
+  `recompute_required=true` + 같은 계좌×종목에 queue pending
+  없음 — `missing-first-event-recompute-cross-check`의 케이스 2
+  (`queue_pending_missing_count`)와 정확히 동일한 population.
+- bucket 정의와 판정 기준(코드: `_classify_recompute_missing_
+  queue_cause()`, `src/agent_trading/api/routes/decisions.py`):
+
+  | bucket | 판정 기준 |
+  |---|---|
+  | `missing_instrument_linkage` | shadow payload에 `instrument_id`가 없음 — 이 모집단은 이미 `recompute_required=true`(= `position_cost_basis_state` 존재 = `instrument_id` 존재)를 전제하므로 **실제로는 도달 불가능**(방어적 bucket, 상위 causes endpoint와 대칭 유지 목적) |
+  | `queue_scan_limit_suspected` | 이번 조회에서 `list_pending(limit=100)`이 정확히 100건을 반환(전역 신호, 모든 row에 동일 적용) — 실제 큐가 스캔 창보다 깊어 이 row의 pending이 스캔에서 빠졌을 가능성 |
+  | `recent_pending_gap` | `position_cost_basis_state.updated_at`(없으면 sample `created_at`)이 1시간 이내로 최근 — 아직 queue에 반영되기 전일 가능성 |
+  | `queue_write_path_suspected` | 스캔 한계에 걸리지 않았고 충분히 시간이 지났는데도 queue pending이 안 보임 — queue write 경로에 문제가 있을 **가능성**만 표현("확정"이 아님, `queue_write_path_bug_confirmed` 같은 이름을 의도적으로 쓰지 않음) |
+  | `other_unclassified` | 위 어느 것도 명확히 해당하지 않음(1~4가 모든 경우를 이미 다루므로 코드 경로상 도달 불가능, 애매한 값을 억지로 분류하지 않기 위한 안전망) |
+
+  **precedence(위에서부터 먼저 만족하는 것으로 확정)**:
+  `missing_instrument_linkage` → `queue_scan_limit_suspected` →
+  `recent_pending_gap` → `queue_write_path_suspected` →
+  `other_unclassified`. `queue_scan_limit_suspected`가
+  `recent_pending_gap`/`queue_write_path_suspected`보다 먼저인
+  이유: 스캔이 한계에 도달했으면 그 아래 판정 자체를 신뢰할 수
+  없기 때문(스캔 창 밖에 있는 pending을 "없다"고 잘못 판정할 수
+  있음).
+- **queue scan limit 한계 노출**: 응답 top-level에 `queue_scan_
+  limit`(=100)과 `queue_scan_limit_reached`(전역 bool)를 그대로
+  노출하고, 각 sample row에도 `queue_scan_limit_reached`를 반복
+  노출해 감추지 않는다.
+- 산출물:
+  - `GET /trade-decisions/loss-cut-shadow/recompute-missing-queue-
+    causes` — 계좌×기간(+선택 `source_type`/`tier`/`before`/
+    `limit`) 기준 top-level summary(`sample_count`/`queue_scan_
+    limit`/`queue_scan_limit_reached`/`cause_breakdown[]`/
+    `by_source_type[]`/`by_tier[]`) + sample별 행
+    (`trade_decision_id`/`created_at`/`symbol`/`instrument_id`/
+    `source_type`/`actual_decision_type`/`tier`/`cause`/
+    `recompute_required`(항상 `true`)/`position_quantity`/
+    `queue_pending`(항상 `false`)/`has_first_realized_event`
+    (항상 `false`)/`queue_scan_limit_reached`/`recompute_required_
+    since`).
+  - `by_source_type`/`by_tier`는 `missing-first-event-causes`의
+    `LossCutShadowMissingGroupBreakdownItem`(더 큰 모집단 대비
+    missing 비율)을 그대로 쓰지 않고, 이 endpoint 전용의
+    `LossCutShadowRecomputeMissingQueueGroupBreakdownItem`(이
+    endpoint 모집단 안에서의 비중)을 새로 정의했다 — 이 endpoint의
+    모집단 전체가 이미 "queue missing" 케이스라 "missing 비율"
+    개념이 성립하지 않기 때문이다.
+  - **신규 repository 메서드 0개** — 기존 4개(`list_loss_cut_
+    shadow_observations()`/`realized_pnl_events.list_by_account_
+    and_instrument_since()`/`position_cost_basis_states.get()`/
+    `realized_pnl_recompute_queue.list_pending()`)만 조합했다.
+  - 신규 테이블/마이그레이션/계산 엔진 없음.
+- 검증: `py_compile`, `accept architecture`/`backend-runtime`/
+  `db-structure`/`no-bypass`/`docs` PASS, 신규 API 테스트 4건
+  (recent/old 두 bucket 분류 + breakdown 정확도, `updated_at` 없을
+  때 `created_at` fallback, 큐 스캔 한계 도달 시 전역 bucket 전환,
+  모집단에서 벗어난 sample(비-recompute_required/queue pending
+  있음) 제외 확인) 전부 dev-validation container에서 PASS
+  (`test-file`로 직접 실행 — `accept backend-file`의 import-graph
+  매칭은 이 테스트 파일을 자동으로 잡지 못해 별도로 확인함).
+  신규 repository 코드가 없어 DB 접근이 필요한 검증 항목 자체가
+  없다.
 - 상태: **완료**(2026-08-12, 이번 PR).
 
 ### 3단계 — Shadow 누적 실측(미착수)
@@ -529,8 +603,9 @@ downside shock, holding_profile 만료)이다. 이 사실은
   주기적 실측 보고. read path는 이번에 추가한
   summary/samples/daily/by-instrument/timeline/first-realized-
   event-latency/missing-first-event-causes/missing-first-event-
-  samples/missing-first-event-recompute-cross-check API를 그대로
-  재사용할 수 있다 — 별도 조회 도구를 새로 만들 필요는 없다.
+  samples/missing-first-event-recompute-cross-check/recompute-
+  missing-queue-causes API를 그대로 재사용할 수 있다 — 별도 조회
+  도구를 새로 만들 필요는 없다.
 - 상태: **미착수**.
 
 ### 4단계 — 정책 확정(미착수)

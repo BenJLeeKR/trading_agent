@@ -1880,3 +1880,287 @@ async def test_recompute_cross_check_empty_population_returns_nulls() -> None:
     assert body["queue_pending_extra_count"] == 0
     assert body["recompute_required_queue_match_rate"] is None
     assert body["items"] == []
+
+
+async def test_recompute_missing_queue_causes_classifies_recent_and_old_cases() -> None:
+    repos = build_in_memory_repositories()
+    account_id, strategy_id, decision_context_id, now = _seed_common(repos)
+
+    # recompute_required=true + queue pending 없음 + 최근에 recompute_required가
+    # 세팅됨(1시간 이내) -> recent_pending_gap.
+    recent_instrument = uuid4()
+    recent_decision = _make_decision(
+        decision_context_id=decision_context_id,
+        strategy_id=strategy_id,
+        symbol="000001",
+        created_at=now,
+        source_type="held_position",
+        decision_type=DecisionType.HOLD,
+        loss_cut_shadow=_shadow_payload(
+            triggered=True, tier="hard", loss_pct="15", instrument_id=recent_instrument
+        ),
+    )
+    repos.trade_decisions._items[recent_decision.trade_decision_id] = recent_decision
+    repos.position_cost_basis_states._items[(account_id, recent_instrument)] = (
+        PositionCostBasisStateEntity(
+            account_id=account_id,
+            instrument_id=recent_instrument,
+            quantity=Decimal("0"),
+            average_cost=Decimal("100000"),
+            recompute_required=True,
+            updated_at=datetime.now(timezone.utc) - timedelta(minutes=5),
+        )
+    )
+
+    # recompute_required=true + queue pending 없음 + 오래 전(1시간 초과)
+    # -> queue_write_path_suspected.
+    old_instrument = uuid4()
+    old_decision = _make_decision(
+        decision_context_id=decision_context_id,
+        strategy_id=strategy_id,
+        symbol="000002",
+        created_at=now,
+        source_type="core",
+        decision_type=DecisionType.WATCH,
+        loss_cut_shadow=_shadow_payload(
+            triggered=True, tier="soft", loss_pct="8", instrument_id=old_instrument
+        ),
+    )
+    repos.trade_decisions._items[old_decision.trade_decision_id] = old_decision
+    repos.position_cost_basis_states._items[(account_id, old_instrument)] = (
+        PositionCostBasisStateEntity(
+            account_id=account_id,
+            instrument_id=old_instrument,
+            quantity=Decimal("0"),
+            average_cost=Decimal("100000"),
+            recompute_required=True,
+            updated_at=datetime.now(timezone.utc) - timedelta(hours=3),
+        )
+    )
+
+    app = create_app(repos=repos, auth_enabled=False)
+    with TestClient(app) as tc:
+        response = tc.get(
+            "/trade-decisions/loss-cut-shadow/recompute-missing-queue-causes",
+            params={
+                "account_id": str(account_id),
+                "start_date": (now - timedelta(days=1)).date().isoformat(),
+                "end_date": (now + timedelta(days=1)).date().isoformat(),
+            },
+        )
+
+    assert response.status_code == 200
+    body = response.json()
+
+    assert body["sample_count"] == 2
+    assert body["queue_scan_limit"] == 100
+    assert body["queue_scan_limit_reached"] is False
+
+    cause_counts = {item["cause"]: item["count"] for item in body["cause_breakdown"]}
+    assert cause_counts["recent_pending_gap"] == 1
+    assert cause_counts["queue_write_path_suspected"] == 1
+    assert cause_counts["missing_instrument_linkage"] == 0
+    assert cause_counts["queue_scan_limit_suspected"] == 0
+
+    items_by_symbol = {item["symbol"]: item for item in body["items"]}
+    assert items_by_symbol["000001"]["cause"] == "recent_pending_gap"
+    assert items_by_symbol["000002"]["cause"] == "queue_write_path_suspected"
+    for item in body["items"]:
+        assert item["recompute_required"] is True
+        assert item["queue_pending"] is False
+        assert item["has_first_realized_event"] is False
+        assert item["queue_scan_limit_reached"] is False
+
+    source_type_rates = {r["group_value"]: r for r in body["by_source_type"]}
+    assert source_type_rates["held_position"]["count"] == 1
+    assert source_type_rates["held_position"]["rate"] == pytest.approx(0.5)
+    assert source_type_rates["core"]["count"] == 1
+
+    tier_rates = {r["group_value"]: r for r in body["by_tier"]}
+    assert tier_rates["hard"]["count"] == 1
+    assert tier_rates["soft"]["count"] == 1
+
+
+async def test_recompute_missing_queue_causes_falls_back_to_created_at_when_no_updated_at() -> None:
+    """``position_cost_basis_state.updated_at``가 없으면 sample
+
+    ``created_at``을 근사치로 써서 recency를 판단해야 한다."""
+    repos = build_in_memory_repositories()
+    account_id, strategy_id, decision_context_id, _now = _seed_common(repos)
+    old_created_at = datetime.now(timezone.utc) - timedelta(hours=5)
+    instrument_id = uuid4()
+
+    decision = _make_decision(
+        decision_context_id=decision_context_id,
+        strategy_id=strategy_id,
+        symbol="005930",
+        created_at=old_created_at,
+        source_type="held_position",
+        decision_type=DecisionType.HOLD,
+        loss_cut_shadow=_shadow_payload(
+            triggered=True, tier="hard", loss_pct="15", instrument_id=instrument_id
+        ),
+    )
+    repos.trade_decisions._items[decision.trade_decision_id] = decision
+    repos.position_cost_basis_states._items[(account_id, instrument_id)] = (
+        PositionCostBasisStateEntity(
+            account_id=account_id,
+            instrument_id=instrument_id,
+            quantity=Decimal("0"),
+            average_cost=Decimal("100000"),
+            recompute_required=True,
+            updated_at=None,
+        )
+    )
+
+    app = create_app(repos=repos, auth_enabled=False)
+    with TestClient(app) as tc:
+        response = tc.get(
+            "/trade-decisions/loss-cut-shadow/recompute-missing-queue-causes",
+            params={
+                "account_id": str(account_id),
+                "start_date": (old_created_at - timedelta(days=1)).date().isoformat(),
+                "end_date": (old_created_at + timedelta(days=1)).date().isoformat(),
+            },
+        )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["items"][0]["cause"] == "queue_write_path_suspected"
+    assert body["items"][0]["recompute_required_since"] is None
+
+
+async def test_recompute_missing_queue_causes_scan_limit_suspected_when_queue_full() -> None:
+    repos = build_in_memory_repositories()
+    account_id, strategy_id, decision_context_id, now = _seed_common(repos)
+    instrument_id = uuid4()
+
+    decision = _make_decision(
+        decision_context_id=decision_context_id,
+        strategy_id=strategy_id,
+        symbol="005930",
+        created_at=now,
+        source_type="held_position",
+        decision_type=DecisionType.HOLD,
+        loss_cut_shadow=_shadow_payload(
+            triggered=True, tier="hard", loss_pct="15", instrument_id=instrument_id
+        ),
+    )
+    repos.trade_decisions._items[decision.trade_decision_id] = decision
+    repos.position_cost_basis_states._items[(account_id, instrument_id)] = (
+        PositionCostBasisStateEntity(
+            account_id=account_id,
+            instrument_id=instrument_id,
+            quantity=Decimal("0"),
+            average_cost=Decimal("100000"),
+            recompute_required=True,
+            updated_at=datetime.now(timezone.utc) - timedelta(hours=5),
+        )
+    )
+
+    # 다른 계좌 소유의 pending 100건으로 전역 스캔 한계(100)를 채운다 —
+    # 우리 계좌 sample의 population 자체는 오염시키지 않는다.
+    other_account_id = uuid4()
+    for i in range(100):
+        await repos.realized_pnl_recompute_queue.add(
+            _make_recompute_queue_item(
+                account_id=other_account_id,
+                instrument_id=uuid4(),
+                requested_at=now - timedelta(hours=i + 1),
+            )
+        )
+
+    app = create_app(repos=repos, auth_enabled=False)
+    with TestClient(app) as tc:
+        response = tc.get(
+            "/trade-decisions/loss-cut-shadow/recompute-missing-queue-causes",
+            params={
+                "account_id": str(account_id),
+                "start_date": (now - timedelta(days=1)).date().isoformat(),
+                "end_date": (now + timedelta(days=1)).date().isoformat(),
+            },
+        )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["queue_scan_limit_reached"] is True
+    assert body["items"][0]["cause"] == "queue_scan_limit_suspected"
+    assert body["items"][0]["queue_scan_limit_reached"] is True
+
+
+async def test_recompute_missing_queue_causes_excludes_non_matching_population() -> None:
+    repos = build_in_memory_repositories()
+    account_id, strategy_id, decision_context_id, now = _seed_common(repos)
+
+    # recompute_required=False -> 모집단 아님.
+    not_recompute_instrument = uuid4()
+    not_recompute_decision = _make_decision(
+        decision_context_id=decision_context_id,
+        strategy_id=strategy_id,
+        symbol="000001",
+        created_at=now,
+        source_type="held_position",
+        decision_type=DecisionType.HOLD,
+        loss_cut_shadow=_shadow_payload(
+            triggered=True, tier="hard", loss_pct="15", instrument_id=not_recompute_instrument
+        ),
+    )
+    repos.trade_decisions._items[not_recompute_decision.trade_decision_id] = (
+        not_recompute_decision
+    )
+    repos.position_cost_basis_states._items[(account_id, not_recompute_instrument)] = (
+        PositionCostBasisStateEntity(
+            account_id=account_id,
+            instrument_id=not_recompute_instrument,
+            quantity=Decimal("10"),
+            average_cost=Decimal("100000"),
+            recompute_required=False,
+        )
+    )
+
+    # recompute_required=True지만 queue pending도 있음 -> 모집단 아님(cross-check의 match).
+    pending_instrument = uuid4()
+    pending_decision = _make_decision(
+        decision_context_id=decision_context_id,
+        strategy_id=strategy_id,
+        symbol="000002",
+        created_at=now,
+        source_type="held_position",
+        decision_type=DecisionType.HOLD,
+        loss_cut_shadow=_shadow_payload(
+            triggered=True, tier="hard", loss_pct="15", instrument_id=pending_instrument
+        ),
+    )
+    repos.trade_decisions._items[pending_decision.trade_decision_id] = pending_decision
+    repos.position_cost_basis_states._items[(account_id, pending_instrument)] = (
+        PositionCostBasisStateEntity(
+            account_id=account_id,
+            instrument_id=pending_instrument,
+            quantity=Decimal("0"),
+            average_cost=Decimal("100000"),
+            recompute_required=True,
+        )
+    )
+    await repos.realized_pnl_recompute_queue.add(
+        _make_recompute_queue_item(
+            account_id=account_id,
+            instrument_id=pending_instrument,
+            requested_at=now - timedelta(hours=1),
+        )
+    )
+
+    app = create_app(repos=repos, auth_enabled=False)
+    with TestClient(app) as tc:
+        response = tc.get(
+            "/trade-decisions/loss-cut-shadow/recompute-missing-queue-causes",
+            params={
+                "account_id": str(account_id),
+                "start_date": (now - timedelta(days=1)).date().isoformat(),
+                "end_date": (now + timedelta(days=1)).date().isoformat(),
+            },
+        )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["sample_count"] == 0
+    assert body["items"] == []

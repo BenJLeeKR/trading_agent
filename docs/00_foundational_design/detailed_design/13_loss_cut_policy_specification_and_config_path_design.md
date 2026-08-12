@@ -318,6 +318,21 @@ orchestrator.py`)로 만들었다 — 어떤 `object.__setattr__` 호출도
   매칭하지 않는다 — **운영 대사 inspection이지 인과 확정 도구가
   아니다.** 신규 repository 메서드 0개(기존 4개 조합) — 상세:
   action plan "2단계 후속 8".
+- **recompute queue missing 케이스 원인 분류 추가(2026-08-12
+  추가 후속)**: `GET /trade-decisions/loss-cut-shadow/recompute-
+  missing-queue-causes`로 위 cross-check의 케이스 2
+  (`recompute_required=true`인데 queue pending 없음)만 모아 5개
+  bucket(`missing_instrument_linkage`/`queue_scan_limit_
+  suspected`/`recent_pending_gap`/`queue_write_path_suspected`/
+  `other_unclassified`)으로 분류한다. `queue_scan_limit_
+  suspected`가 recency 기반 bucket들보다 먼저인 이유는 스캔이
+  한계(100건)에 도달하면 그 아래 판정 자체를 신뢰할 수 없기
+  때문이다. 응답에 `queue_scan_limit`/`queue_scan_limit_reached`를
+  그대로 노출해 스캔 한계를 감춘 것이 없다. **원인 분류
+  inspection이지 진단 완료·인과 확정 도구가 아니다** —
+  `queue_write_path_suspected`처럼 "의심"까지만 표현하고
+  "확정"하지 않는다. 신규 repository 메서드 0개(기존 4개 조합) —
+  상세: action plan "2단계 후속 9".
 
 ## 4. 설정 경로 설계 초안
 
