@@ -54,12 +54,13 @@
 - 코드 스타일 baseline: `bash scripts/harness/run.sh accept style` 또는 `make accept-style`.
 - 우회 행동 검사: `bash scripts/harness/run.sh accept no-bypass` 또는 `make accept-no-bypass`.
 - 단일 백엔드 파일: `bash scripts/harness/run.sh accept backend-file <file>` 또는 `make accept-backend-file FILE=<file>`.
+- 단일 운영 스크립트 파일: `bash scripts/harness/run.sh accept script-file <file>` 또는 `make accept-script-file FILE=<file>`. 판정 대상은 `scripts/` 아래 Python 파일이다.
 - 백엔드 런타임 계약: `bash scripts/harness/run.sh accept backend-runtime` 또는 `make accept-backend-runtime`.
 - Admin UI 계약: `bash scripts/harness/run.sh accept frontend` 또는 `make accept-admin-ui`.
 - 운영 리포트 JSON: `bash scripts/harness/run.sh accept ops-report <summary_json>` 또는 `make accept-ops-report SUMMARY_JSON=<summary_json>`.
 - API 실행: `bash scripts/harness/run.sh run api-inmemory`, `bash scripts/harness/run.sh run api-postgres`, `make run-api-inmemory`, `make run-api-postgres`.
 
-`accept backend-file`에서 직접 대응 테스트가 없으면 실패로 본다. 불가피한 경우에만 `HARNESS_ALLOW_NO_TEST=1`로 명시 우회하고 보고서에 이유를 남긴다.
+`accept backend-file`과 `accept script-file`에서 직접 대응 테스트가 없으면 실패로 본다. 불가피한 경우에만 `HARNESS_ALLOW_NO_TEST=1`로 명시 우회하고 보고서에 이유를 남긴다.
 
 운영 리포트 덤프는 DB를 조회하므로 `HARNESS_ALLOW_OPS_DUMP=1 bash scripts/harness/run.sh dump ops-report [YYYY-MM-DD]` 또는 `HARNESS_ALLOW_OPS_DUMP=1 make dump-ops-report DATE=<YYYY-MM-DD>`로만 실행한다.
 
