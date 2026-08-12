@@ -6698,3 +6698,23 @@ event 타임라인 API 추가 완료 — 위 "신규 backlog"(방향 A) 항목
   `tier` query param으로 개별 호출해 대체 가능 — endpoint를 2번
   호출하는 것과 응답 하나에 soft/hard를 다 담는 것 사이에서 전자를
   택해 응답 스키마를 단순하게 유지).
+
+## AI 토큰 낭비 방지 — BUY daily cap/SELL no-position 차단 위치 설계 조사(2026-08-12 KST, read-only)
+
+상세: `docs/40_action_plans/submit_budget_two_stage_design_2026-
+08-11.md` "12. AI 토큰 낭비 방지 — 차단 위치 재설계 조사",
+`[PRIORITY_MAP]` 동일 날짜 항목.
+
+- **신규 backlog**: 추천안(BUY daily cap exhausted를 Pre-AI gate,
+  단 cycle-level `allow_general_submit` 고정값 기준으로 차단)의
+  실제 구현. `run_decision_loop.py:3196-3208`(Pass 1 진입 분기)에
+  조건 분기 추가 수준으로 예상되나, 실제 반영/테스트/장중 실측은
+  이번 턴 범위 밖(read-only 조사만 수행).
+- **신규 backlog(부수 확인 필요)**: 안 1 적용 시 `trade_decisions`
+  row가 daily cap 소진 후 general lane 후보에 대해 생성되지 않게
+  된다 — 이 사실 자체(특정 시각에 특정 종목이 BUY 후보였다는 기록)
+  에 의존하는 기존 하류 분석/SQL이 있는지 전수 확인 안 됨.
+- **신규 backlog(운영 공지 필요)**: `SUBMIT_BUDGET_TRACE blocked`
+  로그 건수를 daily-cap 소진 지표로 쓰던 기존 사후분석 방식이
+  있다면, 안 1 적용 후 이 건수가 급감하므로(대부분 Pre-AI gate에서
+  더 일찍 걸러짐) 그 방식을 쓰는 쪽에 갱신 공지가 필요하다.
