@@ -1354,6 +1354,96 @@ class LossCutShadowRecomputeCrossCheckResponse(BaseModel):
     items: list[LossCutShadowRecomputeCrossCheckSampleView]
 
 
+class LossCutShadowRecomputeMissingQueueSampleView(BaseModel):
+    """`GET /trade-decisions/loss-cut-shadow/recompute-missing-queue-causes`
+
+    의 개별 행 — ``missing-first-event-recompute-cross-check``의
+    ``queue_pending_missing_count``(케이스 2)에 해당하는 sample
+    1건을, 왜 queue pending이 안 보이는지에 대한 운영 분류
+    (``cause``)와 함께 보여준다. ``recompute_required``/
+    ``queue_pending``은 이 population 정의상 항상 ``True``/``False``
+    다(응답에도 그대로 노출 — 값이 항상 같다는 것을 감추지 않는다).
+    """
+
+    trade_decision_id: UUID
+    created_at: datetime
+    symbol: str
+    instrument_id: UUID | None = None
+    source_type: str
+    actual_decision_type: str
+    tier: str | None = None
+    cause: str
+    recompute_required: bool = True
+    position_quantity: Decimal | None = None
+    queue_pending: bool = False
+    has_first_realized_event: bool = False
+    queue_scan_limit_reached: bool
+    """이 응답을 만들 때 큐 스캔이 ``_LOSS_CUT_SHADOW_RECOMPUTE_
+    QUEUE_SCAN_LIMIT``에 도달했는지 — 도달했다면 이 row의 ``queue_
+    pending=False`` 판정 자체가 스캔 한계 때문일 수 있다(모든 row
+    에 동일하게 적용되는 전역 신호)."""
+    recompute_required_since: datetime | None = None
+    """``position_cost_basis_state.updated_at`` — ``recompute_
+    required``가 정확히 언제 세팅됐는지 기록하는 필드가 없어 이
+    값을 근사치로 쓴다(``updated_at``이 없으면 ``null``). ``cause``
+    판정의 근거로 참고하되, 이 필드가 곧 "recompute_required 시작
+    시각"이라고 단정하지 않는다."""
+
+
+class LossCutShadowRecomputeMissingQueueGroupBreakdownItem(BaseModel):
+    """``by_source_type``/``by_tier`` 공통 1행.
+
+    이 endpoint의 모집단 전체가 이미 "queue missing" 케이스이므로
+    (``LossCutShadowMissingGroupBreakdownItem``처럼 더 큰 모집단
+    대비 missing 비율을 보는 게 아니다), ``rate``는 이 그룹의
+    ``count``를 응답 전체 ``sample_count``로 나눈 값이다 — 이
+    endpoint 모집단 안에서 이 그룹이 차지하는 비중."""
+
+    group_value: str
+    count: int
+    rate: float
+
+
+class LossCutShadowRecomputeMissingQueueCausesResponse(BaseModel):
+    """`GET /trade-decisions/loss-cut-shadow/recompute-missing-queue-causes` 응답.
+
+    **`missing-first-event-recompute-cross-check`의 후속 drilldown/
+    분류 단계다** — cross-check가 "recompute_required인데 queue
+    pending이 없다"는 불일치를 **탐지**한다면, 이 endpoint는 그 중
+    queue missing 케이스만 모아 **왜 그런지 운영 관점에서 분류**
+    한다. **원인 분류/운영 분류 inspection이지 진단 완료·인과
+    확정 도구가 아니다** — "queue write 경로에 버그가 있다" 같은
+    확정적 결론을 내리지 않고, `queue_write_path_suspected`처럼
+    "의심"까지만 표현한다.
+    """
+
+    account_id: UUID
+    start_date: date
+    end_date: date
+    source_type: str | None = None
+    tier: str | None = None
+    sample_count: int
+    """모집단 — ``triggered=true`` + first realized event 없음 +
+    ``recompute_required=true`` + 같은 계좌×종목에 queue pending
+    없음(``missing-first-event-recompute-cross-check``의 케이스 2와
+    동일한 population)."""
+    queue_scan_limit: int
+    """큐 스캔 깊이(``_LOSS_CUT_SHADOW_RECOMPUTE_QUEUE_SCAN_LIMIT``).
+    이 값을 응답에 그대로 노출해 스캔 한계를 감추지 않는다."""
+    queue_scan_limit_reached: bool
+    """전역 신호 — 이번 조회에서 ``list_pending(limit=queue_scan_
+    limit)``이 정확히 ``queue_scan_limit``건을 반환했는지(= 실제
+    미해결 큐가 이 스캔 창보다 깊을 가능성). ``True``면 이 응답의
+    모든 ``queue_pending=False`` 판정을 스캔 한계 관점에서 다시
+    봐야 한다."""
+    cause_breakdown: list[LossCutShadowMissingCauseBreakdownItem]
+    by_source_type: list[LossCutShadowRecomputeMissingQueueGroupBreakdownItem]
+    by_tier: list[LossCutShadowRecomputeMissingQueueGroupBreakdownItem]
+    limit: int
+    before: datetime | None = None
+    items: list[LossCutShadowRecomputeMissingQueueSampleView]
+
+
 class CandidateAlignmentStatusItem(BaseModel):
     """Deterministic candidate와 최종 decision의 정렬 상태 분포."""
 

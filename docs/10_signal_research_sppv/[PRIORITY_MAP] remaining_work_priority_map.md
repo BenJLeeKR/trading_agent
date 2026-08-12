@@ -11726,3 +11726,22 @@ recompute-cross-check`를 추가해 missing sample과 recompute queue를
 - **이후 우선순위는 변경 없음**: `SPPV-3`가 여전히 다음 주력
   작업이다. 3단계(shadow 누적 실측) 착수 시 이 9종 read path를
   그대로 재사용할 수 있다.
+
+## Loss-cut shadow recompute queue missing 케이스 원인 분류 API 추가 — 정책 도입 아님, 새 계산 없음(2026-08-12 KST)
+
+`GET /trade-decisions/loss-cut-shadow/recompute-missing-queue-
+causes`를 추가해 위 cross-check의 "recompute_required인데 queue
+pending 없음" 케이스만 모아 5개 bucket으로 분류한다. **이번
+작업도 read path 추가다 — 실주문 결정 변경 없음, 정식 loss-cut
+정책 도입 아님.**
+
+- `queue_scan_limit_suspected`(전역 신호)가 recency 기반 bucket
+  보다 precedence상 우선한다 — 스캔이 한계(100건)에 도달하면 그
+  아래 판정을 신뢰할 수 없기 때문. `queue_scan_limit`/`queue_scan_
+  limit_reached`를 응답에 그대로 노출해 스캔 한계를 감추지 않았다.
+- 신규 repository 메서드 0개 — 기존 4개 조합.
+- **원인 분류 inspection이지 진단 완료·인과 확정 도구가 아니다**
+  — `queue_write_path_suspected`처럼 "의심"까지만 표현.
+- **이후 우선순위는 변경 없음**: `SPPV-3`가 여전히 다음 주력
+  작업이다. 3단계(shadow 누적 실측) 착수 시 이 10종 read path를
+  그대로 재사용할 수 있다.

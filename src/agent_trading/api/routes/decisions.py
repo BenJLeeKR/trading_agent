@@ -33,6 +33,9 @@ from agent_trading.api.schemas import (
     LossCutShadowMissingSampleView,
     LossCutShadowRecomputeCrossCheckResponse,
     LossCutShadowRecomputeCrossCheckSampleView,
+    LossCutShadowRecomputeMissingQueueCausesResponse,
+    LossCutShadowRecomputeMissingQueueGroupBreakdownItem,
+    LossCutShadowRecomputeMissingQueueSampleView,
     LossCutShadowSampleView,
     LossCutShadowSamplesResponse,
     LossCutShadowSummaryResponse,
@@ -1780,6 +1783,271 @@ async def get_loss_cut_shadow_missing_first_event_recompute_cross_check(
         recompute_required_queue_match_rate=(
             queue_pending_match_count / match_denominator if match_denominator > 0 else None
         ),
+        limit=limit,
+        before=before,
+        items=items,
+    )
+
+
+# --- recompute-missing-queue-causes bucket 상수 ---
+# precedence: 위에서 아래 순서로 먼저 만족하는 bucket에 배정한다.
+_RECOMPUTE_MISSING_QUEUE_CAUSE_INSTRUMENT_LINKAGE = "missing_instrument_linkage"
+_RECOMPUTE_MISSING_QUEUE_CAUSE_SCAN_LIMIT_SUSPECTED = "queue_scan_limit_suspected"
+_RECOMPUTE_MISSING_QUEUE_CAUSE_RECENT_PENDING_GAP = "recent_pending_gap"
+_RECOMPUTE_MISSING_QUEUE_CAUSE_WRITE_PATH_SUSPECTED = "queue_write_path_suspected"
+_RECOMPUTE_MISSING_QUEUE_CAUSE_OTHER_UNCLASSIFIED = "other_unclassified"
+
+_RECOMPUTE_MISSING_QUEUE_CAUSE_PRECEDENCE = (
+    _RECOMPUTE_MISSING_QUEUE_CAUSE_INSTRUMENT_LINKAGE,
+    _RECOMPUTE_MISSING_QUEUE_CAUSE_SCAN_LIMIT_SUSPECTED,
+    _RECOMPUTE_MISSING_QUEUE_CAUSE_RECENT_PENDING_GAP,
+    _RECOMPUTE_MISSING_QUEUE_CAUSE_WRITE_PATH_SUSPECTED,
+    _RECOMPUTE_MISSING_QUEUE_CAUSE_OTHER_UNCLASSIFIED,
+)
+
+_RECOMPUTE_MISSING_QUEUE_RECENT_THRESHOLD = timedelta(hours=1)
+_LOSS_CUT_SHADOW_RECOMPUTE_MISSING_QUEUE_DEFAULT_LIMIT = 50
+
+
+def _classify_recompute_missing_queue_cause(
+    *,
+    instrument_id_raw: str | None,
+    queue_scan_limit_reached: bool,
+    reference_time: datetime,
+    now: datetime,
+) -> str:
+    """``recompute_required=true``인데 queue pending이 없는 이유를
+
+    운영 관점에서 분류한다(읽기 전용, 판단 없음 — 버그/인과 확정
+    아님). precedence(위에서부터 먼저 만족하는 것으로 확정):
+
+    1. ``missing_instrument_linkage`` — shadow payload에 ``instrument_
+       id``가 없음. 이 endpoint의 모집단은 이미 ``recompute_required
+       =true``(= ``position_cost_basis_state`` 존재 = ``instrument_id``
+       존재)를 전제하므로 **실제로는 도달 불가능**하다 — 상위
+       ``_classify_missing_first_event_cause()``와 정의를 대칭적으로
+       유지하기 위한 방어적 bucket이다(항상 count 0으로 기대).
+    2. ``queue_scan_limit_suspected`` — 이번 조회에서 ``list_pending(
+       limit=queue_scan_limit)``이 스캔 한계에 정확히 도달함(전역
+       신호, 모든 row에 동일 적용) — 실제 미해결 큐가 스캔 창보다
+       깊어 이 row의 pending이 스캔에서 빠졌을 가능성이 있다. 이
+       가능성이 있으면 그 아래 판정(3/4)은 신뢰할 수 없으므로 항상
+       먼저 이 bucket으로 분류한다.
+    3. ``recent_pending_gap`` — ``reference_time``(``position_cost_
+       basis_state.updated_at``, 없으면 sample ``created_at``)이
+       ``_RECOMPUTE_MISSING_QUEUE_RECENT_THRESHOLD``(1시간) 이내로
+       최근이면, 아직 queue에 반영되기 전일 가능성을 배제할 수 없다
+       — "누락"이 아니라 "아직"일 수 있다는 뜻으로만 쓴다.
+    4. ``queue_write_path_suspected`` — 스캔 한계에 걸리지 않았고
+       (2), 충분히 시간이 지났는데도(3) queue pending이 안 보이는
+       경우 — queue write 경로에 문제가 있을 **가능성**을 의심할
+       근거는 있지만, 이 함수는 "의심"까지만 표현하고 확정하지
+       않는다(``queue_write_path_bug_confirmed`` 같은 이름을 쓰지
+       않는 이유).
+    5. ``other_unclassified`` — 위 어느 것도 명확히 해당하지 않음
+       (1~4가 모든 경우를 이미 다루므로 코드 경로상 도달 불가능하지만,
+       애매한 값을 억지로 분류하지 않기 위한 안전망으로 유지한다).
+    """
+    if not instrument_id_raw:
+        return _RECOMPUTE_MISSING_QUEUE_CAUSE_INSTRUMENT_LINKAGE
+    if queue_scan_limit_reached:
+        return _RECOMPUTE_MISSING_QUEUE_CAUSE_SCAN_LIMIT_SUSPECTED
+    if now - reference_time <= _RECOMPUTE_MISSING_QUEUE_RECENT_THRESHOLD:
+        return _RECOMPUTE_MISSING_QUEUE_CAUSE_RECENT_PENDING_GAP
+    return _RECOMPUTE_MISSING_QUEUE_CAUSE_WRITE_PATH_SUSPECTED
+
+
+@router.get(
+    "/trade-decisions/loss-cut-shadow/recompute-missing-queue-causes",
+    response_model=LossCutShadowRecomputeMissingQueueCausesResponse,
+)
+async def get_loss_cut_shadow_recompute_missing_queue_causes(
+    account_id: str = Query(..., description="Account UUID"),
+    start_date: date = Query(..., description="Start date (YYYY-MM-DD, KST)"),
+    end_date: date = Query(..., description="End date (YYYY-MM-DD, KST)"),
+    source_type: str | None = Query(None, description="Optional source_type filter"),
+    tier: str | None = Query(None, description="Optional tier filter (soft|hard)"),
+    before: datetime | None = Query(
+        None, description="Optional — only samples created before this instant"
+    ),
+    limit: int = Query(
+        _LOSS_CUT_SHADOW_RECOMPUTE_MISSING_QUEUE_DEFAULT_LIMIT,
+        ge=1,
+        le=500,
+        description="Maximum samples to return",
+    ),
+    repos: RepositoryContainer = Depends(get_repos),
+) -> LossCutShadowRecomputeMissingQueueCausesResponse:
+    """``missing-first-event-recompute-cross-check``의 케이스 2
+
+    (``recompute_required=true``인데 queue pending이 없는 sample)만
+    모아 **왜 queue pending이 안 보이는지**를 운영 관점에서 분류한다.
+    cross-check가 "불일치 탐지"라면, 이 endpoint는 "그 중 queue
+    missing 케이스 분류"다 — **원인 분류 inspection이지 진단
+    완료·인과 확정 도구가 아니다.**
+
+    모집단: ``triggered=true`` + first realized event 없음 +
+    ``recompute_required=true`` + 같은 계좌×종목에 queue pending
+    없음. cause 판정은 ``_classify_missing_first_event_cause()``를
+    재사용해 ``recompute_required`` 여부를 확인하고, queue missing
+    "이유"는 이 endpoint 전용의 ``_classify_recompute_missing_queue_
+    cause()``로 별도 분류한다(bucket precedence는 그 함수 docstring
+    참고).
+
+    **queue 스캔 한계를 숨기지 않는다**: ``queue_scan_limit``/
+    ``queue_scan_limit_reached``를 top-level summary에 그대로
+    노출한다 — 스캔이 한계에 도달했으면 이 응답의 모든 "queue
+    missing" 판정 자체를 스캔 한계 관점에서 다시 봐야 한다.
+    """
+    if start_date > end_date:
+        raise HTTPException(
+            status_code=400, detail="start_date must be on or before end_date"
+        )
+    aid = _parse_query_uuid(account_id, field="account_id")
+
+    queue_items = await repos.realized_pnl_recompute_queue.list_pending(
+        limit=_LOSS_CUT_SHADOW_RECOMPUTE_QUEUE_SCAN_LIMIT
+    )
+    queue_scan_limit_reached = len(queue_items) >= _LOSS_CUT_SHADOW_RECOMPUTE_QUEUE_SCAN_LIMIT
+    queue_by_instrument: dict[UUID, list] = {}
+    for queue_item in queue_items:
+        if queue_item.account_id != aid:
+            continue
+        queue_by_instrument.setdefault(queue_item.instrument_id, []).append(queue_item)
+
+    rows = await repos.trade_decisions.list_loss_cut_shadow_observations(
+        aid,
+        start_date=start_date,
+        end_date=end_date,
+        source_type=source_type,
+        tier=tier,
+        triggered=True,
+        before=before,
+        limit=None,
+    )
+
+    now = datetime.now(timezone.utc)
+    sample_count = 0
+    cause_counts: dict[str, int] = {
+        cause: 0 for cause in _RECOMPUTE_MISSING_QUEUE_CAUSE_PRECEDENCE
+    }
+    source_type_sample_counts: dict[str, int] = {}
+    tier_sample_counts: dict[str, int] = {}
+    items: list[LossCutShadowRecomputeMissingQueueSampleView] = []
+
+    for row in rows:
+        shadow = row.loss_cut_shadow
+        instrument_id_raw = shadow.get("instrument_id")
+
+        is_missing = True
+        if instrument_id_raw:
+            events = await repos.realized_pnl_events.list_by_account_and_instrument_since(
+                aid,
+                UUID(instrument_id_raw),
+                since=row.created_at,
+                limit=1,
+            )
+            is_missing = not events
+        if not is_missing:
+            continue
+
+        classification = await _classify_missing_first_event_cause(
+            repos, account_id=aid, instrument_id_raw=instrument_id_raw
+        )
+        cost_basis_state = classification.cost_basis_state
+        recompute_required = (
+            cost_basis_state.recompute_required if cost_basis_state is not None else None
+        )
+        if recompute_required is not True:
+            continue
+
+        instrument_id = UUID(instrument_id_raw) if instrument_id_raw else None
+        matching_queue_items = (
+            queue_by_instrument.get(instrument_id, []) if instrument_id is not None else []
+        )
+        if matching_queue_items:
+            continue  # queue pending이 있으면 이 endpoint의 모집단이 아니다.
+
+        sample_count += 1
+        group_source_type = row.source_type
+        group_tier = shadow.get("tier") or "none"
+        source_type_sample_counts[group_source_type] = (
+            source_type_sample_counts.get(group_source_type, 0) + 1
+        )
+        tier_sample_counts[group_tier] = tier_sample_counts.get(group_tier, 0) + 1
+
+        reference_time = (
+            cost_basis_state.updated_at
+            if cost_basis_state is not None and cost_basis_state.updated_at is not None
+            else row.created_at
+        )
+        recompute_missing_cause = _classify_recompute_missing_queue_cause(
+            instrument_id_raw=instrument_id_raw,
+            queue_scan_limit_reached=queue_scan_limit_reached,
+            reference_time=reference_time,
+            now=now,
+        )
+        cause_counts[recompute_missing_cause] += 1
+
+        if len(items) < limit:
+            items.append(
+                LossCutShadowRecomputeMissingQueueSampleView(
+                    trade_decision_id=row.trade_decision_id,
+                    created_at=row.created_at,
+                    symbol=row.symbol,
+                    instrument_id=instrument_id,
+                    source_type=row.source_type,
+                    actual_decision_type=row.actual_decision_type,
+                    tier=shadow.get("tier"),
+                    cause=recompute_missing_cause,
+                    recompute_required=True,
+                    position_quantity=(
+                        cost_basis_state.quantity if cost_basis_state is not None else None
+                    ),
+                    queue_pending=False,
+                    has_first_realized_event=False,
+                    queue_scan_limit_reached=queue_scan_limit_reached,
+                    recompute_required_since=(
+                        cost_basis_state.updated_at if cost_basis_state is not None else None
+                    ),
+                )
+            )
+
+    cause_breakdown = [
+        LossCutShadowMissingCauseBreakdownItem(
+            cause=cause,
+            count=cause_counts[cause],
+            rate=(cause_counts[cause] / sample_count) if sample_count > 0 else 0.0,
+        )
+        for cause in _RECOMPUTE_MISSING_QUEUE_CAUSE_PRECEDENCE
+    ]
+
+    def _build_recompute_missing_queue_group_breakdown(
+        counter: dict[str, int],
+    ) -> list[LossCutShadowRecomputeMissingQueueGroupBreakdownItem]:
+        return [
+            LossCutShadowRecomputeMissingQueueGroupBreakdownItem(
+                group_value=key,
+                count=counter[key],
+                rate=(counter[key] / sample_count) if sample_count > 0 else 0.0,
+            )
+            for key in sorted(counter)
+        ]
+
+    return LossCutShadowRecomputeMissingQueueCausesResponse(
+        account_id=aid,
+        start_date=start_date,
+        end_date=end_date,
+        source_type=source_type,
+        tier=tier,
+        sample_count=sample_count,
+        queue_scan_limit=_LOSS_CUT_SHADOW_RECOMPUTE_QUEUE_SCAN_LIMIT,
+        queue_scan_limit_reached=queue_scan_limit_reached,
+        cause_breakdown=cause_breakdown,
+        by_source_type=_build_recompute_missing_queue_group_breakdown(
+            source_type_sample_counts
+        ),
+        by_tier=_build_recompute_missing_queue_group_breakdown(tier_sample_counts),
         limit=limit,
         before=before,
         items=items,
