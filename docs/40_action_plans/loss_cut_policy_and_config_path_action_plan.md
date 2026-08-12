@@ -284,7 +284,60 @@ downside shock, holding_profile 만료)이다. 이 사실은
   dev-validation container, 기존 asyncpg 루프 버그의
   `agent_trading-app-1`) 모두에서 실행 확인이 안 되는 기존
   한계가 그대로 적용된다(PR #229/#231에서 이미 문서화됨).
-- 상태: **완료**(2026-08-11, 이번 PR).
+- 상태: **완료**(2026-08-11, PR #232).
+
+### 2단계 후속 5 — Shadow → 첫 realized event 지연 분포 API 추가(완료)
+
+- 왜: `timeline`은 sample 1건씩만 볼 수 있어 "보통 몇 초/몇 분 뒤
+  첫 realized event가 나타나는지", "hard가 soft보다 빨리
+  청산되는지", "첫 event가 아예 없는 sample 비율" 같은 **집계
+  질문**에 답하지 못했다 — 3단계 실측 착수 여부를 판단할 다음
+  최소 신호다. **새 손익 계산/새 trigger 판정이 아니라, 이미
+  저장된 shadow sample과 이미 저장된 realized event의 시간차를
+  모아 분포 통계만 내는 read-only 집계**다.
+- 판단(코드 기준):
+  1. route: `trade-decisions/loss-cut-shadow/*` 계열에 그대로 둠 —
+     query 계약이 형제 endpoint와 동일하고, `timeline`의 "가장
+     먼저 발생한 event 조회"를 표본 전체에 반복 적용한 것뿐이라
+     `performance` 계열로 옮길 이유가 없다.
+  2. 모집단: `triggered=true` sample 고정(쿼리로 끄고 켤 수 없게
+     내부에서 고정) — `triggered=false` sample에는 "이후 첫
+     event"를 물을 이유가 없기 때문이다. `source_type`/`tier`는
+     선택 필터로 열어뒀다.
+  3. 연결 기준: `account_id + instrument_id + fill_timestamp >=
+     sample.created_at`인 가장 오래된 event 1건(`timeline`이 이미
+     쓰는 `list_by_account_and_instrument_since(limit=1)`과 완전히
+     동일한 조회를 표본마다 반복). 신규 repository 메서드
+     **0개** — PR #232가 이미 추가한 메서드를 그대로 재사용했다.
+  4. 인과 매칭 아님 — `timeline`과 동일한 한계(같은 계좌×종목에서
+     "가장 먼저" 발생한 event일 뿐, 그 event가 이 sample 때문에
+     발생했다는 보장 없음)를 응답 스키마 docstring에 명시했다.
+  5. 이번 턴 범위: 사용자가 우선 추천한 **분포 요약 endpoint
+     1개**만 구현 — 개별 sample 사례 첨부는 하지 않았다(그건
+     이미 `timeline`/`samples`가 제공).
+  6. 이벤트 없음 카운트: `missing_first_event_count`와
+     `missing_first_event_rate` **둘 다** 응답에 포함했다(요청된
+     범위 그대로).
+- 산출물:
+  - `GET /trade-decisions/loss-cut-shadow/first-realized-event-latency`
+    — 계좌×기간(+선택 `source_type`/`tier`) 기준
+    `sample_count`/`matched_first_event_count`/
+    `missing_first_event_count`/`missing_first_event_rate`/
+    `latency_seconds_{min,max,avg,median,p90}` +
+    참고 필드 `first_realized_event_pnl_net_{avg,median}`(첫
+    event의 `realized_pnl_net` 평균/중앙값 — 추가 쿼리 없이 이미
+    가져온 event에서 뽑을 수 있어 포함했다. "이 손실이 shadow
+    때문"이라는 해석을 뒷받침하지 않는다는 caveat을 스키마에
+    명시).
+  - 신규 repository 메서드 0개.
+  - 신규 테이블/마이그레이션/계산 엔진 없음.
+- 검증: `py_compile`, `accept architecture`/`backend-runtime`/
+  `db-structure`/`no-bypass`/`docs` PASS, 신규 API 테스트 4건
+  (분포 통계 계산 정확성 — min/max/avg/median/첫 event PnL
+  평균·중앙값, `tier` 필터, 빈 표본, 전부 event 없는 경우) 전부
+  dev-validation container에서 PASS. 신규 repository 코드가 없어
+  DB 접근이 필요한 검증 항목 자체가 없다.
+- 상태: **완료**(2026-08-12, 이번 PR).
 
 ### 3단계 — Shadow 누적 실측(미착수)
 
@@ -292,9 +345,10 @@ downside shock, holding_profile 만료)이다. 이 사실은
   가능하다.
 - 산출물(예정): 누적 이력(JSONL 또는 유사 구조, 기존
   `regime_conditional_signal_shadow_history.jsonl`류 관례 재사용),
-  주기적 실측 보고. read path는 이번에 추가한 summary/samples/daily/
-  by-instrument/timeline API를 그대로 재사용할 수 있다 — 별도
-  조회 도구를 새로 만들 필요는 없다.
+  주기적 실측 보고. read path는 이번에 추가한
+  summary/samples/daily/by-instrument/timeline/first-realized-
+  event-latency API를 그대로 재사용할 수 있다 — 별도 조회 도구를
+  새로 만들 필요는 없다.
 - 상태: **미착수**.
 
 ### 4단계 — 정책 확정(미착수)

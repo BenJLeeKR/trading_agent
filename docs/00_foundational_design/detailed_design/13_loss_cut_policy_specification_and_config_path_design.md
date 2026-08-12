@@ -276,6 +276,15 @@ orchestrator.py`)로 만들었다 — 어떤 `object.__setattr__` 호출도
   account_and_instrument_since()`, 정렬 방향이 반대라 기존 메서드
   재사용 불가)만 추가했고, 후속 참고 타임라인일 뿐 인과 매칭이
   아니다(상세: action plan "2단계 후속 4").
+- **첫 realized event 지연 분포 추가(2026-08-12 추가 후속)**:
+  `GET /trade-decisions/loss-cut-shadow/first-realized-event-latency`
+  로 `triggered=true` sample들이 이후 첫 realized event까지
+  걸린 시간(초)의 분포(min/max/avg/median/p90)와
+  `missing_first_event_rate`를 낸다 — `timeline`이 쓰는
+  `list_by_account_and_instrument_since(limit=1)` 조회를 표본
+  전체에 반복 적용할 뿐, 신규 repository 메서드 없음. 후속 사건
+  지연 분포일 뿐 정책 효과 판정이 아니다(상세: action plan
+  "2단계 후속 5").
 
 ## 4. 설정 경로 설계 초안
 

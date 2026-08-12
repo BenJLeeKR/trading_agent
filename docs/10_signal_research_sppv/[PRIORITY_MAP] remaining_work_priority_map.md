@@ -11647,3 +11647,22 @@ realized event를 시간순으로 보여준다. **이번 작업도 read path
   작업이다. 3단계(shadow 누적 실측) 착수 시 이 5종
   (summary/samples/daily/by-instrument/timeline) read path를
   그대로 재사용할 수 있다.
+
+## Loss-cut shadow → 첫 realized event 지연 분포 API 추가 — 정책 도입 아님, 새 계산 없음(2026-08-12 KST)
+
+`GET /trade-decisions/loss-cut-shadow/first-realized-event-latency`
+를 추가해 `triggered=true` shadow sample들이 이후 첫 realized
+event까지 걸린 시간(초)의 분포(min/max/avg/median/p90)와
+`missing_first_event_rate`를 보여준다. **이번 작업도 read path
+추가다 — 실주문 결정 변경 없음, 정식 loss-cut 정책 도입 아님.**
+
+- 신규 repository 메서드 0개 — `timeline`(PR #232)이 이미 추가한
+  `list_by_account_and_instrument_since(limit=1)`을 표본 전체에
+  반복 적용만 했다.
+- **후속 사건 지연 분포이지 정책 효과 판정기가 아니다** — 지연이
+  짧다/길다는 사실 자체가 shadow의 적중 여부를 뜻하지 않는다는
+  caveat을 응답 스키마에 명시했다.
+- **이후 우선순위는 변경 없음**: `SPPV-3`가 여전히 다음 주력
+  작업이다. 3단계(shadow 누적 실측) 착수 시 이 6종
+  (summary/samples/daily/by-instrument/timeline/first-realized-
+  event-latency) read path를 그대로 재사용할 수 있다.
