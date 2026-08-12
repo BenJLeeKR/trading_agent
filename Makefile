@@ -2,7 +2,7 @@ SHELL := /usr/bin/bash
 .SHELLFLAGS := -e -o pipefail -c
 
 .PHONY: install run migrate test lint smoke \
-        harness-status check-quick check-full check-changed type-check-backend type-check-frontend security-scan env-check check-file test-one test-file lint-path docs-check accept-docs accept-ci accept-env accept-db-structure accept-architecture accept-style accept-no-bypass accept-backend-file accept-backend-runtime accept-admin-ui accept-ops-report dump-ops-report admin-test-one \
+        harness-status check-quick check-full check-changed type-check-backend type-check-frontend security-scan env-check check-file test-one test-file lint-path docs-check accept-docs accept-ci accept-env accept-db-structure accept-architecture accept-style accept-no-bypass accept-backend-file accept-script-file accept-backend-runtime accept-admin-ui accept-ops-report dump-ops-report admin-test-one \
         dev-validation-image dev-validation-python dev-validation-exec dev-frontend-validation-image dev-frontend-validation-node dev-frontend-validation-exec \
         heavy-full-test heavy-docker-test heavy-smoke heavy-admin-build heavy-admin-test-all \
         full-test docker-test-safe smoke-safe smoke-all admin-build admin-test-all \
@@ -107,6 +107,10 @@ accept-no-bypass:
 accept-backend-file:
 	@test -n "$(FILE)" || (echo "사용법: make accept-backend-file FILE=src/agent_trading/foo.py" >&2; exit 1)
 	bash scripts/harness/run.sh accept backend-file "$(FILE)"
+
+accept-script-file:
+	@test -n "$(FILE)" || (echo "사용법: make accept-script-file FILE=scripts/run_decision_loop.py" >&2; exit 1)
+	bash scripts/harness/run.sh accept script-file "$(FILE)"
 
 accept-backend-runtime:
 	bash scripts/harness/run.sh accept backend-runtime

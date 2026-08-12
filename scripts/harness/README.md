@@ -63,6 +63,7 @@ GitHub Actions도 사람과 AI가 쓰는 동일한 하네스를 사용한다. CI
 | 코드 스타일 baseline 계약 | `bash scripts/harness/run.sh accept style` | `make accept-style` |
 | 우회 행동 검사 | `bash scripts/harness/run.sh accept no-bypass` | `make accept-no-bypass` |
 | 단일 백엔드 파일 | `bash scripts/harness/run.sh accept backend-file <file>` | `make accept-backend-file FILE=<file>` |
+| 단일 운영 스크립트 파일 | `bash scripts/harness/run.sh accept script-file <file>` | `make accept-script-file FILE=<file>` |
 | 백엔드 런타임 계약 | `bash scripts/harness/run.sh accept backend-runtime` | `make accept-backend-runtime` |
 | Admin UI 계약 | `bash scripts/harness/run.sh accept frontend` | `make accept-admin-ui` |
 | 운영 리포트 JSON 계약 | `bash scripts/harness/run.sh accept ops-report <summary_json>` | `make accept-ops-report SUMMARY_JSON=<summary_json>` |
@@ -244,6 +245,33 @@ Makefile에서는 승인 필요 명령을 `heavy-*` target으로 노출한다. �
 - `no_test_policy`: 직접 대응 테스트가 없을 때의 판정 정책.
 
 직접 대응 테스트가 없으면 기본적으로 실패한다. 불가피한 경우에만 `HARNESS_ALLOW_NO_TEST=1`로 명시 우회하고 보고서에 사유를 남긴다.
+
+### `accept script-file`
+
+`scripts/` 아래 Python 파일 하나를 판정한다. `src/agent_trading/`만 대상으로 하는 `accept backend-file`이 다루지 못하던 운영 배치 스크립트를 위한 진입점이다. 판정 절차와 출력 형식은 `accept backend-file`과 같고, 테스트 탐색도 동일하게 import graph 우선 + 파일명 stem fallback 방식을 쓴다.
+
+- `valid_script_file`: 대상 경로가 `scripts/` 아래 Python 파일인지 여부.
+- `test_discovery_mode`: 대응 테스트 탐색 방식(`import_graph` / `stem_fallback` / `none`).
+- `matched_by_import_count`: import graph로 연결된 테스트 후보 수.
+- `safe_test_candidate_count`: 안전 selector로 실행 가능한 후보 수.
+- `selected_test_candidate_count`: 실제 실행 대상으로 선택된 테스트 수.
+- `dropped_test_candidate_count`: 실행 상한(`ACCEPT_SCRIPT_MAX_TEST_FILES`, 기본 3)에 걸려 제외된 후보 수.
+- `tests_run_count`: 실행한 pytest selector 수.
+- `test_failed_count`: 실패한 selector 수.
+- `no_test_override`: `HARNESS_ALLOW_NO_TEST=1` 우회 사용 여부.
+
+`accept backend-file`과 동일하게 **직접 대응 테스트가 없으면 기본 FAIL**이다. 불가피한 경우에만 `HARNESS_ALLOW_NO_TEST=1`로 명시 우회하고 보고서에 사유를 남긴다. `scripts/` 밖 경로를 넘기면 `valid_script_file=0`과 `invalid_path_scope=<file>`로 실패한다.
+
+1차 도입에서 우선 확인한 핵심 운영 배치는 다음 4개다.
+
+```bash
+bash scripts/harness/run.sh accept script-file scripts/run_decision_loop.py
+bash scripts/harness/run.sh accept script-file scripts/run_ops_scheduler.py
+bash scripts/harness/run.sh accept script-file scripts/run_realized_pnl_recompute_worker.py
+bash scripts/harness/run.sh accept script-file scripts/run_reconciliation_worker.py
+```
+
+`check changed`, `accept style`, `type-check backend`, `accept architecture`의 대상 경로는 이번 도입 범위가 아니며 여전히 `src/agent_trading` 기준이다.
 
 ### `accept db-structure`
 

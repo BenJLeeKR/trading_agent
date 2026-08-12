@@ -250,6 +250,7 @@ bash scripts/harness/docker_compose_env.sh up -d db api
 | `make accept-ci` | CI workflow가 같은 하네스를 쓰는지 판정 |
 | `make accept-env` | 운영 환경 재현성 하네스 판정기 실행 |
 | `make accept-backend-file FILE=...` | 단일 백엔드 Python 파일 하네스 판정기 실행 |
+| `make accept-script-file FILE=...` | `scripts/` 아래 단일 운영 스크립트 하네스 판정기 실행 |
 | `make accept-backend-runtime` | 백엔드 런타임 import/factory 계약 판정기 실행 |
 | `make accept-admin-ui` | Admin UI 하네스 판정기 실행 (`accept frontend`) |
 | `make accept-ops-report SUMMARY_JSON=...` | 운영 `summary_json` 커버리지 판정기 실행 (`accept ops-report`) |
@@ -274,7 +275,7 @@ bash scripts/harness/docker_compose_env.sh up -d db api
 | `make docker-test` | `make heavy-docker-test`의 호환 alias |
 | `make docker-shell` | Docker 컨테이너 셸 접속 |
 
-`make accept-backend-file`은 import 기반으로 직접 대응 테스트를 찾으며, 테스트가 없으면 실패한다. 불가피한 무테스트 우회는 `HARNESS_ALLOW_NO_TEST=1`을 명시한다.
+`make accept-backend-file`은 import 기반으로 직접 대응 테스트를 찾으며, 테스트가 없으면 실패한다. 불가피한 무테스트 우회는 `HARNESS_ALLOW_NO_TEST=1`을 명시한다. `scripts/` 아래 운영 스크립트는 같은 규칙을 쓰는 `make accept-script-file FILE=...`로 판정한다.
 `make accept-ops-report`는 기본적으로 `failed_count=0`, `timed_out_count=0`을 요구한다. 운영상 허용 범위가 필요한 경우 `HARNESS_OPS_ALLOWED_FAILED_COUNT`, `HARNESS_OPS_ALLOWED_TIMED_OUT_COUNT`를 명시한다.
 `make dump-ops-report`는 DB를 조회하므로 기본 차단한다. 필요한 경우 `HARNESS_ALLOW_OPS_DUMP=1`을 명시하고, 출력 파일을 `accept-ops-report`에 전달한다.
 전체 테스트, smoke, Admin UI 전체 빌드/테스트는 `make heavy-*` target을 우선 사용한다. 기존 `make full-test`, `make docker-test-safe`, `make smoke-safe`, `make admin-build`, `make admin-test-all`은 호환 alias다.
