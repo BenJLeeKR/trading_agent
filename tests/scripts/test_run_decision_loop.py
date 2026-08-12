@@ -2367,6 +2367,48 @@ class TestRunOneCycle:
         assert details["held_quantity"] == "10"
 
     @pytest.mark.asyncio
+    async def test_assemble_not_called_when_general_buy_budget_exhausted_pre_ai(self) -> None:
+        """AI 토큰 낭비 방지 확인(2026-08-12 KST): 무보유 + remaining_general_
+        buy_budget=0이면 ``orchestrator.assemble()``이 전혀 호출되지 않아야
+        한다 — Pre-AI gate가 AI 호출 전에 차단함을 직접 증명한다."""
+        async with _mock_runtime_for_one_cycle() as runtime:
+            repos = runtime["repositories"]
+            snapshots = await repos.position_snapshots.list_latest_by_account(ACCOUNT_ID)
+            assert snapshots
+            latest_position = snapshots[0]
+            repos.position_snapshots._items[latest_position.position_snapshot_id] = (  # type: ignore[attr-defined]
+                PositionSnapshotEntity(
+                    position_snapshot_id=latest_position.position_snapshot_id,
+                    account_id=latest_position.account_id,
+                    instrument_id=latest_position.instrument_id,
+                    quantity=Decimal("0"),
+                    average_price=latest_position.average_price,
+                    market_price=latest_position.market_price,
+                    unrealized_pnl=latest_position.unrealized_pnl,
+                    source_of_truth=latest_position.source_of_truth,
+                    snapshot_at=latest_position.snapshot_at,
+                    created_at=latest_position.created_at,
+                )
+            )
+            orchestrator = runtime["orchestrator"]
+            mock_assemble = AsyncMock()
+            with patch.object(orchestrator, "assemble", mock_assemble):
+                result = await _run_one_cycle(
+                    cycle=1,
+                    submit=True,
+                    dry_run=False,
+                    output="text",
+                    source_type="core",
+                    remaining_general_buy_budget=0,
+                    runtime=runtime,
+                )
+
+        assert result["status"] == "SKIPPED"
+        assert result["error_phase"] == "pre_ai_gate"
+        assert result["stop_reason"] == "general_buy_budget_exhausted"
+        mock_assemble.assert_not_awaited()
+
+    @pytest.mark.asyncio
     async def test_pre_ai_cash_gate_not_triggered_when_position_exists_and_orderable_amount_low(self) -> None:
         """보유 종목은 주문가능금액이 낮아도 매도/축소 판단 경로를 위해 현금 gate로 막지 않는다."""
         async with _mock_runtime_for_one_cycle() as runtime:
@@ -3075,6 +3117,117 @@ class TestDeferActionableForPass2:
 
         assert result["status"] != "PENDING_PASS2"
         assert sink == []
+
+
+class TestPreAiGeneralBuyBudgetExhaustedDispatch:
+    """``_process_one()`` dispatch — cycle-level ``allow_general_submit=False``
+    일 때만 general BUY lane에 ``remaining_general_buy_budget=0``을 강제
+    전달하는지 검증(2026-08-12 KST). held_position lane과 ``allow_general_
+    submit=True`` cycle의 기존(D안) 동작은 그대로 유지돼야 한다."""
+
+    @staticmethod
+    async def _run_and_capture(*, allow_general_submit: bool) -> dict[str, dict[str, object]]:
+        import scripts.run_decision_loop as module
+
+        universe = (
+            UniverseSymbol(symbol="000030", market="KRX", source_type="core"),
+            UniverseSymbol(symbol="005930", market="KRX", source_type="held_position"),
+        )
+
+        captured_kwargs: dict[str, dict[str, object]] = {}
+
+        async def _mock_run_one_cycle(**kwargs: object) -> dict[str, object]:
+            symbol = str(kwargs["symbol"])
+            captured_kwargs[symbol] = kwargs
+            return {
+                "status": "SKIPPED" if symbol == "000030" and not allow_general_submit else "WATCH",
+                "symbol": symbol,
+                "market": str(kwargs["market"]),
+                "source_type": str(kwargs["source_type"]),
+                "duration_seconds": 0.01,
+                "error_phase": (
+                    "pre_ai_gate" if symbol == "000030" and not allow_general_submit else None
+                ),
+            }
+
+        @asynccontextmanager
+        async def _mock_runtime(run_migrations: bool = False) -> AsyncIterator[dict[str, Any]]:
+            yield {"repositories": MagicMock()}
+
+        class _DummyTx:
+            async def commit(self) -> None:
+                return None
+
+        @asynccontextmanager
+        async def _mock_tx() -> AsyncIterator[_DummyTx]:
+            yield _DummyTx()
+
+        original_shutdown_event = module._shutdown_event
+        module._shutdown_event = asyncio.Event()
+        try:
+            with (
+                patch("scripts.run_decision_loop._install_signal_handlers", return_value=None),
+                patch(
+                    "scripts.run_decision_loop._load_trading_universe_with_anchor",
+                    AsyncMock(
+                        return_value=(universe, UniverseAnchorMetadata(source="test"))
+                    ),
+                ),
+                patch("scripts.run_decision_loop.postgres_runtime", new=_mock_runtime),
+                patch("scripts.run_decision_loop._seed_if_empty", AsyncMock(return_value=False)),
+                patch("scripts.run_decision_loop._run_precheck", AsyncMock(return_value=None)),
+                patch("scripts.run_decision_loop._run_one_cycle", side_effect=_mock_run_one_cycle),
+                patch("agent_trading.db.transaction.transaction", new=_mock_tx),
+                patch(
+                    "agent_trading.repositories.postgres.bootstrap.build_postgres_repositories",
+                    return_value=MagicMock(),
+                ),
+            ):
+                await _run_loop(
+                    interval=0,
+                    max_cycles=1,
+                    submit=True,
+                    dry_run=False,
+                    allow_general_submit=allow_general_submit,
+                    # held_position lane의 remaining_general_buy_budget 계산식
+                    # (max(0, max_general_submits_this_cycle - consumed))이 general
+                    # lane의 강제 0 처리와 독립적임을 뚜렷이 구분하기 위해 일부러
+                    # 0이 아닌 값을 쓴다(held_position은 이 값을 애초에 pre_ai_gate
+                    # 판정에 쓰지 않으므로 값 자체는 held_position 차단 여부에
+                    # 영향을 주지 않는다 — evaluate_pre_ai_validation_result()의
+                    # source_type == "held_position" 분기가 remaining_general_buy_
+                    # budget을 참조하기 전에 먼저 반환하기 때문).
+                    max_general_submits_this_cycle=3,
+                    output="text",
+                )
+        finally:
+            module._shutdown_event = original_shutdown_event
+
+        return captured_kwargs
+
+    @pytest.mark.asyncio
+    async def test_allow_general_submit_false_forces_zero_budget_for_general_lane_only(self) -> None:
+        by_symbol = await self._run_and_capture(allow_general_submit=False)
+
+        # general BUY lane(core) — cycle 전체에 budget이 없으므로 0 강제.
+        assert by_symbol["000030"]["remaining_general_buy_budget"] == 0
+        assert by_symbol["000030"]["defer_actionable_for_pass2"] is True
+
+        # held_position lane은 general lane 분기 자체를 타지 않으므로
+        # 강제 0의 영향을 받지 않는다(기존 else 분기 값 그대로).
+        assert by_symbol["005930"]["remaining_general_buy_budget"] != 0
+        assert by_symbol["005930"]["defer_actionable_for_pass2"] is False
+
+    @pytest.mark.asyncio
+    async def test_allow_general_submit_true_keeps_existing_pass1_behavior(self) -> None:
+        by_symbol = await self._run_and_capture(allow_general_submit=True)
+
+        # budget이 남아있는 cycle에서는 D안 기존 동작(None) 그대로 유지 —
+        # Pass 1.5/Pass 2가 dedupe·우선순위·순차소비를 담당한다.
+        assert by_symbol["000030"]["remaining_general_buy_budget"] is None
+        assert by_symbol["000030"]["defer_actionable_for_pass2"] is True
+
+        assert by_symbol["005930"]["defer_actionable_for_pass2"] is False
 
 
 class TestGeneralLanePriorityKeyAndDedupe:

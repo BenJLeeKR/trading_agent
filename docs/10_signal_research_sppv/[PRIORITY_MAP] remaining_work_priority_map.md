@@ -11818,3 +11818,25 @@ execution_attempts/사후분석 SQL) 보존을 동시에 만족하는지** 코�
   구현 + dev validation container 테스트 보강 + 장중 실측 — 별도
   구현 턴에서 진행. `SPPV-3`(3단계 shadow 누적 실측)와는 독립
   트랙이며 우선순위 변경 없음.
+
+## AI 토큰 낭비 방지 — BUY daily cap Pre-AI gate 구현 완료(2026-08-12 KST, 코드 구현 턴)
+
+위 추천안을 실제로 구현했다. 상세:
+`docs/40_action_plans/submit_budget_two_stage_design_2026-08-
+11.md` "13. 안 1(Pre-AI gate) 구현 완료".
+
+- `scripts/run_decision_loop.py`의 general BUY lane 진입 분기에서
+  `allow_general_submit=False`(cycle-level 고정값)인 경우에만
+  `remaining_general_buy_budget=0`을 전달해 기존 `pre_ai_gate.py`의
+  `GENERAL_BUY_BUDGET_EXHAUSTED` 분기를 열었다 — `assemble()` 호출
+  전 차단. `allow_general_submit=True` cycle/held_position lane은
+  무영향(신규 테스트로 확인).
+- `guardrail_evaluations`에 `general_buy_budget_exhausted`가 이제
+  기록되고, `trade_decisions` row 미생성 및 `SUBMIT_BUDGET_TRACE
+  blocked` 소멸(해당 원인에 한해)은 의도된 관측성 변화다.
+- `tests/scripts/test_run_decision_loop.py` 3건 신규(assemble
+  미호출 직접 증명 1건 + dispatch 레벨 배선 검증 2건), 전체 130건
+  dev validation container PASS. `accept style`/`no-bypass`/
+  `architecture` PASS.
+- **이후 우선순위**: 장중 실측(daily cap 소진 이후 AI 호출 실제
+  감소 확인) — `SPPV-3`와는 독립 트랙, 우선순위 변경 없음.
