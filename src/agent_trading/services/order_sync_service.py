@@ -24,6 +24,10 @@ from agent_trading.domain.models import FillEvent, OrderStatusResult
 from agent_trading.repositories.container import RepositoryContainer
 from agent_trading.repositories.exceptions import is_postgres_error
 from agent_trading.repositories.filters import OrderQuery
+from agent_trading.services.kis_fill_incremental_resolver import (
+    IncrementalFillDecisionKind,
+    resolve_incremental_fill,
+)
 from agent_trading.services.order_manager import OrderManager
 from agent_trading.services.realized_pnl_ledger_service import RealizedPnlLedgerService
 
@@ -166,6 +170,30 @@ class _RealizedPnlSyncCounters:
 
 
 @dataclass(slots=True)
+class _KisFillIncrementalCounters:
+    """``resolve_incremental_fill()`` 판정 결과 집계(설계 문서 14번 6절).
+
+    ``_RealizedPnlSyncCounters``(fill 저장 이후 ledger 반영 결과)와는
+    다른 단계를 센다 — 이건 "KIS 누적 관측을 증분으로 해석하는" 단계다.
+    """
+
+    no_new_fill: int = 0
+    new_fill: int = 0
+    anomaly_negative_delta: int = 0
+    anomaly_unpriceable_delta: int = 0
+    shadow_skipped: int = 0
+
+    @property
+    def total(self) -> int:
+        return (
+            self.no_new_fill
+            + self.new_fill
+            + self.anomaly_negative_delta
+            + self.anomaly_unpriceable_delta
+        )
+
+
+@dataclass(slots=True)
 class OrderSyncService:
     """Post-submit order status/fill sync service.
 
@@ -199,6 +227,12 @@ class OrderSyncService:
     # 첫 사용 시 self.repos로 지연 생성한다. 테스트에서 fake/spy를
     # 주입할 수 있도록 공개 필드로 둔다.
     realized_pnl_ledger_service: RealizedPnlLedgerService | None = None
+
+    # ── KIS 누적→증분 fill 해석 shadow 스위치(설계 문서 14번 6.1절) ──────
+    # False(기본값, shadow) — delta/anomaly 판단은 항상 수행하고 로그로
+    # 남기지만 fill_events에는 append하지 않는다. kis_fill_cumulative_state
+    # 갱신 자체는 이 스위치와 무관하게 항상 수행된다(관측은 계속 진행).
+    kis_fill_incremental_append_enabled: bool = False
 
     # ------------------------------------------------------------------
     # Backfill API (position-delta based EXPIRED SELL recovery)
@@ -768,6 +802,7 @@ class OrderSyncService:
                 broker,
                 account_ref,
                 since=broker_order.last_synced_at,
+                account_id=order.account_id,
             )
 
         # ── 6.5. After-hours stuck active order → EXPIRED fallback ──
@@ -1473,11 +1508,32 @@ class OrderSyncService:
         broker: BrokerAdapter,
         account_ref: str,
         since: datetime | None,
+        account_id: UUID,
     ) -> tuple[int, int]:
         """Fetch fill events from broker and persist new ones (dedup).
 
-        Dedup priority
-        --------------
+        KIS 누적→증분 해석(설계 문서 14번)
+        -----------------------------------
+        ``broker.get_fills()``는 이제 **누적** 체결수량(KIS
+        ``TOT_CCLD_QTY``)을 정규화해 돌려준다 — "이번에 새로 체결된
+        증분"이 아니다. 이 메서드는 각 관측을 ``kis_fill_incremental_
+        resolver.resolve_incremental_fill()``에 통과시켜 직전 관측치와의
+        차이(delta)만 실제 fill 후보로 승격시킨다. 시장가/지정가,
+        부분체결/전체체결을 구분하는 분기는 없다 — 완전체결은
+        "직전 누적치가 0인" 특수 케이스일 뿐, 같은 경로로 처리된다.
+
+        delta==0(no_new_fill)이거나 delta<0/가격 역산 불가(anomaly)면
+        이 fill 후보는 아래 dedup+append 단계에 아예 도달하지 않는다.
+        불확실하면 append하지 않는다는 것이 최우선 원칙이다.
+
+        shadow 모드(``kis_fill_incremental_append_enabled=False``,
+        기본값)에서는 delta 계산까지는 항상 수행하고 로그로 남기지만,
+        실제 ``fill_events.add()``는 건너뛴다 — ``kis_fill_cumulative_
+        state`` 관측 자체는 계속 갱신되므로, 이후 스위치를 켜면 그
+        시점 이후의 신규 체결부터 안전하게 append되기 시작한다.
+
+        Dedup priority (delta 승격 이후 단계 — 기존 로직 유지)
+        --------------------------------------------------------
         1. broker_fill_id (when available) — authoritative broker-native fill
            identifier.  If the incoming ``FillEvent`` carries a non-empty
            ``broker_fill_id`` and that ID already exists in the repository
@@ -1512,7 +1568,7 @@ class OrderSyncService:
             elif broker_order.created_at is not None:
                 from_ts = broker_order.created_at.strftime("%Y%m%d")
 
-            fill_events: Sequence[FillEvent] = await broker.get_fills(
+            observations: Sequence[FillEvent] = await broker.get_fills(
                 account_ref,
                 broker_order.broker_native_order_id,
                 from_ts=from_ts,
@@ -1524,8 +1580,88 @@ class OrderSyncService:
             )
             return 0, 0
 
-        if not fill_events:
+        if not observations:
             return 0, 0
+
+        # ── KIS 누적 관측 → 증분 fill 후보 해석 ──────────────────────
+        incremental_counters = _KisFillIncrementalCounters()
+        fill_events: list[FillEvent] = []
+        for observation in observations:
+            if broker_order.broker_native_order_id is None:
+                continue
+            decision = await resolve_incremental_fill(
+                state_repo=self.repos.kis_fill_cumulative_state,
+                account_id=account_id,
+                broker_name=broker_order.broker_name,
+                broker_native_order_id=broker_order.broker_native_order_id,
+                current_cumulative_quantity=observation.fill_quantity,
+                current_average_price=observation.fill_price,
+            )
+            if decision.kind == IncrementalFillDecisionKind.NO_NEW_FILL:
+                incremental_counters.no_new_fill += 1
+                continue
+            if decision.kind == IncrementalFillDecisionKind.ANOMALY:
+                if decision.anomaly_reason == "negative_delta":
+                    incremental_counters.anomaly_negative_delta += 1
+                else:
+                    incremental_counters.anomaly_unpriceable_delta += 1
+                logger.warning(
+                    "kis_fill_observation anomaly: broker_order=%s reason=%s "
+                    "cumulative_qty=%s — no fill appended this cycle",
+                    broker_order.broker_order_id,
+                    decision.anomaly_reason,
+                    observation.fill_quantity,
+                )
+                continue
+
+            # NEW_FILL — delta_quantity/inferred_price로 fill 후보 확정.
+            incremental_counters.new_fill += 1
+            if not self.kis_fill_incremental_append_enabled:
+                incremental_counters.shadow_skipped += 1
+                logger.info(
+                    "kis_fill_observation shadow_skip: broker_order=%s "
+                    "delta_qty=%s inferred_price=%s — append disabled "
+                    "(KIS_FILL_INCREMENTAL_APPEND_ENABLED=false)",
+                    broker_order.broker_order_id,
+                    decision.delta_quantity,
+                    decision.inferred_price,
+                )
+                continue
+
+            fill_events.append(
+                FillEvent(
+                    broker_name=observation.broker_name,
+                    broker_order_id=observation.broker_order_id,
+                    symbol=observation.symbol,
+                    side=observation.side,
+                    fill_quantity=decision.delta_quantity,
+                    fill_price=decision.inferred_price,
+                    fill_timestamp=observation.fill_timestamp,
+                    broker_fill_id=observation.broker_fill_id,
+                    fee=observation.fee,
+                    tax=observation.tax,
+                ),
+            )
+
+        if incremental_counters.total:
+            logger.info(
+                "kis_fill_incremental summary: broker_order=%s no_new_fill=%d "
+                "new_fill=%d shadow_skipped=%d anomaly_negative_delta=%d "
+                "anomaly_unpriceable_delta=%d",
+                broker_order.broker_order_id,
+                incremental_counters.no_new_fill,
+                incremental_counters.new_fill,
+                incremental_counters.shadow_skipped,
+                incremental_counters.anomaly_negative_delta,
+                incremental_counters.anomaly_unpriceable_delta,
+            )
+
+        if not fill_events:
+            # no_new_fill(delta==0)은 "다시 조회했지만 새 체결이 없었다"는
+            # 뜻이므로, 호출자 관점에서는 기존 dedup skip과 동일하게
+            # fills_skipped에 반영한다(anomaly는 반영하지 않는다 — 이후
+            # 관측에서 해소될지 다시 판단할 여지를 남긴다).
+            return 0, incremental_counters.no_new_fill
 
         # Load existing fills for dedup.
         existing = await self.repos.fill_events.list_by_broker_order(
@@ -1604,7 +1740,7 @@ class OrderSyncService:
                 realized_pnl_counters.failed,
             )
 
-        return synced, skipped
+        return synced, skipped + incremental_counters.no_new_fill
 
     def _get_realized_pnl_ledger_service(self) -> RealizedPnlLedgerService:
         """``realized_pnl_ledger_service``를 지연 생성해 반환한다.

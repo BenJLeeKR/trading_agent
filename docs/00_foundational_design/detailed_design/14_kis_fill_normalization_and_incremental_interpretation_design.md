@@ -1,11 +1,43 @@
-# 14. KIS 체결 응답 정규화 및 누적→증분 해석 설계 (설계안, 구현 미착수)
+# 14. KIS 체결 응답 정규화 및 누적→증분 해석 설계 (1차 구현 완료 — shadow 모드 운영)
 
 ## 0. 문서 성격
 
-이 문서는 **설계 문서**다. 코드 구현, migration, API 변경은 포함하지 않는다.
-근거가 된 read-only 운영 조사는 별도 대화 세션에서 여러 턴에 걸쳐 수행됐으며,
-이 문서는 그 관측 결과를 정리하고 **구현 방향을 결정하기 위한 설계**를 제공한다.
+이 문서는 **설계 문서**였고, 이후 별도 구현 턴에서 1차 구현이 완료됐다(0.1절
+"구현 현황" 참고). 근거가 된 read-only 운영 조사는 별도 대화 세션에서 여러
+턴에 걸쳐 수행됐으며, 이 문서는 그 관측 결과와 설계 판단을 그대로 유지한다.
 실행 계획은 [`docs/40_action_plans/kis_fill_normalization_action_plan.md`](../../40_action_plans/kis_fill_normalization_action_plan.md)를 따른다.
+
+### 0.1 구현 현황 (구현 턴에서 추가)
+
+안 A(누적 스냅샷 + delta 계산) + 안 C(전용 상태 테이블)가 코드로 구현됐다.
+아래는 실제 코드 구조가 이 설계 문서와 다른 지점(설계 의도는 유지, 배치만
+조정)이다.
+
+- **정규화(①)와 누적→증분 해석(②)이 서로 다른 계층에 분리됐다** — 원래
+  구상은 두 단계를 하나의 파이프라인처럼 서술했지만, 실제로는 `src/AGENTS.md`
+  계층 경계(`brokers/`는 `repositories/`/`services/`를 import하지 않는다) 때문에
+  분리가 필요했다:
+  - ① 정규화(`NormalizedKisFillObservation`)는 `brokers/koreainvestment/
+    kis_fill_normalization.py`에 있고, `KISRestClient.get_fills()`가 내부에서
+    호출한다(순수 함수, DB 접근 없음). `get_fills()`의 반환 타입은 여전히
+    `Sequence[FillEvent]`이지만, 이제 각 `FillEvent.fill_quantity`는 **이번
+    관측 시점 기준 누적 체결수량**을 의미한다(증분 아님) — 이 의미론 변화는
+    `get_fills()`의 docstring에 명시했다.
+  - ② 누적→증분 해석(`resolve_incremental_fill()`)은 `services/kis_fill_
+    incremental_resolver.py`에 있고, `order_sync_service._sync_fills()`가
+    `broker.get_fills()` 호출 직후 호출한다(`kis_fill_cumulative_state`
+    repository 접근이 필요하므로 services 계층에 있어야 한다).
+  - ③ 기존 dedup+append 경로는 원래 계획대로 변경 없이 재사용했다.
+- `kis_fill_cumulative_state` migration(`db/migrations/0056_...sql`), entity,
+  repository(contract/memory/postgres), container/bootstrap wiring이 모두
+  추가됐다 — `bash scripts/harness/run.sh accept db-structure` PASS로 확인.
+- shadow 모드는 `KIS_FILL_INCREMENTAL_APPEND_ENABLED` env(기본값 `false`)로
+  제어하며, `docker-compose.yml`의 `ops-scheduler` 서비스에도 배선했다(이전
+  `LOSS_CUT_SHADOW_ENABLED` 배선 누락 사례를 반복하지 않기 위해 이번에는
+  구현과 동시에 배선했다).
+- `accept architecture`로 `broker_forbidden_import_excess_count=0`을 확인했다
+  — 위 계층 분리 덕분에 새 코드가 `brokers/` → `services/`/`repositories/`
+  역참조를 추가하지 않았다.
 
 관련 선행 문서:
 - [`12_realized_pnl_moving_average_ledger.md`](12_realized_pnl_moving_average_ledger.md) — `fill_events` → `RealizedPnlLedgerService` → `realized_pnl_events`/`position_cost_basis_state` 흐름의 원 설계. 이 문서는 그 설계의 **입력 경로(`fill_events` 적재 이전 단계)** 만을 다룬다. 12번 문서가 정의한 idempotency/replay 계약(5~8절)은 그대로 유지되며, 이 문서는 그 계약을 깨지 않는 범위에서 입력을 만드는 방법을 다룬다.
@@ -268,8 +300,9 @@ FillEvent(
 
 ## 9. 이번 설계가 명시적으로 다루지 않는 것 (범위 밖)
 
-- `get_order_status()` 쪽 필드 해석 통합(9절 언급 수준으로만 남김).
-- 정정/취소의 자동 역산 로직(7절, 향후 별도 설계).
-- `kis_fill_cumulative_state`의 실제 migration/스키마 확정 SQL(실행 계획 문서에서 별도 턴으로 진행).
-- inspection API를 통한 anomaly 카운터 노출(6절에서 향후 후속으로만 언급).
-- live 환경 실제 검증(6절의 사전 검증 항목으로 남김 — 이 설계 문서 자체는 이 검증을 수행하지 않는다).
+- `get_order_status()` 쪽 필드 해석 통합(9절 언급 수준으로만 남김) — 미착수.
+- 정정/취소의 자동 역산 로직(7절, 향후 별도 설계) — 미착수(현재는 anomaly로만 분리).
+- ~~`kis_fill_cumulative_state`의 실제 migration/스키마 확정 SQL~~ — **구현 완료**(`db/migrations/0056_add_kis_fill_cumulative_state.sql`, 0.1절 참고).
+- inspection API를 통한 anomaly 카운터 노출(6절에서 향후 후속으로만 언급) — 미착수, 로그로만 관측 가능.
+- live 환경 실제 검증(6절의 사전 검증 항목으로 남김) — 미착수, shadow 모드로 운영 중.
+- 자연 발생 부분체결 표본을 이용한 실 운영 shadow 로그 관측(delta 계산이 실제 체결과 맞는지) — 미착수, 구현 직후 후속 운영 점검 대상.

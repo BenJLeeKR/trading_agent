@@ -50,6 +50,9 @@ from agent_trading.repositories.postgres.instrument_index_memberships import (
 from agent_trading.repositories.postgres.instrument_status_snapshots import (
     PostgresInstrumentStatusSnapshotRepository,
 )
+from agent_trading.repositories.postgres.kis_fill_cumulative_state import (
+    PostgresKisFillCumulativeStateRepository,
+)
 from agent_trading.repositories.postgres.market_sessions import (
     PostgresMarketSessionRepository,
 )
@@ -155,6 +158,7 @@ def build_postgres_repositories(
         broker_orders=PostgresBrokerOrderRepository(tx),
         fill_events=PostgresFillEventRepository(tx),
         broker_fill_snapshots=PostgresBrokerFillSnapshotRepository(tx),
+        kis_fill_cumulative_state=PostgresKisFillCumulativeStateRepository(tx),
         external_events=PostgresExternalEventRepository(tx),
         reconciliations=PostgresReconciliationRepository(tx),
         audit_logs=PostgresAuditLogRepository(tx),
