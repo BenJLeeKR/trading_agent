@@ -118,7 +118,16 @@ Docker/배포 표준 명령은 `bash scripts/harness/docker_compose_env.sh ...`�
 - 이 차이는 `check quick`을 가볍게 유지하고 `check full`을 CI safe 등가 계약으로 두는 방식으로 정리했다.
 - 커밋 전 빠른 확인은 `check quick`, CI와 같은 범위의 로컬 확인은 `check full`을 사용한다.
 
-`check changed`는 Git 변경 목록에서 `src/agent_trading/**/*.py` 파일만 골라 각 파일에 `accept backend-file`을 적용한다. 문서만 변경된 경우 `changed_backend_file_count=0`으로 보고하며 전체 테스트를 실행하지 않는다.
+`check changed`는 Git 변경 목록에서 `src/agent_trading/**/*.py` 파일을 골라 각 파일에 `accept backend-file`을 적용하고, 여기에 더해 **운영 경로 allowlist에 등록된 `scripts/*.py` 12개**를 골라 각 파일에 `accept script-file`을 적용한다. 문서만 변경된 경우 `changed_backend_file_count=0`, `script_allowlist_candidate_count=0`으로 보고하며 전체 테스트를 실행하지 않는다.
+
+allowlist는 `scripts/harness/run.sh`의 `HARNESS_SCRIPT_ALLOWLIST` 배열에 하드코딩돼 있고, 기준은 `docker-compose.yml`의 command와 `run_ops_scheduler.py`의 subprocess 호출이다. 실행 구성이 바뀌면 이 배열도 함께 갱신해야 한다.
+
+- `script_allowlist_size`: allowlist에 등록된 운영 경로 스크립트 수.
+- `script_allowlist_candidate_count`: 변경 목록에서 allowlist에 걸린 파일 수.
+- `script_allowlist_checked_count`: 실제로 `accept script-file`을 실행한 파일 수.
+- `script_allowlist_failed_count`: 그중 판정에 실패한 파일 수. 0이 아니면 `check changed`가 FAIL이다.
+
+`scripts/` 전체 자동 판정은 아직 도입하지 않았다. allowlist 밖 `scripts/*.py` 변경은 `skipped_non_backend_file_count`로 집계되며, 필요하면 `bash scripts/harness/run.sh accept script-file <file>`을 수동으로 실행한다.
 
 `type-check backend`는 `mypy` 또는 `pyright`가 설치된 경우에만 실행한다. 둘 다 없으면 `backend_type_tool_missing_count=1`, `backend_type_check_run=0`으로 보고한다. `type-check frontend`는 `admin_ui/package.json`의 `typecheck`, `type-check`, `check:types` script 중 하나가 있을 때만 실행한다. script가 없으면 `frontend_typecheck_script_missing_count=1`, `frontend_type_check_run=0`으로 보고한다.
 
@@ -271,7 +280,7 @@ bash scripts/harness/run.sh accept script-file scripts/run_realized_pnl_recomput
 bash scripts/harness/run.sh accept script-file scripts/run_reconciliation_worker.py
 ```
 
-`check changed`, `accept style`, `type-check backend`, `accept architecture`의 대상 경로는 이번 도입 범위가 아니며 여전히 `src/agent_trading` 기준이다.
+`check changed`는 운영 경로 allowlist 12개에 한해 이 판정기를 자동 실행한다(위 `check changed` 절 참고). `accept style`, `type-check backend`, `accept architecture`의 대상 경로는 아직 `src/agent_trading` 기준이며 `scripts/`를 포함하지 않는다.
 
 ### `accept db-structure`
 

@@ -43,7 +43,7 @@
 - CI도 사람·AI와 같은 `bash scripts/harness/run.sh ...` 진입점을 사용하며, GitHub Actions 기준은 `.github/workflows/harness.yml`에 둔다.
 - 커밋 전 빠른 스냅샷: `bash scripts/harness/run.sh check quick` 또는 `make check-quick`.
 - CI safe 등가 로컬 스냅샷: `bash scripts/harness/run.sh check full` 또는 `make check-full`.
-- 변경 백엔드 파일 스냅샷: `bash scripts/harness/run.sh check changed` 또는 `make check-changed`.
+- 변경 백엔드 파일 스냅샷: `bash scripts/harness/run.sh check changed` 또는 `make check-changed`. `src/agent_trading/**/*.py`와 운영 경로 allowlist에 등록된 `scripts/*.py`를 함께 판정한다.
 - 타입 검사 스냅샷: `bash scripts/harness/run.sh type-check backend`, `bash scripts/harness/run.sh type-check frontend`, `make type-check-backend`, `make type-check-frontend`.
 - read-only 보안 스냅샷: `bash scripts/harness/run.sh security scan` 또는 `make security-scan`.
 - 문서 정합성: `bash scripts/harness/run.sh accept docs` 또는 `make accept-docs`.
@@ -54,7 +54,7 @@
 - 코드 스타일 baseline: `bash scripts/harness/run.sh accept style` 또는 `make accept-style`.
 - 우회 행동 검사: `bash scripts/harness/run.sh accept no-bypass` 또는 `make accept-no-bypass`.
 - 단일 백엔드 파일: `bash scripts/harness/run.sh accept backend-file <file>` 또는 `make accept-backend-file FILE=<file>`.
-- 단일 운영 스크립트 파일: `bash scripts/harness/run.sh accept script-file <file>` 또는 `make accept-script-file FILE=<file>`. 판정 대상은 `scripts/` 아래 Python 파일이다.
+- 단일 운영 스크립트 파일: `bash scripts/harness/run.sh accept script-file <file>` 또는 `make accept-script-file FILE=<file>`. 판정 대상은 `scripts/` 아래 Python 파일이다. `check changed`가 자동 판정하는 것은 운영 경로 allowlist 12개뿐이며, 그 밖의 `scripts/*.py`를 바꿨다면 이 명령을 직접 실행한다.
 - 백엔드 런타임 계약: `bash scripts/harness/run.sh accept backend-runtime` 또는 `make accept-backend-runtime`.
 - Admin UI 계약: `bash scripts/harness/run.sh accept frontend` 또는 `make accept-admin-ui`.
 - 운영 리포트 JSON: `bash scripts/harness/run.sh accept ops-report <summary_json>` 또는 `make accept-ops-report SUMMARY_JSON=<summary_json>`.

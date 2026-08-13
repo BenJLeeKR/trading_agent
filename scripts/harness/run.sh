@@ -10,6 +10,37 @@ HEAVY_TIMEOUT_SECONDS="${HARNESS_HEAVY_TIMEOUT_SECONDS:-900}"
 BASE_WORKSPACE_ROOT="/workspace/agent_trading"
 DEV_WORKSPACE_ROOT="/workspace/agent_trading_dev"
 
+# `check changed`가 자동 판정하는 운영 경로 스크립트 목록(1단계 allowlist).
+# 기준은 docker-compose.yml의 command와 run_ops_scheduler.py의 subprocess 호출이며,
+# 목록은 하드코딩으로 유지한다. 실행 구성이 바뀌면 이 목록도 함께 갱신해야 한다.
+# scripts/ 전체 자동 판정은 아직 도입하지 않는다. 목록 밖 scripts/*.py 변경은
+# `bash scripts/harness/run.sh accept script-file <file>` 수동 실행 대상이다.
+HARNESS_SCRIPT_ALLOWLIST=(
+  "scripts/analyze_trigger_proxy_attribution.py"
+  "scripts/build_instrument_status_snapshots.py"
+  "scripts/build_kis_instrument_master_sync_csv.py"
+  "scripts/run_decision_loop.py"
+  "scripts/run_event_ingestion_loop.py"
+  "scripts/run_fill_sync_loop.py"
+  "scripts/run_ops_scheduler.py"
+  "scripts/run_post_submit_sync_loop.py"
+  "scripts/run_realized_pnl_recompute_worker.py"
+  "scripts/run_reconciliation_worker.py"
+  "scripts/run_snapshot_sync_loop.py"
+  "scripts/sync_kis_instrument_master.py"
+)
+
+is_allowlisted_script_path() {
+  local candidate="$1"
+  local entry
+  for entry in "${HARNESS_SCRIPT_ALLOWLIST[@]}"; do
+    if [[ "$entry" == "$candidate" ]]; then
+      return 0
+    fi
+  done
+  return 1
+}
+
 detect_workspace_role() {
   if [[ "${HARNESS_CI:-}" == "1" ]]; then
     printf '%s\n' "ci"
@@ -974,6 +1005,9 @@ check_changed() {
   local skipped_non_backend_file_count=0
   local failed_backend_file_count=0
   local total_changed_path_count=0
+  local script_allowlist_candidate_count=0
+  local script_allowlist_checked_count=0
+  local script_allowlist_failed_count=0
 
   mapfile -t changed_paths < <(
     {
@@ -1002,13 +1036,28 @@ check_changed() {
           fi
         fi
         ;;
+      scripts/*.py)
+        if is_allowlisted_script_path "$path"; then
+          script_allowlist_candidate_count=$((script_allowlist_candidate_count + 1))
+          if [[ -f "$path" ]]; then
+            script_allowlist_checked_count=$((script_allowlist_checked_count + 1))
+            if accept_script_file "$path"; then
+              :
+            else
+              script_allowlist_failed_count=$((script_allowlist_failed_count + 1))
+            fi
+          fi
+        else
+          skipped_non_backend_file_count=$((skipped_non_backend_file_count + 1))
+        fi
+        ;;
       *)
         skipped_non_backend_file_count=$((skipped_non_backend_file_count + 1))
         ;;
     esac
   done
 
-  if [[ "$failed_backend_file_count" -eq 0 && "$deleted_backend_file_count" -eq 0 ]]; then
+  if [[ "$failed_backend_file_count" -eq 0 && "$deleted_backend_file_count" -eq 0 && "$script_allowlist_failed_count" -eq 0 ]]; then
     echo "CHECK changed: PASS"
   else
     echo "CHECK changed: FAIL"
@@ -1018,6 +1067,10 @@ check_changed() {
   echo "- deleted_backend_file_count=$deleted_backend_file_count"
   echo "- skipped_non_backend_file_count=$skipped_non_backend_file_count"
   echo "- failed_backend_file_count=$failed_backend_file_count"
+  echo "- script_allowlist_size=${#HARNESS_SCRIPT_ALLOWLIST[@]}"
+  echo "- script_allowlist_candidate_count=$script_allowlist_candidate_count"
+  echo "- script_allowlist_checked_count=$script_allowlist_checked_count"
+  echo "- script_allowlist_failed_count=$script_allowlist_failed_count"
   echo "- full_test_run=0"
   echo "- full_build_run=0"
   echo "- database_connection_run=0"
@@ -1030,7 +1083,7 @@ check_changed() {
     done
   fi
 
-  [[ "$failed_backend_file_count" -eq 0 && "$deleted_backend_file_count" -eq 0 ]]
+  [[ "$failed_backend_file_count" -eq 0 && "$deleted_backend_file_count" -eq 0 && "$script_allowlist_failed_count" -eq 0 ]]
 }
 
 type_check_backend() {
