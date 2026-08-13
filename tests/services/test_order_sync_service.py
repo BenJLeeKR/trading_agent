@@ -7634,3 +7634,320 @@ class TestRealizedPnlLedgerHook:
 
         assert r1.fills_synced == 1 and r1.fills_skipped == 0
         assert r2.fills_synced == 0 and r2.fills_skipped >= 1
+
+
+def _make_fill_snapshot_for_parallel_test(
+    *,
+    order: OrderRequestEntity,
+    broker_native_order_id: str,
+    ordered_quantity: str,
+    filled_quantity: str,
+) -> BrokerFillSnapshotEntity:
+    return BrokerFillSnapshotEntity(
+        broker_fill_snapshot_id=uuid4(),
+        fill_sync_run_id=uuid4(),
+        account_id=order.account_id,
+        order_request_id=order.order_request_id,
+        broker_name=BrokerName.KOREA_INVESTMENT.value,
+        broker_native_order_id=broker_native_order_id,
+        broker_fill_id=None,
+        symbol="005930",
+        side="sell",
+        order_date=datetime.now(timezone.utc).date(),
+        ordered_quantity=Decimal(ordered_quantity),
+        filled_quantity=Decimal(filled_quantity),
+        fill_price=Decimal("50000"),
+        fill_timestamp=datetime.now(timezone.utc),
+        dedupe_key=f"{order.order_request_id}-{filled_quantity}",
+        raw_payload_json={},
+    )
+
+
+class TestFillSnapshotTruthProbeParallelSync:
+    """``FILL_SNAPSHOT`` truth-probe 성공 시 ``_sync_fills()`` 병행 호출 검증.
+
+    설계 근거: docs/00_foundational_design/detailed_design/15_truth_probe_
+    and_kis_fill_sync_coexistence_design.md (안 B). 운영 read-only 조사로
+    확인된 병목(linked fill snapshot 성공 시 조기 반환으로 ``_sync_fills()``
+    도달 불가)을 ``FILL_SNAPSHOT`` reason 한정으로 해소하는 구현을 검증한다.
+    """
+
+    async def test_fill_snapshot_partial_invokes_parallel_sync_fills(
+        self,
+        sync_service: OrderSyncService,
+        repos: RepositoryContainer,
+    ) -> None:
+        """PARTIALLY_FILLED로 확정돼도 _sync_fills()가 병행 호출되고,
+        정확히 1건만 fill_events에 append되며 kis_fill_cumulative_state도
+        갱신된다."""
+        order = _make_order(
+            repos, status=OrderStatus.SUBMITTED, side=OrderSide.SELL,
+            client_order_id="FSP-PARALLEL-001",
+        )
+        order = replace(order, requested_quantity=Decimal("10"))
+        repos.orders._items[order.order_request_id] = order  # type: ignore[attr-defined]
+        broker_order = _make_broker_order(
+            repos, order, broker_native_order_id="BRK-FSP-PARALLEL-001",
+        )
+        await repos.broker_fill_snapshots.upsert(
+            _make_fill_snapshot_for_parallel_test(
+                order=order,
+                broker_native_order_id=broker_order.broker_native_order_id or "",
+                ordered_quantity="10",
+                filled_quantity="6",
+            ),
+        )
+        fill = _make_fill(
+            broker_native_order_id=broker_order.broker_native_order_id,
+            quantity="6", price="50000", broker_fill_id=None,
+        )
+        broker = _StubBroker(status=OrderStatus.PARTIALLY_FILLED, fills=[fill])
+
+        result = await sync_service.sync_order_post_submit(
+            account_ref="test-account",
+            broker=broker,  # type: ignore[arg-type]
+            broker_order_id=broker_order.broker_order_id,
+        )
+
+        assert broker.get_fills_call_count == 1, (
+            "FILL_SNAPSHOT 성공에도 _sync_fills()가 병행 호출돼야 한다"
+        )
+        assert result.current_status == OrderStatus.PARTIALLY_FILLED
+        assert result.status_changed is True
+        assert result.fills_synced == 1
+        assert result.fills_skipped == 0
+
+        updated = await repos.orders.get(order.order_request_id)
+        assert updated is not None
+        assert updated.status_reason_code == "truth_probe_fill_snapshot"
+
+        saved = await repos.fill_events.list_by_broker_order(broker_order.broker_order_id)
+        assert len(saved) == 1, "정확히 1건만 append돼야 한다(중복 없음)"
+        assert saved[0].fill_quantity == Decimal("6")
+
+        state = await repos.kis_fill_cumulative_state.get(
+            account_id=order.account_id,
+            broker_name=BrokerName.KOREA_INVESTMENT.value,
+            broker_native_order_id=broker_order.broker_native_order_id,
+        )
+        assert state is not None
+        assert state.last_cumulative_filled_quantity == Decimal("6")
+
+    async def test_fill_snapshot_repeated_cycle_is_idempotent_no_op(
+        self,
+        sync_service: OrderSyncService,
+        repos: RepositoryContainer,
+    ) -> None:
+        """같은 누적치를 다시 관측하면(반복 cycle) delta=0 → no-op이고,
+        fill_events에 중복 행이 추가되지 않는다."""
+        order = _make_order(
+            repos, status=OrderStatus.SUBMITTED, side=OrderSide.SELL,
+            client_order_id="FSP-REPEAT-001",
+        )
+        order = replace(order, requested_quantity=Decimal("10"))
+        repos.orders._items[order.order_request_id] = order  # type: ignore[attr-defined]
+        broker_order = _make_broker_order(
+            repos, order, broker_native_order_id="BRK-FSP-REPEAT-001",
+        )
+        await repos.broker_fill_snapshots.upsert(
+            _make_fill_snapshot_for_parallel_test(
+                order=order,
+                broker_native_order_id=broker_order.broker_native_order_id or "",
+                ordered_quantity="10",
+                filled_quantity="6",
+            ),
+        )
+        fill = _make_fill(
+            broker_native_order_id=broker_order.broker_native_order_id,
+            quantity="6", price="50000", broker_fill_id=None,
+        )
+        broker = _StubBroker(status=OrderStatus.PARTIALLY_FILLED, fills=[fill])
+
+        r1 = await sync_service.sync_order_post_submit(
+            account_ref="test-account",
+            broker=broker,  # type: ignore[arg-type]
+            broker_order_id=broker_order.broker_order_id,
+        )
+        r2 = await sync_service.sync_order_post_submit(
+            account_ref="test-account",
+            broker=broker,  # type: ignore[arg-type]
+            broker_order_id=broker_order.broker_order_id,
+        )
+
+        assert broker.get_fills_call_count == 2, "두 cycle 모두 병행 호출돼야 한다"
+        assert r1.fills_synced == 1
+        assert r2.fills_synced == 0, "같은 누적치 재관측 → 신규 fill 없음"
+        assert r2.fills_skipped >= 1, "no_new_fill은 skipped로 집계된다"
+
+        saved = await repos.fill_events.list_by_broker_order(broker_order.broker_order_id)
+        assert len(saved) == 1, "반복 cycle에도 중복 append가 없어야 한다"
+
+    async def test_fill_snapshot_terminal_filled_still_invokes_parallel_sync_fills(
+        self,
+        sync_service: OrderSyncService,
+        repos: RepositoryContainer,
+    ) -> None:
+        """FILL_SNAPSHOT이 FILLED(terminal)로 확정되는 cycle에도 병행
+        호출이 실행돼 마지막 증분이 반영된다 — 그러지 않으면 다음 cycle부터
+        terminal-skip에 걸려 영원히 반영 기회를 잃는다(설계 문서 5.5절)."""
+        order = _make_order(
+            repos, status=OrderStatus.SUBMITTED, side=OrderSide.SELL,
+            client_order_id="FSP-TERMINAL-001",
+        )
+        order = replace(order, requested_quantity=Decimal("10"))
+        repos.orders._items[order.order_request_id] = order  # type: ignore[attr-defined]
+        broker_order = _make_broker_order(
+            repos, order, broker_native_order_id="BRK-FSP-TERMINAL-001",
+        )
+        await repos.broker_fill_snapshots.upsert(
+            _make_fill_snapshot_for_parallel_test(
+                order=order,
+                broker_native_order_id=broker_order.broker_native_order_id or "",
+                ordered_quantity="10",
+                filled_quantity="10",
+            ),
+        )
+        fill = _make_fill(
+            broker_native_order_id=broker_order.broker_native_order_id,
+            quantity="10", price="50000", broker_fill_id=None,
+        )
+        broker = _StubBroker(status=OrderStatus.FILLED, fills=[fill])
+
+        result = await sync_service.sync_order_post_submit(
+            account_ref="test-account",
+            broker=broker,  # type: ignore[arg-type]
+            broker_order_id=broker_order.broker_order_id,
+        )
+
+        assert broker.get_fills_call_count == 1, (
+            "terminal(FILLED)로 확정되는 cycle에도 병행 호출이 실행돼야 한다"
+        )
+        assert result.current_status == OrderStatus.FILLED
+        assert result.terminal is True
+        assert result.fills_synced == 1
+
+        saved = await repos.fill_events.list_by_broker_order(broker_order.broker_order_id)
+        assert len(saved) == 1
+        assert saved[0].fill_quantity == Decimal("10")
+
+    async def test_buy_position_fill_truth_probe_does_not_invoke_parallel_sync_fills(
+        self,
+        sync_service: OrderSyncService,
+        repos: RepositoryContainer,
+    ) -> None:
+        """다른 truth source(BUY_POSITION_FILL)는 병행 호출 대상이 아니다 —
+        병행 호출 조건은 오직 FILL_SNAPSHOT reason 하나여야 한다."""
+        now = datetime.now(timezone.utc)
+        order = _make_order(
+            repos,
+            status=OrderStatus.SUBMITTED,
+            client_order_id="BUY-TP-NO-PARALLEL-001",
+        )
+        order = replace(
+            order,
+            side=OrderSide.BUY,
+            requested_quantity=Decimal("37"),
+            created_at=now - timedelta(minutes=2),
+            submitted_at=now - timedelta(minutes=2),
+            updated_at=now - timedelta(minutes=2),
+        )
+        repos.orders._items[order.order_request_id] = order  # type: ignore[attr-defined]
+        broker_order = _make_broker_order(
+            repos,
+            order,
+            broker_native_order_id="BRK-BUY-TP-NO-PARALLEL-001",
+            broker_status="submitted",
+            created_at=now - timedelta(minutes=2),
+        )
+
+        _make_position_snapshot(
+            repos,
+            account_id=order.account_id,
+            instrument_id=order.instrument_id,
+            quantity=Decimal("4"),
+            snapshot_time=now - timedelta(minutes=3),
+        )
+        _make_position_snapshot(
+            repos,
+            account_id=order.account_id,
+            instrument_id=order.instrument_id,
+            quantity=Decimal("41"),
+            snapshot_time=now - timedelta(minutes=1),
+        )
+
+        broker = _MultiStatusBroker(default_status=OrderStatus.SUBMITTED)
+
+        result = await sync_service.sync_order_post_submit(
+            account_ref="test-account",
+            broker=broker,  # type: ignore[arg-type]
+            broker_order_id=broker_order.broker_order_id,
+        )
+
+        updated = await repos.orders.get(order.order_request_id)
+        assert updated is not None
+        assert updated.status_reason_code == "truth_probe_buy_position_fill"
+        assert result.current_status == OrderStatus.FILLED
+        assert broker.get_fills_call_count == 0, (
+            "BUY_POSITION_FILL reason은 병행 호출 대상이 아니다(기존 조기 반환 유지)"
+        )
+
+    async def test_fill_snapshot_shadow_mode_updates_state_but_blocks_append(
+        self,
+        repos: RepositoryContainer,
+        order_manager: OrderManager,
+    ) -> None:
+        """shadow 모드(``kis_fill_incremental_append_enabled=False``)에서도
+        병행 호출 자체(및 ``kis_fill_cumulative_state`` 갱신)는 살아있지만,
+        ``fill_events`` append는 차단된다."""
+        shadow_sync_service = OrderSyncService(
+            repos=repos,
+            order_manager=order_manager,
+            kis_fill_incremental_append_enabled=False,
+        )
+
+        order = _make_order(
+            repos, status=OrderStatus.SUBMITTED, side=OrderSide.SELL,
+            client_order_id="FSP-SHADOW-001",
+        )
+        order = replace(order, requested_quantity=Decimal("10"))
+        repos.orders._items[order.order_request_id] = order  # type: ignore[attr-defined]
+        broker_order = _make_broker_order(
+            repos, order, broker_native_order_id="BRK-FSP-SHADOW-001",
+        )
+        await repos.broker_fill_snapshots.upsert(
+            _make_fill_snapshot_for_parallel_test(
+                order=order,
+                broker_native_order_id=broker_order.broker_native_order_id or "",
+                ordered_quantity="10",
+                filled_quantity="6",
+            ),
+        )
+        fill = _make_fill(
+            broker_native_order_id=broker_order.broker_native_order_id,
+            quantity="6", price="50000", broker_fill_id=None,
+        )
+        broker = _StubBroker(status=OrderStatus.PARTIALLY_FILLED, fills=[fill])
+
+        result = await shadow_sync_service.sync_order_post_submit(
+            account_ref="test-account",
+            broker=broker,  # type: ignore[arg-type]
+            broker_order_id=broker_order.broker_order_id,
+        )
+
+        assert broker.get_fills_call_count == 1, (
+            "shadow 모드에서도 병행 호출 자체는 실행돼야 한다"
+        )
+        assert result.current_status == OrderStatus.PARTIALLY_FILLED
+
+        saved = await repos.fill_events.list_by_broker_order(broker_order.broker_order_id)
+        assert len(saved) == 0, "shadow 모드에서는 fill_events append가 차단돼야 한다"
+
+        state = await repos.kis_fill_cumulative_state.get(
+            account_id=order.account_id,
+            broker_name=BrokerName.KOREA_INVESTMENT.value,
+            broker_native_order_id=broker_order.broker_native_order_id,
+        )
+        assert state is not None, (
+            "shadow 모드에서도 kis_fill_cumulative_state 관측 자체는 갱신돼야 한다"
+        )
+        assert state.last_cumulative_filled_quantity == Decimal("6")
