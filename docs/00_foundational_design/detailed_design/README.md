@@ -87,6 +87,12 @@
    - shadow 모드 유지 전제, 과거 snapshot backfill 문제와의 선후관계/경계 명시
    - 실행 계획: [`docs/40_action_plans/truth_probe_kis_fill_sync_coexistence_action_plan.md`](../../40_action_plans/truth_probe_kis_fill_sync_coexistence_action_plan.md)
 
+16. `16_broker_fill_snapshot_historical_backfill_design.md` (설계안, 구현 미착수)
+   - `broker_fill_snapshots`에 남은 과거 체결 관측 흔적을 근거로, 이미 지나간 과거 매도(및 그 원가 형성에 필요한 매수)를 synthetic `fill_events`로 사후 재구성하는 backfill 설계
+   - 14번/15번 문서의 "미래 체결 경로 정상화"와 명확히 구분되는 "과거 복원" 전용 축 — 매도만으로는 이동평균 원가 계산이 완결되지 않는다는 점을 반영해 계좌×종목 단위 원가 완결성 기준으로 모집단을 제한
+   - snapshot→synthetic fill 변환은 14번 문서의 계산 공식을 재사용하되 실시간 폴링 전용 상태 테이블(`kis_fill_cumulative_state`)은 재사용하지 않음, `fill_events` 직접 append + dry-run/사람 승인 절차로 안전성 확보
+   - 실행 계획: [`docs/40_action_plans/broker_fill_snapshot_historical_backfill_action_plan.md`](../../40_action_plans/broker_fill_snapshot_historical_backfill_action_plan.md)
+
 ## 설계 원칙
 
 - 실전/모의 환경은 논리적으로만이 아니라 설정, 자격증명, 계좌, 라우팅 수준에서 분리한다.
