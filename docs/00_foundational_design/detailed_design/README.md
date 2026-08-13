@@ -81,6 +81,12 @@
    - `fill_history_sync.py`의 기존 fallback 규칙과의 정합성, shadow 모드 선행 운용 권장
    - 실행 계획: [`docs/40_action_plans/kis_fill_normalization_action_plan.md`](../../40_action_plans/kis_fill_normalization_action_plan.md)
 
+15. `15_truth_probe_and_kis_fill_sync_coexistence_design.md` (설계안, 구현 미착수)
+   - 기존 `_try_truth_probe()`(주문 상태 확정)와 신규 `_sync_fills()`/KIS 누적→증분 해석 경로(체결 원장 적재)의 책임 분리 설계
+   - linked `broker_fill_snapshots` truth 성공 시 조기 반환이 신규 경로 실행 기회를 영구히 차단하는 문제를 `FILL_SNAPSHOT` reason 한정 병행 호출로 해소하는 안 비교
+   - shadow 모드 유지 전제, 과거 snapshot backfill 문제와의 선후관계/경계 명시
+   - 실행 계획: [`docs/40_action_plans/truth_probe_kis_fill_sync_coexistence_action_plan.md`](../../40_action_plans/truth_probe_kis_fill_sync_coexistence_action_plan.md)
+
 ## 설계 원칙
 
 - 실전/모의 환경은 논리적으로만이 아니라 설정, 자격증명, 계좌, 라우팅 수준에서 분리한다.
