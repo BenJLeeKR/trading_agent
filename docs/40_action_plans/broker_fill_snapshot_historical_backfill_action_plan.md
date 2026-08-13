@@ -6,8 +6,11 @@
 [`docs/00_foundational_design/detailed_design/16_broker_fill_snapshot_historical_backfill_design.md`](../00_foundational_design/detailed_design/16_broker_fill_snapshot_historical_backfill_design.md)를
 따른다.
 
-**구현 현황**: 이번 문서 작성 turn에서는 설계/계획 문서만 작성했다. 아래
-1~8단계 모두 **미착수**다.
+**구현 현황**: 아래 5절의 1~4단계는 별도 구현 턴에서 완료됐다(원가
+완결성 판정 + 변환 규칙 순수 로직 + dry-run/apply 겸용 서비스/CLI,
+단위 테스트 포함). 5~8단계(실제 후보에 대한 사람 승인 + apply 실행,
+recompute 워커 소비 확인, 회고)는 아직 미착수다 — 이번 구현 턴에서는
+실제 운영 DB에 대한 apply를 실행하지 않았다.
 
 **이 실행 계획은 과거 복원(backfill) 전용이다.** 미래 체결 경로 정상화는
 [`kis_fill_normalization_action_plan.md`](kis_fill_normalization_action_plan.md)/
@@ -76,22 +79,24 @@
 
 ## 5. 실행 단계별 계획
 
-1. **read-only 모집단 조사(구현 착수 전 필수)** — 미착수. 설계 문서
-   3.3절 원가 완결성 기준을 실제 DB에 대해 read-only로 적용해, 대상
-   계좌×종목 수와 그 구체 목록을 먼저 확인한다. 이 조사 결과가 0건이면
-   설계 문서 8.8절의 보류 조건에 해당하므로, 그 시점에 계속 진행할지
-   여부를 사용자에게 먼저 확인한다.
-2. **변환 규칙 순수 함수 구현 + 단위 테스트** — 미착수. snapshot 시계열
-   → `IncrementalFillDecision` 목록을 계산하는 순수 함수와, 음수 역행/
-   가격 산출 불가/cancel·정정 흔적 케이스의 anomaly 테스트를 먼저
-   작성한다(실제 배치 스크립트보다 먼저 만들어 독립적으로 검증한다).
-3. **원가 완결성 판정 로직 구현 + 단위 테스트** — 미착수. 완전 청산
-   시작점 탐지, snapshot 누락 감지, cancel/정정 흔적 감지를 각각
-   독립적으로 테스트한다.
-4. **dry-run 배치 스크립트 구현** — 미착수. 2~3단계 로직을 조합해,
-   대상 계좌×종목별로 "몇 건의 synthetic fill을 만들 것인지, 각각의
-   수량/가격/시각/근거 snapshot"을 사람이 읽을 수 있는 리포트로만
-   출력한다. 이 단계에서는 어떤 DB write도 하지 않는다.
+1. **read-only 모집단 조사(구현 착수 전 필수)** — ✅ 완료(별도 read-only
+   조사 턴). `2026-08-01 KST` 이후 filled 주문 14건(매수 12/매도 2) 중
+   매도가 존재하는 종목은 1개뿐이었고, 이 1개 종목(1 buy + 2 sell)이
+   원가 완결성 기준을 충족하는 것으로 확인됐다.
+2. **변환 규칙 순수 함수 구현 + 단위 테스트** — ✅ 완료:
+   `historical_fill_backfill.py`가 14번 문서 `_infer_delta_price()`를
+   재사용해 음수 delta/가격 산출 불가/cancel 흔적을 anomaly로 분리한다.
+   `tests/services/test_historical_fill_backfill.py`의
+   `TestExclusionReasons`로 각 사유를 독립 검증했다.
+3. **원가 완결성 판정 로직 구현 + 단위 테스트** — ✅ 완료: `build_backfill_
+   plan()`이 `position_snapshots.get_latest_by_account_and_instrument_
+   before()`로 zero-crossing anchor를 찾고, anchor~첫 주문 사이 gap
+   주문/snapshot 누락/lineage 불일치를 각각 감지해 전체 제외한다.
+4. **dry-run 배치 스크립트 구현** — ✅ 완료: `scripts/backfill_broker_
+   fill_snapshot_historical_fills.py --mode dry-run`(기본값)가 계좌×종목
+   별 예상 synthetic fill/최종 잔량/브로커 잔량 대비 정합성을 리포트로만
+   출력한다. `--mode apply`도 같은 턴에서 구현했으나(§0.1), 실제 운영
+   DB에 대한 apply 실행은 아직 하지 않았다.
 5. **dry-run 결과에 대한 사람 검토 + 승인** — 미착수. 이 단계는
    자동화하지 않는다 — 사용자가 리포트를 직접 확인하고, 실제 append를
    진행할 대상(계좌×종목 목록)을 명시적으로 승인해야 다음 단계로

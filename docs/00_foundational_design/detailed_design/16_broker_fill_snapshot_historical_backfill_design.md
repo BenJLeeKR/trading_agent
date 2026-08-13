@@ -1,9 +1,38 @@
-# 16. `broker_fill_snapshots` 기반 과거 체결 synthetic `fill_events` Backfill 설계 (설계안, 구현 미착수)
+# 16. `broker_fill_snapshots` 기반 과거 체결 synthetic `fill_events` Backfill 설계 (최소 구현 완료 — apply는 미실행)
 
 ## 0. 문서 성격 — "미래 정상화"가 아니라 "과거 복원" 전용 축
 
-이 문서는 **설계 문서**다. 이번 턴에서는 문서만 작성했고, 코드/migration/env/
-브랜치/커밋/PR은 전혀 건드리지 않았다.
+이 문서는 **설계 문서**였고, 이후 별도 구현 턴에서 §5.2 추천안(안 A +
+dry-run/승인 절차)의 최소 구현이 완료됐다.
+
+### 0.1 구현 현황 (구현 턴에서 추가)
+
+- **서비스 계층**: [`src/agent_trading/services/historical_fill_backfill.py`](../../../src/agent_trading/services/historical_fill_backfill.py)의
+  `build_backfill_plan()`(§3.3 원가 완결성 판정 + §4.2 변환 규칙, read-only)과
+  `apply_backfill_plan()`(§5.2 dry-run과 완전히 같은 계산 결과를 실제
+  `fill_events`에 append, §6 idempotency)로 구현했다. 신규 테이블/migration은
+  없다 — `fill_events.source_channel='backfill'`, `realized_pnl_recompute_
+  queue.reason_code='manual_request'` 둘 다 기존 스키마가 이미 허용하던 값을
+  그대로 썼다(§1.1).
+- **원가 완결성 판정**은 `position_snapshots.get_latest_by_account_and_
+  instrument_before()`로 zero-crossing anchor를 찾고, anchor~첫 주문 사이에
+  "누락된" filled 주문이 있으면 전체 제외하는 방식으로 구현했다(§3.3).
+- **변환 규칙**은 14번 문서의 `_infer_delta_price()`를 그대로 import해
+  재사용했다(§4.2) — `kis_fill_cumulative_state`(실시간 폴링 상태 테이블)는
+  참조하지 않는다. anomaly(음수 delta/가격 역산 불가/cancel 흔적/snapshot
+  누락/lineage 불일치/최종수량 불일치) 발생 시 **계좌×종목 전체를 제외**한다
+  (§4.3, 부분 반영 없음).
+- **CLI 진입점**: [`scripts/backfill_broker_fill_snapshot_historical_fills.py`](../../../scripts/backfill_broker_fill_snapshot_historical_fills.py) —
+  `--mode dry-run`(기본값)/`--mode apply`. `--mode`를 명시하지 않으면
+  항상 dry-run이다(§5.2 안전장치의 코드 레벨 강제).
+- **단위 테스트**: `tests/services/test_historical_fill_backfill.py`(원가
+  완결성 판정의 각 제외 사유 + eligible 사례 + apply idempotency),
+  `tests/scripts/test_backfill_broker_fill_snapshot_historical_fills.py`
+  (CLI 인자 파싱 + dry-run이 실제로 DB에 안 씀 + apply의 eligible 분기).
+- **아직 실행하지 않은 것**: 실제 운영 DB에 대한 `--mode apply` 실행. 이
+  구현 턴은 코드/테스트만 완료했고, 확정된 후보(계좌 1개×종목 1개, 매수
+  1건+매도 2건)에 대한 실제 apply는 별도로 사용자 승인을 받은 뒤 진행한다
+  (§5.2의 "dry-run → 사람 승인 → 실제 apply" 절차를 그대로 유지).
 
 **이 설계는 오직 과거 복원(backfill) 전용이다.** 아래 두 가지를 명확히 구분한다.
 
