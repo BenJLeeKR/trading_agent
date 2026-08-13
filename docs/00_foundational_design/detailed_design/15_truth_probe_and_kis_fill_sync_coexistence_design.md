@@ -1,11 +1,39 @@
-# 15. truth-probe와 KIS fill 누적→증분 해석 경로 병행 설계 (설계안, 구현 미착수)
+# 15. truth-probe와 KIS fill 누적→증분 해석 경로 병행 설계 (1차 구현 완료 — shadow 모드 운영)
 
 ## 0. 문서 성격
 
-이 문서는 **설계 문서**다. 코드 구현, migration, API/env/compose 변경은 포함하지 않는다.
-근거가 된 read-only 운영 조사는 별도 대화 세션에서 수행됐으며, 이 문서는 그 관측
-결과를 정리하고 **구현 방향을 결정하기 위한 설계**를 제공한다. 실행 계획은
+이 문서는 **설계 문서**였고, 이후 별도 구현 턴에서 안 B(§4~5)가 코드로
+구현됐다(0.1절 참고). 근거가 된 read-only 운영 조사는 별도 대화 세션에서
+수행됐으며, 이 문서는 그 관측 결과와 설계 판단을 그대로 유지한다. 실행 계획은
 [`docs/40_action_plans/truth_probe_kis_fill_sync_coexistence_action_plan.md`](../../40_action_plans/truth_probe_kis_fill_sync_coexistence_action_plan.md)를 따른다.
+
+### 0.1 구현 현황 (구현 턴에서 추가)
+
+안 B가 설계대로 구현됐다 — `sync_order_post_submit()`의 `FILL_SNAPSHOT`
+분기(조기 반환 직전)에 `_sync_fills()` 병행 호출을 추가했다. 실제 코드
+구조는 이 설계 문서와 어긋나지 않는다:
+
+- 병행 호출 조건은 오직 `probe_reason == TruthProbeReason.FILL_SNAPSHOT`
+  하나다(§6에서 개념으로 서술한 그대로).
+- `PARTIALLY_FILLED`/`FILLED`(terminal) 결과 모두에서 병행 호출이
+  실행되도록 구현했다(§5.5의 요구사항 그대로).
+- `resolve_unknown_state`/`BUY_POSITION_FILL` 등 다른 truth source는
+  손대지 않았다 — 테스트로 `get_fills_call_count == 0`을 직접 확인했다.
+- 병행 호출 실패는 `try/except`로 격리해, truth-probe가 이미 확정한
+  상태 전이 결과를 되돌리지 않는다(§7 리스크 표의 첫 항목 그대로 구현).
+- 관측 로그 `truth_probe_fill_snapshot_parallel_sync`(INFO 레벨)를
+  추가해 "이번 cycle은 병행 호출이 실행됐다"를 기존 `Truth probe
+  resolved order ...` 로그와 구분할 수 있게 했다.
+- shadow 모드(`KIS_FILL_INCREMENTAL_APPEND_ENABLED` 기본값 `false`)는
+  그대로 유지된다 — 테스트로 "병행 호출과 `kis_fill_cumulative_state`
+  갱신은 shadow와 무관하게 실행되지만, `fill_events` append만 차단된다"를
+  직접 검증했다(§5.6과 일치).
+- §5.2가 근거로 든 "기존 2단계 dedup 방어선이 그대로 유효하다"는 주장은
+  반복 cycle 테스트(같은 누적치 재관측 → delta=0 no-op, `fill_events`
+  중복 없음)로 실증됐다 — §1.2의 미확정 항목 중 하나("병행 호출 시 실제로
+  중복 반영이 발생하는지")가 **단위 테스트 수준에서는 해소**됐다. 다만
+  운영 read-only 관측(shadow 로그, `kis_fill_cumulative_state` row 증가)은
+  아직 이뤄지지 않았다 — 배포 후 별도 관측 턴이 필요하다.
 
 관련 선행 문서(표현 충돌 없이 아래를 그대로 존중한다):
 - [`12_realized_pnl_moving_average_ledger.md`](12_realized_pnl_moving_average_ledger.md) — `fill_events`가 append-only이고, recompute의 1차 입력이 `fill_events`뿐이라는 계약. 이 문서는 그 계약을 바꾸지 않는다.
@@ -270,10 +298,14 @@ reason이 `FILL_SNAPSHOT`인가"**여야 하고, "그 결과가 non-terminal인�
 
 ## 9. 이번 설계가 명시적으로 다루지 않는 것 (범위 밖)
 
-- 실제 코드 구현(§6은 개념 설명일 뿐 구현 아님).
+- ~~실제 코드 구현(§6은 개념 설명일 뿐 구현 아님)~~ — **구현 완료**(0.1절 참고).
 - `resolve_unknown_state`/`BUY_POSITION_FILL` 경로의 병행 여부(§3 표에서
-  "검토 보류"로만 남김).
+  "검토 보류"로만 남김) — 여전히 미착수.
 - 과거(2026-08-01 KST 이후 등) 매도 실현손익 backfill의 정식 설계(§5.7,
-  별도 문서 대상).
-- live 환경에서의 검증(§1.2).
-- inspection API를 통한 이번 병행 호출의 anomaly/성공률 노출(향후 후속 고려 대상).
+  별도 문서 대상) — 여전히 미착수.
+- live 환경에서의 검증(§1.2) — 여전히 미착수, paper 전용 검증만 완료.
+- inspection API를 통한 이번 병행 호출의 anomaly/성공률 노출(향후 후속
+  고려 대상) — 여전히 미착수, 현재는 로그로만 관측 가능.
+- 운영 배포 후 실제 shadow 관측(`kis_fill_incremental summary`/
+  `shadow_skip` 로그, `kis_fill_cumulative_state` row 증가)을 통한
+  실운영 검증 — 단위 테스트로는 확인했으나 아직 운영 배포/관측 전이다.

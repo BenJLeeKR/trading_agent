@@ -4,8 +4,11 @@
 
 이 문서는 **실행 계획**이다. 상세 설계 근거는
 [`docs/00_foundational_design/detailed_design/15_truth_probe_and_kis_fill_sync_coexistence_design.md`](../00_foundational_design/detailed_design/15_truth_probe_and_kis_fill_sync_coexistence_design.md)를
-따른다. 이 문서를 작성한 턴 자체는 **설계/문서 작업**이며, 코드 구현·migration·
-env/compose·런타임 변경은 포함하지 않는다.
+따른다.
+
+**구현 현황**: 아래 5절의 1~4단계는 별도 구현 턴에서 완료됐다(`FILL_SNAPSHOT`
+reason 한정 병행 호출, shadow 기본값 `false` 유지, 단위 테스트 5건 추가).
+5~8단계(shadow 관측 기간, 전환 판단, 과거 backfill 검토)는 아직 미착수다.
 
 ## 1. 문제 재정의
 
@@ -57,31 +60,30 @@ env/compose·런타임 변경은 포함하지 않는다.
 
 ## 5. 실행 단계별 계획
 
-이 단계 구분은 **다음 구현 턴이 참고할 순서**이며, 이번 문서 작성 턴에서 실행하지 않는다.
-
-1. **회귀 안전망 확인**: 구현 착수 전, 기존 `test_truth_probe_conflict.py`가
-   다루는 시나리오(특히 `FILL_SNAPSHOT` reason 관련 테스트)를 다시 확인해
-   병행 호출 추가로 깨질 수 있는 기존 기대값을 미리 파악한다.
-2. **`sync_order_post_submit()`의 `FILL_SNAPSHOT` 분기 수정**: 조기 반환
-   직전에 `_sync_fills()` 호출을 추가하고, 그 결과를 `SyncOrderResult`에
-   반영한다(설계 문서 6절 개념 참고). `FILLED`/`PARTIALLY_FILLED` 결과
-   모두에서 실행되도록 한다 — 조건에 "non-terminal일 때만"을 추가하지 않는다.
-3. **관측 로그 추가**: "truth-probe가 `FILL_SNAPSHOT`으로 걸렸지만 이번엔
-   `_sync_fills()`가 병행 실행됐다"를 구분할 수 있는 로그 문구를 추가한다
-   (INFO 레벨 — 운영에서 보이도록, DEBUG 금지는 이전 turn들의 교훈 반복 적용).
-4. **단위/통합 테스트 추가**(설계 문서 8절 4가지 시나리오):
+1. **회귀 안전망 확인** — ✅ 완료: `test_truth_probe_conflict.py`(14건)와
+   기존 `test_order_sync_service.py`(136건)를 구현 전/후 모두 실행해
+   회귀가 없음을 확인.
+2. **`sync_order_post_submit()`의 `FILL_SNAPSHOT` 분기 수정** — ✅ 완료:
+   조기 반환 직전에 `_sync_fills()` 호출을 추가하고 결과를
+   `SyncOrderResult`에 반영. `FILLED`/`PARTIALLY_FILLED` 결과 모두에서
+   실행되도록 구현(조건에 "non-terminal일 때만"을 추가하지 않음).
+3. **관측 로그 추가** — ✅ 완료: `truth_probe_fill_snapshot_parallel_sync`
+   INFO 로그 추가.
+4. **단위/통합 테스트 추가** — ✅ 완료(설계 문서 8절 시나리오 + 기존
+   `test_truth_probe_conflict.py` 회귀 확인):
    - `FILL_SNAPSHOT` + 병행 호출 → 정확히 1건만 append.
    - 반복 호출 → delta=0 no-op 확인.
    - terminal(`FILLED`) 전환 cycle에서도 병행 호출 및 마지막 증분 반영 확인.
-   - `resolve_unknown_state`/`BUY_POSITION_FILL` 경로 회귀 없음(기존 테스트 그대로 통과).
-5. **shadow 상태로 운영 배포** — `KIS_FILL_INCREMENTAL_APPEND_ENABLED=false` 기본값 유지, 병행 호출만 활성화.
-6. **shadow 관측 기간**: 처음으로 `kis_fill_incremental summary`/`shadow_skip`/anomaly
-   로그와 `kis_fill_cumulative_state` row 증가를 관측(설계 문서 8절 "운영에서
-   확인해야 할 로그/테이블").
-7. **회고 후 shadow 전환 여부 판단**: 관측 결과를 근거로 `KIS_FILL_INCREMENTAL_APPEND_ENABLED=true`
-   전환 여부를 별도 턴에서 판단.
-8. **(선택, 별도 축)** 과거 backfill 설계로 진행 여부 판단 — 이 실행계획의
-   범위 밖이며, 위 1~7단계가 안정화된 뒤에만 검토 권장(설계 문서 5.7절).
+   - `BUY_POSITION_FILL` 경로는 병행 호출 대상이 아님(`get_fills_call_count==0`) 확인.
+   - shadow 모드에서 상태 갱신은 살아있고 append만 차단됨을 확인.
+5. **shadow 상태로 운영 배포** — 미착수. `KIS_FILL_INCREMENTAL_APPEND_ENABLED=false`
+   기본값 유지, 병행 호출만 활성화하는 배포가 아직 이뤄지지 않았다.
+6. **shadow 관측 기간** — 미착수. 배포 후 `kis_fill_incremental summary`/
+   `shadow_skip`/anomaly 로그와 `kis_fill_cumulative_state` row 증가를
+   운영에서 관측하는 후속 read-only 턴이 필요하다.
+7. **회고 후 shadow 전환 여부 판단** — 미착수.
+8. **(선택, 별도 축)** 과거 backfill 설계로 진행 여부 판단 — 미착수, 5~7단계
+   안정화 후 검토 권장(설계 문서 5.7절).
 
 ## 6. 추가 보정사항
 

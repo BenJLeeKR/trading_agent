@@ -716,13 +716,74 @@ class OrderSyncService:
                 ):
                     error_msg = f"truth_probe_conflict:{probe_reason.value}"
 
+                # ── FILL_SNAPSHOT reason 한정 _sync_fills() 병행 호출 ──────
+                # 설계 근거: docs/00_foundational_design/detailed_design/
+                # 15_truth_probe_and_kis_fill_sync_coexistence_design.md (안 B).
+                #
+                # truth-probe가 linked broker_fill_snapshots만으로 상태를
+                # 확정(FILL_SNAPSHOT)하면, 원래는 여기서 바로 return되어
+                # _sync_fills()(→ get_fills() → 누적→증분 해석 →
+                # kis_fill_cumulative_state/fill_events)가 영원히 실행되지
+                # 못했다 — 운영 read-only 조사로 이 차단이 예외 없이
+                # 재현됨을 확인했다.
+                #
+                # 다른 truth source(resolve_unknown_state 명확한 terminal,
+                # buy position delta 등)는 병목 증거가 없으므로 건드리지
+                # 않는다 — 병행 호출 조건은 오직 FILL_SNAPSHOT reason 하나다.
+                #
+                # PARTIALLY_FILLED뿐 아니라 FILLED(terminal)로 확정되는
+                # cycle에도 반드시 병행 호출한다 — 그러지 않으면 "마지막
+                # 증분"이 영원히 반영되지 못한 채 다음 cycle부터는 최상단
+                # terminal-skip에 걸려 재시도 기회 자체가 사라진다.
+                #
+                # _sync_fills() 실패가 이미 확정된 truth-probe 상태 전이
+                # 결과에 영향을 주지 않도록 격리한다(기존 ledger 훅과
+                # 동일한 원칙 — "체결/원장 반영 실패가 상태 확정 성공을
+                # 되돌리지 않는다").
+                parallel_fills_synced = 0
+                parallel_fills_skipped = 0
+                if probe_reason == TruthProbeReason.FILL_SNAPSHOT:
+                    try:
+                        # Paper 1 RPS pacing: 기존 6단계 경로와 동일하게
+                        # 연속 KIS 호출 사이 최소 1초를 둔다.
+                        await asyncio.sleep(1.0)
+                        parallel_fills_synced, parallel_fills_skipped = (
+                            await self._sync_fills(
+                                broker_order,
+                                broker,
+                                account_ref,
+                                since=broker_order.last_synced_at,
+                                account_id=order.account_id,
+                            )
+                        )
+                        logger.info(
+                            "truth_probe_fill_snapshot_parallel_sync: order=%s "
+                            "status=%s fills_synced=%d fills_skipped=%d "
+                            "odno=%s — _sync_fills() invoked alongside "
+                            "FILL_SNAPSHOT truth probe resolution",
+                            order.order_request_id,
+                            current_status.value,
+                            parallel_fills_synced,
+                            parallel_fills_skipped,
+                            broker_order.broker_native_order_id,
+                        )
+                    except Exception as exc:
+                        logger.warning(
+                            "truth_probe_fill_snapshot_parallel_sync failed: "
+                            "order=%s odno=%s error=%s — truth-probe status "
+                            "resolution is unaffected",
+                            order.order_request_id,
+                            broker_order.broker_native_order_id,
+                            exc,
+                        )
+
                 return SyncOrderResult(
                     broker_order_id=broker_order_id,
                     previous_status=previous_status,
                     current_status=current_status,
                     status_changed=status_changed,
-                    fills_synced=0,
-                    fills_skipped=0,
+                    fills_synced=parallel_fills_synced,
+                    fills_skipped=parallel_fills_skipped,
                     terminal=terminal,
                     snapshot_triggered=snapshot_triggered,
                     last_synced_at=now,
