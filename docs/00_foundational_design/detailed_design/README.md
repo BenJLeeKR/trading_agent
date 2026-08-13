@@ -75,6 +75,12 @@
    - 실행 계획: [`docs/40_action_plans/loss_cut_policy_and_config_path_action_plan.md`](../../40_action_plans/loss_cut_policy_and_config_path_action_plan.md)
    - shadow inspection API 운영 해석 가이드(정책 실행 가이드 아님): [`docs/40_action_plans/loss_cut_shadow_inspection_operations_guide.md`](../../40_action_plans/loss_cut_shadow_inspection_operations_guide.md)
 
+14. `14_kis_fill_normalization_and_incremental_interpretation_design.md` (설계안, 구현 미착수)
+   - KIS `inquire-daily-ccld` 응답의 paper/live 필드명·대소문자 차이를 주문 유형별 분기 없이 흡수하는 범용 정규화 계층 설계
+   - 누적 체결량(`TOT_CCLD_QTY`)을 증분 fill로 안전하게 변환하는 해석 계층(상태 테이블 기반 delta 계산) 설계, append-only ledger 보호를 위한 anomaly 분리 규칙
+   - `fill_history_sync.py`의 기존 fallback 규칙과의 정합성, shadow 모드 선행 운용 권장
+   - 실행 계획: [`docs/40_action_plans/kis_fill_normalization_action_plan.md`](../../40_action_plans/kis_fill_normalization_action_plan.md)
+
 ## 설계 원칙
 
 - 실전/모의 환경은 논리적으로만이 아니라 설정, 자격증명, 계좌, 라우팅 수준에서 분리한다.
