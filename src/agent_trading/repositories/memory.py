@@ -28,6 +28,7 @@ from agent_trading.domain.entities import (
     InstrumentEntity,
     InstrumentIndexMembershipEntity,
     InstrumentStatusSnapshotEntity,
+    KisFillCumulativeStateEntity,
     MarketSessionEntity,
     OrderRequestEntity,
     OrderSubmissionAttemptEntity,
@@ -1028,6 +1029,46 @@ class InMemoryBrokerFillSnapshotRepository:
             )
             by_order[order_id] = items[:limit_per_order]
         return by_order
+
+
+class InMemoryKisFillCumulativeStateRepository:
+    """``kis_fill_cumulative_state``의 in-memory 구현.
+
+    단일 프로세스 내 테스트/in-memory 런타임에서는 asyncio가 협조적
+    스케줄링이므로 별도 lock 없이도 upsert가 원자적으로 보인다 —
+    postgres 구현에서만 실제 행 잠금이 필요하다(계약 docstring 참고).
+    """
+
+    def __init__(self) -> None:
+        self._items: dict[tuple[UUID, str, str], KisFillCumulativeStateEntity] = {}
+
+    async def get(
+        self,
+        *,
+        account_id: UUID,
+        broker_name: str,
+        broker_native_order_id: str,
+    ) -> KisFillCumulativeStateEntity | None:
+        return self._items.get((account_id, broker_name, broker_native_order_id))
+
+    async def upsert(
+        self, state: KisFillCumulativeStateEntity
+    ) -> KisFillCumulativeStateEntity:
+        key = (state.account_id, state.broker_name, state.broker_native_order_id)
+        existing = self._items.get(key)
+        if existing is not None:
+            updated = replace(
+                existing,
+                last_cumulative_filled_quantity=state.last_cumulative_filled_quantity,
+                last_average_fill_price=state.last_average_fill_price,
+                last_observed_at=state.last_observed_at,
+                last_raw_field_fingerprint=state.last_raw_field_fingerprint,
+                updated_at=state.updated_at,
+            )
+            self._items[key] = updated
+            return updated
+        self._items[key] = state
+        return state
 
 
 class InMemoryFillSyncRunRepository:

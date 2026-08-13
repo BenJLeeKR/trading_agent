@@ -22,6 +22,7 @@ from agent_trading.repositories.contracts import (
     InstrumentIndexMembershipRepository,
     InstrumentStatusSnapshotRepository,
     InstrumentRepository,
+    KisFillCumulativeStateRepository,
     MarketSessionRepository,
     OrderRepository,
     OrderStateEventRepository,
@@ -64,6 +65,7 @@ class RepositoryContainer:
     broker_orders: BrokerOrderRepository
     fill_events: FillEventRepository
     broker_fill_snapshots: BrokerFillSnapshotRepository
+    kis_fill_cumulative_state: KisFillCumulativeStateRepository
     reconciliations: ReconciliationRepository
     audit_logs: AuditLogRepository
     broker_accounts: BrokerAccountRepository

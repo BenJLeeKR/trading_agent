@@ -27,6 +27,7 @@ from agent_trading.domain.entities import (
     InstrumentEntity,
     InstrumentIndexMembershipEntity,
     InstrumentStatusSnapshotEntity,
+    KisFillCumulativeStateEntity,
     MarketSessionEntity,
     OrderRequestEntity,
     OrderSubmissionAttemptEntity,
@@ -875,6 +876,35 @@ class BrokerFillSnapshotRepository(Protocol):
         absent from the result. Empty input returns an empty dict without a
         query.
         """
+        ...
+
+
+class KisFillCumulativeStateRepository(Protocol):
+    """계좌×브로커주문번호 단위 KIS 누적 체결량 관측 상태 저장소.
+
+    설계 근거: docs/00_foundational_design/detailed_design/14_kis_fill_
+    normalization_and_incremental_interpretation_design.md 3.2절(안 C).
+    ``fill_events``의 대체가 아니라, 누적→증분 해석의 기준점을 프로세스
+    재시작에도 안전하게 보관하는 보조 상태다.
+    """
+
+    async def get(
+        self,
+        *,
+        account_id: UUID,
+        broker_name: str,
+        broker_native_order_id: str,
+    ) -> KisFillCumulativeStateEntity | None:
+        """마지막으로 저장된 누적 관측 상태를 조회한다. 없으면 ``None``."""
+        ...
+
+    async def upsert(
+        self, state: KisFillCumulativeStateEntity
+    ) -> KisFillCumulativeStateEntity:
+        """``(account_id, broker_name, broker_native_order_id)`` 단위로
+        upsert한다. Postgres 구현은 이 호출을 단일 행 잠금(``SELECT ...
+        FOR UPDATE`` 또는 동등한 원자적 upsert)으로 감싸 동시 폴러 간
+        경쟁 조건을 막아야 한다(설계 문서 3.2절 "1차 방어선")."""
         ...
 
 

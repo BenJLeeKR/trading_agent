@@ -429,6 +429,32 @@ class BrokerFillSnapshotEntity:
 
 
 @dataclass(slots=True, frozen=True)
+class KisFillCumulativeStateEntity:
+    """계좌×브로커주문번호 단위, KIS가 마지막으로 보고한 누적 체결량 관측 상태.
+
+    설계 근거: docs/00_foundational_design/detailed_design/14_kis_fill_
+    normalization_and_incremental_interpretation_design.md 3.2절(안 C).
+
+    이 엔티티는 ``fill_events``(진실의 원천, 증분만 append)의 대체가
+    아니다 — ``order_sync_service._sync_fills()``가 KIS ``TOT_CCLD_QTY``
+    (누적값)를 증분 fill로 안전하게 변환하기 위한 **보조 관측 상태(cache)**
+    다. 이 상태가 손상/재구축되어도 이미 append된 ``fill_events``는
+    바뀌지 않는다.
+    """
+
+    kis_fill_cumulative_state_id: UUID
+    account_id: UUID
+    broker_name: str
+    broker_native_order_id: str
+    last_cumulative_filled_quantity: Decimal
+    last_average_fill_price: Decimal | None = None
+    last_observed_at: datetime | None = None
+    last_raw_field_fingerprint: str | None = None
+    created_at: datetime | None = None
+    updated_at: datetime | None = None
+
+
+@dataclass(slots=True, frozen=True)
 class RealizedPnlComputationRunEntity:
     """이동평균 실현 손익 ledger의 실시간 반영/백필 실행 이력.
 

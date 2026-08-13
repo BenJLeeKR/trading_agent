@@ -389,6 +389,9 @@ async def _run_one_cycle(
                 sync_service = OrderSyncService(
                     repos=repos,
                     order_manager=order_manager,
+                    kis_fill_incremental_append_enabled=(
+                        settings.kis_fill_incremental_append_enabled
+                    ),
                 )
                 refresh_cb = _build_refresh_callback(
                     repos,

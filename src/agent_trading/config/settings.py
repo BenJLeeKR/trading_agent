@@ -591,6 +591,29 @@ def _resolve_loss_cut_shadow_hard_threshold_pct() -> Decimal:
     return Decimal(os.getenv("LOSS_CUT_SHADOW_HARD_THRESHOLD_PCT", "12"))
 
 
+def _resolve_kis_fill_incremental_append_enabled() -> bool:
+    """KIS 누적 체결량(``TOT_CCLD_QTY``)을 증분으로 해석해 실제
+    ``fill_events``에 append할지 여부를 ``KIS_FILL_INCREMENTAL_APPEND_
+    ENABLED`` env에서 읽는다.
+
+    설계 근거: docs/00_foundational_design/detailed_design/14_kis_fill_
+    normalization_and_incremental_interpretation_design.md 6.1절
+    (shadow 모드 선행 운용) — ``loss_cut_shadow`` 선례와 동일한 원칙.
+
+    기본값 ``False``(shadow) — 누적→증분 delta 계산과 anomaly 판단은
+    항상 수행하고 로그로 남기지만, ``fill_events.add()``/
+    ``RealizedPnlLedgerService.apply_fill()``은 호출하지 않는다.
+    ``True``로 켜야만 실제로 ``fill_events``에 append된다. 이 스위치는
+    ``kis_fill_cumulative_state`` 누적 관측 자체(직전 관측치 갱신)에는
+    영향을 주지 않는다 — shadow 기간에도 관측 상태는 계속 최신으로
+    유지되므로, 이후 이 스위치를 켜면 그 시점 이후의 신규 체결부터
+    안전하게 append되기 시작한다(shadow 기간 중 발생한 체결은 소급
+    반영되지 않는다 — 관측 전용 기간의 의도된 동작이다).
+    """
+    raw = os.getenv("KIS_FILL_INCREMENTAL_APPEND_ENABLED", "false")
+    return raw.strip().lower() == "true"
+
+
 # ---------------------------------------------------------------------------
 # Application settings
 # ---------------------------------------------------------------------------
@@ -851,3 +874,12 @@ class AppSettings:
     )
     """`LOSS_CUT_SHADOW_HARD_THRESHOLD_PCT` env(기본값 ``12``). 관측
     전용 임계치 — 정식 정책값이 아니다."""
+
+    # ---- KIS 누적 체결량 → 증분 fill 해석 (설계 문서 14번) ---------------
+    kis_fill_incremental_append_enabled: bool = field(
+        default_factory=_resolve_kis_fill_incremental_append_enabled
+    )
+    """`KIS_FILL_INCREMENTAL_APPEND_ENABLED` env로 제어하는 shadow/실적재
+    스위치. 기본값 ``False``(shadow) — delta 계산/anomaly 판단은 항상
+    수행하되 `fill_events`에는 append하지 않는다. `True`여야 실제
+    `RealizedPnlLedgerService.apply_fill()` 경로까지 반영된다."""

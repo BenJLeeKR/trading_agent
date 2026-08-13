@@ -22,6 +22,10 @@ from agent_trading.brokers.errors import (
     BrokerErrorType,
     TokenExpiredError,
 )
+from agent_trading.brokers.koreainvestment.kis_field_mapping import get_kis_field
+from agent_trading.brokers.koreainvestment.kis_fill_normalization import (
+    normalize_kis_fill_observation,
+)
 from agent_trading.brokers.koreainvestment.token_cache import (
     CachePurpose,
     KisTokenCache,
@@ -296,61 +300,12 @@ _INQUIRE_DAILY_CCLD_AFTER_HOURS_PAPER_MAX_PAGES: int = 3
 _INQUIRE_DAILY_CCLD_AFTER_HOURS_PAPER_MAX_RECORDS: int = 45  # 15×3
 
 
-@dataclass(slots=True, frozen=True)
-class KisOrderFillRecord:
-    """KIS inquire-daily-ccld output item (단일 레코드).
-
-    KIS ``inquire-daily-ccld`` (VTTC0081R) 응답의 ``output`` 배열
-    각 항목을 정규화한 dataclass.
-
-    Reference: KIS OpenAPI Excel — VTTC0081R output fields
-    """
-
-    # ── 식별자 ──
-    odno: str                                  # 주문번호
-    pdno: str                                  # 종목코드
-    # ── 주문 정보 ──
-    ord_qty: Decimal                           # 주문수량
-    ord_unpr: Decimal                          # 주문단가
-    sll_buy_dvsn_cd: str                       # 01=매도, 02=매수
-    ord_dvsn: str                              # 주문구분 (00=지정가, 01=시장가)
-    # ── 체결 정보 ──
-    ccld_qty: Decimal                          # 체결수량
-    ccld_unpr: Decimal                         # 체결단가
-    ccld_tmd: str                              # 체결시각 (HHMMSS)
-    ccld_num: str | None = None                # 체결번호
-    # ── 상태 ──
-    ord_stat: str = ""                         # 주문상태 (00/01/02/03/05/07)
-    cncl_yn: str = "N"                         # 취소여부
-    rvse_yn: str = "N"                         # 정정여부
-    # ── 시간 ──
-    ord_tmd: str = ""                          # 주문시각 (HHMMSS)
-    # ── 기타 ──
-    rmn_qty: Decimal | None = None             # 미체결수량
-    avg_prvs: Decimal | None = None            # 평균가
-
-
-def parse_kis_order_fill_record(item: dict[str, Any]) -> KisOrderFillRecord:
-    """Convert a raw KIS inquire-daily-ccld dict to ``KisOrderFillRecord``."""
-    _gf = KISRestClient._get_kis_field
-    return KisOrderFillRecord(
-        odno=_gf(item, "ODNO"),
-        pdno=_gf(item, "PDNO"),
-        ord_qty=Decimal(_gf(item, "ORD_QTY", "0")),
-        ord_unpr=Decimal(_gf(item, "ORD_UNPR", "0")),
-        sll_buy_dvsn_cd=_gf(item, "SLL_BUY_DVSN_CD"),
-        ord_dvsn=_gf(item, "ORD_DVSN"),
-        ccld_qty=Decimal(_gf(item, "CCLD_QTY", "0")),
-        ccld_unpr=Decimal(_gf(item, "CCLD_UNPR", "0")),
-        ccld_tmd=_gf(item, "CCLD_TMD"),
-        ccld_num=_gf(item, "CCLD_NUM"),
-        ord_stat=_gf(item, "ORD_STAT"),
-        cncl_yn=_gf(item, "CNCL_YN", "N"),
-        rvse_yn=_gf(item, "RVSE_YN", "N"),
-        ord_tmd=_gf(item, "ORD_TMD"),
-        rmn_qty=Decimal(_gf(item, "RMN_QTY", "0")) if _gf(item, "RMN_QTY") else None,
-        avg_prvs=Decimal(_gf(item, "AVG_PRVS", "0")) if _gf(item, "AVG_PRVS") else None,
-    )
+# ``inquire-daily-ccld`` raw item → 범용 정규화 모델(``NormalizedKisFillObservation``)
+# 변환은 ``kis_fill_normalization.normalize_kis_fill_observation()``가 담당한다.
+# (이전에는 이 파일에 ``KisOrderFillRecord``/``parse_kis_order_fill_record``가
+# 있었으나 어디에서도 호출되지 않던 dead code였고, 필드명도 실제 paper 응답과
+# 어긋나 있었다 — read-only 운영 조사로 확인, 설계 문서 14번 1.1절. 대소문자
+# 무관 + 후보 키 fallback을 포함한 정규화 로직으로 대체했다.)
 
 
 @dataclass(slots=True, frozen=True)
@@ -1562,10 +1517,36 @@ class KISRestClient:
         broker_order_id: str,
         from_ts: str | None = None,
     ) -> Sequence[FillEvent]:
-        """Retrieve fill events from daily settlement inquiry.
+        """Retrieve the current cumulative fill observation for an order.
 
-        Uses inquire-daily-ccld endpoint with pagination.
-        Matches the ``BrokerAdapter`` protocol signature.
+        Uses inquire-daily-ccld endpoint with pagination. Matches the
+        ``BrokerAdapter`` protocol signature.
+
+        중요 — 반환값의 의미론(설계 문서 14번 1.2절/3.3절)
+        --------------------------------------------------
+        각 반환 ``FillEvent.fill_quantity``는 **이번 관측 시점 기준
+        해당 주문의 누적 체결수량**이다 — "이번에 새로 체결된 증분"이
+        아니다. KIS ``inquire-daily-ccld``는 개별 체결 단위가 아니라
+        "지금까지 이 주문이 총 몇 주 체결됐는가"를 돌려준다는 것이
+        read-only 운영 조사(자연 발생 부분체결 표본, `broker_fill_
+        snapshots` 시계열의 0→11→259 staircase)로 실증 확인됐다.
+
+        이 메서드는 **정규화까지만** 책임진다(브로커 계층은 stateless —
+        `src/AGENTS.md` 계층 경계상 repository/DB 접근을 하지 않는다).
+        누적값을 증분(fill)으로 바꾸는 것은 호출자(``order_sync_service.
+        _sync_fills()``)가 ``kis_fill_incremental_resolver.
+        resolve_incremental_fill()``을 통해 직전 관측치와 비교해서
+        수행할 책임이다.
+
+        시장가/지정가, 부분체결/전체체결을 구분하는 분기는 없다 —
+        어떤 주문이든 같은 정규화 경로를 거친다.
+
+        parse 불가(주문번호/종목코드 없음) 또는 취소/정정 플래그
+        (``CNCL_YN``/``RVSE_YN`` = ``Y``)가 관측된 row는 이 메서드가
+        **건너뛴다**(anomaly, 반환하지 않음) — stateless 계층에서는
+        "이게 진짜 새 취소/정정인지, 이미 알고 있던 상태인지" 판단할
+        수 없으므로, 조용히 진행하지 않고 로그만 남긴 뒤 이번 관측
+        자체를 생략한다. 다음 폴링에서 상태가 명확해지면 다시 시도된다.
         """
         # Fetch all records with pagination (기본 date-range = 당일)
         _strt_dt: str | None = None
@@ -1577,6 +1558,7 @@ class KISRestClient:
                 # from_ts가 ISO format이라고 가정하고 YYYYMMDD 추출
                 _strt_dt = from_ts[:10].replace("-", "")  # "2026-05-19" → "20260519"
         output = await self.inquire_daily_ccld(
+            broker_order_id=broker_order_id or None,
             strt_dt=_strt_dt,
             end_dt=_end_dt,
             after_hours=False,
@@ -1584,23 +1566,53 @@ class KISRestClient:
 
         fills: list[FillEvent] = []
         for item in output:
-            # Only include items with actual fills
-            ccll_qty = Decimal(item.get("CCLD_QTY", "0"))
-            if ccll_qty <= 0:
+            observation = normalize_kis_fill_observation(item)
+
+            if not observation.is_parseable:
+                logger.warning(
+                    "get_fills(): unparseable inquire-daily-ccld row skipped "
+                    "(missing ODNO/PDNO), broker_order_id=%s",
+                    broker_order_id,
+                )
                 continue
 
-            if broker_order_id and item.get("ODNO") != broker_order_id:
+            if broker_order_id and observation.broker_native_order_id != broker_order_id:
+                continue
+
+            if observation.cancel_yn == "Y" or observation.rvse_yn == "Y":
+                logger.warning(
+                    "get_fills(): cancel/revision flagged row skipped "
+                    "(cancel_yn=%s, rvse_yn=%s), broker_order_id=%s — "
+                    "incremental resolver will not see this observation this cycle",
+                    observation.cancel_yn, observation.rvse_yn, broker_order_id,
+                )
+                continue
+
+            cumulative_qty = observation.cumulative_filled_quantity
+            if cumulative_qty is None or cumulative_qty < 0:
+                logger.warning(
+                    "get_fills(): missing/invalid cumulative quantity skipped, "
+                    "broker_order_id=%s", broker_order_id,
+                )
+                continue
+
+            side = observation.side
+            if side is None:
+                logger.warning(
+                    "get_fills(): unresolvable side (SLL_BUY_DVSN_CD) skipped, "
+                    "broker_order_id=%s", broker_order_id,
+                )
                 continue
 
             fill = FillEvent(
                 broker_name=BrokerName.KOREA_INVESTMENT,
-                broker_order_id=item.get("ODNO", ""),
-                symbol=item.get("PDNO", ""),
-                side=OrderSide.BUY if item.get("SLL_BUY_DVSN_CD") in ("01", "02") else OrderSide.SELL,
-                fill_quantity=ccll_qty,
-                fill_price=Decimal(item.get("CCLD_UNPR", "0")),
+                broker_order_id=observation.broker_native_order_id,
+                symbol=observation.symbol,
+                side=side,
+                fill_quantity=cumulative_qty,  # 누적값 — 증분 아님(위 docstring 참고)
+                fill_price=observation.average_fill_price or Decimal("0"),
                 fill_timestamp=datetime.now(timezone.utc),  # KIS doesn't provide per-fill timestamp
-                broker_fill_id=item.get("CCLD_NUM"),  # KIS 체결번호 (unique per fill)
+                broker_fill_id=observation.broker_fill_id_candidate,
                 fee=None,
                 tax=None,
             )
@@ -2824,13 +2836,13 @@ class KISRestClient:
     def _get_kis_field(item: dict[str, Any], field: str, default: Any = "") -> Any:
         """KIS 응답 필드를 대소문자 무관하게 읽는다.
 
-        KIS API는 응답 키를 대문자(ODNO) 또는 소문자(odno)로 혼용하여 반환하므로,
-        두 케이스를 모두 시도한다.
+        ``kis_field_mapping.get_kis_field()``의 얇은 래퍼다 — 이 파일 안의
+        기존 호출부(``inquire_daily_ccld`` post-filter, ``get_order_status``,
+        ``resolve_unknown_state``)를 바꾸지 않기 위해 staticmethod로 유지한다.
+        ``fill_history_sync.py``도 같은 공통 함수를 직접 import해서 쓴다 —
+        로직이 두 곳에 각각 존재하며 서로 어긋나는 일(drift)을 막는다.
         """
-        value = item.get(field)
-        if value is not None and value != "":
-            return value
-        return item.get(field.lower(), default)
+        return get_kis_field(item, field, default)
 
     @staticmethod
     def _map_order_style(

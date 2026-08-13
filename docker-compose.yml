@@ -364,6 +364,13 @@ services:
       LOSS_CUT_SHADOW_ENABLED: "${LOSS_CUT_SHADOW_ENABLED:-false}"
       LOSS_CUT_SHADOW_SOFT_THRESHOLD_PCT: "${LOSS_CUT_SHADOW_SOFT_THRESHOLD_PCT:-7}"
       LOSS_CUT_SHADOW_HARD_THRESHOLD_PCT: "${LOSS_CUT_SHADOW_HARD_THRESHOLD_PCT:-12}"
+      # KIS 누적 체결량(TOT_CCLD_QTY) → 증분 fill 해석 shadow 스위치(설계
+      # 문서 14번 6.1절) — 위 loss-cut shadow와 같은 이유로 이 화이트리스트에
+      # 미리 선언해 둔다. run_post_submit_sync_loop.py는 ops-scheduler의
+      # 서브프로세스이므로 이 값이 없으면 컨테이너 재기동 없이는 절대
+      # 전달되지 않는다(§62/SPPV-2.73과 동일한 배선 누락 패턴을 이번엔
+      # 처음부터 피한다). 기본값 false(shadow) — config 모듈 기본값과 동일.
+      KIS_FILL_INCREMENTAL_APPEND_ENABLED: "${KIS_FILL_INCREMENTAL_APPEND_ENABLED:-false}"
       # core universe(decision_loop_intraday) 크기 상한(SPPV-2.102~2.105) —
       # 이 화이트리스트에 선언돼 있지 않으면 호스트 `.env` 값이 이 컨테이너
       # 실제 프로세스에는 전달되지 않는다(위 R3b alpha 스위치와 동일 이슈).

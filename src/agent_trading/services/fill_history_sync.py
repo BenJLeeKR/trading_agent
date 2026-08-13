@@ -7,6 +7,10 @@ from decimal import Decimal
 from typing import Any
 from uuid import UUID, uuid4
 
+from agent_trading.brokers.koreainvestment.kis_field_mapping import (
+    get_kis_field,
+    get_kis_value,
+)
 from agent_trading.brokers.koreainvestment.rest_client import KISRestClient
 from agent_trading.brokers.rate_limit import BudgetExhaustedError
 from agent_trading.domain.entities import BrokerFillSnapshotEntity, FillSyncRunEntity
@@ -22,7 +26,10 @@ from agent_trading.repositories.filters import AccountLookup
 logger = logging.getLogger(__name__)
 
 _KST = timezone(timedelta(hours=9))
-_GF = KISRestClient._get_kis_field
+# 공통 필드 매핑 모듈로 이전(설계 문서 14번 4절) — KISRestClient._get_kis_field는
+# 이 함수의 얇은 래퍼가 됐다. rest_client.py를 거치지 않고 직접 공통 모듈을
+# 참조해 두 곳의 로직이 어긋나는 일(drift)을 막는다.
+_GF = get_kis_field
 _VTTC0081R_RETRY_WAIT_SECONDS = 3.0
 _VTTC0081R_MAX_ATTEMPTS = 2
 
@@ -119,12 +126,10 @@ def _parse_decimal(raw: Any) -> Decimal | None:
         return None
 
 
-def _get_kis_value(item: dict[str, Any], *fields: str, default: Any = "") -> Any:
-    for field_name in fields:
-        value = _GF(item, field_name, None)
-        if value not in (None, ""):
-            return value
-    return default
+# 공통 필드 매핑 모듈로 이전(설계 문서 14번 4절) — 이 파일이 먼저 쓰던
+# "후보 키 목록 순서대로 fallback" 순서를 그대로 유지한 채, 로직 자체는
+# `kis_field_mapping.get_kis_value()`로 공통화했다.
+_get_kis_value = get_kis_value
 
 
 def _side_from_code(code: str | None) -> str:

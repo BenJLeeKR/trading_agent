@@ -128,7 +128,17 @@ def sync_service(
     repos: RepositoryContainer,
     order_manager: OrderManager,
 ) -> OrderSyncService:
-    return OrderSyncService(repos=repos, order_manager=order_manager)
+    # kis_fill_incremental_append_enabled=True — 이 파일의 기존 테스트들은
+    # broker.get_fills()가 돌려주는 FillEvent.fill_quantity를 "이번에 새로
+    # 관측된 값"으로 가정한다(각 테스트가 신규 order/repos를 쓰므로
+    # kis_fill_cumulative_state의 prior_qty=0에서 시작 — 단일 관측 표본에서는
+    # delta==fill_quantity가 성립해 기존 기대값과 일치한다). shadow 모드
+    # (기본값 False)는 별도 테스트에서 명시적으로 검증한다.
+    return OrderSyncService(
+        repos=repos,
+        order_manager=order_manager,
+        kis_fill_incremental_append_enabled=True,
+    )
 
 
 def _make_order(
@@ -683,49 +693,76 @@ class TestSyncFillDedup:
         sync_service: OrderSyncService,
         repos: RepositoryContainer,
     ) -> None:
-        """동일 timestamp/price/qty지만 다른 broker_fill_id → 별개 fill (broker_fill_id 우선)."""
+        """서로 다른 broker_fill_id를 가진 두 번의 신규 누적 관측 → 각각 별개 fill로 sync.
+
+        NOTE: KIS ``inquire-daily-ccld``는 주문 1건당 응답 row 1개(누적
+        체결량)만 준다 — 같은 호출에서 같은 주문에 대해 서로 다른 두 개의
+        ``fill_quantity``가 동시에 오는 것은 실제로 일어나지 않는다(설계
+        문서 14번). 이 테스트는 원래 "다른 broker_fill_id → 별개 fill"을
+        검증하려던 의도를 유지하되, 실제 KIS 동작에 맞게 **연속된 두 번의
+        관측**(누적 5 → 누적 10)으로 재구성했다.
+        """
         now = datetime.now(timezone.utc)
         order = _make_order(repos, status=OrderStatus.ACKNOWLEDGED)
         broker_order = _make_broker_order(
             repos, order, broker_status="acknowledged",
         )
 
-        fills = [
-            FillEvent(
-                broker_name=BrokerName.KOREA_INVESTMENT,
-                broker_order_id=broker_order.broker_native_order_id,
-                symbol="005930",
-                side=OrderSide.BUY,
-                fill_quantity=Decimal("5"),
-                fill_price=Decimal("50000"),
-                fill_timestamp=now,
-                broker_fill_id="CCLD001",
-                fee=Decimal("250"),
-                tax=Decimal("0"),
-            ),
-            FillEvent(
-                broker_name=BrokerName.KOREA_INVESTMENT,
-                broker_order_id=broker_order.broker_native_order_id,
-                symbol="005930",
-                side=OrderSide.BUY,
-                fill_quantity=Decimal("5"),
-                fill_price=Decimal("50000"),
-                fill_timestamp=now,
-                broker_fill_id="CCLD002",  # 다른 fill ID
-                fee=Decimal("250"),
-                tax=Decimal("0"),
-            ),
-        ]
-        broker = _StubBroker(status=OrderStatus.PARTIALLY_FILLED, fills=fills)
-
-        # Composite key만 보면 둘이 동일하지만, broker_fill_id가 다르므로 둘 다 sync
-        r = await sync_service.sync_order_post_submit(
+        # 1차 관측 — 누적 5주, broker_fill_id=CCLD001
+        broker1 = _StubBroker(
+            status=OrderStatus.PARTIALLY_FILLED,
+            fills=[
+                FillEvent(
+                    broker_name=BrokerName.KOREA_INVESTMENT,
+                    broker_order_id=broker_order.broker_native_order_id,
+                    symbol="005930",
+                    side=OrderSide.BUY,
+                    fill_quantity=Decimal("5"),
+                    fill_price=Decimal("50000"),
+                    fill_timestamp=now,
+                    broker_fill_id="CCLD001",
+                    fee=Decimal("250"),
+                    tax=Decimal("0"),
+                ),
+            ],
+        )
+        r1 = await sync_service.sync_order_post_submit(
             account_ref="test-account",
-            broker=broker,  # type: ignore[arg-type]
+            broker=broker1,  # type: ignore[arg-type]
             broker_order_id=broker_order.broker_order_id,
         )
-        assert r.fills_synced == 2, "Different broker_fill_id → both synced"
-        assert r.fills_skipped == 0
+        assert r1.fills_synced == 1
+        assert r1.fills_skipped == 0
+
+        # 2차 관측 — 누적 10주(5주 추가 체결), broker_fill_id=CCLD002
+        broker2 = _StubBroker(
+            status=OrderStatus.PARTIALLY_FILLED,
+            fills=[
+                FillEvent(
+                    broker_name=BrokerName.KOREA_INVESTMENT,
+                    broker_order_id=broker_order.broker_native_order_id,
+                    symbol="005930",
+                    side=OrderSide.BUY,
+                    fill_quantity=Decimal("10"),
+                    fill_price=Decimal("50000"),
+                    fill_timestamp=now,
+                    broker_fill_id="CCLD002",  # 다른 fill ID
+                    fee=Decimal("250"),
+                    tax=Decimal("0"),
+                ),
+            ],
+        )
+        r2 = await sync_service.sync_order_post_submit(
+            account_ref="test-account",
+            broker=broker2,  # type: ignore[arg-type]
+            broker_order_id=broker_order.broker_order_id,
+        )
+        assert r2.fills_synced == 1, "새 누적 관측(delta=5) → 신규 fill로 sync"
+        assert r2.fills_skipped == 0
+
+        saved = await repos.fill_events.list_by_broker_order(broker_order.broker_order_id)
+        assert len(saved) == 2
+        assert sorted(f.fill_quantity for f in saved) == [Decimal("5"), Decimal("5")]
 
     async def test_fill_dedup_broker_fill_id_overrides_timestamp(
         self,
@@ -793,58 +830,78 @@ class TestSyncFillDedup:
         sync_service: OrderSyncService,
         repos: RepositoryContainer,
     ) -> None:
-        """일부 fill은 broker_fill_id 보유, 일부는 None → 각각 dedup 정상."""
+        """broker_fill_id 보유 관측 → None 관측 순서로 각각 dedup 정상 동작.
+
+        NOTE: 위 ``test_fill_dedup_broker_fill_id_preferred``와 동일한 이유로,
+        "한 호출에 서로 다른 두 fill_quantity"가 아니라 **연속된 두 번의
+        누적 관측**(누적 3 → 누적 10)으로 재구성했다.
+        """
         now = datetime.now(timezone.utc)
         order = _make_order(repos, status=OrderStatus.ACKNOWLEDGED)
         broker_order = _make_broker_order(
             repos, order, broker_status="acknowledged",
         )
 
-        # Fill A: has broker_fill_id, Fill B: no broker_fill_id
-        fills = [
-            FillEvent(
-                broker_name=BrokerName.KOREA_INVESTMENT,
-                broker_order_id=broker_order.broker_native_order_id,
-                symbol="005930",
-                side=OrderSide.BUY,
-                fill_quantity=Decimal("3"),
-                fill_price=Decimal("49000"),
-                fill_timestamp=now,
-                broker_fill_id="CCLD-A",
-                fee=Decimal("100"),
-                tax=Decimal("0"),
-            ),
-            FillEvent(
-                broker_name=BrokerName.KOREA_INVESTMENT,
-                broker_order_id=broker_order.broker_native_order_id,
-                symbol="005930",
-                side=OrderSide.BUY,
-                fill_quantity=Decimal("7"),
-                fill_price=Decimal("51000"),
-                fill_timestamp=now,
-                broker_fill_id=None,
-                fee=Decimal("200"),
-                tax=Decimal("0"),
-            ),
-        ]
-        broker = _StubBroker(status=OrderStatus.PARTIALLY_FILLED, fills=fills)
-
-        # 1st call — both synced
+        # 1차 관측 — 누적 3주, broker_fill_id 있음
+        broker1 = _StubBroker(
+            status=OrderStatus.PARTIALLY_FILLED,
+            fills=[
+                FillEvent(
+                    broker_name=BrokerName.KOREA_INVESTMENT,
+                    broker_order_id=broker_order.broker_native_order_id,
+                    symbol="005930",
+                    side=OrderSide.BUY,
+                    fill_quantity=Decimal("3"),
+                    fill_price=Decimal("49000"),
+                    fill_timestamp=now,
+                    broker_fill_id="CCLD-A",
+                    fee=Decimal("100"),
+                    tax=Decimal("0"),
+                ),
+            ],
+        )
         r1 = await sync_service.sync_order_post_submit(
             account_ref="test-account",
-            broker=broker,  # type: ignore[arg-type]
+            broker=broker1,  # type: ignore[arg-type]
             broker_order_id=broker_order.broker_order_id,
         )
-        assert r1.fills_synced == 2
+        assert r1.fills_synced == 1
+        assert r1.fills_skipped == 0
 
-        # 2nd call — broker returns identical fills → both deduped
+        # 2차 관측 — 누적 10주(7주 추가 체결), broker_fill_id 없음(composite key fallback)
+        broker2 = _StubBroker(
+            status=OrderStatus.PARTIALLY_FILLED,
+            fills=[
+                FillEvent(
+                    broker_name=BrokerName.KOREA_INVESTMENT,
+                    broker_order_id=broker_order.broker_native_order_id,
+                    symbol="005930",
+                    side=OrderSide.BUY,
+                    fill_quantity=Decimal("10"),
+                    fill_price=Decimal("51000"),
+                    fill_timestamp=now,
+                    broker_fill_id=None,
+                    fee=Decimal("200"),
+                    tax=Decimal("0"),
+                ),
+            ],
+        )
         r2 = await sync_service.sync_order_post_submit(
             account_ref="test-account",
-            broker=broker,  # type: ignore[arg-type]
+            broker=broker2,  # type: ignore[arg-type]
             broker_order_id=broker_order.broker_order_id,
         )
-        assert r2.fills_synced == 0
-        assert r2.fills_skipped >= 2
+        assert r2.fills_synced == 1
+        assert r2.fills_skipped == 0
+
+        # 3차 관측 — 동일 누적치(10) 재조회 → delta=0, no_new_fill로 skip 처리
+        r3 = await sync_service.sync_order_post_submit(
+            account_ref="test-account",
+            broker=broker2,  # type: ignore[arg-type]
+            broker_order_id=broker_order.broker_order_id,
+        )
+        assert r3.fills_synced == 0
+        assert r3.fills_skipped >= 1
 
     async def test_fill_empty_broker_fill_id_normalized_to_none(
         self,

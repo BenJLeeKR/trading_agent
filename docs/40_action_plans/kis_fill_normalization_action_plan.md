@@ -4,7 +4,11 @@
 
 이 문서는 **실행 계획**이다. 상세 설계 근거는
 [`docs/00_foundational_design/detailed_design/14_kis_fill_normalization_and_incremental_interpretation_design.md`](../00_foundational_design/detailed_design/14_kis_fill_normalization_and_incremental_interpretation_design.md)를 따른다.
-이번 문서를 작성한 턴 자체는 **설계/문서 작업**이며, 코드 구현·migration·런타임 변경은 포함하지 않는다.
+
+**구현 현황**: 아래 5절의 1~4단계는 별도 구현 턴에서 완료됐다(shadow 모드,
+`KIS_FILL_INCREMENTAL_APPEND_ENABLED=false` 기본값). 5~7단계(shadow 관측
+기간, 실 전환, 회고)는 아직 미착수다 — 지금은 shadow 모드로 관측 로그만
+쌓이는 단계다.
 
 ## 1. 문제 재정의
 
@@ -41,22 +45,20 @@
 4. 음수 delta/파싱 실패/정정 플래그는 자동으로 처리하지 않고 anomaly로 분리 — `fill_events`에 아무것도 append하지 않는다.
 5. 전개는 **shadow 모드 선행**(loss_cut_shadow 선례와 동일한 원칙)을 강력 권장 — 관측 로그만 쌓다가, live 사전 검증(6.6절 체크리스트)을 통과한 뒤 실제 append로 전환.
 
-## 5. 구현 단계별 계획 (이번 턴 미착수 — 향후 별도 구현 턴을 위한 순서 제안)
+## 5. 구현 단계별 계획
 
-이 단계 구분은 **다음 구현 턴이 참고할 순서**이며, 이번 문서 작성 턴에서 실행하지 않는다.
-
-1. **공통 필드 매핑 모듈 추출**: `kis_field_mapping.py` 신설, `_get_kis_field`/`_get_kis_value` 이관, `rest_client.py`/`fill_history_sync.py` import 경로 조정(동작 변경 없는 리팩터링만).
-2. **정규화 계층 구현**: `NormalizedKisFillObservation` + `normalize_kis_fill_observation()`, 단위 테스트로 paper 응답 표본(당일 시장가 완전체결 케이스) 재현.
-3. **상태 테이블 migration**: `kis_fill_cumulative_state` 추가(다음 가용 migration 번호는 구현 시점에 `db/migrations/` 최신 번호를 다시 확인해 정한다 — 이 문서 작성 시점 최신은 `0055_...`이며 임의로 다음 번호를 고정하지 않는다).
-4. **해석 계층 구현**: `resolve_incremental_fill()` + repository, 동시성 락 포함. shadow 모드 feature flag(`KIS_FILL_INCREMENTAL_RESOLUTION_SHADOW_ENABLED` 등, 이름은 구현 턴에서 확정) 추가.
-5. **shadow 관측 기간**: 운영에서 로그만 쌓으며 delta 계산이 실제 체결과 맞는지 확인(6절 체크리스트와 연계).
-6. **전환**: 사전 검증 통과 후 실제 `fill_events.add()` 경로로 전환.
-7. **회고/정리**: shadow 기간 로그를 근거로 anomaly 비율, delta 계산 정확도를 정리해 운영 판단 문서화(loss_cut_shadow_inspection_operations_guide.md와 유사한 성격의 문서를 이 경로용으로도 검토할 수 있음 — 필요 여부는 구현 이후 판단).
+1. **공통 필드 매핑 모듈 추출** — ✅ 완료: `kis_field_mapping.py` 신설, `get_kis_field`/`get_kis_value`로 `_get_kis_field`/`fill_history_sync._get_kis_value`를 공통화, `rest_client.py`/`fill_history_sync.py` import 조정.
+2. **정규화 계층 구현** — ✅ 완료: `kis_fill_normalization.py`의 `NormalizedKisFillObservation` + `normalize_kis_fill_observation()`. 단위 테스트로 실제 paper 응답 표본(`odno`/`pdno`/`tot_ccld_qty`/`avg_prvs` 소문자 키) 재현.
+3. **상태 테이블 migration** — ✅ 완료: `db/migrations/0056_add_kis_fill_cumulative_state.sql`(구현 시점 최신 번호 `0055_...` 확인 후 `0056`으로 결정).
+4. **해석 계층 구현** — ✅ 완료: `kis_fill_incremental_resolver.py`의 `resolve_incremental_fill()` + `KisFillCumulativeStateRepository`(postgres는 `SELECT ... FOR UPDATE`로 동시성 락). shadow 모드 flag는 `KIS_FILL_INCREMENTAL_APPEND_ENABLED`(기본값 `false`)로 확정, `docker-compose.yml` `ops-scheduler`에도 배선.
+5. **shadow 관측 기간** — 미착수. 운영에서 로그만 쌓으며 delta 계산이 실제 체결과 맞는지 확인(설계 문서 6절 체크리스트와 연계) — 다음 단계.
+6. **전환** — 미착수. 사전 검증 통과 후 `KIS_FILL_INCREMENTAL_APPEND_ENABLED=true`로 전환.
+7. **회고/정리** — 미착수.
 
 ## 6. 추가 보정사항
 
 - 이번 문서 및 상세 설계 문서는 **시장가만**, **완전체결만** 한정하는 경로를 기본안으로 삼지 않는다 — 범용 정규화/증분 해석 경로가 기본안이다.
-- `TOT_CCLD_QTY`가 누적값이라는 것은 강한 가설이며 확정이 아니다 — 구현 턴은 반드시 자연 발생 부분체결 표본으로 이 가설을 먼저 검증한 뒤 shadow 전환 여부를 판단해야 한다.
+- `TOT_CCLD_QTY`가 누적값이라는 것은 강한 가설이며 완전한 확정은 아니었다 — 구현 자체는 이 가설을 전제로 진행했으나(안 A 채택), shadow 모드 기본값 `false`로 실제 append 전환은 자연 발생 부분체결 표본으로 재검증한 뒤에만 켜야 한다.
 - live 환경 필드 스키마는 이번 설계 근거에 전혀 포함되지 않았다 — live 전개 전 별도 read-only 검증이 필수다.
 - 정정/취소가 섞인 표본에 대한 처리는 이번 설계에서 "자동 처리하지 않고 분리"하는 수준까지만 다룬다 — 자동 역산 로직은 범위 밖이다.
 
