@@ -81,6 +81,18 @@ def parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
         help="dry-run(기본값): 계산 결과만 리포트, DB 변경 없음. "
         "apply: 실제 fill_events append + recompute_queue 등록.",
     )
+    parser.add_argument(
+        "--use-historical-policy-estimate-for-buy-fee",
+        action="store_true",
+        default=False,
+        help=(
+            "기본값 False — 없으면 기존 동작과 100%% 동일(정책 활성 이전 "
+            "BUY는 assumed_zero 그대로). 켜면 BUY이고 assumed_zero로 계산된 "
+            "fill에 한해, 현재 활성 execution.fee_tax 정책으로 재계산을 "
+            "시도해 성립하면 historical_policy_estimate로 override한다 "
+            "(initial backfill 전용, SELL/실시간 경로는 무관 — 16번 문서 §8)."
+        ),
+    )
     parser.add_argument("--verbose", "-v", action="store_true", help="상세 로그 출력")
     return parser.parse_args(argv)
 
@@ -120,7 +132,12 @@ def _print_plan_report(plan: BackfillPlan) -> None:
             f"synthetic_fills={len(detail.candidates)}"
         )
     lines.append("  append 예정 fill_events 핵심 필드 요약:")
+    historical_estimate_count = 0
     for candidate in plan.synthetic_fills:
+        is_historical_estimate = candidate.fee_tax_source.value == "historical_policy_estimate"
+        if is_historical_estimate:
+            historical_estimate_count += 1
+        marker = " [HISTORICAL_POLICY_ESTIMATE]" if is_historical_estimate else ""
         lines.append(
             f"    - order={candidate.order_request_id} "
             f"side={candidate.side.value} "
@@ -130,7 +147,11 @@ def _print_plan_report(plan: BackfillPlan) -> None:
             f"fill_timestamp={candidate.fill_timestamp.isoformat()} "
             f"broker_fill_id={candidate.broker_fill_id} "
             f"source_snapshot={candidate.source_broker_fill_snapshot_id}"
+            f"{marker}"
         )
+    lines.append(
+        f"  historical_policy_estimate로 override된 fill 수: {historical_estimate_count}"
+    )
     print("\n".join(lines))
 
 
@@ -152,6 +173,9 @@ async def run_backfill(repos: RepositoryContainer, args: argparse.Namespace) -> 
         account_id=account_id,
         instrument_id=instrument_id,
         start_date=start_date,
+        use_historical_policy_estimate_for_buy_fee=(
+            args.use_historical_policy_estimate_for_buy_fee
+        ),
     )
     _print_plan_report(plan)
 
