@@ -33,10 +33,13 @@ dry-run/승인 절차)의 최소 구현이 완료됐다.
   구현 턴은 코드/테스트만 완료했고, 확정된 후보(계좌 1개×종목 1개, 매수
   1건+매도 2건)에 대한 실제 apply는 별도로 사용자 승인을 받은 뒤 진행한다
   (§5.2의 "dry-run → 사람 승인 → 실제 apply" 절차를 그대로 유지).
-- **`historical_policy_estimate` override(별도 구현 턴, 완료)**: `001450`/
-  `004370` initial backfill 파일럿용 — `use_historical_policy_estimate_
-  for_buy_fee` opt-in 옵션. 상세는 §8.9. `007070`(overlay+recompute) 트랙과
-  완전히 별개다. 이번에도 실제 apply는 미실행 — 코드/테스트만 완료.
+- **`historical_policy_estimate` override(별도 구현 턴, 완료) + apply 실측
+  완료(2026-08-15 KST)**: `001450`/`004370` initial backfill 파일럿용 —
+  `use_historical_policy_estimate_for_buy_fee` opt-in 옵션으로 두 종목 모두
+  실제 `--mode apply` 실행 완료(`fee=347`/`679`, 오차 0원, §8.10 참고).
+  `007070`(overlay+recompute) 트랙과 완전히 별개다. `recompute_queue`는
+  등록됐고 워커 처리 대기 중(`resolved_at` 아직 `NULL`) — `position_cost_
+  basis_state`의 최종 `quantity`/`average_cost`는 그 처리 이후 반영된다.
 
 **이 설계는 오직 과거 복원(backfill) 전용이다.** 아래 두 가지를 명확히 구분한다.
 
@@ -567,6 +570,46 @@ SELL이 없는 종목(`001450`, `004370` 둘 다 이 파일럿 window 안에서 
 CLI: `scripts/backfill_broker_fill_snapshot_historical_fills.py`에
 `--use-historical-policy-estimate-for-buy-fee`(기본값 off) 추가, dry-run
 리포트에 override된 fill을 `[HISTORICAL_POLICY_ESTIMATE]` 마커로 표시한다.
+
+### 8.10 종목별 추정 수수료의 성격과 허용 오차 기준(운영 정책, 실측 적용 완료)
+
+**이 값의 성격**: `historical_policy_estimate`로 계산되는 fee는 증권사가
+그 체결 건에 대해 **개별적으로 확정해 준 수수료가 아니다**. 실제 KIS
+수수료는 계좌 단위로 하루(또는 정산 주기) 전체 매매 금액을 합산한 뒤
+정책 요율을 적용하는 방식에 가깝고, 이 시스템은 그 합산 기준 정책을
+**체결 1건 단위로 역산**해 종목별/체결별 추정치로 환산한다. 이 환산
+과정에서 반올림 단위(`rounding_unit`)가 체결별로 개별 적용되기 때문에,
+"하루 전체를 한 번에 반올림한 값"과 "체결마다 나눠 반올림한 값의 합"이
+정확히 일치하지 않을 수 있다.
+
+**허용 오차 기준**: 이런 이유로, 이 시스템은 **종목별/체결별 추정
+수수료가 다른 기준값(예: 향후 KIS 총괄 대사, 하루 합산 재계산)과 비교해
+차이가 9원 이하이면 허용 오차 범위 내 일치로 본다.** 이 기준은 계산
+로직의 버그를 눈감기 위한 것이 **아니다** — 합산 기준 정책을 체결 단위
+추정치로 쪼갤 때 구조적으로 생기는 반올림 한계를 인정하는 **운영
+기준**이다. 이 허용 범위는 **수수료(fee) 검산에만** 적용되며, 세금
+금액, 체결 수량/가격, 잔량 정합성 같은 다른 불변식에는 전혀 적용되지
+않는다 — 그런 값들은 여전히 정확히 일치해야 한다.
+
+**`001450`/`004370` 파일럿 실측(2026-08-15 KST, `apply` 실행 완료)**:
+
+| 종목 | fill_price × fill_quantity | 계산식(`× 0.0140527% → round_half_up`) | 기대값 | `fill_events.fill_fee` 저장값 | 차이 |
+|---|---|---|---|---|---|
+| `001450` | 44,153 × 56 = 2,472,568 | 2,472,568 × 0.0140527 / 100 = 347.4626 | 347 | 347 | **0원** |
+| `004370` | 402,500 × 12 = 4,830,000 | 4,830,000 × 0.0140527 / 100 = 678.7454 | 679 | 679 | **0원** |
+
+두 건 모두 오차 0원으로 9원 허용 기준을 여유 있게 충족했다. 두 종목 모두
+`fee_tax_source='historical_policy_estimate'`, `fill_tax=0`(BUY이므로),
+`source_channel='backfill'`로 저장됐고, 이후 `realized_pnl_recompute_queue`
+에 `reason_code='manual_request'`로 등록되어(`resolved_at`은 아직 `NULL`
+— 워커의 다음 주기 처리 대기 중) `position_cost_basis_state`가 갱신될
+예정이다. 이번 파일럿은 SELL이 없는 종목이라 `realized_pnl_events`/
+`remaining_buy_fee_pool`/`allocated_buy_fee`는 이 시점에 여전히 실측
+대상이 아니다(recompute가 완료돼도 SELL이 없으면 이 필드들이 생성/변경될
+계기 자체가 없다) — 향후 실제 SELL이 발생할 때가 진짜 검증 시점이다.
+
+`007070`(overlay+recompute) 트랙은 이 파일럿과 완전히 별개이며, 이번
+apply는 그 트랙에 어떤 영향도 주지 않았다.
 
 ## 9. 리스크
 
