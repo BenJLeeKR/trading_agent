@@ -483,11 +483,14 @@ ORDER BY fill_timestamp ASC, broker_fill_id ASC NULLS LAST, created_at ASC, fill
 
 ### 14.3 provenance 요약 — lot 추적이 아니다
 
-이동평균은 BUY를 개별 lot으로 구분하지 않으므로, `buy_fee_pool_provenance`도 "어느 BUY에서 왔는지"가 아니라 "지금 쌓인 pool 전체가 어떤 신뢰도로 구성돼 있는가"만 요약한다:
+이동평균은 BUY를 개별 lot으로 구분하지 않으므로, `buy_fee_pool_provenance`도 "어느 BUY에서 왔는지"가 아니라 "지금 쌓인 pool 전체가 어떤 신뢰도로 구성돼 있는가"만 요약한다. `fee_tax_source`는 판정 전용 3부류(`realized_pnl_engine._classify_fee_tax_source_for_pool()`)로 먼저 분류된다 — calculated-ish(`calculated_from_policy`/`reported`), historical-ish(`historical_policy_estimate`), zero-ish(`assumed_zero`/`policy_not_applicable`).
 
-- `fully_calculated` — 현재 보유의 최초 진입 이후 쌓인 모든 BUY fee가 `calculated_from_policy`(또는 `reported`, 실 도입 시)로만 구성.
-- `fully_assumed_zero` — 전부 `assumed_zero`/`policy_not_applicable`(사실상 0)로만 구성.
-- `partially_assumed_zero` — 같은 보유 기간에 위 두 종류가 섞여 들어온 경우. 한 번 섞이면 전량 청산 후 재진입 전까지 "순수"로 되돌아가지 않는다(`realized_pnl_engine._merge_buy_fee_pool_provenance()`).
+- `fully_calculated` — 현재 보유의 최초 진입 이후 쌓인 모든 BUY fee가 calculated-ish로만 구성.
+- `historically_estimated`(**4번째 값, 별도 검토 turn에서 추가**) — 전부 historical-ish(`historical_policy_estimate`)로만 구성. **`fully_calculated`와 절대 같은 의미가 아니다** — `calculated_from_policy`는 그 체결 시점에 실제 활성이던 정책으로 계산됐다는 인과관계이고, `historical_policy_estimate`는 initial backfill이 그 이후 시점의 정책을 소급 적용한 추정치라는 다른 인과관계다(16번 문서 §8.9/§8.10). 이 구분을 pool 요약 레벨에서도 유지하기 위해 별도 값으로 분리했다 — `fully_calculated`로 편입시키면 "이 pool이 실시간 계산으로만 채워졌는지 소급 추정도 섞였는지"를 영구히 구분할 수 없게 되기 때문이다.
+- `fully_assumed_zero` — 전부 zero-ish(사실상 0)로만 구성.
+- `partially_assumed_zero` — 같은 보유 기간에 서로 다른 3부류가 섞여 들어온 경우(calculated-ish/historical-ish/zero-ish 중 둘 이상). 한 번 섞이면 전량 청산 후 재진입 전까지 "순수"로 되돌아가지 않는다(`realized_pnl_engine._merge_buy_fee_pool_provenance()`, 조회 테이블 `_MERGE_TABLE`). 이름이 "assumed_zero"이지만 실제 의미는 "pool 전체가 단일 신뢰도로 순수하지 않다"이다 — 이 이름-의미 괴리는 알려진 한계이며, 리네이밍은 이번 확장 범위 밖이다.
+
+**5값 이상은 필요 없다고 판단한 근거**: historical-ish와 calculated-ish가 섞이는 경우와 historical-ish와 zero-ish가 섞이는 경우를 이론상 구분할 수도 있지만(케이스별로 5값 이상 필요), pool은 애초에 "섞이면 출처를 다시 못 나눈다"는 이동평균의 근본 전제 위에 있으므로 "완전히 순수한가, 조금이라도 섞였는가"만 요약하면 충분하다 — 정확한 혼합 비율/종류는 `fill_events` 원장을 직접 조회해서 확인할 몫이지 pool 요약값의 책임이 아니다.
 
 ### 14.4 forward-only 안전성
 
@@ -499,16 +502,22 @@ ORDER BY fill_timestamp ASC, broker_fill_id ASC NULLS LAST, created_at ASC, fill
 
 ### 14.6 구현 위치
 
-- `domain/enums.py`: `RealizedPnlBuyFeeAllocationSource`(3값).
+- `domain/enums.py`: `RealizedPnlBuyFeeAllocationSource`(4값 — `historically_estimated`는 별도 turn에서 추가).
 - `domain/entities.py`: `PositionCostBasisStateEntity.remaining_buy_fee_pool`/`buy_fee_pool_provenance`, `RealizedPnlEventEntity.allocated_buy_fee`/`buy_fee_allocation_source`.
-- `services/realized_pnl_engine.py`: `_apply_buy()`/`_apply_sell()` 확장, `_merge_buy_fee_pool_provenance()` 신설.
-- `db/migrations/0059_add_buy_fee_pool_allocation.sql`.
-- `repositories/postgres/position_cost_basis_states.py`, `repositories/postgres/realized_pnl_events.py`, `repositories/memory.py`: INSERT/upsert 컬럼 목록 반영.
+- `services/realized_pnl_engine.py`: `_apply_buy()`/`_apply_sell()` 확장, `_merge_buy_fee_pool_provenance()`/`_classify_fee_tax_source_for_pool()`/`_MERGE_TABLE` 신설.
+- `db/migrations/0059_add_buy_fee_pool_allocation.sql`, `0061_add_historically_estimated_buy_fee_pool_provenance.sql`(4번째 값 CHECK 확장).
+- `repositories/postgres/position_cost_basis_states.py`, `repositories/postgres/realized_pnl_events.py`, `repositories/memory.py`: INSERT/upsert 컬럼 목록 반영(제네릭 enum 매핑이라 4번째 값 추가로 인한 추가 코드 변경 없음).
 - `api/schemas.py`: `RealizedPnlEventView` 필드 추가.
-- 단위 테스트: `tests/services/test_realized_pnl_engine.py`(pool 누적/배분/전량청산/과거데이터 회귀/mixed provenance/replay 결정론).
+- 단위 테스트: `tests/services/test_realized_pnl_engine.py`(pool 누적/배분/전량청산/과거데이터 회귀/mixed provenance/replay 결정론 + `historically_estimated` 5개 시나리오).
 
-### 14.7 아직 확정하지 않은 것
+### 14.7 `historically_estimated` 신설 경위 — 발견된 버그와 수정(별도 turn)
+
+`historical_policy_estimate`(§16번 문서 §8.9) 도입 당시, `realized_pnl_engine.py`의 `_CALCULATED_ISH_FEE_TAX_SOURCES`(pool provenance 판정용 집합)에 이 새 값을 추가하는 걸 누락했다. 그 결과 `001450`/`004370` initial backfill apply에서 `remaining_buy_fee_pool` **금액**(347/679)은 정확히 반영됐지만, `buy_fee_pool_provenance`가 `fully_assumed_zero`로 잘못 분류되는 문제가 발생했다(금액 계산 경로와 provenance 분류 경로가 서로 다른 로직을 쓴 게 원인 — 전자는 `fee_tax_source`와 무관하게 `fill.fee`를 그대로 더하고, 후자는 하드코딩된 2값 집합에만 있는지 확인했다). 이 turn에서 3부류 분류 체계(calculated-ish/historical-ish/zero-ish)로 재구성하고 4번째 값을 신설해 수정했다. **기존 `001450`/`004370` 2건은 이 코드 수정만으로는 안 고쳐진다** — `fill_events` 원본은 이미 정확하므로 UPDATE 없이, 두 계좌×종목을 `recompute_queue`에 다시 등록해 재계산하면 새 로직이 적용돼 `historically_estimated`로 바로잡힌다(별도 후속 turn에서 실행).
+
+### 14.8 아직 확정하지 않은 것
 
 - 실제 `calculated_from_policy` BUY/SELL 표본으로의 실측 검증(운영 데이터 미존재, 이번 turn은 코드/테스트 범위로 한정).
-- `reported`(브로커 실보고 BUY fee) 도입 시 `_CALCULATED_ISH_FEE_TAX_SOURCES` 분류가 여전히 타당한지 재검토.
+- `reported`(브로커 실보고 BUY fee) 도입 시 3부류 분류가 여전히 타당한지 재검토.
+- `partially_assumed_zero`라는 이름과 실제 의미(신뢰도 혼합)의 괴리를 리네이밍할지 여부(이번 확장 범위 밖).
+- `001450`/`004370`의 실제 recompute 재실행(이번 turn은 코드/테스트/문서까지만, 운영 write는 후속 turn).
 - Admin UI에 `allocated_buy_fee`/`buy_fee_allocation_source` 노출 여부(이번 turn 범위 밖).

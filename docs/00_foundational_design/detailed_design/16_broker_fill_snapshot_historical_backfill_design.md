@@ -611,6 +611,20 @@ CLI: `scripts/backfill_broker_fill_snapshot_historical_fills.py`에
 `007070`(overlay+recompute) 트랙은 이 파일럿과 완전히 별개이며, 이번
 apply는 그 트랙에 어떤 영향도 주지 않았다.
 
+### 8.11 발견된 버그 — `buy_fee_pool_provenance` 오분류(수정 완료)
+
+§8.10 apply 이후 recompute가 완료된 뒤 확인한 결과, `remaining_buy_fee_pool`
+금액(347/679)은 정확했지만 `position_cost_basis_state.buy_fee_pool_
+provenance`가 `fully_assumed_zero`로 잘못 남아 있었다(기대값은
+`historically_estimated`). 원인은 `realized_pnl_engine.py`의 pool
+provenance 판정 집합이 `historical_policy_estimate`를 인식하지 못해
+"계산값 아님"으로 오분류한 것 — **금액 계산 경로와 provenance 분류 경로가
+서로 다른 로직을 쓰고 있었다.** 상세 원인 분석과 수정(4번째 값
+`historically_estimated` 신설, 3부류 분류 체계 재구성)은 12번 문서 §14.7을
+참고. 기존 `001450`/`004370` 2건은 이 코드 수정만으로는 안 고쳐지고,
+`fill_events` 원본은 그대로 둔 채 별도 recompute 재실행으로 바로잡아야
+한다(운영 write는 이 문서 갱신 시점 기준 아직 미실행).
+
 ## 9. 리스크
 
 | 리스크 | 평가 |

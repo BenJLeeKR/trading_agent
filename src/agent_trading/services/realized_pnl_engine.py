@@ -54,14 +54,81 @@ from agent_trading.domain.enums import (
     RealizedPnlFeeTaxSource,
 )
 
-# BUY fee가 "실제 값"으로 신뢰할 수 있는 fee_tax_source 집합 — 매수 수수료
-# pool의 provenance 요약(RealizedPnlBuyFeeAllocationSource)을 판정할 때만
-# 쓰는 내부 분류다. REPORTED는 BUY 경로에서 현재 발생하지 않지만(브로커
-# 직접 보고 fee는 아직 미구현), 발생한다면 CALCULATED_FROM_POLICY와 동일하게
-# "실제 값이 있는 fee"로 취급해야 한다.
+# BUY fee_tax_source를 매수 수수료 pool provenance 요약(
+# RealizedPnlBuyFeeAllocationSource) 판정에 쓸 3부류로 나눈다 — 이 분류는
+# fill 단위 provenance(fee_tax_source) 자체를 바꾸지 않는, pool 요약 전용
+# 내부 개념이다.
+#
+# - "calculated-ish": 그 체결 시점에 실제 활성이던 정책/브로커 보고로 얻은
+#   신뢰 가능한 실제 계산값. REPORTED는 BUY 경로에서 현재 발생하지 않지만
+#   (브로커 직접 보고 fee는 아직 미구현), 발생한다면 CALCULATED_FROM_POLICY
+#   와 동일하게 취급해야 한다.
+# - "historical-ish": initial backfill이 opt-in으로 그 체결 이후 시점의
+#   정책을 소급 적용해 추정한 값(16번 문서 §8.9/§8.10). calculated-ish와
+#   인과관계가 다르므로 pool provenance에서도 절대 같은 값으로 섞지 않는다.
+# - "zero-ish": 정책이 없거나(assumed_zero) 이 자산군에 정책이 적용되지
+#   않아(policy_not_applicable) 사실상 값이 없는 경우.
 _CALCULATED_ISH_FEE_TAX_SOURCES = frozenset(
     {RealizedPnlFeeTaxSource.CALCULATED_FROM_POLICY, RealizedPnlFeeTaxSource.REPORTED}
 )
+_HISTORICAL_ISH_FEE_TAX_SOURCES = frozenset(
+    {RealizedPnlFeeTaxSource.HISTORICAL_POLICY_ESTIMATE}
+)
+_ZERO_ISH_FEE_TAX_SOURCES = frozenset(
+    {RealizedPnlFeeTaxSource.ASSUMED_ZERO, RealizedPnlFeeTaxSource.POLICY_NOT_APPLICABLE}
+)
+
+
+class _FeeTaxSourceBucket:
+    """``_classify_fee_tax_source_for_pool()``이 반환하는 3부류 태그."""
+
+    CALCULATED_ISH = "calculated_ish"
+    HISTORICAL_ISH = "historical_ish"
+    ZERO_ISH = "zero_ish"
+
+
+def _classify_fee_tax_source_for_pool(fee_tax_source: RealizedPnlFeeTaxSource) -> str:
+    if fee_tax_source in _CALCULATED_ISH_FEE_TAX_SOURCES:
+        return _FeeTaxSourceBucket.CALCULATED_ISH
+    if fee_tax_source in _HISTORICAL_ISH_FEE_TAX_SOURCES:
+        return _FeeTaxSourceBucket.HISTORICAL_ISH
+    return _FeeTaxSourceBucket.ZERO_ISH
+
+
+# 신규 진입(직전 pool이 없는 상태)에서 3부류 → pool provenance 매핑.
+_FRESH_ENTRY_PROVENANCE_BY_BUCKET = {
+    _FeeTaxSourceBucket.CALCULATED_ISH: RealizedPnlBuyFeeAllocationSource.FULLY_CALCULATED,
+    _FeeTaxSourceBucket.HISTORICAL_ISH: RealizedPnlBuyFeeAllocationSource.HISTORICALLY_ESTIMATED,
+    _FeeTaxSourceBucket.ZERO_ISH: RealizedPnlBuyFeeAllocationSource.FULLY_ASSUMED_ZERO,
+}
+
+# 기존 pool provenance(대각선=순수 유지) × 새 BUY의 3부류 → 결과 provenance.
+# 대각선이 아니면(서로 다른 신뢰도가 섞이면) 전부 PARTIALLY_ASSUMED_ZERO로
+# 수렴한다 — 그 이름이 "assumed_zero"이지만 실제 의미는 "pool 전체가 단일
+# 신뢰도로 순수하지 않다"이다(기존 3값 체계부터 이어진 정의, 리네이밍은
+# 이번 확장 범위 밖).
+_MERGE_TABLE = {
+    (RealizedPnlBuyFeeAllocationSource.FULLY_CALCULATED, _FeeTaxSourceBucket.CALCULATED_ISH):
+        RealizedPnlBuyFeeAllocationSource.FULLY_CALCULATED,
+    (RealizedPnlBuyFeeAllocationSource.FULLY_CALCULATED, _FeeTaxSourceBucket.HISTORICAL_ISH):
+        RealizedPnlBuyFeeAllocationSource.PARTIALLY_ASSUMED_ZERO,
+    (RealizedPnlBuyFeeAllocationSource.FULLY_CALCULATED, _FeeTaxSourceBucket.ZERO_ISH):
+        RealizedPnlBuyFeeAllocationSource.PARTIALLY_ASSUMED_ZERO,
+    (RealizedPnlBuyFeeAllocationSource.HISTORICALLY_ESTIMATED, _FeeTaxSourceBucket.HISTORICAL_ISH):
+        RealizedPnlBuyFeeAllocationSource.HISTORICALLY_ESTIMATED,
+    (RealizedPnlBuyFeeAllocationSource.HISTORICALLY_ESTIMATED, _FeeTaxSourceBucket.CALCULATED_ISH):
+        RealizedPnlBuyFeeAllocationSource.PARTIALLY_ASSUMED_ZERO,
+    (RealizedPnlBuyFeeAllocationSource.HISTORICALLY_ESTIMATED, _FeeTaxSourceBucket.ZERO_ISH):
+        RealizedPnlBuyFeeAllocationSource.PARTIALLY_ASSUMED_ZERO,
+    (RealizedPnlBuyFeeAllocationSource.FULLY_ASSUMED_ZERO, _FeeTaxSourceBucket.ZERO_ISH):
+        RealizedPnlBuyFeeAllocationSource.FULLY_ASSUMED_ZERO,
+    (RealizedPnlBuyFeeAllocationSource.FULLY_ASSUMED_ZERO, _FeeTaxSourceBucket.CALCULATED_ISH):
+        RealizedPnlBuyFeeAllocationSource.PARTIALLY_ASSUMED_ZERO,
+    (RealizedPnlBuyFeeAllocationSource.FULLY_ASSUMED_ZERO, _FeeTaxSourceBucket.HISTORICAL_ISH):
+        RealizedPnlBuyFeeAllocationSource.PARTIALLY_ASSUMED_ZERO,
+    # PARTIALLY_ASSUMED_ZERO(이미 섞임)는 무엇이 오든 그대로 유지 —
+    # 아래 _merge_buy_fee_pool_provenance()의 fallback으로 처리한다.
+}
 
 __all__ = [
     "NormalizedFill",
@@ -240,24 +307,18 @@ def _merge_buy_fee_pool_provenance(
     """기존 pool provenance 요약에 새 BUY 1건의 fee_tax_source를 합친다.
 
     이동평균 원가는 BUY를 lot으로 구분하지 않으므로, pool도 "지금까지 쌓인
-    전체가 어떤 신뢰도로 구성돼 있는가"만 요약한다 — 한 번이라도 섞이면
+    전체가 어떤 신뢰도로 구성돼 있는가"만 요약한다 — 한 번이라도 서로 다른
+    3부류(calculated-ish/historical-ish/zero-ish)가 섞이면
     (``PARTIALLY_ASSUMED_ZERO``) 그 뒤로는 같은 종류의 BUY가 반복돼도
     "순수"로 되돌아가지 않는다(전량 청산 후 재진입해야만 리셋된다).
+
+    ``current``가 이미 ``PARTIALLY_ASSUMED_ZERO``면 무엇이 오든 그대로
+    유지한다(``_MERGE_TABLE``에 그 키가 없으므로 fallback으로 처리).
     """
-    new_is_calculated_ish = new_fee_tax_source in _CALCULATED_ISH_FEE_TAX_SOURCES
-    if current == RealizedPnlBuyFeeAllocationSource.FULLY_CALCULATED:
-        return (
-            RealizedPnlBuyFeeAllocationSource.FULLY_CALCULATED
-            if new_is_calculated_ish
-            else RealizedPnlBuyFeeAllocationSource.PARTIALLY_ASSUMED_ZERO
-        )
-    if current == RealizedPnlBuyFeeAllocationSource.FULLY_ASSUMED_ZERO:
-        return (
-            RealizedPnlBuyFeeAllocationSource.FULLY_ASSUMED_ZERO
-            if not new_is_calculated_ish
-            else RealizedPnlBuyFeeAllocationSource.PARTIALLY_ASSUMED_ZERO
-        )
-    return RealizedPnlBuyFeeAllocationSource.PARTIALLY_ASSUMED_ZERO
+    new_bucket = _classify_fee_tax_source_for_pool(new_fee_tax_source)
+    return _MERGE_TABLE.get(
+        (current, new_bucket), RealizedPnlBuyFeeAllocationSource.PARTIALLY_ASSUMED_ZERO
+    )
 
 
 def _apply_buy(
@@ -268,11 +329,9 @@ def _apply_buy(
         new_quantity = fill.quantity
         new_average_cost = fill.price
         new_pool = fill.fee
-        new_provenance = (
-            RealizedPnlBuyFeeAllocationSource.FULLY_CALCULATED
-            if fill.fee_tax_source in _CALCULATED_ISH_FEE_TAX_SOURCES
-            else RealizedPnlBuyFeeAllocationSource.FULLY_ASSUMED_ZERO
-        )
+        new_provenance = _FRESH_ENTRY_PROVENANCE_BY_BUCKET[
+            _classify_fee_tax_source_for_pool(fill.fee_tax_source)
+        ]
     else:
         new_quantity = state.quantity + fill.quantity
         new_average_cost = (
