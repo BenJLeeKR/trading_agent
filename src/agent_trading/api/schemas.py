@@ -2997,6 +2997,10 @@ class RealizedPnlEventView(BaseModel):
     realized_pnl_net: Decimal
     position_quantity_after: Decimal
     fill_timestamp: datetime
+    allocated_buy_fee: Decimal
+    """이번 SELL에 매수 수수료 pool에서 배분된 몫(``fee``와는 분리 보존)."""
+    buy_fee_allocation_source: str
+    """``allocated_buy_fee``가 배분된 pool의 provenance 요약."""
 
 
 class RealizedPnlEventsResponse(BaseModel):

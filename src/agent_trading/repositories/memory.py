@@ -1207,6 +1207,8 @@ class InMemoryRealizedPnlEventRepository:
                 realized_pnl_net=event.realized_pnl_net,
                 position_quantity_after=event.position_quantity_after,
                 computation_run_id=event.computation_run_id,
+                allocated_buy_fee=event.allocated_buy_fee,
+                buy_fee_allocation_source=event.buy_fee_allocation_source,
             )
             self._items[existing_id] = updated
             return updated

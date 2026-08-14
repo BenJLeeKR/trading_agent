@@ -13,6 +13,7 @@ from agent_trading.domain.enums import (
     OrderSide,
     OrderStatus,
     OrderType,
+    RealizedPnlBuyFeeAllocationSource,
     RealizedPnlComputationRunType,
     RealizedPnlFeeTaxSource,
     TimeInForce,
@@ -500,6 +501,15 @@ class PositionCostBasisStateEntity:
     recompute_required: bool = False
     recompute_reason: str | None = None
     updated_at: datetime | None = None
+    remaining_buy_fee_pool: Decimal = Decimal("0")
+    """현재 보유 수량에 대응하는, 아직 SELL에 배분되지 않은 누적 매수
+    수수료(``average_cost``는 건드리지 않는다 — 설계 문서 12번 14절).
+    불변식: ``quantity == 0`` 이면 이 값도 항상 ``0``이다(완전청산 시
+    ``_apply_sell``이 전액 배분해 정확히 0으로 리셋한다)."""
+    buy_fee_pool_provenance: RealizedPnlBuyFeeAllocationSource = (
+        RealizedPnlBuyFeeAllocationSource.FULLY_ASSUMED_ZERO
+    )
+    """``remaining_buy_fee_pool``을 구성하는 BUY들의 fee_tax_source 요약."""
 
 
 @dataclass(slots=True, frozen=True)
@@ -530,6 +540,16 @@ class RealizedPnlEventEntity:
     fill_timestamp: datetime
     superseded_by_event_id: UUID | None = None
     created_at: datetime | None = None
+    allocated_buy_fee: Decimal = Decimal("0")
+    """이번 SELL에 ``remaining_buy_fee_pool``에서 배분된 매수 수수료 몫.
+
+    ``fee``(이번 SELL 자체의 매도 수수료)와는 감사 목적상 분리 보존한다 —
+    합쳐 넣지 않는다(설계 문서 12번 14절)."""
+    buy_fee_allocation_source: RealizedPnlBuyFeeAllocationSource = (
+        RealizedPnlBuyFeeAllocationSource.FULLY_ASSUMED_ZERO
+    )
+    """``allocated_buy_fee``가 배분된 시점의 ``remaining_buy_fee_pool``
+    provenance 요약(이벤트 시점 스냅샷)."""
 
 
 @dataclass(slots=True, frozen=True)
