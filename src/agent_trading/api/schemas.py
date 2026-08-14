@@ -2896,6 +2896,27 @@ class RealizedPnlEventsResponse(BaseModel):
     events: list[RealizedPnlEventView]
 
 
+class RealizedPnlProvenanceBreakdown(BaseModel):
+    """provenance(``fee_tax_source``)별 이벤트 건수 분포 — 4키 고정.
+
+    설계 근거: docs/00_foundational_design/detailed_design/
+    12_realized_pnl_moving_average_ledger.md 13.5절.
+
+    집계 단위(일자/종목/요약)에는 서로 다른 provenance를 가진 이벤트가
+    섞일 수 있다 — 대표값 하나로 뭉개거나 provenance 자체를 숨기지 않고,
+    4개 값 각각의 건수를 그대로 노출한다. 0건인 provenance도 키 자체는
+    항상 포함한다(응답에서 빠진 것과 "0건"을 구분하기 위함). 이번 계약은
+    **건수 기준만** 다룬다 — 금액 합계 breakdown은 범위 밖이다(13.6절).
+    """
+
+    model_config = ConfigDict(from_attributes=True)
+
+    reported: int = 0
+    assumed_zero: int = 0
+    calculated_from_policy: int = 0
+    policy_not_applicable: int = 0
+
+
 class RealizedPnlDailyAggregateView(BaseModel):
     """``GET /performance/realized-pnl/daily`` 한 행 — 일자별 realized PnL aggregate.
 
@@ -2905,6 +2926,10 @@ class RealizedPnlDailyAggregateView(BaseModel):
     실현손익 화면(design/realized_pnl_screen_spec.md)을 위한 UI용 파생
     합계 캐시다 — ``realized_pnl_events``의 기존 필드를 그대로 합산한
     값이며 새로운 손익 계산식이 아니다.
+
+    ``provenance_breakdown``은 이 날짜(``/daily-summary``는 계좌 전체,
+    ``/daily``는 단일 종목)에 속한 ``realized_pnl_events``를
+    ``fee_tax_source``별로 건수만 센 값이다 — 계산이 아니라 단순 집계다.
     """
 
     model_config = ConfigDict(from_attributes=True)
@@ -2915,6 +2940,9 @@ class RealizedPnlDailyAggregateView(BaseModel):
     buy_amount_sum: Decimal = Decimal("0")
     sell_amount_sum: Decimal = Decimal("0")
     fee_tax_sum: Decimal = Decimal("0")
+    provenance_breakdown: RealizedPnlProvenanceBreakdown = Field(
+        default_factory=RealizedPnlProvenanceBreakdown
+    )
 
 
 class RealizedPnlDailyResponse(BaseModel):
@@ -2989,6 +3017,9 @@ class RealizedPnlSummaryInstrumentView(BaseModel):
     sell_amount_sum: Decimal
     fee_tax_sum: Decimal
     recompute_required: bool
+    provenance_breakdown: RealizedPnlProvenanceBreakdown = Field(
+        default_factory=RealizedPnlProvenanceBreakdown
+    )
 
 
 class RealizedPnlSummaryResponse(BaseModel):
@@ -3011,6 +3042,9 @@ class RealizedPnlSummaryResponse(BaseModel):
     sell_amount_sum: Decimal
     fee_tax_sum: Decimal
     recompute_pending_count: int
+    provenance_breakdown: RealizedPnlProvenanceBreakdown = Field(
+        default_factory=RealizedPnlProvenanceBreakdown
+    )
     by_instrument: list[RealizedPnlSummaryInstrumentView]
 
 

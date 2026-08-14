@@ -32,7 +32,8 @@ Authoritative source 요약
 
 from __future__ import annotations
 
-from datetime import date, datetime
+from collections.abc import Sequence
+from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 from uuid import UUID
 
@@ -47,17 +48,54 @@ from agent_trading.api.schemas import (
     RealizedPnlEventsResponse,
     RealizedPnlEventView,
     RealizedPnlPositionView,
+    RealizedPnlProvenanceBreakdown,
     RealizedPnlRecomputeQueueItemView,
     RealizedPnlRecomputeQueueResponse,
     RealizedPnlSummaryInstrumentView,
     RealizedPnlSummaryResponse,
 )
+from agent_trading.domain.entities import RealizedPnlEventEntity
 from agent_trading.repositories.container import RepositoryContainer
 
 router = APIRouter(tags=["realized-pnl"])
 
 _DEFAULT_EVENTS_LIMIT = 200
 _DEFAULT_RECOMPUTE_QUEUE_LIMIT = 100
+
+_KST = timezone(timedelta(hours=9))
+
+
+def _to_kst_trade_date(fill_timestamp: datetime) -> date:
+    """``fill_timestamp``(UTC)를 KST 날짜로 변환한다.
+
+    ``realized_pnl_daily_aggregates.trade_date``와 동일한 정책
+    (``fill_history_sync.py``의 ``_KST`` 상수, ``to_kst_trade_date()``와
+    동일)이다 — ``provenance_breakdown``을 일자별로 묶을 때만 쓰는
+    표시 전용 변환이며, 계산에는 관여하지 않는다.
+    """
+    return fill_timestamp.astimezone(_KST).date()
+
+
+def _tally_provenance_breakdown(
+    events: Sequence[RealizedPnlEventEntity],
+) -> RealizedPnlProvenanceBreakdown:
+    """``fee_tax_source``별 건수만 센다 — 계산이 아니라 단순 집계다.
+
+    4키(``reported``/``assumed_zero``/``calculated_from_policy``/
+    ``policy_not_applicable``)는 항상 전부 포함한다(0건이어도 키 자체는
+    유지 — 설계 문서 12번 13.5절).
+    """
+    counts = {
+        "reported": 0,
+        "assumed_zero": 0,
+        "calculated_from_policy": 0,
+        "policy_not_applicable": 0,
+    }
+    for event in events:
+        key = event.fee_tax_source.value
+        if key in counts:
+            counts[key] += 1
+    return RealizedPnlProvenanceBreakdown(**counts)
 
 
 def _parse_uuid(value: str, *, field: str, request_path: str) -> UUID:
@@ -229,12 +267,29 @@ async def list_realized_pnl_daily(
         aid, iid, start_date=sd, end_date=ed
     )
 
+    events = await repos.realized_pnl_events.list_by_account(
+        aid, start_date=sd, end_date=ed
+    )
+    events_by_date: dict[date, list[RealizedPnlEventEntity]] = {}
+    for event in events:
+        if event.instrument_id != iid:
+            continue
+        events_by_date.setdefault(_to_kst_trade_date(event.fill_timestamp), []).append(event)
+
+    daily: list[RealizedPnlDailyAggregateView] = []
+    for row in rows:
+        view = RealizedPnlDailyAggregateView.model_validate(row)
+        view.provenance_breakdown = _tally_provenance_breakdown(
+            events_by_date.get(row.trade_date, [])
+        )
+        daily.append(view)
+
     return RealizedPnlDailyResponse(
         account_id=aid,
         instrument_id=iid,
         start_date=sd,
         end_date=ed,
-        daily=[RealizedPnlDailyAggregateView.model_validate(r) for r in rows],
+        daily=daily,
     )
 
 
@@ -290,6 +345,13 @@ async def get_realized_pnl_summary(
     recompute_by_instrument: dict[UUID, bool] = {}
     target_instrument_id: UUID | None = None
 
+    all_events = await repos.realized_pnl_events.list_by_account(
+        aid, start_date=sd, end_date=ed
+    )
+    events_by_instrument: dict[UUID, list[RealizedPnlEventEntity]] = {}
+    for event in all_events:
+        events_by_instrument.setdefault(event.instrument_id, []).append(event)
+
     if instrument_id is not None:
         iid = _parse_uuid(instrument_id, field="instrument_id", request_path=request_path)
         target_instrument_id = iid
@@ -320,6 +382,12 @@ async def get_realized_pnl_summary(
     total_sell = Decimal("0")
     total_fee_tax = Decimal("0")
     recompute_pending_count = 0
+    total_provenance_counts = {
+        "reported": 0,
+        "assumed_zero": 0,
+        "calculated_from_policy": 0,
+        "policy_not_applicable": 0,
+    }
 
     for iid_key in sorted(grouped, key=str):
         agg_rows = grouped[iid_key]
@@ -331,6 +399,9 @@ async def get_realized_pnl_summary(
         recompute_required = recompute_by_instrument.get(iid_key, False)
 
         inst = await repos.instruments.get(iid_key)
+        instrument_breakdown = _tally_provenance_breakdown(
+            events_by_instrument.get(iid_key, [])
+        )
         by_instrument.append(
             RealizedPnlSummaryInstrumentView(
                 instrument_id=iid_key,
@@ -342,8 +413,13 @@ async def get_realized_pnl_summary(
                 sell_amount_sum=sell,
                 fee_tax_sum=fee_tax,
                 recompute_required=recompute_required,
+                provenance_breakdown=instrument_breakdown,
             )
         )
+        for provenance_key in total_provenance_counts:
+            total_provenance_counts[provenance_key] += getattr(
+                instrument_breakdown, provenance_key
+            )
 
         total_net += net
         total_count += count
@@ -364,6 +440,7 @@ async def get_realized_pnl_summary(
         sell_amount_sum=total_sell,
         fee_tax_sum=total_fee_tax,
         recompute_pending_count=recompute_pending_count,
+        provenance_breakdown=RealizedPnlProvenanceBreakdown(**total_provenance_counts),
         by_instrument=by_instrument,
     )
 
@@ -416,6 +493,13 @@ async def get_realized_pnl_daily_summary(
     for row in rows:
         grouped.setdefault(row.trade_date, []).append(row)
 
+    events = await repos.realized_pnl_events.list_by_account(
+        aid, start_date=sd, end_date=ed
+    )
+    events_by_date: dict[date, list[RealizedPnlEventEntity]] = {}
+    for event in events:
+        events_by_date.setdefault(_to_kst_trade_date(event.fill_timestamp), []).append(event)
+
     daily: list[RealizedPnlDailyAggregateView] = []
     for trade_date in sorted(grouped):
         day_rows = grouped[trade_date]
@@ -433,6 +517,9 @@ async def get_realized_pnl_daily_summary(
                     (r.sell_amount_sum for r in day_rows), Decimal("0")
                 ),
                 fee_tax_sum=sum((r.fee_tax_sum for r in day_rows), Decimal("0")),
+                provenance_breakdown=_tally_provenance_breakdown(
+                    events_by_date.get(trade_date, [])
+                ),
             )
         )
 

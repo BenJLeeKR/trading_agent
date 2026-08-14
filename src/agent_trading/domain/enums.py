@@ -217,14 +217,29 @@ class RealizedPnlComputationRunType(str, Enum):
 class RealizedPnlFeeTaxSource(str, Enum):
     """실현 손익 이벤트의 수수료/세금 출처 구분.
 
-    ``trading.realized_pnl_events.fee_tax_source`` CHECK 제약과 동일한 2개
-    값으로 닫혀 있다. 계산 엔진이 매 이벤트 생성 시 항상 채워야 하는
-    계산 provenance 필드이며(설계 문서 3.3절), 브로커가 fee/tax를 보고하지
-    않아 0으로 간주한 경우와 실제 보고값을 구분해 정확도를 추적한다.
+    ``trading.realized_pnl_events.fee_tax_source`` CHECK 제약과 동일한 4개
+    값으로 닫혀 있다(설계 문서 12번 13절). 계산 엔진이 매 이벤트 생성 시
+    항상 채워야 하는 계산 provenance 필드다. 4값은 서로 배타적이며,
+    판정 순서는 항상 "자산군/시장군이 정책 지원 대상인가 → (지원 대상이면)
+    활성 정책이 있는가"다 — 지원 대상이 아니면 ``POLICY_NOT_APPLICABLE``,
+    지원 대상인데 정책이 없으면 ``ASSUMED_ZERO``다.
+
+    - ``REPORTED``: 브로커가 fee/tax를 직접 보고한 값.
+    - ``CALCULATED_FROM_POLICY``: 지원 대상 자산군·시장군이고 활성 정책값이
+      있어 우리가 계산한 값.
+    - ``ASSUMED_ZERO``: 지원 대상 자산군인데 정책이 아직 없거나 비활성이라
+      0으로 간주한 값.
+    - ``POLICY_NOT_APPLICABLE``: 이 정책의 지원 대상 자산군/시장군이 애초에
+      아니라서 계산을 시도조차 하지 않은 경우.
+
+    ``REPORTED``의 0과 ``ASSUMED_ZERO``의 0은 의미가 다르다 — 전자는
+    브로커가 확정해 준 0, 후자는 우리가 모른다는 뜻으로 채운 0이다.
     """
 
     REPORTED = "reported"
     ASSUMED_ZERO = "assumed_zero"
+    CALCULATED_FROM_POLICY = "calculated_from_policy"
+    POLICY_NOT_APPLICABLE = "policy_not_applicable"
 
 
 class SourceReliabilityTier(str, Enum):

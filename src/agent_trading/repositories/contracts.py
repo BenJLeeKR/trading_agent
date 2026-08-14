@@ -1002,6 +1002,25 @@ class RealizedPnlEventRepository(Protocol):
         """
         ...
 
+    async def list_by_account(
+        self,
+        account_id: UUID,
+        *,
+        start_date: date | None = None,
+        end_date: date | None = None,
+    ) -> Sequence[RealizedPnlEventEntity]:
+        """계좌의 모든 종목에 대한 realized_pnl_events를 종목 필터 없이
+
+        단일 조회로 반환한다(``RealizedPnlDailyAggregateRepository.
+        list_by_account()``와 동일한 목적 — 종목마다 반복 조회하는 N+1을
+        피하기 위함). ``start_date``/``end_date``는 ``fill_timestamp``를
+        KST 날짜로 변환한 값 기준이다(``realized_pnl_ledger_service.
+        to_kst_trade_date()``와 동일 정책). 설계 문서 12번 13절의
+        ``provenance_breakdown`` 집계 전용 경로이며, 계산은 하지 않는다
+        — 정렬 순서도 보장하지 않는다.
+        """
+        ...
+
 
 class RealizedPnlDailyAggregateRepository(Protocol):
     """조회 성능용 일자 집계 캐시 저장소.

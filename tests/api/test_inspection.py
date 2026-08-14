@@ -2082,7 +2082,16 @@ class TestRealizedPnl:
         asyncio.run(repos.position_cost_basis_states.upsert(state))
         return state
 
-    def _seed_event(self, repos, *, account_id, instrument_id, fill_timestamp, realized_pnl_net):
+    def _seed_event(
+        self,
+        repos,
+        *,
+        account_id,
+        instrument_id,
+        fill_timestamp,
+        realized_pnl_net,
+        fee_tax_source=RealizedPnlFeeTaxSource.REPORTED,
+    ):
         event = RealizedPnlEventEntity(
             realized_pnl_event_id=uuid4(),
             account_id=account_id,
@@ -2095,7 +2104,7 @@ class TestRealizedPnl:
             avg_cost_basis_before=Decimal("100"),
             fee=Decimal("10"),
             tax=Decimal("5"),
-            fee_tax_source=RealizedPnlFeeTaxSource.REPORTED,
+            fee_tax_source=fee_tax_source,
             realized_pnl_gross=Decimal(realized_pnl_net) + Decimal("15"),
             realized_pnl_net=Decimal(realized_pnl_net),
             position_quantity_after=Decimal("5"),
@@ -2303,6 +2312,70 @@ class TestRealizedPnl:
         assert response.status_code == 200
         assert response.json()["daily"] == []
 
+    def test_daily_provenance_breakdown_counts_events_by_source(self) -> None:
+        """provenance_breakdown이 fee_tax_source별 건수를 4키 고정으로 반환한다."""
+        repos, app = self._build()
+        account_id = uuid4()
+        instrument_id = uuid4()
+        self._seed_daily(
+            repos, account_id=account_id, instrument_id=instrument_id,
+            trade_date=date(2026, 8, 5), net_sum="200", count=2,
+        )
+        self._seed_event(
+            repos, account_id=account_id, instrument_id=instrument_id,
+            fill_timestamp=datetime(2026, 8, 5, 0, 0, tzinfo=timezone.utc),
+            realized_pnl_net="80", fee_tax_source=RealizedPnlFeeTaxSource.CALCULATED_FROM_POLICY,
+        )
+        self._seed_event(
+            repos, account_id=account_id, instrument_id=instrument_id,
+            fill_timestamp=datetime(2026, 8, 5, 1, 0, tzinfo=timezone.utc),
+            realized_pnl_net="120", fee_tax_source=RealizedPnlFeeTaxSource.ASSUMED_ZERO,
+        )
+        # 다른 날짜 이벤트 — 이 조회의 breakdown에 섞이면 안 된다(기간 밖).
+        self._seed_event(
+            repos, account_id=account_id, instrument_id=instrument_id,
+            fill_timestamp=datetime(2026, 8, 6, 0, 0, tzinfo=timezone.utc),
+            realized_pnl_net="50", fee_tax_source=RealizedPnlFeeTaxSource.REPORTED,
+        )
+
+        with TestClient(app) as client:
+            response = client.get(
+                f"/performance/realized-pnl/daily?account_id={account_id}&instrument_id={instrument_id}"
+                "&start_date=2026-08-05&end_date=2026-08-05"
+            )
+        assert response.status_code == 200
+        data = response.json()
+        assert len(data["daily"]) == 1
+        assert data["daily"][0]["provenance_breakdown"] == {
+            "reported": 0,
+            "assumed_zero": 1,
+            "calculated_from_policy": 1,
+            "policy_not_applicable": 0,
+        }
+
+    def test_daily_provenance_breakdown_defaults_to_all_zero(self) -> None:
+        """이벤트가 없으면 4키 모두 0으로 채워진 breakdown이 그대로 온다(키 생략 없음)."""
+        repos, app = self._build()
+        account_id = uuid4()
+        instrument_id = uuid4()
+        self._seed_daily(
+            repos, account_id=account_id, instrument_id=instrument_id,
+            trade_date=date(2026, 8, 1), net_sum="100", count=1,
+        )
+
+        with TestClient(app) as client:
+            response = client.get(
+                f"/performance/realized-pnl/daily?account_id={account_id}&instrument_id={instrument_id}"
+            )
+        assert response.status_code == 200
+        data = response.json()
+        assert data["daily"][0]["provenance_breakdown"] == {
+            "reported": 0,
+            "assumed_zero": 0,
+            "calculated_from_policy": 0,
+            "policy_not_applicable": 0,
+        }
+
     def test_recompute_queue_filters_by_account(self) -> None:
         """recompute_required 상태를 야기한 pending 큐 항목을 계좌 기준으로 볼 수 있다."""
         repos, app = self._build()
@@ -2481,6 +2554,49 @@ class TestRealizedPnl:
         assert Decimal(str(data["realized_pnl_net_sum"])) == Decimal("0")
         assert data["recompute_pending_count"] == 0
 
+    def test_summary_provenance_breakdown_by_instrument_and_total(self) -> None:
+        """종목별 breakdown + 전체 합산 breakdown이 모두 정확해야 한다."""
+        repos, app = self._build()
+        account_id = uuid4()
+        instrument_a = uuid4()
+        instrument_b = uuid4()
+        self._seed_daily(
+            repos, account_id=account_id, instrument_id=instrument_a,
+            trade_date=date(2026, 8, 1), net_sum="100", count=1,
+        )
+        self._seed_daily(
+            repos, account_id=account_id, instrument_id=instrument_b,
+            trade_date=date(2026, 8, 2), net_sum="50", count=1,
+        )
+        self._seed_event(
+            repos, account_id=account_id, instrument_id=instrument_a,
+            fill_timestamp=datetime(2026, 8, 1, 0, 0, tzinfo=timezone.utc),
+            realized_pnl_net="100", fee_tax_source=RealizedPnlFeeTaxSource.CALCULATED_FROM_POLICY,
+        )
+        self._seed_event(
+            repos, account_id=account_id, instrument_id=instrument_b,
+            fill_timestamp=datetime(2026, 8, 2, 0, 0, tzinfo=timezone.utc),
+            realized_pnl_net="50", fee_tax_source=RealizedPnlFeeTaxSource.POLICY_NOT_APPLICABLE,
+        )
+
+        with TestClient(app) as client:
+            response = client.get(
+                f"/performance/realized-pnl/summary?account_id={account_id}"
+                "&start_date=2026-08-01&end_date=2026-08-31"
+            )
+        assert response.status_code == 200
+        data = response.json()
+        by_instrument = {row["instrument_id"]: row for row in data["by_instrument"]}
+        assert by_instrument[str(instrument_a)]["provenance_breakdown"] == {
+            "reported": 0, "assumed_zero": 0, "calculated_from_policy": 1, "policy_not_applicable": 0,
+        }
+        assert by_instrument[str(instrument_b)]["provenance_breakdown"] == {
+            "reported": 0, "assumed_zero": 0, "calculated_from_policy": 0, "policy_not_applicable": 1,
+        }
+        assert data["provenance_breakdown"] == {
+            "reported": 0, "assumed_zero": 0, "calculated_from_policy": 1, "policy_not_applicable": 1,
+        }
+
     def test_summary_invalid_date_range(self) -> None:
         _repos, app = self._build()
         with TestClient(app) as client:
@@ -2567,6 +2683,42 @@ class TestRealizedPnl:
         data = response.json()
         assert len(data["daily"]) == 1
         assert data["daily"][0]["trade_date"] == "2026-08-01"
+
+    def test_daily_summary_provenance_breakdown_across_instruments(self) -> None:
+        """같은 날짜에 서로 다른 종목의 이벤트가 있으면 건수가 합쳐져야 한다."""
+        repos, app = self._build()
+        account_id = uuid4()
+        instrument_a = uuid4()
+        instrument_b = uuid4()
+        self._seed_daily(
+            repos, account_id=account_id, instrument_id=instrument_a,
+            trade_date=date(2026, 8, 1), net_sum="100", count=1,
+        )
+        self._seed_daily(
+            repos, account_id=account_id, instrument_id=instrument_b,
+            trade_date=date(2026, 8, 1), net_sum="-20", count=1,
+        )
+        self._seed_event(
+            repos, account_id=account_id, instrument_id=instrument_a,
+            fill_timestamp=datetime(2026, 8, 1, 0, 0, tzinfo=timezone.utc),
+            realized_pnl_net="100", fee_tax_source=RealizedPnlFeeTaxSource.ASSUMED_ZERO,
+        )
+        self._seed_event(
+            repos, account_id=account_id, instrument_id=instrument_b,
+            fill_timestamp=datetime(2026, 8, 1, 1, 0, tzinfo=timezone.utc),
+            realized_pnl_net="-20", fee_tax_source=RealizedPnlFeeTaxSource.ASSUMED_ZERO,
+        )
+
+        with TestClient(app) as client:
+            response = client.get(
+                f"/performance/realized-pnl/daily-summary?account_id={account_id}"
+                "&start_date=2026-08-01&end_date=2026-08-31"
+            )
+        assert response.status_code == 200
+        data = response.json()
+        assert data["daily"][0]["provenance_breakdown"] == {
+            "reported": 0, "assumed_zero": 2, "calculated_from_policy": 0, "policy_not_applicable": 0,
+        }
 
     def test_daily_summary_empty_for_unknown_account(self) -> None:
         """활동이 전혀 없으면 빈 daily 배열을 반환한다(오류가 아니다)."""

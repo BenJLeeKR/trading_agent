@@ -1256,6 +1256,25 @@ class InMemoryRealizedPnlEventRepository:
         items.sort(key=lambda item: item.fill_timestamp)
         return tuple(items[:limit])
 
+    async def list_by_account(
+        self,
+        account_id: UUID,
+        *,
+        start_date: date | None = None,
+        end_date: date | None = None,
+    ) -> Sequence[RealizedPnlEventEntity]:
+        _kst = timezone(timedelta(hours=9))
+        items = [item for item in self._items.values() if item.account_id == account_id]
+        if start_date is not None:
+            items = [
+                item for item in items if item.fill_timestamp.astimezone(_kst).date() >= start_date
+            ]
+        if end_date is not None:
+            items = [
+                item for item in items if item.fill_timestamp.astimezone(_kst).date() <= end_date
+            ]
+        return tuple(items)
+
 
 class InMemoryRealizedPnlDailyAggregateRepository:
     def __init__(self) -> None:

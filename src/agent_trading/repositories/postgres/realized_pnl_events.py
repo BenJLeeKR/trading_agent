@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
-from datetime import datetime
+from datetime import date, datetime
 from uuid import UUID
 
 from agent_trading.db.row_mapper import row_to_entity
@@ -163,5 +163,31 @@ class PostgresRealizedPnlEventRepository:
             instrument_id,
             since,
             limit,
+        )
+        return tuple(row_to_entity(row, RealizedPnlEventEntity) for row in rows)
+
+    async def list_by_account(
+        self,
+        account_id: UUID,
+        *,
+        start_date: date | None = None,
+        end_date: date | None = None,
+    ) -> Sequence[RealizedPnlEventEntity]:
+        """계좌 전체(종목 필터 없음) — ``fill_timestamp``를 KST 날짜로
+
+        변환한 값이 ``[start_date, end_date]``에 들어오는 이벤트만 반환한다
+        (``AT TIME ZONE 'Asia/Seoul'``, ``fill_history_sync.py``의 ``_KST``
+        정책과 동일). ``provenance_breakdown`` 집계 전용 경로다.
+        """
+        rows = await self._tx.connection.fetch(
+            """
+            SELECT * FROM trading.realized_pnl_events
+            WHERE account_id = $1
+              AND ($2::date IS NULL OR (fill_timestamp AT TIME ZONE 'Asia/Seoul')::date >= $2)
+              AND ($3::date IS NULL OR (fill_timestamp AT TIME ZONE 'Asia/Seoul')::date <= $3)
+            """,
+            account_id,
+            start_date,
+            end_date,
         )
         return tuple(row_to_entity(row, RealizedPnlEventEntity) for row in rows)
