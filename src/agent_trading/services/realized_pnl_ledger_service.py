@@ -129,10 +129,19 @@ class _FillLineage:
 
 
 def _normalize_fee_tax(
-    fill_fee: Decimal | None, fill_tax: Decimal | None
+    fill_fee: Decimal | None,
+    fill_tax: Decimal | None,
+    *,
+    explicit_source: RealizedPnlFeeTaxSource | None = None,
 ) -> tuple[Decimal, Decimal, RealizedPnlFeeTaxSource]:
-    """fee/tax provenance 판정 규칙(고정).
+    """fee/tax provenance 판정 규칙.
 
+    ``explicit_source``가 주어지면(정책 기반 계산 경로, 설계 문서 12번
+    13절) 그 provenance를 그대로 신뢰한다 — ``fill_fee``/``fill_tax``의
+    None 여부로 재추론하지 않는다. 이 경로만이
+    ``CALCULATED_FROM_POLICY``/``POLICY_NOT_APPLICABLE``을 만들 수 있다.
+
+    ``explicit_source``가 없으면(기존 브로커 관측 경로, 하위 호환)
     ``fill_fee``와 ``fill_tax``가 **둘 다** ``None``이면 브로커가 아무것도
     보고하지 않은 것으로 보고 ``ASSUMED_ZERO``(둘 다 0)로 처리한다. 둘 중
     하나라도 값이 있으면(0을 명시적으로 보고한 경우 포함) ``REPORTED``로
@@ -140,6 +149,12 @@ def _normalize_fee_tax(
     ``FeeTaxSourceMismatchError`` 가드를 절대 위반하지 않도록 설계됐다
     (``ASSUMED_ZERO``는 오직 fee=0, tax=0 조합에서만 나온다).
     """
+    if explicit_source is not None:
+        return (
+            fill_fee if fill_fee is not None else Decimal("0"),
+            fill_tax if fill_tax is not None else Decimal("0"),
+            explicit_source,
+        )
     if fill_fee is None and fill_tax is None:
         return Decimal("0"), Decimal("0"), RealizedPnlFeeTaxSource.ASSUMED_ZERO
     return (
@@ -164,8 +179,21 @@ def build_normalized_fill(
     (``broker_order_id → broker_orders.order_request_id → order_requests``
     로 join해야 한다 — :meth:`RealizedPnlLedgerService._resolve_lineage`
     참고). 이 함수는 그 join이 이미 끝난 뒤의 순수 변환만 담당한다.
+
+    ``fill_event.fee_tax_source``가 채워져 있으면(정책 기반 계산 경로)
+    그 provenance를 그대로 쓴다 — 값이 4값 체계 밖의 알 수 없는 문자열이면
+    조용히 무시하지 않고 기존 None 기반 추론으로 폴백한다(방어적 처리이며,
+    정상 경로에서는 발생하지 않아야 한다).
     """
-    fee, tax, fee_tax_source = _normalize_fee_tax(fill_event.fill_fee, fill_event.fill_tax)
+    explicit_source: RealizedPnlFeeTaxSource | None = None
+    if fill_event.fee_tax_source is not None:
+        try:
+            explicit_source = RealizedPnlFeeTaxSource(fill_event.fee_tax_source)
+        except ValueError:
+            explicit_source = None
+    fee, tax, fee_tax_source = _normalize_fee_tax(
+        fill_event.fill_fee, fill_event.fill_tax, explicit_source=explicit_source
+    )
     return NormalizedFill(
         fill_event_id=fill_event.fill_event_id,
         account_id=account_id,

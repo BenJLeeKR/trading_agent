@@ -376,6 +376,7 @@ class FillEventEntity:
     broker_fill_id: str | None = None
     fill_fee: Decimal | None = None
     fill_tax: Decimal | None = None
+    fee_tax_source: str | None = None
     raw_payload_uri: str | None = None
     created_at: datetime | None = None
 

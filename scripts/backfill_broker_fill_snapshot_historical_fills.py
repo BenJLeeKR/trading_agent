@@ -125,6 +125,8 @@ def _print_plan_report(plan: BackfillPlan) -> None:
             f"    - order={candidate.order_request_id} "
             f"side={candidate.side.value} "
             f"qty={candidate.fill_quantity} price={candidate.fill_price} "
+            f"fee={candidate.fee} tax={candidate.tax} "
+            f"fee_tax_source={candidate.fee_tax_source.value} "
             f"fill_timestamp={candidate.fill_timestamp.isoformat()} "
             f"broker_fill_id={candidate.broker_fill_id} "
             f"source_snapshot={candidate.source_broker_fill_snapshot_id}"
