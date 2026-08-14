@@ -15,12 +15,15 @@ from uuid import uuid4
 import pytest
 
 from agent_trading.domain.entities import (
+    AccountEntity,
     BrokerFillSnapshotEntity,
     BrokerOrderEntity,
+    ConfigVersionEntity,
+    InstrumentEntity,
     OrderRequestEntity,
     PositionSnapshotEntity,
 )
-from agent_trading.domain.enums import OrderSide, OrderStatus, OrderType, TimeInForce
+from agent_trading.domain.enums import Environment, OrderSide, OrderStatus, OrderType, TimeInForce
 from agent_trading.repositories.bootstrap import build_in_memory_repositories
 from agent_trading.services.historical_fill_backfill import (
     BackfillExclusionReason,
@@ -489,3 +492,124 @@ class TestApplyGuards:
         assert result.applied is False
         assert result.fills_appended == 0
         assert result.recompute_queue_item_id is None
+
+
+class TestFeeTaxPolicyIntegration:
+    """정책 기반 fee/tax 계산이 backfill 경로에도 연결되는지 확인한다.
+
+    설계 근거: docs/00_foundational_design/detailed_design/
+    12_realized_pnl_moving_average_ledger.md 13절. 실시간 경로
+    (test_order_sync_service.py::TestFeeTaxPolicyIntegration)와 동일한
+    ``compute_fee_tax()``를 공유한다 — 계산 결과가 같은 정책값에 대해
+    같은 방식으로 나오는지가 핵심이다.
+    """
+
+    def _seed_account_and_instrument(
+        self, repos, *, account_id, instrument_id, asset_class="kr_stock",
+        market_segment="KOSPI",
+    ):
+        client_id = uuid4()
+        account = AccountEntity(
+            account_id=account_id, client_id=client_id, broker_account_id=uuid4(),
+            environment=Environment.PAPER, account_alias="backfill-fee-test",
+            account_masked="test-masked", status="active",
+        )
+        repos.accounts._items[account_id] = account  # type: ignore[attr-defined]
+        instrument = InstrumentEntity(
+            instrument_id=instrument_id, symbol="007070", market_code="KRX",
+            asset_class=asset_class, currency="KRW", name="테스트종목",
+            market_segment=market_segment,
+        )
+        repos.instruments._items[instrument_id] = instrument  # type: ignore[attr-defined]
+        return client_id
+
+    async def _seed_policy(self, repos, *, client_id, **overrides):
+        fee_tax = {
+            "enabled": True,
+            "supported_asset_classes": ["kr_stock"],
+            "supported_market_segments": ["KOSPI", "KOSDAQ"],
+            "buy_commission_rate_pct": "0.015",
+            "sell_commission_rate_pct": "0.015",
+            "sell_tax_rate_pct": "0.18",
+            "sell_agri_tax_rate_pct": "0.02",
+            "rounding_mode": "round_half_up",
+            "rounding_unit": "1",
+        }
+        fee_tax.update(overrides)
+        version = ConfigVersionEntity(
+            config_version_id=uuid4(), client_id=client_id, environment=Environment.PAPER,
+            version_tag="test", config_json={"execution": {"fee_tax": fee_tax}},
+            checksum="test", activated_at=_dt("2026-01-01 00:00:00"),
+        )
+        await repos.config_versions.add(version)
+
+    def _seed_single_buy_scenario(self, repos):
+        account_id = uuid4()
+        instrument_id = uuid4()
+        repos.position_snapshots._items[uuid4()] = _make_position(  # type: ignore[attr-defined]
+            account_id=account_id, instrument_id=instrument_id, quantity=Decimal("0"),
+            average_price=Decimal("0"), snapshot_at=_dt("2026-06-18 12:00:00"),
+        )
+        order = _make_order(
+            account_id=account_id, instrument_id=instrument_id, side=OrderSide.BUY,
+            requested_quantity=Decimal("176"), created_at=_dt("2026-08-10 08:58:36"),
+        )
+        broker_order = _make_broker_order(order, "0000000871")
+        repos.orders._items[order.order_request_id] = order  # type: ignore[attr-defined]
+        repos.broker_orders._items[broker_order.broker_order_id] = broker_order  # type: ignore[attr-defined]
+        snapshot = _make_snapshot(
+            account_id=account_id, order=order, native_id="0000000871",
+            filled_quantity=Decimal("176"), fill_price=Decimal("28000"),
+            updated_at=_dt("2026-08-10 09:01:05"),
+        )
+        repos.broker_fill_snapshots._items[snapshot.broker_fill_snapshot_id] = snapshot  # type: ignore[attr-defined]
+        repos.broker_fill_snapshots._by_dedupe_key[snapshot.dedupe_key] = (  # type: ignore[attr-defined]
+            snapshot.broker_fill_snapshot_id
+        )
+        return account_id, instrument_id
+
+    @pytest.mark.asyncio
+    async def test_calculated_from_policy_end_to_end_via_apply(self, repos):
+        account_id, instrument_id = self._seed_single_buy_scenario(repos)
+        client_id = self._seed_account_and_instrument(
+            repos, account_id=account_id, instrument_id=instrument_id,
+        )
+        await self._seed_policy(repos, client_id=client_id)
+
+        plan = await build_backfill_plan(
+            repos, account_id=account_id, instrument_id=instrument_id,
+            start_date=date(2026, 8, 1),
+        )
+        assert plan.eligible is True
+        assert len(plan.synthetic_fills) == 1
+        candidate = plan.synthetic_fills[0]
+        expected_fee = (Decimal("28000") * Decimal("176") * Decimal("0.015") / 100).to_integral_value()
+        assert candidate.fee == expected_fee
+        assert candidate.tax == Decimal("0")
+        assert candidate.fee_tax_source.value == "calculated_from_policy"
+
+        result = await apply_backfill_plan(repos, plan)
+        assert result.applied is True
+        broker_order_id = plan.order_details[0].candidates[0].broker_order_id
+        saved = await repos.fill_events.list_by_broker_order(broker_order_id)
+        assert len(saved) == 1
+        assert saved[0].fill_fee == expected_fee
+        assert saved[0].fee_tax_source == "calculated_from_policy"
+
+    @pytest.mark.asyncio
+    async def test_assumed_zero_when_no_policy_registered(self, repos):
+        account_id, instrument_id = self._seed_single_buy_scenario(repos)
+        self._seed_account_and_instrument(
+            repos, account_id=account_id, instrument_id=instrument_id,
+        )
+        # config_versions에는 아무것도 등록하지 않는다.
+
+        plan = await build_backfill_plan(
+            repos, account_id=account_id, instrument_id=instrument_id,
+            start_date=date(2026, 8, 1),
+        )
+        assert plan.eligible is True
+        candidate = plan.synthetic_fills[0]
+        assert candidate.fee == Decimal("0")
+        assert candidate.tax == Decimal("0")
+        assert candidate.fee_tax_source.value == "assumed_zero"

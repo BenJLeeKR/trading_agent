@@ -24,6 +24,7 @@ from agent_trading.domain.models import FillEvent, OrderStatusResult
 from agent_trading.repositories.container import RepositoryContainer
 from agent_trading.repositories.exceptions import is_postgres_error
 from agent_trading.repositories.filters import OrderQuery
+from agent_trading.services.kis_fee_tax_policy import compute_fee_tax
 from agent_trading.services.kis_fill_incremental_resolver import (
     IncrementalFillDecisionKind,
     resolve_incremental_fill,
@@ -754,6 +755,8 @@ class OrderSyncService:
                                 account_ref,
                                 since=broker_order.last_synced_at,
                                 account_id=order.account_id,
+                                instrument_id=order.instrument_id,
+                                side=order.side,
                             )
                         )
                         logger.info(
@@ -864,6 +867,8 @@ class OrderSyncService:
                 account_ref,
                 since=broker_order.last_synced_at,
                 account_id=order.account_id,
+                instrument_id=order.instrument_id,
+                side=order.side,
             )
 
         # ── 6.5. After-hours stuck active order → EXPIRED fallback ──
@@ -1570,6 +1575,8 @@ class OrderSyncService:
         account_ref: str,
         since: datetime | None,
         account_id: UUID,
+        instrument_id: UUID,
+        side: OrderSide,
     ) -> tuple[int, int]:
         """Fetch fill events from broker and persist new ones (dedup).
 
@@ -1724,6 +1731,20 @@ class OrderSyncService:
             # 관측에서 해소될지 다시 판단할 여지를 남긴다).
             return 0, incremental_counters.no_new_fill
 
+        # 정책 기반 fee/tax 계산에 필요한 계좌/종목 정보를 이 호출당 한 번만
+        # 조회한다(설계 문서 12번 13절) — fill마다 반복 조회하지 않는다.
+        # account/instrument가 없으면(FK 무결성상 사실상 발생하지 않아야
+        # 하지만) fee/tax 계산을 생략하고 조용히 assumed_zero로 남긴다 —
+        # fill 저장 자체를 막지 않는다는 기존 원칙과 동일하다.
+        account = await self.repos.accounts.get(account_id)
+        instrument = await self.repos.instruments.get(instrument_id)
+        if account is None or instrument is None:
+            logger.warning(
+                "fee/tax policy skipped — account or instrument missing: "
+                "account_id=%s instrument_id=%s broker_order=%s",
+                account_id, instrument_id, broker_order.broker_order_id,
+            )
+
         # Load existing fills for dedup.
         existing = await self.repos.fill_events.list_by_broker_order(
             broker_order.broker_order_id,
@@ -1766,6 +1787,31 @@ class OrderSyncService:
                     skipped += 1
                     continue
 
+            if fill.fee is not None or fill.tax is not None:
+                # 브로커가 실제로 fee/tax를 보고한 경우(현재 경로에서는
+                # 발생하지 않지만 향후를 위해 보존) — 정책 계산으로
+                # 덮어쓰지 않는다. provenance는 기존 None 기반 추론
+                # (realized_pnl_ledger_service._normalize_fee_tax)에 맡긴다
+                # — fee_tax_source를 여기서 "reported"로 직접 만들지 않는다.
+                computed_fee, computed_tax, computed_source = fill.fee, fill.tax, None
+            elif account is not None and instrument is not None:
+                fee_tax_result = await compute_fee_tax(
+                    self.repos,
+                    client_id=account.client_id,
+                    environment=account.environment,
+                    asset_class=instrument.asset_class,
+                    market_segment=instrument.market_segment,
+                    side=side,
+                    fill_price=fill.fill_price,
+                    fill_quantity=fill.fill_quantity,
+                    fill_timestamp=fill.fill_timestamp,
+                )
+                computed_fee = fee_tax_result.fee
+                computed_tax = fee_tax_result.tax
+                computed_source = fee_tax_result.fee_tax_source.value
+            else:
+                computed_fee, computed_tax, computed_source = None, None, None
+
             entity = FillEventEntity(
                 fill_event_id=uuid4(),
                 broker_order_id=broker_order.broker_order_id,
@@ -1774,8 +1820,9 @@ class OrderSyncService:
                 fill_quantity=fill.fill_quantity,
                 source_channel="rest_poll",
                 broker_fill_id=broker_fill_id,
-                fill_fee=fill.fee,
-                fill_tax=fill.tax,
+                fill_fee=computed_fee,
+                fill_tax=computed_tax,
+                fee_tax_source=computed_source,
             )
             await self.repos.fill_events.add(entity)
             if broker_fill_id:

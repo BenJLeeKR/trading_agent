@@ -24,7 +24,9 @@ from agent_trading.domain.entities import (
     BrokerAccountEntity,
     BrokerFillSnapshotEntity,
     BrokerOrderEntity,
+    ConfigVersionEntity,
     FillEventEntity,
+    InstrumentEntity,
     OrderRequestEntity,
     ReconciliationRunEntity,
 )
@@ -7951,3 +7953,188 @@ class TestFillSnapshotTruthProbeParallelSync:
             "shadow 모드에서도 kis_fill_cumulative_state 관측 자체는 갱신돼야 한다"
         )
         assert state.last_cumulative_filled_quantity == Decimal("6")
+
+
+# ═════════════════════════════════════════════════════════════════════
+# Test: 정책 기반 fee/tax 계산 (_sync_fills() 연결)
+# ═════════════════════════════════════════════════════════════════════
+
+
+def _seed_account_and_instrument(
+    repos: RepositoryContainer,
+    *,
+    account_id: UUID,
+    instrument_id: UUID,
+    asset_class: str = "kr_stock",
+    market_segment: str | None = "KOSPI",
+) -> UUID:
+    """계좌×종목을 in-memory repos에 직접 삽입하고 ``client_id``를 반환한다."""
+    client_id = uuid4()
+    account = AccountEntity(
+        account_id=account_id,
+        client_id=client_id,
+        broker_account_id=uuid4(),
+        environment=Environment.PAPER,
+        account_alias="fee-tax-test",
+        account_masked="test-masked",
+        status="active",
+    )
+    repos.accounts._items[account_id] = account  # type: ignore[attr-defined]
+    instrument = InstrumentEntity(
+        instrument_id=instrument_id,
+        symbol="005930",
+        market_code="KRX",
+        asset_class=asset_class,
+        currency="KRW",
+        name="테스트종목",
+        market_segment=market_segment,
+    )
+    repos.instruments._items[instrument_id] = instrument  # type: ignore[attr-defined]
+    return client_id
+
+
+async def _seed_fee_tax_policy(
+    repos: RepositoryContainer, *, client_id: UUID, **overrides
+) -> None:
+    fee_tax = {
+        "enabled": True,
+        "supported_asset_classes": ["kr_stock"],
+        "supported_market_segments": ["KOSPI", "KOSDAQ"],
+        "buy_commission_rate_pct": "0.015",
+        "sell_commission_rate_pct": "0.015",
+        "sell_tax_rate_pct": "0.18",
+        "sell_agri_tax_rate_pct": "0.02",
+        "rounding_mode": "round_half_up",
+        "rounding_unit": "1",
+    }
+    fee_tax.update(overrides)
+    version = ConfigVersionEntity(
+        config_version_id=uuid4(),
+        client_id=client_id,
+        environment=Environment.PAPER,
+        version_tag="test",
+        config_json={"execution": {"fee_tax": fee_tax}},
+        checksum="test",
+        activated_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
+    )
+    await repos.config_versions.add(version)
+
+
+class TestFeeTaxPolicyIntegration:
+    """``_sync_fills()``가 정책 기반 fee/tax 계산을 ``fill_events``에
+
+    반영하는지 확인한다 — 설계 근거: docs/00_foundational_design/
+    detailed_design/12_realized_pnl_moving_average_ledger.md 13절.
+    브로커 관측(``FillEvent.fee``/``.tax``)이 둘 다 ``None``인 경우에만
+    계산 함수가 호출된다(기존 브로커 보고 경로와 분기).
+    """
+
+    async def test_calculated_from_policy_when_policy_active(
+        self, repos: RepositoryContainer, sync_service: OrderSyncService,
+    ) -> None:
+        order = _make_order(repos, side=OrderSide.BUY)
+        broker_order = _make_broker_order(repos, order)
+        client_id = _seed_account_and_instrument(
+            repos, account_id=order.account_id, instrument_id=order.instrument_id,
+        )
+        await _seed_fee_tax_policy(repos, client_id=client_id)
+
+        fill = FillEvent(
+            broker_name=BrokerName.KOREA_INVESTMENT,
+            broker_order_id=broker_order.broker_native_order_id,
+            symbol="005930",
+            side=OrderSide.BUY,
+            fill_quantity=Decimal("10"),
+            fill_price=Decimal("50000"),
+            fill_timestamp=datetime.now(timezone.utc),
+            broker_fill_id="F-CALC-001",
+            fee=None,
+            tax=None,
+        )
+        broker = _StubBroker(status=OrderStatus.PARTIALLY_FILLED, fills=[fill])
+
+        synced, _skipped = await sync_service._sync_fills(
+            broker_order, broker, "test-account", since=None,
+            account_id=order.account_id, instrument_id=order.instrument_id, side=order.side,
+        )
+        assert synced == 1
+
+        saved = await repos.fill_events.list_by_broker_order(broker_order.broker_order_id)
+        assert len(saved) == 1
+        expected_fee = (Decimal("50000") * Decimal("10") * Decimal("0.015") / 100).to_integral_value()
+        assert saved[0].fill_fee == expected_fee
+        assert saved[0].fill_tax == Decimal("0")
+        assert saved[0].fee_tax_source == "calculated_from_policy"
+
+    async def test_assumed_zero_when_no_active_policy(
+        self, repos: RepositoryContainer, sync_service: OrderSyncService,
+    ) -> None:
+        order = _make_order(repos, side=OrderSide.BUY)
+        broker_order = _make_broker_order(repos, order)
+        # 계좌/종목은 seed하지만, config_versions에는 아무것도 등록하지 않는다.
+        _seed_account_and_instrument(
+            repos, account_id=order.account_id, instrument_id=order.instrument_id,
+        )
+
+        fill = FillEvent(
+            broker_name=BrokerName.KOREA_INVESTMENT,
+            broker_order_id=broker_order.broker_native_order_id,
+            symbol="005930",
+            side=OrderSide.BUY,
+            fill_quantity=Decimal("10"),
+            fill_price=Decimal("50000"),
+            fill_timestamp=datetime.now(timezone.utc),
+            broker_fill_id="F-ASSUMED-001",
+            fee=None,
+            tax=None,
+        )
+        broker = _StubBroker(status=OrderStatus.PARTIALLY_FILLED, fills=[fill])
+
+        synced, _skipped = await sync_service._sync_fills(
+            broker_order, broker, "test-account", since=None,
+            account_id=order.account_id, instrument_id=order.instrument_id, side=order.side,
+        )
+        assert synced == 1
+
+        saved = await repos.fill_events.list_by_broker_order(broker_order.broker_order_id)
+        assert len(saved) == 1
+        assert saved[0].fill_fee == Decimal("0")
+        assert saved[0].fill_tax == Decimal("0")
+        assert saved[0].fee_tax_source == "assumed_zero"
+
+    async def test_policy_not_applicable_when_asset_class_unsupported(
+        self, repos: RepositoryContainer, sync_service: OrderSyncService,
+    ) -> None:
+        order = _make_order(repos, side=OrderSide.SELL)
+        broker_order = _make_broker_order(repos, order)
+        client_id = _seed_account_and_instrument(
+            repos, account_id=order.account_id, instrument_id=order.instrument_id,
+            asset_class="kr_etf", market_segment="KOSPI",
+        )
+        await _seed_fee_tax_policy(repos, client_id=client_id)
+
+        fill = FillEvent(
+            broker_name=BrokerName.KOREA_INVESTMENT,
+            broker_order_id=broker_order.broker_native_order_id,
+            symbol="069500",
+            side=OrderSide.SELL,
+            fill_quantity=Decimal("10"),
+            fill_price=Decimal("50000"),
+            fill_timestamp=datetime.now(timezone.utc),
+            broker_fill_id="F-NA-001",
+            fee=None,
+            tax=None,
+        )
+        broker = _StubBroker(status=OrderStatus.PARTIALLY_FILLED, fills=[fill])
+
+        synced, _skipped = await sync_service._sync_fills(
+            broker_order, broker, "test-account", since=None,
+            account_id=order.account_id, instrument_id=order.instrument_id, side=order.side,
+        )
+        assert synced == 1
+
+        saved = await repos.fill_events.list_by_broker_order(broker_order.broker_order_id)
+        assert len(saved) == 1
+        assert saved[0].fill_fee == Decimal("0")
+        assert saved[0].fill_tax == Decimal("0")
+        assert saved[0].fee_tax_source == "policy_not_applicable"

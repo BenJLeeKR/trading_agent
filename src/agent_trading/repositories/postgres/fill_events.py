@@ -33,9 +33,9 @@ class PostgresFillEventRepository:
             INSERT INTO trading.fill_events
                 (fill_event_id, broker_order_id, broker_fill_id,
                  fill_timestamp, fill_price, fill_quantity,
-                 fill_fee, fill_tax,
+                 fill_fee, fill_tax, fee_tax_source,
                  source_channel, raw_payload_uri)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
             RETURNING *
             """,
             fill_event.fill_event_id,
@@ -46,6 +46,7 @@ class PostgresFillEventRepository:
             fill_event.fill_quantity,
             fill_event.fill_fee,
             fill_event.fill_tax,
+            fill_event.fee_tax_source,
             fill_event.source_channel,
             fill_event.raw_payload_uri,
         )

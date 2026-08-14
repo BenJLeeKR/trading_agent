@@ -45,8 +45,9 @@ from agent_trading.domain.entities import (
     PositionCostBasisStateEntity,
     RealizedPnlRecomputeQueueEntity,
 )
-from agent_trading.domain.enums import OrderSide, OrderStatus
+from agent_trading.domain.enums import OrderSide, OrderStatus, RealizedPnlFeeTaxSource
 from agent_trading.repositories.filters import OrderQuery
+from agent_trading.services.kis_fee_tax_policy import compute_fee_tax
 from agent_trading.services.kis_fill_incremental_resolver import _infer_delta_price
 
 if TYPE_CHECKING:
@@ -109,6 +110,9 @@ class SyntheticFillCandidate:
     fill_timestamp: datetime
     broker_fill_id: str | None
     source_broker_fill_snapshot_id: UUID
+    fee: Decimal = Decimal("0")
+    tax: Decimal = Decimal("0")
+    fee_tax_source: RealizedPnlFeeTaxSource = RealizedPnlFeeTaxSource.ASSUMED_ZERO
 
 
 @dataclass(slots=True, frozen=True)
@@ -253,6 +257,14 @@ async def build_backfill_plan(
     # 확인했으므로 window_orders와 동일하다).
     population_orders = window_orders
 
+    # 정책 기반 fee/tax 계산에 필요한 계좌/종목 정보를 이 호출당 한 번만
+    # 조회한다(설계 문서 12번 13절) — order/snapshot마다 반복 조회하지
+    # 않는다. account/instrument가 없으면(FK 무결성상 사실상 발생하지
+    # 않아야 하지만) fee/tax 계산은 생략하고 assumed_zero로 남긴다 —
+    # synthetic fill 복원 자체를 막지 않는다.
+    account = await repos.accounts.get(account_id)
+    instrument = await repos.instruments.get(instrument_id)
+
     order_request_ids = [o.order_request_id for o in population_orders]
     snapshots_by_order = await repos.broker_fill_snapshots.list_recent_by_order_ids(
         order_request_ids, limit_per_order=200
@@ -319,6 +331,27 @@ async def build_backfill_plan(
                 )
 
             fill_ts = snap.fill_timestamp or snap.updated_at or datetime.now(timezone.utc)
+
+            if account is not None and instrument is not None:
+                fee_tax_result = await compute_fee_tax(
+                    repos,
+                    client_id=account.client_id,
+                    environment=account.environment,
+                    asset_class=instrument.asset_class,
+                    market_segment=instrument.market_segment,
+                    side=order.side,
+                    fill_price=inferred_price,
+                    fill_quantity=delta_qty,
+                    fill_timestamp=fill_ts,
+                )
+                candidate_fee = fee_tax_result.fee
+                candidate_tax = fee_tax_result.tax
+                candidate_fee_tax_source = fee_tax_result.fee_tax_source
+            else:
+                candidate_fee = Decimal("0")
+                candidate_tax = Decimal("0")
+                candidate_fee_tax_source = RealizedPnlFeeTaxSource.ASSUMED_ZERO
+
             order_candidates.append(
                 SyntheticFillCandidate(
                     order_request_id=order.order_request_id,
@@ -331,6 +364,9 @@ async def build_backfill_plan(
                     fill_timestamp=fill_ts,
                     broker_fill_id=snap.broker_fill_id,
                     source_broker_fill_snapshot_id=snap.broker_fill_snapshot_id,
+                    fee=candidate_fee,
+                    tax=candidate_tax,
+                    fee_tax_source=candidate_fee_tax_source,
                 )
             )
             prior_qty = current_qty
@@ -470,6 +506,9 @@ async def apply_backfill_plan(
             fill_quantity=candidate.fill_quantity,
             source_channel="backfill",
             broker_fill_id=candidate.broker_fill_id,
+            fill_fee=candidate.fee,
+            fill_tax=candidate.tax,
+            fee_tax_source=candidate.fee_tax_source.value,
             raw_payload_uri=raw_payload_uri,
         )
         saved = await repos.fill_events.add(new_fill)
