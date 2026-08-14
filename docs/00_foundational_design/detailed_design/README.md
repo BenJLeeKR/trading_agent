@@ -65,6 +65,7 @@
    - KIS 실체결 기준 종목별 이동평균 매입원가·실현 손익 ledger
    - `position_cost_basis_state` / `realized_pnl_event` / `realized_pnl_daily_aggregate` 분리 설계
    - idempotency, out-of-order/중복/정정 처리, 장애 복구 계약
+   - 13절: `fee_tax_source` provenance 4값(`reported`/`assumed_zero`/`calculated_from_policy`/`policy_not_applicable`) 확장 계약 확정(구현 미착수) — migration 방향, `provenance_breakdown` API 계약 포함
    - 실행 계획: [`docs/40_action_plans/kis_realized_pnl_moving_average_action_plan.md`](../../40_action_plans/kis_realized_pnl_moving_average_action_plan.md)
 
 13. `13_loss_cut_policy_specification_and_config_path_design.md` (정책 명세 초안, 구현 미착수)

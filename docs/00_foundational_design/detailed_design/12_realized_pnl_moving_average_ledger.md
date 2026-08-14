@@ -16,6 +16,8 @@
 > - **아직 연결되지 않음**: 대규모 backfill CLI(수천 계좌×종목 순회), Admin UI를 `summary` endpoint로 전환.
 > - **idempotency 현재 보장 범위**: SELL은 `realized_pnl_events.fill_event_id` UNIQUE 조회로 완전히 감지된다. BUY는 `position_cost_basis_state.last_applied_fill_event_id`와의 일치만 확인하므로 "가장 최근에 적용된 fill과 정확히 같은 재적용"만 막는다 — 그보다 이전 BUY fill의 non-adjacent 중복 재적용은 실시간 반영 경로(`RealizedPnlLedgerService.apply_fill`)에서는 여전히 막히지 않는다. **다만 recompute/replay 경로는 이 한계를 물려받지 않는다** — replay는 반복 호출이 아니라 `fill_events` 테이블의 distinct 행을 정렬해 정확히 한 번씩만 훑으므로, 과거 incremental 반영이 실수로 잘못 누적했더라도 replay는 그 잘못된 상태를 신뢰하지 않고 원본 fill부터 다시 계산해 사실상의 안전망이 된다(자세한 설명은 `realized_pnl_recompute_service.py` 모듈 docstring).
 >
+> - **`fee_tax_source` 4값 확장 설계도 별도 검토 턴에서 계약까지 확정됐다(구현 미착수)** — `reported`/`assumed_zero` 2값을 `calculated_from_policy`/`policy_not_applicable`를 더한 4값 체계로 확장하는 결정, `VARCHAR(16)→VARCHAR(32)` migration 방향, 집계 API `provenance_breakdown` 최소 계약을 13절에 canonical하게 기록했다. 아직 코드/migration은 전혀 바뀌지 않았다 — 13절이 다음 구현 turn의 기준 문서다.
+>
 > 구현 순서와 단계 분리는 [`kis_realized_pnl_moving_average_action_plan.md`](../../40_action_plans/kis_realized_pnl_moving_average_action_plan.md)를 따른다.
 > **범위**: 국내주식(KIS) 계좌의 종목별 이동평균 매입원가 기반 실현 손익. FIFO는 2절에서 비교만 하고 이번 설계는 이동평균으로 확정한다.
 
@@ -361,3 +363,88 @@ ORDER BY fill_timestamp ASC, broker_fill_id ASC NULLS LAST, created_at ASC, fill
 - 매입(BUY) 수수료를 평균단가 계산에 포함하는 방식 검토(현재 v1은 미반영, 3.3절).
 - 숏 포지션 지원 여부 검토(현재는 계산 엔진이 예외로 실패만 하고, orchestration은 recompute_queue로 격리만 한다 — 지원 여부 자체는 미결정).
 - websocket fill writer 존재 여부 확인 후, 필요 시 5절 정렬 키 설계 재검토.
+
+## 13. `fee_tax_source` provenance 4값 확장 설계 (계약 확정, 구현 미착수)
+
+### 13.0 이 절의 성격 — 왜 문서로 먼저 고정하는가
+
+> **요약(3~6줄)**: 지금까지 `fee_tax_source`는 `reported`/`assumed_zero` 2값뿐이라 "정책이 없어서 0"과 "이 자산군은 애초에 계산 대상이 아니어서 0"을 구분하지 못했다. 이 구분이 없으면 향후 KOSPI/KOSDAQ `kr_stock` 외 자산군(예: 이미 DB에 1,145건 존재하는 `kr_etf`)이 실제로 거래되는 순간, 아무 경고 없이 부정확한 gross 값이 net처럼 노출될 위험이 있다. 그래서 `calculated_from_policy`/`policy_not_applicable`를 더한 4값 체계로 확장하기로 했다. repository 계층(postgres/memory)은 이미 provenance를 제네릭하게(enum 값 그대로) 다루도록 짜여 있어 **이번 확장만으로는 코드 수정이 필요 없다** — 실제로 손대야 하는 곳은 enum 정의, migration, API 응답 계약뿐이다. 계산 로직 자체를 구현하기 전에, 값 체계·저장 스키마·API 계약을 먼저 문서로 고정해 두면 다음 구현 turn이 "왜 이 4값인지"를 다시 논의하지 않고 바로 착수할 수 있다.
+
+이 절은 **read-only 코드/스키마 조사와 여러 차례의 설계 검토 turn을 거쳐 합의된 결정**을 기록한 것이다. 이번 문서화 turn 자체는 코드/migration/DB를 전혀 바꾸지 않았다 — 아래 내용은 전부 "다음 구현 turn이 그대로 따라야 할 계약"이며, 구현이 완료되면 이 절 상단에 "구현 현황" 배너를 추가하는 것이 이 문서 세트의 기존 관례(14/15/16번 문서와 동일)다.
+
+### 13.1 설계 결정 — 4값 체계
+
+`trading.realized_pnl_events.fee_tax_source`(및 `RealizedPnlFeeTaxSource` enum, [`domain/enums.py`](../../../src/agent_trading/domain/enums.py))를 아래 4값으로 확장한다.
+
+| 값 | 의미 |
+|---|---|
+| `reported` | 브로커가 fee/tax를 **직접** 보고한 값(현재 실시간 경로는 항상 `None`이라 사실상 미발생 — 향후 브로커 응답 개선 시를 위해 유지) |
+| `calculated_from_policy` | 지원 대상 자산군·시장군이고, 활성 정책값이 있어 **우리가 계산**한 값 |
+| `assumed_zero` | 지원 대상 자산군인데 **정책이 아직 없거나 비활성**이라 0으로 간주한 값 |
+| `policy_not_applicable` | **이 정책의 지원 대상 자산군/시장군이 애초에 아니라서** 계산을 시도조차 하지 않은 경우 |
+
+4값은 **서로 배타적**이다 — 하나의 `realized_pnl_event`는 정확히 하나의 provenance만 가진다. 판정 순서는 항상 "① 자산군/시장군이 정책 지원 대상인가 → ② (지원 대상이면) 활성 정책이 있는가"이며, ①에서 탈락하면 무조건 `policy_not_applicable`, ①을 통과하고 ②에서 탈락하면 `assumed_zero`다 — 이 우선순위를 코드가 뒤집으면 안 된다(예: 정책이 없다고 먼저 판단해 `assumed_zero`를 주고 자산군 확인을 건너뛰면, ETF 체결이 "정책 등록만 하면 해결되는 것"으로 잘못 보인다).
+
+**`reported`의 0과 `assumed_zero`의 0은 의미가 다르다.** 전자는 "브로커가 실제로 0원이라고 확정해 준 값"이고, 후자는 "우리가 모른다는 뜻으로 0을 채운 값"이다. 두 값이 숫자로는 똑같이 `0`이어도, provenance가 다르면 신뢰 수준이 완전히 다르다 — 이게 애초에 provenance 필드가 존재하는 이유다.
+
+### 13.2 경계 규칙 — `assumed_zero` vs `policy_not_applicable`
+
+| 상황 | provenance |
+|---|---|
+| 지원 자산군(코스피/코스닥 `kr_stock`)인데 정책이 아직 등록/활성화되지 않음 | `assumed_zero` |
+| 애초에 정책 대상이 아닌 자산군/시장군(예: `kr_etf`, `market_segment` 미분류) | `policy_not_applicable` |
+| 브로커가 fee/tax를 명시적으로 0으로 보고 | `reported`(값은 0이어도 provenance는 reported) |
+| 브로커가 필드 자체를 안 줘서(`None`) 0으로 간주 + 지원 자산군인데 정책 없음 | `assumed_zero` |
+
+우선순위 규칙(13.1 재확인): **자산군/시장군 지원 여부 확인이 항상 먼저이고, 정책 존재 여부 확인은 그다음이다.**
+
+### 13.3 저장 계층 영향 — 확인된 사실
+
+- `RealizedPnlEventEntity.fee_tax_source`([`domain/entities.py`](../../../src/agent_trading/domain/entities.py))는 **`RealizedPnlFeeTaxSource` enum 타입**이다(단순 `str`이 아님).
+- [`db/row_mapper.py`](../../../src/agent_trading/db/row_mapper.py)의 `row_to_entity()`가 "DB의 `str` 값 → 해당 `Enum` 서브클래스로 자동 변환"을 **이미 제네릭하게** 처리한다(`enum_type(value)` 호출) — 이 로직은 특정 enum 값을 나열하지 않으므로, `RealizedPnlFeeTaxSource`에 새 멤버가 추가돼도 **코드 수정 없이 그대로 동작**한다.
+- [`repositories/postgres/realized_pnl_events.py`](../../../src/agent_trading/repositories/postgres/realized_pnl_events.py)의 `add()`/`upsert()`는 `event.fee_tax_source.value`만 쓰고 특정 값 분기가 없다.
+- [`repositories/memory.py`](../../../src/agent_trading/repositories/memory.py)의 `InMemoryRealizedPnlEventRepository`는 entity 객체를 그대로 저장/치환할 뿐이다.
+- **결론(확정 사실)**: 이번 provenance 확장만으로는 위 두 repository 파일에 **코드 수정이 필요 없다.** 실제로 바뀌어야 하는 곳은 `domain/enums.py`(멤버 추가), migration(컬럼 폭 + CHECK), API 스키마/라우트뿐이다.
+
+### 13.4 migration 방향 (설계 수준 — 실제 SQL 최종본 아님)
+
+- **현재 상태**: `realized_pnl_events.fee_tax_source`는 `VARCHAR(16)`, CHECK는 `IN ('reported', 'assumed_zero')`([`db/migrations/0053_add_realized_pnl_ledger_tables.sql`](../../../db/migrations/0053_add_realized_pnl_ledger_tables.sql)).
+- **문제**: `calculated_from_policy`(22자), `policy_not_applicable`(21자) 둘 다 16자를 초과한다 — CHECK 값 목록만 바꾸면 컬럼 길이 자체에 막혀 INSERT가 실패한다.
+- **권장 방향**: `VARCHAR(32)`로 확장한다. 현재 최장 후보(22자)에 여유를 더한 값이며, `VARCHAR(64)`처럼 과하게 잡지 않는다 — 이 필드는 고정된 소수의 열거값만 담으므로 여유를 최소한으로만 둔다.
+- **권장 순서**(신규 migration, `0053` 후속 번호):
+  1. 기존 CHECK 제약(`ck_realized_pnl_events_fee_tax_source`) 제거.
+  2. 컬럼 타입을 `VARCHAR(16)`에서 `VARCHAR(32)`로 확장(폭을 넓히는 변경이므로 기존 값 `reported`/`assumed_zero`는 그대로 들어간다 — 데이터 손실/변환 문제 없음).
+  3. 새 CHECK 제약을 4값(`'reported'`, `'assumed_zero'`, `'calculated_from_policy'`, `'policy_not_applicable'`)으로 재추가.
+- **rollback 시 고려사항**: 새 값(`calculated_from_policy`/`policy_not_applicable`)이 이미 저장된 상태에서 컬럼을 다시 `VARCHAR(16)`으로 되돌리려 하면 실패한다 — rollback 스크립트는 "새 값이 실제로 쓰인 행이 있는지 먼저 확인하고, 있으면 rollback을 거부"하는 가드를 포함해야 한다. **다만 이 가드의 정확한 SQL은 이번 문서화 turn에서 확정하지 않는다 — 다음 구현 turn의 과제로 남긴다(13.6절).**
+
+### 13.5 API 계약
+
+- `RealizedPnlEventView.fee_tax_source: str`([`api/schemas.py`](../../../src/agent_trading/api/schemas.py)) 구조는 **유지 가능**하다 — 값 종류가 늘 뿐 필드 타입은 그대로다. 다만 **기존 UI/클라이언트가 새 값(`calculated_from_policy`/`policy_not_applicable`)을 만났을 때 안전하게(최소한 크래시 없이) 처리하는지는 별도로 확인이 필요하다** — 이번 문서화 turn에서 그 확인까지 마친 것은 아니다.
+- 집계 응답(`RealizedPnlDailyAggregateView` 등, [`api/routes/realized_pnl.py`](../../../src/agent_trading/api/routes/realized_pnl.py))에는 **`provenance_breakdown`을 4키 고정 딕셔너리로 추가하는 것을 기본안으로 한다**:
+  ```json
+  {
+    "reported": 0,
+    "assumed_zero": 1,
+    "calculated_from_policy": 3,
+    "policy_not_applicable": 0
+  }
+  ```
+  - 배열이 아니라 **딕셔너리**를 쓴다 — 소비자가 `breakdown.calculated_from_policy`로 바로 접근 가능하고, 순서/중복 문제가 없다.
+  - **4키는 항상 전부 포함한다**(0건이어도 키 자체는 유지) — 그래야 "이 값이 없어서 안 보이는지, 응답에서 빠진 것인지"를 소비자가 헷갈리지 않는다.
+  - **이번 최소 계약은 건수(count) 기준만 다룬다** — 금액 합계 breakdown은 13.6절 미확정 사항이다.
+  - 대안으로 "provenance 미노출 유지"/"대표 provenance 1개만 노출"도 검토했으나, 전자는 "gross인데 net이라 불리는" 원래 문제를 방치하고 후자는 여러 provenance가 섞였을 때 임의 규칙이 필요해져 기각했다.
+
+### 13.6 아직 확정하지 말아야 할 사항
+
+- `fee_tax_source_label`(사람이 읽는 설명 문자열) 필드 도입 여부.
+- `provenance_breakdown`에 금액 합계까지 포함할지 여부(이번엔 건수만).
+- rollback guard의 정확한 SQL.
+- 프런트/Admin UI에서 `policy_not_applicable`을 어떤 문구/경고로 노출할지.
+- 실제 fee/tax 계산 함수(정책값 기반 산출 로직) 연결 시점과 구현 상세 — 이 절은 provenance/저장/계약만 다루고 계산 로직 자체는 범위 밖이다.
+- `execution.fee_tax`라는 `config_versions` 정책 스키마 네임스페이스명과 세부 필드(별도 검토 turn에서 초안이 나왔으나, 이 절의 확정 대상이 아니다).
+
+### 13.7 구현 선후관계
+
+1. **provenance 4값 확정**(이 절, 완료) → 2. **migration 설계/적용**(13.4절 방향 확정, 실제 SQL 작성·실행은 다음 turn) → 3. **API 계약 확정/구현**(13.5절 방향 확정, 실제 스키마·라우트 수정은 다음 turn) → 4. **계산 함수 연결**(범위 밖, 별도 turn) → 5. **실제 구현/운영 반영**.
+
+이 순서가 맞는 이유: provenance 값 체계가 확정되지 않은 채 계산 함수부터 만들면 나중에 분기 로직을 다시 바꿔야 하고, migration 없이 API 계약만 먼저 정하면 실제로 그 값을 저장할 수 없는 상태에서 계약을 확정하게 된다 — 값→저장 스키마→계약→계산의 의존 순서를 그대로 따른 것이다.
