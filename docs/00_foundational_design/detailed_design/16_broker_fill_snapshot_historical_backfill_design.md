@@ -33,6 +33,10 @@ dry-run/승인 절차)의 최소 구현이 완료됐다.
   구현 턴은 코드/테스트만 완료했고, 확정된 후보(계좌 1개×종목 1개, 매수
   1건+매도 2건)에 대한 실제 apply는 별도로 사용자 승인을 받은 뒤 진행한다
   (§5.2의 "dry-run → 사람 승인 → 실제 apply" 절차를 그대로 유지).
+- **`historical_policy_estimate` override(별도 구현 턴, 완료)**: `001450`/
+  `004370` initial backfill 파일럿용 — `use_historical_policy_estimate_
+  for_buy_fee` opt-in 옵션. 상세는 §8.9. `007070`(overlay+recompute) 트랙과
+  완전히 별개다. 이번에도 실제 apply는 미실행 — 코드/테스트만 완료.
 
 **이 설계는 오직 과거 복원(backfill) 전용이다.** 아래 두 가지를 명확히 구분한다.
 
@@ -511,6 +515,58 @@ snapshot 목록 전체를 입력으로 받아 `IncrementalFillDecision`의 리�
   이는 "이번 backfill 대상에는 그 위험이 없다"는 확인이 되므로 보류
   이유는 아니지만, 만약 향후 범위를 넓히려는 시점에 정정/취소 흔적이
   있는 종목이 나타나면 그 확장은 반드시 별도 설계 turn으로 넘긴다.
+
+### 8.9 `historical_policy_estimate` — initial backfill 전용 BUY fee 추정 override(구현 완료)
+
+**배경**: `build_backfill_plan()`은 synthetic BUY fill의 fee를
+`compute_fee_tax()`로 계산하는데, 이 함수는 `get_active_at(fill_timestamp)`
+(그 체결 시각 기준 활성 정책)만 본다. `execution.fee_tax` 정책이 그 체결
+이후에야 등록된 경우(이 저장소에서 실제로 발생한 사례 — `001450`(BUY
+2026-08-12), `004370`(BUY 2026-08-09), 정책 활성 2026-08-14), 이 BUY는
+영원히 `assumed_zero`로 남는다. 앞으로 이 종목을 매도할 때 C안 확장형
+(`remaining_buy_fee_pool`, 12번 문서 14절)의 pool이 처음부터 비어 있게
+되어, 미래 SELL의 `allocated_buy_fee`가 구조적으로 과소평가된다.
+
+**이건 `007070`(이미 `fill_events`/`realized_pnl_events`가 존재하는
+overlay + recompute 문제)과 근본적으로 다르다** — `001450`/`004370`는
+아직 내부 원장 자체가 없는 **initial backfill 문제**다. 처음 `fill_events`
+를 만들 때부터 올바른 값을 채우면, 나중에 다시 손볼 필요가 없다.
+
+**구현**: `build_backfill_plan()`에 `use_historical_policy_estimate_for_buy_fee`
+(기본값 `False`) 옵션을 추가했다. `False`면 기존 동작과 100% 동일. `True`면,
+`_maybe_override_with_historical_policy_estimate()`가 아래 조건을 **전부**
+만족할 때만 override한다:
+
+1. `side == BUY`(SELL은 이 파일럿 범위 밖 — `007070` 트랙에서 별도 검토).
+2. 기본 `compute_fee_tax()` 결과가 `ASSUMED_ZERO`(= 그 시점엔 활성 정책이
+   없었음).
+3. **현재 시각**을 `fill_timestamp`로 넘겨 `compute_fee_tax()`를 다시
+   호출한 결과가 `CALCULATED_FROM_POLICY`로 성립함(= 지금은 활성 정책이
+   있고, 이 자산군/시장군이 지원 대상임 — `compute_fee_tax()` 자체의
+   판정 로직을 그대로 재사용해 별도 파싱/매칭 코드를 새로 만들지 않았다).
+
+override 시 provenance는 `calculated_from_policy`가 **아니라**
+`RealizedPnlFeeTaxSource.HISTORICAL_POLICY_ESTIMATE`(신규,
+`db/migrations/0060_add_historical_policy_estimate_fee_tax_source.sql`)로
+저장한다 — `calculated_from_policy`는 "그 시점에 실제 활성이던 정책으로
+계산됨"이라는 인과관계이고, `historical_policy_estimate`는 "그 시점엔
+없었지만 initial backfill 단계에서 현재 정책을 소급 추정으로 적용했다"는
+전혀 다른 인과관계이기 때문이다 — 절대 섞으면 안 된다(감사 가능성).
+
+`compute_fee_tax()` 자체, `get_active_at()` 의미론, 실시간 경로
+(`order_sync_service`)는 전혀 건드리지 않았다 — 이 override는
+`historical_fill_backfill.py` 내부에만 존재하는, 명시적 opt-in 후처리다.
+
+SELL이 없는 종목(`001450`, `004370` 둘 다 이 파일럿 window 안에서 매도
+0건)이라, `realized_pnl_events`/`remaining_buy_fee_pool`/`allocated_buy_fee`
+는 이번 구현에서 실측 대상이 아니다 — BUY fill이 `fill_events`에 올바른
+`fill_fee`/`fee_tax_source=historical_policy_estimate`로 저장되면, 이후
+실제 SELL이 발생할 때 기존 C안 확장형 경로(`realized_pnl_engine._apply_buy`)
+가 그 pool을 자연스럽게 채운다 — 이번 구현이 별도로 손댈 필요가 없다.
+
+CLI: `scripts/backfill_broker_fill_snapshot_historical_fills.py`에
+`--use-historical-policy-estimate-for-buy-fee`(기본값 off) 추가, dry-run
+리포트에 override된 fill을 `[HISTORICAL_POLICY_ESTIMATE]` 마커로 표시한다.
 
 ## 9. 리스크
 

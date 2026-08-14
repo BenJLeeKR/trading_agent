@@ -385,7 +385,9 @@ ORDER BY fill_timestamp ASC, broker_fill_id ASC NULLS LAST, created_at ASC, fill
 | `assumed_zero` | 지원 대상 자산군인데 **정책이 아직 없거나 비활성**이라 0으로 간주한 값 |
 | `policy_not_applicable` | **이 정책의 지원 대상 자산군/시장군이 애초에 아니라서** 계산을 시도조차 하지 않은 경우 |
 
-4값은 **서로 배타적**이다 — 하나의 `realized_pnl_event`는 정확히 하나의 provenance만 가진다. 판정 순서는 항상 "① 자산군/시장군이 정책 지원 대상인가 → ② (지원 대상이면) 활성 정책이 있는가"이며, ①에서 탈락하면 무조건 `policy_not_applicable`, ①을 통과하고 ②에서 탈락하면 `assumed_zero`다 — 이 우선순위를 코드가 뒤집으면 안 된다(예: 정책이 없다고 먼저 판단해 `assumed_zero`를 주고 자산군 확인을 건너뛰면, ETF 체결이 "정책 등록만 하면 해결되는 것"으로 잘못 보인다).
+> **[추가 turn] 5번째 값 `historical_policy_estimate` 신설**: initial backfill이 명시적 opt-in 옵션으로 BUY fee를 현재 활성 정책으로 소급 추정할 때만 쓰인다(위 4값과 절대 안 섞임 — `calculated_from_policy`는 "그 시점 실제 활성 정책"이라는 인과관계이고 이 값은 "나중에 소급 추정"이라는 다른 인과관계). 상세는 [`16_broker_fill_snapshot_historical_backfill_design.md`](16_broker_fill_snapshot_historical_backfill_design.md) §8.9, [`domain/enums.py`](../../../src/agent_trading/domain/enums.py). 이 절의 제목/아래 표는 그 이후 다시 갱신하지 않았으므로 "4값"이라는 표현은 이제 "5값 중 실시간 계산 경로에 쓰이는 4값"으로 읽어야 한다.
+
+4값(실시간 경로 기준)은 **서로 배타적**이다 — 하나의 `realized_pnl_event`는 정확히 하나의 provenance만 가진다. 판정 순서는 항상 "① 자산군/시장군이 정책 지원 대상인가 → ② (지원 대상이면) 활성 정책이 있는가"이며, ①에서 탈락하면 무조건 `policy_not_applicable`, ①을 통과하고 ②에서 탈락하면 `assumed_zero`다 — 이 우선순위를 코드가 뒤집으면 안 된다(예: 정책이 없다고 먼저 판단해 `assumed_zero`를 주고 자산군 확인을 건너뛰면, ETF 체결이 "정책 등록만 하면 해결되는 것"으로 잘못 보인다).
 
 **`reported`의 0과 `assumed_zero`의 0은 의미가 다르다.** 전자는 "브로커가 실제로 0원이라고 확정해 준 값"이고, 후자는 "우리가 모른다는 뜻으로 0을 채운 값"이다. 두 값이 숫자로는 똑같이 `0`이어도, provenance가 다르면 신뢰 수준이 완전히 다르다 — 이게 애초에 provenance 필드가 존재하는 이유다.
 

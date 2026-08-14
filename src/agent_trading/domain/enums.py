@@ -231,6 +231,16 @@ class RealizedPnlFeeTaxSource(str, Enum):
       0으로 간주한 값.
     - ``POLICY_NOT_APPLICABLE``: 이 정책의 지원 대상 자산군/시장군이 애초에
       아니라서 계산을 시도조차 하지 않은 경우.
+    - ``HISTORICAL_POLICY_ESTIMATE``: **실시간 계산이 아니다.** initial
+      backfill 시점에 그 체결 당시엔 활성 정책이 없었지만(그래서
+      ``compute_fee_tax()``가 그 체결 시각 기준으로는 ``ASSUMED_ZERO``를
+      반환했지만), 명시적 opt-in 옵션이 켜진 상태에서 **현재 활성 정책을
+      소급 추정으로 적용**한 값. ``CALCULATED_FROM_POLICY``와 절대 같은
+      의미가 아니다 — 후자는 "그 시점에 실제로 활성이던 정책으로 계산됐다"
+      는 인과관계이고, 전자는 "그 시점엔 없었지만 나중에 initial backfill
+      단계에서 지금 정책을 추정 삽입했다"는 인과관계다(설계 근거:
+      docs/00_foundational_design/detailed_design/16_broker_fill_snapshot_
+      historical_backfill_design.md §8).
 
     ``REPORTED``의 0과 ``ASSUMED_ZERO``의 0은 의미가 다르다 — 전자는
     브로커가 확정해 준 0, 후자는 우리가 모른다는 뜻으로 채운 0이다.
@@ -240,6 +250,7 @@ class RealizedPnlFeeTaxSource(str, Enum):
     ASSUMED_ZERO = "assumed_zero"
     CALCULATED_FROM_POLICY = "calculated_from_policy"
     POLICY_NOT_APPLICABLE = "policy_not_applicable"
+    HISTORICAL_POLICY_ESTIMATE = "historical_policy_estimate"
 
 
 class RealizedPnlBuyFeeAllocationSource(str, Enum):

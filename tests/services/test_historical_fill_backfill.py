@@ -613,3 +613,279 @@ class TestFeeTaxPolicyIntegration:
         assert candidate.fee == Decimal("0")
         assert candidate.tax == Decimal("0")
         assert candidate.fee_tax_source.value == "assumed_zero"
+
+
+class TestHistoricalPolicyEstimateOverride:
+    """``use_historical_policy_estimate_for_buy_fee`` 옵션 — `001450`/`004370`
+
+    파일럿(둘 다 SELL 없는 BUY-only 종목, 정책 활성 이전 BUY)을 재현한다.
+    설계 근거: docs/00_foundational_design/detailed_design/
+    16_broker_fill_snapshot_historical_backfill_design.md §8, 12번 문서
+    13절/14절. 의도적으로 ``TestFeeTaxPolicyIntegration``을 상속하지 않고
+    필요한 seed helper만 별도로 둔다 — 상속하면 그 클래스의 기존 테스트가
+    이 클래스 아래에서 중복 실행되기 때문이다.
+    """
+
+    def _seed_account_and_instrument(
+        self, repos, *, account_id, instrument_id, asset_class="kr_stock",
+        market_segment="KOSPI",
+    ):
+        client_id = uuid4()
+        account = AccountEntity(
+            account_id=account_id, client_id=client_id, broker_account_id=uuid4(),
+            environment=Environment.PAPER, account_alias="historical-estimate-test",
+            account_masked="test-masked", status="active",
+        )
+        repos.accounts._items[account_id] = account  # type: ignore[attr-defined]
+        instrument = InstrumentEntity(
+            instrument_id=instrument_id, symbol="001450", market_code="KRX",
+            asset_class=asset_class, currency="KRW", name="테스트종목",
+            market_segment=market_segment,
+        )
+        repos.instruments._items[instrument_id] = instrument  # type: ignore[attr-defined]
+        return client_id
+
+    def _seed_single_buy_scenario(self, repos):
+        account_id = uuid4()
+        instrument_id = uuid4()
+        repos.position_snapshots._items[uuid4()] = _make_position(  # type: ignore[attr-defined]
+            account_id=account_id, instrument_id=instrument_id, quantity=Decimal("0"),
+            average_price=Decimal("0"), snapshot_at=_dt("2026-06-18 12:00:00"),
+        )
+        order = _make_order(
+            account_id=account_id, instrument_id=instrument_id, side=OrderSide.BUY,
+            requested_quantity=Decimal("176"), created_at=_dt("2026-08-10 08:58:36"),
+        )
+        broker_order = _make_broker_order(order, "0000000871")
+        repos.orders._items[order.order_request_id] = order  # type: ignore[attr-defined]
+        repos.broker_orders._items[broker_order.broker_order_id] = broker_order  # type: ignore[attr-defined]
+        snapshot = _make_snapshot(
+            account_id=account_id, order=order, native_id="0000000871",
+            filled_quantity=Decimal("176"), fill_price=Decimal("28000"),
+            updated_at=_dt("2026-08-10 09:01:05"),
+        )
+        repos.broker_fill_snapshots._items[snapshot.broker_fill_snapshot_id] = snapshot  # type: ignore[attr-defined]
+        repos.broker_fill_snapshots._by_dedupe_key[snapshot.dedupe_key] = (  # type: ignore[attr-defined]
+            snapshot.broker_fill_snapshot_id
+        )
+        return account_id, instrument_id
+
+    async def _seed_policy_activated_after_buy(self, repos, *, client_id, **overrides):
+        """BUY(2026-08-10 08:58:36 KST) **이후** 시점(2026-08-14)에 활성화되는
+        정책 — `001450`/`004370`가 실제로 겪는 시간 관계(정책이 BUY보다
+        나중에 등록됨)를 그대로 재현한다."""
+        await self._seed_policy(
+            repos, client_id=client_id,
+            activated_at_override=_dt("2026-08-14 15:50:11"),
+            **overrides,
+        )
+
+    async def _seed_policy(self, repos, *, client_id, activated_at_override=None, **overrides):
+        fee_tax = {
+            "enabled": True,
+            "supported_asset_classes": ["kr_stock"],
+            "supported_market_segments": ["KOSPI", "KOSDAQ"],
+            "buy_commission_rate_pct": "0.015",
+            "sell_commission_rate_pct": "0.015",
+            "sell_tax_rate_pct": "0.18",
+            "sell_agri_tax_rate_pct": "0.02",
+            "rounding_mode": "round_half_up",
+            "rounding_unit": "1",
+        }
+        fee_tax.update(overrides)
+        activated_at = activated_at_override or _dt("2026-01-01 00:00:00")
+        version = ConfigVersionEntity(
+            config_version_id=uuid4(), client_id=client_id, environment=Environment.PAPER,
+            version_tag="test", config_json={"execution": {"fee_tax": fee_tax}},
+            checksum="test", activated_at=activated_at,
+        )
+        await repos.config_versions.add(version)
+
+    @pytest.mark.asyncio
+    async def test_option_off_keeps_assumed_zero_for_policy_activated_after_buy(self, repos):
+        """시나리오 1: 옵션 없음 → 정책 활성 이전 BUY는 기존대로 assumed_zero."""
+        account_id, instrument_id = self._seed_single_buy_scenario(repos)
+        client_id = self._seed_account_and_instrument(
+            repos, account_id=account_id, instrument_id=instrument_id,
+        )
+        await self._seed_policy_activated_after_buy(repos, client_id=client_id)
+
+        plan = await build_backfill_plan(
+            repos, account_id=account_id, instrument_id=instrument_id,
+            start_date=date(2026, 8, 1),
+            # use_historical_policy_estimate_for_buy_fee 생략 → 기본값 False
+        )
+        assert plan.eligible is True
+        candidate = plan.synthetic_fills[0]
+        assert candidate.fee == Decimal("0")
+        assert candidate.tax == Decimal("0")
+        assert candidate.fee_tax_source.value == "assumed_zero"
+
+    @pytest.mark.asyncio
+    async def test_option_on_overrides_buy_with_historical_policy_estimate(self, repos):
+        """시나리오 2: 옵션 있음 + 정책 활성 이전 BUY + 현재 활성 정책 존재
+        → historical_policy_estimate로 fee 계산."""
+        account_id, instrument_id = self._seed_single_buy_scenario(repos)
+        client_id = self._seed_account_and_instrument(
+            repos, account_id=account_id, instrument_id=instrument_id,
+        )
+        await self._seed_policy_activated_after_buy(repos, client_id=client_id)
+
+        plan = await build_backfill_plan(
+            repos, account_id=account_id, instrument_id=instrument_id,
+            start_date=date(2026, 8, 1),
+            use_historical_policy_estimate_for_buy_fee=True,
+        )
+        assert plan.eligible is True
+        candidate = plan.synthetic_fills[0]
+        expected_fee = (Decimal("28000") * Decimal("176") * Decimal("0.015") / 100).to_integral_value()
+        assert candidate.fee == expected_fee
+        assert candidate.tax == Decimal("0")
+        assert candidate.fee_tax_source.value == "historical_policy_estimate"
+
+        # apply까지 해도 fill_events에 그대로 저장된다(overlay/recompute 없음).
+        result = await apply_backfill_plan(repos, plan)
+        assert result.applied is True
+        saved = await repos.fill_events.list_by_broker_order(
+            plan.order_details[0].candidates[0].broker_order_id
+        )
+        assert saved[0].fill_fee == expected_fee
+        assert saved[0].fee_tax_source == "historical_policy_estimate"
+
+    @pytest.mark.asyncio
+    async def test_option_on_does_not_affect_sell(self, repos):
+        """시나리오 3: 옵션 있음이어도 SELL에는 적용 안 됨(1 buy + 2 sell,
+        `007070` 실제 형태를 그대로 재현 — 정책은 BUY/SELL 모두보다 나중에
+        활성화됨)."""
+        account_id = uuid4()
+        instrument_id = uuid4()
+        client_id = self._seed_account_and_instrument(
+            repos, account_id=account_id, instrument_id=instrument_id,
+        )
+        await self._seed_policy_activated_after_buy(repos, client_id=client_id)
+
+        await repos.position_snapshots.add(
+            _make_position(
+                account_id=account_id, instrument_id=instrument_id,
+                quantity=Decimal("0"), average_price=Decimal("0"),
+                snapshot_at=_dt("2026-06-18 12:00:00"),
+            )
+        )
+        buy_order = _make_order(
+            account_id=account_id, instrument_id=instrument_id, side=OrderSide.BUY,
+            requested_quantity=Decimal("176"), created_at=_dt("2026-08-10 08:58:36"),
+        )
+        sell_order = _make_order(
+            account_id=account_id, instrument_id=instrument_id, side=OrderSide.SELL,
+            requested_quantity=Decimal("176"), created_at=_dt("2026-08-13 08:52:17"),
+        )
+        for order in (buy_order, sell_order):
+            await repos.orders.add(order)
+        buy_broker_order = _make_broker_order(buy_order, "0000000871")
+        sell_broker_order = _make_broker_order(sell_order, "0000000758")
+        for bo in (buy_broker_order, sell_broker_order):
+            await repos.broker_orders.add(bo)
+        await repos.broker_fill_snapshots.upsert(
+            _make_snapshot(
+                account_id=account_id, order=buy_order, native_id="0000000871",
+                filled_quantity=Decimal("176"), fill_price=Decimal("28000"),
+                updated_at=_dt("2026-08-10 09:01:05"),
+            )
+        )
+        await repos.broker_fill_snapshots.upsert(
+            _make_snapshot(
+                account_id=account_id, order=sell_order, native_id="0000000758",
+                filled_quantity=Decimal("176"), fill_price=Decimal("26800"),
+                updated_at=_dt("2026-08-13 15:42:50"),
+            )
+        )
+        await repos.position_snapshots.add(
+            _make_position(
+                account_id=account_id, instrument_id=instrument_id,
+                quantity=Decimal("0"), average_price=Decimal("0"),
+                snapshot_at=_dt("2026-08-13 15:42:20"),
+            )
+        )
+
+        plan = await build_backfill_plan(
+            repos, account_id=account_id, instrument_id=instrument_id,
+            start_date=date(2026, 8, 1),
+            use_historical_policy_estimate_for_buy_fee=True,
+        )
+        assert plan.eligible is True
+        buy_fill = next(f for f in plan.synthetic_fills if f.side == OrderSide.BUY)
+        sell_fill = next(f for f in plan.synthetic_fills if f.side == OrderSide.SELL)
+        assert buy_fill.fee_tax_source.value == "historical_policy_estimate"
+        assert sell_fill.fee_tax_source.value == "assumed_zero"  # SELL은 옵션과 무관
+        assert sell_fill.fee == Decimal("0")
+        assert sell_fill.tax == Decimal("0")
+
+    @pytest.mark.asyncio
+    async def test_option_on_does_not_override_unsupported_asset_class(self, repos):
+        """시나리오 4: 옵션 있음이어도 자산군/시장군 비대상은 override 안 됨.
+
+        기본 계산(fill_timestamp 기준)은 그 시점에 활성 정책 자체가 없어
+        ``assumed_zero``다. override 재조회(현재 시각 기준)는 활성 정책은
+        있지만 이 자산군(``kr_etf``)이 비지원이라 ``policy_not_applicable``을
+        반환하므로, override 조건("재조회 결과가 CALCULATED_FROM_POLICY")을
+        만족하지 못해 원래 값(``assumed_zero``)이 그대로 유지돼야 한다 —
+        ``policy_not_applicable``로 바뀌면 안 된다(그건 "재조회 자체를
+        기본 계산 결과로 승격시킨다"는 뜻이 되어 override 함수의 계약을
+        벗어난다)."""
+        account_id, instrument_id = self._seed_single_buy_scenario(repos)
+        client_id = self._seed_account_and_instrument(
+            repos, account_id=account_id, instrument_id=instrument_id,
+            asset_class="kr_etf",  # 정책의 supported_asset_classes=["kr_stock"]엔 없음
+        )
+        await self._seed_policy_activated_after_buy(repos, client_id=client_id)
+
+        plan = await build_backfill_plan(
+            repos, account_id=account_id, instrument_id=instrument_id,
+            start_date=date(2026, 8, 1),
+            use_historical_policy_estimate_for_buy_fee=True,
+        )
+        assert plan.eligible is True
+        candidate = plan.synthetic_fills[0]
+        assert candidate.fee == Decimal("0")
+        assert candidate.fee_tax_source.value == "assumed_zero"
+
+    @pytest.mark.asyncio
+    async def test_option_on_without_active_policy_stays_assumed_zero(self, repos):
+        """옵션이 켜져 있어도 활성 정책이 아예 없으면 override할 근거가 없다."""
+        account_id, instrument_id = self._seed_single_buy_scenario(repos)
+        self._seed_account_and_instrument(
+            repos, account_id=account_id, instrument_id=instrument_id,
+        )
+        # config_versions에는 아무것도 등록하지 않는다.
+
+        plan = await build_backfill_plan(
+            repos, account_id=account_id, instrument_id=instrument_id,
+            start_date=date(2026, 8, 1),
+            use_historical_policy_estimate_for_buy_fee=True,
+        )
+        assert plan.eligible is True
+        candidate = plan.synthetic_fills[0]
+        assert candidate.fee == Decimal("0")
+        assert candidate.fee_tax_source.value == "assumed_zero"
+
+    @pytest.mark.asyncio
+    async def test_option_on_does_not_change_calculated_from_policy_case(self, repos):
+        """회귀: BUY 시점에 이미 정책이 활성이었던(calculated_from_policy) 경우,
+        옵션을 켜도 결과가 그대로여야 한다(이미 CALCULATED_FROM_POLICY라서
+        override 조건(base=ASSUMED_ZERO)에 안 걸림)."""
+        account_id, instrument_id = self._seed_single_buy_scenario(repos)
+        client_id = self._seed_account_and_instrument(
+            repos, account_id=account_id, instrument_id=instrument_id,
+        )
+        await self._seed_policy(repos, client_id=client_id)  # 2026-01-01 활성 — BUY보다 이전
+
+        plan = await build_backfill_plan(
+            repos, account_id=account_id, instrument_id=instrument_id,
+            start_date=date(2026, 8, 1),
+            use_historical_policy_estimate_for_buy_fee=True,
+        )
+        assert plan.eligible is True
+        candidate = plan.synthetic_fills[0]
+        expected_fee = (Decimal("28000") * Decimal("176") * Decimal("0.015") / 100).to_integral_value()
+        assert candidate.fee == expected_fee
+        assert candidate.fee_tax_source.value == "calculated_from_policy"

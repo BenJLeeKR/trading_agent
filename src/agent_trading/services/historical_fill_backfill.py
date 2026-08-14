@@ -189,15 +189,82 @@ def _snapshot_sort_key(snapshot: "BrokerFillSnapshotEntity"):
     return (updated_at, snapshot.filled_quantity)
 
 
+async def _maybe_override_with_historical_policy_estimate(
+    repos: "RepositoryContainer",
+    *,
+    client_id: UUID,
+    environment,
+    asset_class: str,
+    market_segment: str | None,
+    side: OrderSide,
+    fill_price: Decimal,
+    fill_quantity: Decimal,
+    base_fee: Decimal,
+    base_tax: Decimal,
+    base_fee_tax_source: RealizedPnlFeeTaxSource,
+) -> tuple[Decimal, Decimal, RealizedPnlFeeTaxSource]:
+    """initial backfill 전용 historical BUY fee estimate override.
+
+    ``compute_fee_tax()``의 시간 의미론(``get_active_at(fill_timestamp)``)은
+    건드리지 않는다 — 이 함수는 그 결과(``base_*``)가 이미 ``ASSUMED_ZERO``
+    로 나온 **BUY** fill에 대해서만, **현재 시각**을 넘겨 ``compute_fee_tax()``
+    를 한 번 더 호출해 "지금 활성 정책을 적용하면 어떻게 계산되는지"를
+    재조회한다. 이 두 번째 호출이 ``CALCULATED_FROM_POLICY``로 성립해야만
+    (= 실제로 활성 정책이 있고 이 자산군/시장군이 지원 대상이어야만)
+    override한다 — 그렇지 않으면(정책이 아직 없거나 비지원 자산군) 원래
+    결과를 그대로 둔다. SELL은 무조건 원래 결과를 그대로 둔다(이번
+    파일럿 범위 밖 — 설계 문서 16번 §8).
+    """
+    if side != OrderSide.BUY or base_fee_tax_source != RealizedPnlFeeTaxSource.ASSUMED_ZERO:
+        return base_fee, base_tax, base_fee_tax_source
+
+    estimate_result = await compute_fee_tax(
+        repos,
+        client_id=client_id,
+        environment=environment,
+        asset_class=asset_class,
+        market_segment=market_segment,
+        side=side,
+        fill_price=fill_price,
+        fill_quantity=fill_quantity,
+        fill_timestamp=datetime.now(timezone.utc),
+    )
+    if estimate_result.fee_tax_source != RealizedPnlFeeTaxSource.CALCULATED_FROM_POLICY:
+        return base_fee, base_tax, base_fee_tax_source
+
+    return estimate_result.fee, Decimal("0"), RealizedPnlFeeTaxSource.HISTORICAL_POLICY_ESTIMATE
+
+
 async def build_backfill_plan(
     repos: "RepositoryContainer",
     *,
     account_id: UUID,
     instrument_id: UUID,
     start_date: date,
+    use_historical_policy_estimate_for_buy_fee: bool = False,
 ) -> BackfillPlan:
     """16번 문서 §3.3 원가 완결성 기준을 판정하고, 통과하면 synthetic fill
     후보를 계산한다. **DB에 아무것도 쓰지 않는다.**
+
+    ``use_historical_policy_estimate_for_buy_fee``:
+        기본값 ``False`` — 꺼져 있으면 기존 동작과 100% 동일하다(모든
+        BUY/SELL fee/tax는 그 체결 시각 기준 ``compute_fee_tax()`` 결과
+        그대로).
+
+        ``True``면, **BUY fill이고** 그 계산 결과가 ``ASSUMED_ZERO``일
+        때(= 그 체결 당시엔 활성 정책이 없었던 경우)에 한해,
+        :func:`_maybe_override_with_historical_policy_estimate`가 **현재
+        활성 정책**으로 다시 계산을 시도한다. 그 재계산이
+        ``CALCULATED_FROM_POLICY``로 성립하면(활성 정책이 실제로 있고
+        자산군/시장군이 지원 대상이면) ``HISTORICAL_POLICY_ESTIMATE``로
+        override하고, 그렇지 않으면(여전히 정책이 없거나 비대상 자산군)
+        원래 결과를 그대로 둔다. SELL에는 이 옵션이 전혀 개입하지 않는다
+        — ``compute_fee_tax()`` 자체의 시간 의미론(``get_active_at
+        (fill_timestamp)``)은 이 옵션과 무관하게 절대 바뀌지 않는다;
+        이 옵션은 그 위에 얹는 initial backfill 전용 선택적 후처리다
+        (설계 근거: 16번 문서 §8, `001450`/`004370` 파일럿 — 둘 다
+        SELL이 없는 BUY-only 종목이라 이 파일럿 범위에서는 SELL 분기가
+        실측되지 않는다).
     """
     window_start = _kst_midnight_utc(start_date)
 
@@ -347,6 +414,22 @@ async def build_backfill_plan(
                 candidate_fee = fee_tax_result.fee
                 candidate_tax = fee_tax_result.tax
                 candidate_fee_tax_source = fee_tax_result.fee_tax_source
+                if use_historical_policy_estimate_for_buy_fee:
+                    candidate_fee, candidate_tax, candidate_fee_tax_source = (
+                        await _maybe_override_with_historical_policy_estimate(
+                            repos,
+                            client_id=account.client_id,
+                            environment=account.environment,
+                            asset_class=instrument.asset_class,
+                            market_segment=instrument.market_segment,
+                            side=order.side,
+                            fill_price=inferred_price,
+                            fill_quantity=delta_qty,
+                            base_fee=candidate_fee,
+                            base_tax=candidate_tax,
+                            base_fee_tax_source=candidate_fee_tax_source,
+                        )
+                    )
             else:
                 candidate_fee = Decimal("0")
                 candidate_tax = Decimal("0")
