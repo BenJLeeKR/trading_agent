@@ -25,7 +25,11 @@ from uuid import UUID, uuid4
 import pytest
 
 from agent_trading.domain.entities import PositionCostBasisStateEntity
-from agent_trading.domain.enums import OrderSide, RealizedPnlFeeTaxSource
+from agent_trading.domain.enums import (
+    OrderSide,
+    RealizedPnlBuyFeeAllocationSource,
+    RealizedPnlFeeTaxSource,
+)
 from agent_trading.services.realized_pnl_engine import (
     FeeTaxSourceMismatchError,
     FillsNotSortedError,
@@ -454,3 +458,280 @@ def test_replay_fills_reuses_initial_state():
     assert len(result.realized_pnl_events) == 1
     assert result.realized_pnl_events[0].avg_cost_basis_before == Decimal("100")
     assert result.final_state.quantity == Decimal("0")
+
+
+# ======================================================================
+# 13. 매수 수수료 pool 누적/배분(C안 확장형, 설계 문서 12번 14절)
+# ======================================================================
+
+
+def test_buy_fee_pool_accumulates_on_single_buy():
+    """BUY 1건 → pool 증가, average_cost는 fee와 무관하게 그대로."""
+    buy = _make_fill(
+        quantity=Decimal("10"),
+        price=Decimal("100"),
+        fee=Decimal("14"),
+        fee_tax_source=RealizedPnlFeeTaxSource.CALCULATED_FROM_POLICY,
+    )
+
+    state, event = apply_fill_to_cost_basis(None, buy, computation_run_id=_COMPUTATION_RUN_ID)
+
+    assert event is None
+    assert state.average_cost == Decimal("100")  # fee가 average_cost에 안 들어감
+    assert state.remaining_buy_fee_pool == Decimal("14")
+    assert state.buy_fee_pool_provenance == RealizedPnlBuyFeeAllocationSource.FULLY_CALCULATED
+
+
+def test_buy_fee_pool_accumulates_across_two_buys():
+    """BUY 2건 누적 — pool은 단순 합산, average_cost 공식은 손대지 않는다."""
+    buy1 = _make_fill(
+        quantity=Decimal("10"),
+        price=Decimal("100"),
+        fee=Decimal("14"),
+        fee_tax_source=RealizedPnlFeeTaxSource.CALCULATED_FROM_POLICY,
+    )
+    buy2 = _make_fill(
+        quantity=Decimal("10"),
+        price=Decimal("200"),
+        fee=Decimal("28"),
+        fee_tax_source=RealizedPnlFeeTaxSource.CALCULATED_FROM_POLICY,
+        fill_timestamp=_BASE_TS + timedelta(seconds=1),
+    )
+
+    state1, _ = apply_fill_to_cost_basis(None, buy1, computation_run_id=_COMPUTATION_RUN_ID)
+    state2, _ = apply_fill_to_cost_basis(state1, buy2, computation_run_id=_COMPUTATION_RUN_ID)
+
+    assert state2.average_cost == Decimal("150")  # 기존 공식 그대로(fee 미반영)
+    assert state2.remaining_buy_fee_pool == Decimal("42")
+    assert state2.buy_fee_pool_provenance == RealizedPnlBuyFeeAllocationSource.FULLY_CALCULATED
+
+
+def test_partial_sell_allocates_buy_fee_proportionally():
+    """부분 SELL → pool이 수량 비례로 줄고, allocated_buy_fee가 정확히 계산된다."""
+    buy = _make_fill(
+        quantity=Decimal("10"),
+        price=Decimal("100"),
+        fee=Decimal("100"),
+        fee_tax_source=RealizedPnlFeeTaxSource.CALCULATED_FROM_POLICY,
+    )
+    state_after_buy, _ = apply_fill_to_cost_basis(None, buy, computation_run_id=_COMPUTATION_RUN_ID)
+
+    sell = _make_fill(
+        side=OrderSide.SELL,
+        quantity=Decimal("4"),
+        price=Decimal("150"),
+        fill_timestamp=_BASE_TS + timedelta(seconds=1),
+    )
+    state_after_sell, event = apply_fill_to_cost_basis(
+        state_after_buy, sell, computation_run_id=_COMPUTATION_RUN_ID
+    )
+
+    # pool 100 * (4/10) = 40
+    assert event.allocated_buy_fee == Decimal("40")
+    assert event.buy_fee_allocation_source == RealizedPnlBuyFeeAllocationSource.FULLY_CALCULATED
+    # gross는 그대로(200), net만 allocated_buy_fee만큼 추가로 줄어든다
+    assert event.realized_pnl_gross == Decimal("200")
+    assert event.realized_pnl_net == Decimal("160")  # 200 - 0(fee) - 0(tax) - 40
+    assert state_after_sell.remaining_buy_fee_pool == Decimal("60")
+    assert state_after_sell.average_cost == Decimal("100")  # average_cost는 절대 안 바뀐다
+
+
+def test_full_sell_drains_buy_fee_pool_to_exactly_zero():
+    """전량 청산 시 비율 나눗셈이 아니라 pool 전액을 배분해 정확히 0이 되어야 한다."""
+    buy = _make_fill(
+        quantity=Decimal("3"),
+        price=Decimal("100"),
+        fee=Decimal("10"),
+        fee_tax_source=RealizedPnlFeeTaxSource.CALCULATED_FROM_POLICY,
+    )
+    state_after_buy, _ = apply_fill_to_cost_basis(None, buy, computation_run_id=_COMPUTATION_RUN_ID)
+
+    sell = _make_fill(
+        side=OrderSide.SELL,
+        quantity=Decimal("3"),
+        price=Decimal("120"),
+        fill_timestamp=_BASE_TS + timedelta(seconds=1),
+    )
+    state_after_sell, event = apply_fill_to_cost_basis(
+        state_after_buy, sell, computation_run_id=_COMPUTATION_RUN_ID
+    )
+
+    # 10 / 3은 나눠떨어지지 않지만, 전량 청산이므로 비율 나눗셈 없이 pool 전액(10)을 그대로 배분한다.
+    assert event.allocated_buy_fee == Decimal("10")
+    assert state_after_sell.remaining_buy_fee_pool == Decimal("0")
+    assert state_after_sell.average_cost == Decimal("0")
+
+
+def test_repeated_partial_sells_drain_pool_to_zero_on_final_liquidation():
+    """여러 SELL에 걸친 배분 후에도 마지막 전량 청산에서 pool이 정확히 0이 된다."""
+    buy = _make_fill(
+        quantity=Decimal("7"),
+        price=Decimal("100"),
+        fee=Decimal("10"),
+        fee_tax_source=RealizedPnlFeeTaxSource.CALCULATED_FROM_POLICY,
+    )
+    state, _ = apply_fill_to_cost_basis(None, buy, computation_run_id=_COMPUTATION_RUN_ID)
+
+    sell1 = _make_fill(
+        side=OrderSide.SELL, quantity=Decimal("2"), price=Decimal("100"),
+        fill_timestamp=_BASE_TS + timedelta(seconds=1),
+    )
+    state, event1 = apply_fill_to_cost_basis(state, sell1, computation_run_id=_COMPUTATION_RUN_ID)
+
+    sell2 = _make_fill(
+        side=OrderSide.SELL, quantity=Decimal("2"), price=Decimal("100"),
+        fill_timestamp=_BASE_TS + timedelta(seconds=2),
+    )
+    state, event2 = apply_fill_to_cost_basis(state, sell2, computation_run_id=_COMPUTATION_RUN_ID)
+
+    sell3 = _make_fill(
+        side=OrderSide.SELL, quantity=Decimal("3"), price=Decimal("100"),
+        fill_timestamp=_BASE_TS + timedelta(seconds=3),
+    )
+    state, event3 = apply_fill_to_cost_basis(state, sell3, computation_run_id=_COMPUTATION_RUN_ID)
+
+    # 중간 배분에 반올림이 있더라도(10 * 2/7, 10 * 2/5) 마지막 청산이 나머지 전부를 흡수한다.
+    assert state.quantity == Decimal("0")
+    assert state.remaining_buy_fee_pool == Decimal("0")
+    total_allocated = event1.allocated_buy_fee + event2.allocated_buy_fee + event3.allocated_buy_fee
+    assert total_allocated == Decimal("10")
+
+
+def test_full_liquidation_then_reentry_resets_pool_and_provenance():
+    """완전 청산 후 재매수하면 pool/provenance가 새 진입처럼 리셋된다."""
+    buy1 = _make_fill(
+        quantity=Decimal("5"),
+        price=Decimal("100"),
+        fee=Decimal("20"),
+        fee_tax_source=RealizedPnlFeeTaxSource.CALCULATED_FROM_POLICY,
+    )
+    state, _ = apply_fill_to_cost_basis(None, buy1, computation_run_id=_COMPUTATION_RUN_ID)
+
+    sell = _make_fill(
+        side=OrderSide.SELL, quantity=Decimal("5"), price=Decimal("110"),
+        fill_timestamp=_BASE_TS + timedelta(seconds=1),
+    )
+    state, _ = apply_fill_to_cost_basis(state, sell, computation_run_id=_COMPUTATION_RUN_ID)
+    assert state.quantity == Decimal("0")
+    assert state.remaining_buy_fee_pool == Decimal("0")
+
+    buy2 = _make_fill(
+        quantity=Decimal("5"),
+        price=Decimal("200"),
+        fee=Decimal("0"),
+        fee_tax_source=RealizedPnlFeeTaxSource.ASSUMED_ZERO,
+        fill_timestamp=_BASE_TS + timedelta(seconds=2),
+    )
+    state, _ = apply_fill_to_cost_basis(state, buy2, computation_run_id=_COMPUTATION_RUN_ID)
+
+    assert state.average_cost == Decimal("200")  # 새 진입처럼 리셋
+    assert state.remaining_buy_fee_pool == Decimal("0")
+    assert state.buy_fee_pool_provenance == RealizedPnlBuyFeeAllocationSource.FULLY_ASSUMED_ZERO
+
+
+def test_past_fee_zero_buys_are_no_op_regression():
+    """과거(fee=0/assumed_zero) BUY만 있는 경우 realized_pnl_net이 기존과 완전히 동일해야 한다.
+
+    forward-only 안전성의 핵심 근거: fee=0인 BUY는 pool에 +0을 더하는 것과
+    같아 이 확장 이전의 계산 결과와 바이트 단위로 동일해야 한다.
+    """
+    buy = _make_fill(
+        quantity=Decimal("10"),
+        price=Decimal("100"),
+        fee=Decimal("0"),
+        fee_tax_source=RealizedPnlFeeTaxSource.ASSUMED_ZERO,
+    )
+    state_after_buy, _ = apply_fill_to_cost_basis(None, buy, computation_run_id=_COMPUTATION_RUN_ID)
+
+    sell = _make_fill(
+        side=OrderSide.SELL,
+        quantity=Decimal("4"),
+        price=Decimal("150"),
+        fee=Decimal("5"),
+        tax=Decimal("2"),
+        fee_tax_source=RealizedPnlFeeTaxSource.CALCULATED_FROM_POLICY,
+        fill_timestamp=_BASE_TS + timedelta(seconds=1),
+    )
+    _, event = apply_fill_to_cost_basis(
+        state_after_buy, sell, computation_run_id=_COMPUTATION_RUN_ID
+    )
+
+    assert event.allocated_buy_fee == Decimal("0")
+    # (150-100)*4 - 5 - 2 - 0 = 193 — 이 확장 이전 공식(gross - fee - tax)과 동일
+    assert event.realized_pnl_net == Decimal("193")
+    assert event.buy_fee_allocation_source == RealizedPnlBuyFeeAllocationSource.FULLY_ASSUMED_ZERO
+
+
+@pytest.mark.parametrize(
+    "first_source,second_source,expected",
+    [
+        (
+            RealizedPnlFeeTaxSource.CALCULATED_FROM_POLICY,
+            RealizedPnlFeeTaxSource.CALCULATED_FROM_POLICY,
+            RealizedPnlBuyFeeAllocationSource.FULLY_CALCULATED,
+        ),
+        (
+            RealizedPnlFeeTaxSource.ASSUMED_ZERO,
+            RealizedPnlFeeTaxSource.ASSUMED_ZERO,
+            RealizedPnlBuyFeeAllocationSource.FULLY_ASSUMED_ZERO,
+        ),
+        (
+            RealizedPnlFeeTaxSource.ASSUMED_ZERO,
+            RealizedPnlFeeTaxSource.CALCULATED_FROM_POLICY,
+            RealizedPnlBuyFeeAllocationSource.PARTIALLY_ASSUMED_ZERO,
+        ),
+    ],
+)
+def test_mixed_provenance_buy_fee_pool_summary(first_source, second_source, expected):
+    """fully_calculated / fully_assumed_zero / partially_assumed_zero 3가지 모두 검증."""
+    buy1 = _make_fill(
+        quantity=Decimal("5"),
+        price=Decimal("100"),
+        fee=Decimal("10") if first_source != RealizedPnlFeeTaxSource.ASSUMED_ZERO else Decimal("0"),
+        fee_tax_source=first_source,
+    )
+    buy2 = _make_fill(
+        quantity=Decimal("5"),
+        price=Decimal("100"),
+        fee=Decimal("10") if second_source != RealizedPnlFeeTaxSource.ASSUMED_ZERO else Decimal("0"),
+        fee_tax_source=second_source,
+        fill_timestamp=_BASE_TS + timedelta(seconds=1),
+    )
+
+    state1, _ = apply_fill_to_cost_basis(None, buy1, computation_run_id=_COMPUTATION_RUN_ID)
+    state2, _ = apply_fill_to_cost_basis(state1, buy2, computation_run_id=_COMPUTATION_RUN_ID)
+
+    assert state2.buy_fee_pool_provenance == expected
+
+    sell = _make_fill(
+        side=OrderSide.SELL, quantity=Decimal("10"), price=Decimal("120"),
+        fill_timestamp=_BASE_TS + timedelta(seconds=2),
+    )
+    _, event = apply_fill_to_cost_basis(state2, sell, computation_run_id=_COMPUTATION_RUN_ID)
+    assert event.buy_fee_allocation_source == expected
+
+
+def test_replay_determinism_with_buy_fee_pool():
+    """같은 입력을 replay_fills에 두 번 먹여도 pool/allocated_buy_fee 결과가 바이트 단위로 동일해야 한다."""
+    fills = [
+        _make_fill(
+            quantity=Decimal("10"), price=Decimal("100"), fee=Decimal("14"),
+            fee_tax_source=RealizedPnlFeeTaxSource.CALCULATED_FROM_POLICY,
+            fill_timestamp=_BASE_TS,
+        ),
+        _make_fill(
+            side=OrderSide.SELL, quantity=Decimal("4"), price=Decimal("150"),
+            fill_timestamp=_BASE_TS + timedelta(seconds=1),
+        ),
+        _make_fill(
+            side=OrderSide.SELL, quantity=Decimal("6"), price=Decimal("160"),
+            fill_timestamp=_BASE_TS + timedelta(seconds=2),
+        ),
+    ]
+
+    result1 = replay_fills(fills, computation_run_id=_COMPUTATION_RUN_ID)
+    result2 = replay_fills(fills, computation_run_id=_COMPUTATION_RUN_ID)
+
+    assert result1.final_state == result2.final_state
+    assert result1.realized_pnl_events == result2.realized_pnl_events
+    assert result1.final_state.remaining_buy_fee_pool == Decimal("0")

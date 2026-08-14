@@ -38,8 +38,9 @@ class PostgresPositionCostBasisStateRepository:
             INSERT INTO trading.position_cost_basis_state
                 (account_id, instrument_id, quantity, average_cost,
                  last_applied_fill_event_id, last_applied_fill_timestamp,
-                 recompute_required, recompute_reason, updated_at)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW())
+                 recompute_required, recompute_reason,
+                 remaining_buy_fee_pool, buy_fee_pool_provenance, updated_at)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, NOW())
             ON CONFLICT (account_id, instrument_id) DO UPDATE SET
                 quantity = EXCLUDED.quantity,
                 average_cost = EXCLUDED.average_cost,
@@ -47,6 +48,8 @@ class PostgresPositionCostBasisStateRepository:
                 last_applied_fill_timestamp = EXCLUDED.last_applied_fill_timestamp,
                 recompute_required = EXCLUDED.recompute_required,
                 recompute_reason = EXCLUDED.recompute_reason,
+                remaining_buy_fee_pool = EXCLUDED.remaining_buy_fee_pool,
+                buy_fee_pool_provenance = EXCLUDED.buy_fee_pool_provenance,
                 updated_at = NOW()
             RETURNING *
             """,
@@ -58,6 +61,8 @@ class PostgresPositionCostBasisStateRepository:
             state.last_applied_fill_timestamp,
             state.recompute_required,
             state.recompute_reason,
+            state.remaining_buy_fee_pool,
+            state.buy_fee_pool_provenance.value,
         )
         return row_to_entity(row, PositionCostBasisStateEntity)
 

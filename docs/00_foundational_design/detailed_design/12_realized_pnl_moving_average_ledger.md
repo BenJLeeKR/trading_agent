@@ -18,6 +18,8 @@
 >
 > - **`fee_tax_source` 4값 확장 설계도 별도 검토 턴에서 계약까지 확정됐다(구현 미착수)** — `reported`/`assumed_zero` 2값을 `calculated_from_policy`/`policy_not_applicable`를 더한 4값 체계로 확장하는 결정, `VARCHAR(16)→VARCHAR(32)` migration 방향, 집계 API `provenance_breakdown` 최소 계약을 13절에 canonical하게 기록했다. 아직 코드/migration은 전혀 바뀌지 않았다 — 13절이 다음 구현 turn의 기준 문서다.
 >
+> - **매수(BUY) 수수료 pool 배분(C안 확장형)도 설계+구현 완료** — `average_cost`는 절대 바꾸지 않고, 매수 수수료를 `position_cost_basis_state.remaining_buy_fee_pool`에 별도로 누적했다가 SELL 시점에 보유수량 대비 매도수량 비율로 배분해 `realized_pnl_net = gross - fee - tax - allocated_buy_fee`로 반영한다. `db/migrations/0059_add_buy_fee_pool_allocation.sql`. 상세는 14절.
+>
 > 구현 순서와 단계 분리는 [`kis_realized_pnl_moving_average_action_plan.md`](../../40_action_plans/kis_realized_pnl_moving_average_action_plan.md)를 따른다.
 > **범위**: 국내주식(KIS) 계좌의 종목별 이동평균 매입원가 기반 실현 손익. FIFO는 2절에서 비교만 하고 이번 설계는 이동평균으로 확정한다.
 
@@ -360,7 +362,7 @@ ORDER BY fill_timestamp ASC, broker_fill_id ASC NULLS LAST, created_at ASC, fill
 - Admin UI 노출 화면 — **화면 설계서 작성이 먼저 필요하며, 시작 전 사용자에게 먼저 알린다.**
 - `broker_fill_snapshots`와의 정식 대사 리포트 및 임계값 정책.
 - FIFO 병행 지원(세무 목적 필요 시 별도 lot 테이블 추가).
-- 매입(BUY) 수수료를 평균단가 계산에 포함하는 방식 검토(현재 v1은 미반영, 3.3절).
+- ~~매입(BUY) 수수료를 평균단가 계산에 포함하는 방식 검토(현재 v1은 미반영, 3.3절)~~ — **평균단가에는 포함하지 않고 별도 pool 배분 방식으로 구현 완료(14절)**.
 - 숏 포지션 지원 여부 검토(현재는 계산 엔진이 예외로 실패만 하고, orchestration은 recompute_queue로 격리만 한다 — 지원 여부 자체는 미결정).
 - websocket fill writer 존재 여부 확인 후, 필요 시 5절 정렬 키 설계 재검토.
 
@@ -448,3 +450,63 @@ ORDER BY fill_timestamp ASC, broker_fill_id ASC NULLS LAST, created_at ASC, fill
 1. **provenance 4값 확정**(이 절, 완료) → 2. **migration 설계/적용**(13.4절 방향 확정, 실제 SQL 작성·실행은 다음 turn) → 3. **API 계약 확정/구현**(13.5절 방향 확정, 실제 스키마·라우트 수정은 다음 turn) → 4. **계산 함수 연결**(범위 밖, 별도 turn) → 5. **실제 구현/운영 반영**.
 
 이 순서가 맞는 이유: provenance 값 체계가 확정되지 않은 채 계산 함수부터 만들면 나중에 분기 로직을 다시 바꿔야 하고, migration 없이 API 계약만 먼저 정하면 실제로 그 값을 저장할 수 없는 상태에서 계약을 확정하게 된다 — 값→저장 스키마→계약→계산의 의존 순서를 그대로 따른 것이다.
+
+## 14. 매수(BUY) 수수료 pool 배분 — C안 확장형(구현 완료)
+
+### 14.0 이 절의 성격
+
+12절 "향후 확장 범위"의 "매입(BUY) 수수료를 평균단가 계산에 포함하는 방식 검토(현재 v1은 미반영, 3.3절)" 항목에 대한 별도 검토 turn의 설계 결정과 그 구현을 기록한다. **`average_cost`는 절대 바꾸지 않는다** — 대신 매수 수수료를 별도 pool로 누적했다가 매도 시점에 보유수량 대비 매도수량 비율로 배분해 `realized_pnl_net`에만 반영하는 절충안(검토 시 비교한 안 A/B/C 중 "안 A 확장형" — 상태 저장 위치는 `position_cost_basis_state`에 두고 lot 원장은 별도로 만들지 않음)이다.
+
+### 14.1 설계 결정
+
+- `average_cost`(및 `avg_cost_basis_before`, `buy_amount_sum`)의 계약은 **전혀 바꾸지 않는다** — 3.2절/3.3절 공식 그대로.
+- `realized_pnl_gross` 계약도 바꾸지 않는다.
+- `position_cost_basis_state`에 `remaining_buy_fee_pool`(현재 보유 수량에 대응하는, 아직 배분되지 않은 누적 매수 수수료)과 `buy_fee_pool_provenance`(pool의 fee_tax_source 요약, 3값)를 추가한다.
+- `realized_pnl_events`에 `allocated_buy_fee`(이번 SELL에 배분된 몫)와 `buy_fee_allocation_source`(배분 시점 pool provenance 스냅샷)를 추가한다. 기존 `fee`(이번 SELL 자체의 매도 수수료)와는 절대 합쳐 넣지 않고 분리 보존한다.
+- `realized_pnl_net = realized_pnl_gross - fee - tax - allocated_buy_fee`.
+
+### 14.2 배분 공식
+
+```
+전량 청산(sell_quantity == 보유수량):
+    allocated_buy_fee = remaining_buy_fee_pool  (비율 계산 없이 전액)
+    new_pool = 0
+
+부분 청산:
+    allocated_buy_fee = remaining_buy_fee_pool * (sell_quantity / 보유수량)
+    new_pool = remaining_buy_fee_pool - allocated_buy_fee
+```
+
+이동평균 원가 모델에서는 보유수량 전체가 동일한 `average_cost`를 공유하므로 "수량 비례"와 "원가금액 비례"가 수학적으로 항상 같다 — 수량 비례가 나눗셈에 `average_cost`를 요구하지 않아 더 단순하다. 전량 청산을 별도 분기로 처리하는 이유는 rounding 누적으로 마지막에 pool이 정확히 0이 안 되는 drift를 원천 차단하기 위함이다(`tests/services/test_realized_pnl_engine.py`의 `test_repeated_partial_sells_drain_pool_to_zero_on_final_liquidation` 참고).
+
+### 14.3 provenance 요약 — lot 추적이 아니다
+
+이동평균은 BUY를 개별 lot으로 구분하지 않으므로, `buy_fee_pool_provenance`도 "어느 BUY에서 왔는지"가 아니라 "지금 쌓인 pool 전체가 어떤 신뢰도로 구성돼 있는가"만 요약한다:
+
+- `fully_calculated` — 현재 보유의 최초 진입 이후 쌓인 모든 BUY fee가 `calculated_from_policy`(또는 `reported`, 실 도입 시)로만 구성.
+- `fully_assumed_zero` — 전부 `assumed_zero`/`policy_not_applicable`(사실상 0)로만 구성.
+- `partially_assumed_zero` — 같은 보유 기간에 위 두 종류가 섞여 들어온 경우. 한 번 섞이면 전량 청산 후 재진입 전까지 "순수"로 되돌아가지 않는다(`realized_pnl_engine._merge_buy_fee_pool_provenance()`).
+
+### 14.4 forward-only 안전성
+
+오늘까지 존재하는 모든 BUY는 fee가 `NULL`이거나(과거 데이터) `assumed_zero`/`policy_not_applicable`(fee=0, `_validate_fill`이 `fee_tax_source=assumed_zero ⟹ fee=0` 불변식을 이미 강제)이므로, 이 확장 공식에 과거 replay 입력을 그대로 흘려도 `+0`을 더하는 것과 같아 결과가 전혀 바뀌지 않는다(`test_past_fee_zero_buys_are_no_op_regression`). 소급 재계산/대량 backfill은 필요 없다 — 신규 컬럼에 기본값(`0`/`fully_assumed_zero`)만 채우면 그대로 진실이다. 단, 이 안전성은 "설계가 forward-only를 보장해서"가 아니라 "지금까지 실제 nonzero 과거 fee가 없어서" 성립하는 것이라는 점을 명확히 인지해야 한다(향후 `reported`가 실제 도입돼 과거 fee가 소급 채워지는 경로가 생기면 재검토 필요).
+
+### 14.5 API 영향
+
+`GET /performance/realized-pnl/events`(`RealizedPnlEventView`)에 `allocated_buy_fee`/`buy_fee_allocation_source`를 추가 노출했다(from_attributes 방식이라 route 코드 변경 없이 스키마 필드 추가만으로 반영). `positions`/`daily`/`summary`/`daily-summary` 응답과 `average_cost`/`avg_cost_basis_before`/`buy_amount_sum`/`fee_tax_sum` 계산식은 전혀 바꾸지 않았다 — `realized_pnl_net`(과 그 합계)만 자연스럽게 영향을 받는다.
+
+### 14.6 구현 위치
+
+- `domain/enums.py`: `RealizedPnlBuyFeeAllocationSource`(3값).
+- `domain/entities.py`: `PositionCostBasisStateEntity.remaining_buy_fee_pool`/`buy_fee_pool_provenance`, `RealizedPnlEventEntity.allocated_buy_fee`/`buy_fee_allocation_source`.
+- `services/realized_pnl_engine.py`: `_apply_buy()`/`_apply_sell()` 확장, `_merge_buy_fee_pool_provenance()` 신설.
+- `db/migrations/0059_add_buy_fee_pool_allocation.sql`.
+- `repositories/postgres/position_cost_basis_states.py`, `repositories/postgres/realized_pnl_events.py`, `repositories/memory.py`: INSERT/upsert 컬럼 목록 반영.
+- `api/schemas.py`: `RealizedPnlEventView` 필드 추가.
+- 단위 테스트: `tests/services/test_realized_pnl_engine.py`(pool 누적/배분/전량청산/과거데이터 회귀/mixed provenance/replay 결정론).
+
+### 14.7 아직 확정하지 않은 것
+
+- 실제 `calculated_from_policy` BUY/SELL 표본으로의 실측 검증(운영 데이터 미존재, 이번 turn은 코드/테스트 범위로 한정).
+- `reported`(브로커 실보고 BUY fee) 도입 시 `_CALCULATED_ISH_FEE_TAX_SOURCES` 분류가 여전히 타당한지 재검토.
+- Admin UI에 `allocated_buy_fee`/`buy_fee_allocation_source` 노출 여부(이번 turn 범위 밖).

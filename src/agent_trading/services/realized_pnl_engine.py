@@ -48,7 +48,20 @@ from agent_trading.domain.entities import (
     PositionCostBasisStateEntity,
     RealizedPnlEventEntity,
 )
-from agent_trading.domain.enums import OrderSide, RealizedPnlFeeTaxSource
+from agent_trading.domain.enums import (
+    OrderSide,
+    RealizedPnlBuyFeeAllocationSource,
+    RealizedPnlFeeTaxSource,
+)
+
+# BUY fee가 "실제 값"으로 신뢰할 수 있는 fee_tax_source 집합 — 매수 수수료
+# pool의 provenance 요약(RealizedPnlBuyFeeAllocationSource)을 판정할 때만
+# 쓰는 내부 분류다. REPORTED는 BUY 경로에서 현재 발생하지 않지만(브로커
+# 직접 보고 fee는 아직 미구현), 발생한다면 CALCULATED_FROM_POLICY와 동일하게
+# "실제 값이 있는 fee"로 취급해야 한다.
+_CALCULATED_ISH_FEE_TAX_SOURCES = frozenset(
+    {RealizedPnlFeeTaxSource.CALCULATED_FROM_POLICY, RealizedPnlFeeTaxSource.REPORTED}
+)
 
 __all__ = [
     "NormalizedFill",
@@ -220,6 +233,33 @@ def _validate_fill(fill: NormalizedFill) -> None:
 # ---------------------------------------------------------------------------
 
 
+def _merge_buy_fee_pool_provenance(
+    current: RealizedPnlBuyFeeAllocationSource,
+    new_fee_tax_source: RealizedPnlFeeTaxSource,
+) -> RealizedPnlBuyFeeAllocationSource:
+    """기존 pool provenance 요약에 새 BUY 1건의 fee_tax_source를 합친다.
+
+    이동평균 원가는 BUY를 lot으로 구분하지 않으므로, pool도 "지금까지 쌓인
+    전체가 어떤 신뢰도로 구성돼 있는가"만 요약한다 — 한 번이라도 섞이면
+    (``PARTIALLY_ASSUMED_ZERO``) 그 뒤로는 같은 종류의 BUY가 반복돼도
+    "순수"로 되돌아가지 않는다(전량 청산 후 재진입해야만 리셋된다).
+    """
+    new_is_calculated_ish = new_fee_tax_source in _CALCULATED_ISH_FEE_TAX_SOURCES
+    if current == RealizedPnlBuyFeeAllocationSource.FULLY_CALCULATED:
+        return (
+            RealizedPnlBuyFeeAllocationSource.FULLY_CALCULATED
+            if new_is_calculated_ish
+            else RealizedPnlBuyFeeAllocationSource.PARTIALLY_ASSUMED_ZERO
+        )
+    if current == RealizedPnlBuyFeeAllocationSource.FULLY_ASSUMED_ZERO:
+        return (
+            RealizedPnlBuyFeeAllocationSource.FULLY_ASSUMED_ZERO
+            if not new_is_calculated_ish
+            else RealizedPnlBuyFeeAllocationSource.PARTIALLY_ASSUMED_ZERO
+        )
+    return RealizedPnlBuyFeeAllocationSource.PARTIALLY_ASSUMED_ZERO
+
+
 def _apply_buy(
     state: PositionCostBasisStateEntity | None,
     fill: NormalizedFill,
@@ -227,11 +267,23 @@ def _apply_buy(
     if state is None or state.quantity == 0:
         new_quantity = fill.quantity
         new_average_cost = fill.price
+        new_pool = fill.fee
+        new_provenance = (
+            RealizedPnlBuyFeeAllocationSource.FULLY_CALCULATED
+            if fill.fee_tax_source in _CALCULATED_ISH_FEE_TAX_SOURCES
+            else RealizedPnlBuyFeeAllocationSource.FULLY_ASSUMED_ZERO
+        )
     else:
         new_quantity = state.quantity + fill.quantity
         new_average_cost = (
             (state.quantity * state.average_cost) + (fill.quantity * fill.price)
         ) / new_quantity
+        # average_cost는 위 한 줄 그대로 유지 — fill.fee는 여기 넣지 않는다
+        # (설계 문서 12번 3.3절 v1 단순화 유지 결정, 14절 C안 확장형).
+        new_pool = state.remaining_buy_fee_pool + fill.fee
+        new_provenance = _merge_buy_fee_pool_provenance(
+            state.buy_fee_pool_provenance, fill.fee_tax_source
+        )
 
     return PositionCostBasisStateEntity(
         account_id=fill.account_id,
@@ -242,6 +294,8 @@ def _apply_buy(
         last_applied_fill_timestamp=fill.fill_timestamp,
         recompute_required=False,
         recompute_reason=None,
+        remaining_buy_fee_pool=new_pool,
+        buy_fee_pool_provenance=new_provenance,
     )
 
 
@@ -266,7 +320,6 @@ def _apply_sell(
 
     old_average_cost = state.average_cost
     realized_pnl_gross = (fill.price - old_average_cost) * fill.quantity
-    realized_pnl_net = realized_pnl_gross - fill.fee - fill.tax
     new_quantity = state.quantity - fill.quantity
     if new_quantity < 0:
         # 위의 fill.quantity > state.quantity 가드로 도달할 수 없어야 하는
@@ -278,6 +331,23 @@ def _apply_sell(
         )
     new_average_cost = Decimal("0") if new_quantity == 0 else old_average_cost
 
+    # 매수 수수료 pool 배분(C안 확장형, 설계 문서 12번 14절) — average_cost는
+    # 위에서 그대로 유지했고, 여기서는 realized_pnl_net에만 영향을 준다.
+    # 전량 청산이면 비율 나눗셈 없이 pool 전액을 배분해 rounding 누적으로
+    # pool이 0에 못 미치는 drift를 원천 차단한다.
+    if fill.quantity == state.quantity:
+        allocated_buy_fee = state.remaining_buy_fee_pool
+        new_pool = Decimal("0")
+    else:
+        allocated_buy_fee = state.remaining_buy_fee_pool * (fill.quantity / state.quantity)
+        new_pool = state.remaining_buy_fee_pool - allocated_buy_fee
+    # pool의 provenance 요약은 이번 SELL로 바뀌지 않는다 — 이동평균처럼
+    # 이미 섞여 있는 돈에서 "이번엔 어느 출처분만 나갔다"를 구분할 수
+    # 없으므로, 완전청산 후 재진입해야만 _apply_buy에서 새로 리셋된다.
+    buy_fee_allocation_source = state.buy_fee_pool_provenance
+
+    realized_pnl_net = realized_pnl_gross - fill.fee - fill.tax - allocated_buy_fee
+
     new_state = PositionCostBasisStateEntity(
         account_id=fill.account_id,
         instrument_id=fill.instrument_id,
@@ -287,6 +357,8 @@ def _apply_sell(
         last_applied_fill_timestamp=fill.fill_timestamp,
         recompute_required=False,
         recompute_reason=None,
+        remaining_buy_fee_pool=new_pool,
+        buy_fee_pool_provenance=state.buy_fee_pool_provenance,
     )
     event = RealizedPnlEventEntity(
         realized_pnl_event_id=_derive_realized_pnl_event_id(fill.fill_event_id),
@@ -306,6 +378,8 @@ def _apply_sell(
         position_quantity_after=new_quantity,
         computation_run_id=computation_run_id,
         fill_timestamp=fill.fill_timestamp,
+        allocated_buy_fee=allocated_buy_fee,
+        buy_fee_allocation_source=buy_fee_allocation_source,
     )
     return new_state, event
 
@@ -325,12 +399,18 @@ def apply_fill_to_cost_basis(
 
     BUY
         평균단가를 갱신한다. ``RealizedPnlEventEntity``를 만들지 않는다.
-        (v1 범위: 매수 수수료는 평균단가에 반영하지 않는다 — 후속 확장 후보.)
+        (매수 수수료는 여전히 평균단가에 반영하지 않는다 — 설계 문서 12번
+        3.3절 v1 단순화 유지. 대신 ``remaining_buy_fee_pool``에 별도로
+        누적했다가 SELL 시점에 배분한다 — 12번 14절 C안 확장형.)
 
     SELL
         평균단가는 바꾸지 않는다. ``(fill.price - 기존 평균단가) * 수량``으로
-        실현 손익을 계산하고 ``RealizedPnlEventEntity`` 1건을 반환한다.
-        잔량이 0이 되면 평균단가를 0으로 리셋한다. 보유 수량을 초과하는
+        ``realized_pnl_gross``를 계산하고, 여기서 이번 SELL 자체의
+        ``fee``/``tax``에 더해 ``remaining_buy_fee_pool``에서 보유수량 대비
+        매도수량 비율만큼 배분한 ``allocated_buy_fee``까지 뺀 값을
+        ``realized_pnl_net``으로 반환한다. ``RealizedPnlEventEntity`` 1건을
+        반환한다. 잔량이 0이 되면 평균단가를 0으로 리셋한다(pool도 전액
+        배분되어 0이 된다). 보유 수량을 초과하는
         SELL, 또는 보유 상태 자체가 없는 SELL은 예외로 명시 실패한다
         (개인 계좌 기준 숏 포지션 미지원).
 

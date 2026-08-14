@@ -31,9 +31,10 @@ class PostgresRealizedPnlEventRepository:
                  sell_quantity, sell_price, avg_cost_basis_before,
                  fee, tax, fee_tax_source,
                  realized_pnl_gross, realized_pnl_net, position_quantity_after,
-                 computation_run_id, superseded_by_event_id, fill_timestamp)
+                 computation_run_id, superseded_by_event_id, fill_timestamp,
+                 allocated_buy_fee, buy_fee_allocation_source)
             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12,
-                    $13, $14, $15, $16, $17, $18)
+                    $13, $14, $15, $16, $17, $18, $19, $20)
             RETURNING *
             """,
             event.realized_pnl_event_id,
@@ -54,6 +55,8 @@ class PostgresRealizedPnlEventRepository:
             event.computation_run_id,
             event.superseded_by_event_id,
             event.fill_timestamp,
+            event.allocated_buy_fee,
+            event.buy_fee_allocation_source.value,
         )
         return row_to_entity(row, RealizedPnlEventEntity)
 
@@ -72,9 +75,10 @@ class PostgresRealizedPnlEventRepository:
                  sell_quantity, sell_price, avg_cost_basis_before,
                  fee, tax, fee_tax_source,
                  realized_pnl_gross, realized_pnl_net, position_quantity_after,
-                 computation_run_id, superseded_by_event_id, fill_timestamp)
+                 computation_run_id, superseded_by_event_id, fill_timestamp,
+                 allocated_buy_fee, buy_fee_allocation_source)
             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12,
-                    $13, $14, $15, $16, $17, $18)
+                    $13, $14, $15, $16, $17, $18, $19, $20)
             ON CONFLICT (fill_event_id) DO UPDATE SET
                 sell_quantity = EXCLUDED.sell_quantity,
                 sell_price = EXCLUDED.sell_price,
@@ -85,7 +89,9 @@ class PostgresRealizedPnlEventRepository:
                 realized_pnl_gross = EXCLUDED.realized_pnl_gross,
                 realized_pnl_net = EXCLUDED.realized_pnl_net,
                 position_quantity_after = EXCLUDED.position_quantity_after,
-                computation_run_id = EXCLUDED.computation_run_id
+                computation_run_id = EXCLUDED.computation_run_id,
+                allocated_buy_fee = EXCLUDED.allocated_buy_fee,
+                buy_fee_allocation_source = EXCLUDED.buy_fee_allocation_source
             RETURNING *
             """,
             event.realized_pnl_event_id,
@@ -106,6 +112,8 @@ class PostgresRealizedPnlEventRepository:
             event.computation_run_id,
             event.superseded_by_event_id,
             event.fill_timestamp,
+            event.allocated_buy_fee,
+            event.buy_fee_allocation_source.value,
         )
         return row_to_entity(row, RealizedPnlEventEntity)
 
