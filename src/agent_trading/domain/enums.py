@@ -258,29 +258,51 @@ class RealizedPnlBuyFeeAllocationSource(str, Enum):
 
     ``trading.position_cost_basis_state.buy_fee_pool_provenance`` /
     ``trading.realized_pnl_events.buy_fee_allocation_source`` CHECK 제약과
-    동일한 3개 값으로 닫혀 있다(설계 문서 12번 14절 — average_cost는
-    유지하고 매수 수수료만 별도 pool로 누적/배분하는 C안 확장형).
+    동일한 4개 값으로 닫혀 있다(설계 문서 12번 14절 — average_cost는
+    유지하고 매수 수수료만 별도 pool로 누적/배분하는 C안 확장형. 4번째
+    값 ``HISTORICALLY_ESTIMATED``는 별도 검토 turn에서 추가됐다).
 
     이동평균 원가 모델은 개별 BUY를 lot으로 구분하지 않고 하나로 합치므로,
     이 pool도 "어느 BUY에서 왔는지"가 아니라 "지금 쌓여 있는 pool 전체가
     어떤 신뢰도의 fee로 구성돼 있는지"만 요약해서 추적한다(``fee_tax_source``
     처럼 매 fill 단위로 정확한 출처를 남기는 것과는 다른 성격의 값이다).
 
+    판정에 쓰는 ``fee_tax_source`` 3분류(``realized_pnl_engine.py``
+    ``_classify_fee_tax_source_for_pool()`` 참고):
+
+    - **calculated-ish**(실시간, 신뢰 가능한 실제 계산값): ``calculated_
+      from_policy``, ``reported``.
+    - **historical-ish**(소급 추정값, 계산 시점의 실제 정책이 아님):
+      ``historical_policy_estimate``.
+    - **zero-ish**(값 없음/비대상): ``assumed_zero``, ``policy_not_
+      applicable``.
+
     - ``FULLY_CALCULATED``: 현재 보유 수량의 최초 진입 이후 쌓인 모든 BUY의
-      fee가 ``calculated_from_policy``(또는 ``reported``, 실제 값이 있는
-      경우) 출처로만 구성됨.
-    - ``FULLY_ASSUMED_ZERO``: 쌓인 모든 BUY의 fee가 ``assumed_zero`` 또는
-      ``policy_not_applicable``(사실상 0)로만 구성됨 — 정책 등록 이전
-      데이터/이 자산군에 정책이 적용 안 되는 경우가 여기 해당한다.
-    - ``PARTIALLY_ASSUMED_ZERO``: 같은 보유 기간 안에 위 두 종류가 섞여
-      들어온 경우(예: 정책 등록 전 BUY + 등록 후 BUY를 같은 종목에 이어서
-      매수). 이 값이 뜨면 SELL의 ``allocated_buy_fee``가 신뢰도 낮은
-      기여분을 일부 포함할 수 있다는 뜻이다.
+      fee가 calculated-ish 출처로만 구성됨.
+    - ``HISTORICALLY_ESTIMATED``: 쌓인 모든 BUY의 fee가 historical-ish
+      출처(``historical_policy_estimate``)로만 구성됨 — initial backfill이
+      opt-in으로 소급 추정한 값이라는 뜻이며, ``FULLY_CALCULATED``와
+      **절대 같은 의미가 아니다**(``calculated_from_policy``는 "그 시점
+      실제 활성 정책"이라는 인과관계, ``historical_policy_estimate``는
+      "나중에 initial backfill 단계에서 현재 정책을 소급 적용"이라는 다른
+      인과관계 — 16번 문서 §8.9/§8.10).
+    - ``FULLY_ASSUMED_ZERO``: 쌓인 모든 BUY의 fee가 zero-ish 출처로만
+      구성됨 — 정책 등록 이전 데이터/이 자산군에 정책이 적용 안 되는
+      경우가 여기 해당한다.
+    - ``PARTIALLY_ASSUMED_ZERO``: 같은 보유 기간 안에 서로 다른 분류가
+      섞여 들어온 경우(예: 정책 등록 전 BUY + 등록 후 BUY, 또는
+      ``historical_policy_estimate`` BUY + ``calculated_from_policy``
+      BUY를 같은 종목에 이어서 매수). 이 값이 뜨면 SELL의
+      ``allocated_buy_fee``가 신뢰도가 서로 다른 기여분을 섞어서 포함할 수
+      있다는 뜻이다 — 이름이 "assumed_zero"이지만 실제로는 "pool 전체가
+      단일 신뢰도로 순수하지 않다"는 뜻으로 쓰인다(이름과 의미의 괴리는
+      알려진 한계이며, 리네이밍은 이번 확장의 범위 밖이다).
     """
 
     FULLY_CALCULATED = "fully_calculated"
     FULLY_ASSUMED_ZERO = "fully_assumed_zero"
     PARTIALLY_ASSUMED_ZERO = "partially_assumed_zero"
+    HISTORICALLY_ESTIMATED = "historically_estimated"
 
 
 class SourceReliabilityTier(str, Enum):

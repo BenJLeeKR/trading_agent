@@ -735,3 +735,150 @@ def test_replay_determinism_with_buy_fee_pool():
     assert result1.final_state == result2.final_state
     assert result1.realized_pnl_events == result2.realized_pnl_events
     assert result1.final_state.remaining_buy_fee_pool == Decimal("0")
+
+
+# ======================================================================
+# 14. historically_estimated — 4번째 pool provenance 값
+# ======================================================================
+
+
+def test_fresh_buy_with_historical_policy_estimate_yields_historically_estimated():
+    """시나리오 1: 신규 BUY + historical_policy_estimate → historically_estimated."""
+    buy = _make_fill(
+        quantity=Decimal("56"), price=Decimal("44153"), fee=Decimal("347"),
+        fee_tax_source=RealizedPnlFeeTaxSource.HISTORICAL_POLICY_ESTIMATE,
+    )
+
+    state, event = apply_fill_to_cost_basis(None, buy, computation_run_id=_COMPUTATION_RUN_ID)
+
+    assert event is None
+    assert state.average_cost == Decimal("44153")  # 금액 계산은 그대로
+    assert state.remaining_buy_fee_pool == Decimal("347")  # 금액 계산은 그대로
+    assert state.buy_fee_pool_provenance == RealizedPnlBuyFeeAllocationSource.HISTORICALLY_ESTIMATED
+
+
+def test_historically_estimated_plus_historical_ish_buy_stays_historically_estimated():
+    """시나리오 2: historically_estimated pool + historical-ish BUY 추가 → 유지."""
+    buy1 = _make_fill(
+        quantity=Decimal("10"), price=Decimal("100"), fee=Decimal("10"),
+        fee_tax_source=RealizedPnlFeeTaxSource.HISTORICAL_POLICY_ESTIMATE,
+    )
+    buy2 = _make_fill(
+        quantity=Decimal("10"), price=Decimal("100"), fee=Decimal("10"),
+        fee_tax_source=RealizedPnlFeeTaxSource.HISTORICAL_POLICY_ESTIMATE,
+        fill_timestamp=_BASE_TS + timedelta(seconds=1),
+    )
+
+    state1, _ = apply_fill_to_cost_basis(None, buy1, computation_run_id=_COMPUTATION_RUN_ID)
+    state2, _ = apply_fill_to_cost_basis(state1, buy2, computation_run_id=_COMPUTATION_RUN_ID)
+
+    assert state2.remaining_buy_fee_pool == Decimal("20")
+    assert state2.buy_fee_pool_provenance == RealizedPnlBuyFeeAllocationSource.HISTORICALLY_ESTIMATED
+
+
+def test_historically_estimated_plus_calculated_ish_buy_becomes_partially_assumed_zero():
+    """시나리오 3: historically_estimated pool + calculated-ish BUY → partially_assumed_zero."""
+    buy1 = _make_fill(
+        quantity=Decimal("10"), price=Decimal("100"), fee=Decimal("10"),
+        fee_tax_source=RealizedPnlFeeTaxSource.HISTORICAL_POLICY_ESTIMATE,
+    )
+    buy2 = _make_fill(
+        quantity=Decimal("10"), price=Decimal("100"), fee=Decimal("14"),
+        fee_tax_source=RealizedPnlFeeTaxSource.CALCULATED_FROM_POLICY,
+        fill_timestamp=_BASE_TS + timedelta(seconds=1),
+    )
+
+    state1, _ = apply_fill_to_cost_basis(None, buy1, computation_run_id=_COMPUTATION_RUN_ID)
+    state2, _ = apply_fill_to_cost_basis(state1, buy2, computation_run_id=_COMPUTATION_RUN_ID)
+
+    assert state2.remaining_buy_fee_pool == Decimal("24")  # 금액은 그대로 합산
+    assert state2.buy_fee_pool_provenance == RealizedPnlBuyFeeAllocationSource.PARTIALLY_ASSUMED_ZERO
+
+
+def test_historically_estimated_plus_zero_ish_buy_becomes_partially_assumed_zero():
+    """시나리오 4: historically_estimated pool + zero-ish BUY → partially_assumed_zero."""
+    buy1 = _make_fill(
+        quantity=Decimal("10"), price=Decimal("100"), fee=Decimal("10"),
+        fee_tax_source=RealizedPnlFeeTaxSource.HISTORICAL_POLICY_ESTIMATE,
+    )
+    buy2 = _make_fill(
+        quantity=Decimal("10"), price=Decimal("100"), fee=Decimal("0"),
+        fee_tax_source=RealizedPnlFeeTaxSource.ASSUMED_ZERO,
+        fill_timestamp=_BASE_TS + timedelta(seconds=1),
+    )
+
+    state1, _ = apply_fill_to_cost_basis(None, buy1, computation_run_id=_COMPUTATION_RUN_ID)
+    state2, _ = apply_fill_to_cost_basis(state1, buy2, computation_run_id=_COMPUTATION_RUN_ID)
+
+    assert state2.remaining_buy_fee_pool == Decimal("10")
+    assert state2.buy_fee_pool_provenance == RealizedPnlBuyFeeAllocationSource.PARTIALLY_ASSUMED_ZERO
+
+
+@pytest.mark.parametrize(
+    "fee_tax_source,expected",
+    [
+        (RealizedPnlFeeTaxSource.CALCULATED_FROM_POLICY, RealizedPnlBuyFeeAllocationSource.FULLY_CALCULATED),
+        (RealizedPnlFeeTaxSource.REPORTED, RealizedPnlBuyFeeAllocationSource.FULLY_CALCULATED),
+        (RealizedPnlFeeTaxSource.ASSUMED_ZERO, RealizedPnlBuyFeeAllocationSource.FULLY_ASSUMED_ZERO),
+        (RealizedPnlFeeTaxSource.POLICY_NOT_APPLICABLE, RealizedPnlBuyFeeAllocationSource.FULLY_ASSUMED_ZERO),
+        (RealizedPnlFeeTaxSource.HISTORICAL_POLICY_ESTIMATE, RealizedPnlBuyFeeAllocationSource.HISTORICALLY_ESTIMATED),
+    ],
+)
+def test_fresh_entry_classification_matches_3_bucket_scheme(fee_tax_source, expected):
+    """시나리오 5(회귀): 기존 fully_calculated/fully_assumed_zero 분류가 그대로 유지되는지."""
+    fee = Decimal("10") if fee_tax_source in (
+        RealizedPnlFeeTaxSource.CALCULATED_FROM_POLICY,
+        RealizedPnlFeeTaxSource.REPORTED,
+        RealizedPnlFeeTaxSource.HISTORICAL_POLICY_ESTIMATE,
+    ) else Decimal("0")
+    buy = _make_fill(quantity=Decimal("10"), price=Decimal("100"), fee=fee, fee_tax_source=fee_tax_source)
+
+    state, _ = apply_fill_to_cost_basis(None, buy, computation_run_id=_COMPUTATION_RUN_ID)
+
+    assert state.buy_fee_pool_provenance == expected
+
+
+def test_existing_partially_assumed_zero_stays_partially_assumed_zero_regression():
+    """시나리오 5(회귀): 기존 partially_assumed_zero 케이스가 그대로 유지되는지."""
+    buy1 = _make_fill(
+        quantity=Decimal("5"), price=Decimal("100"), fee=Decimal("0"),
+        fee_tax_source=RealizedPnlFeeTaxSource.ASSUMED_ZERO,
+    )
+    buy2 = _make_fill(
+        quantity=Decimal("5"), price=Decimal("100"), fee=Decimal("10"),
+        fee_tax_source=RealizedPnlFeeTaxSource.CALCULATED_FROM_POLICY,
+        fill_timestamp=_BASE_TS + timedelta(seconds=1),
+    )
+    state1, _ = apply_fill_to_cost_basis(None, buy1, computation_run_id=_COMPUTATION_RUN_ID)
+    state2, _ = apply_fill_to_cost_basis(state1, buy2, computation_run_id=_COMPUTATION_RUN_ID)
+    assert state2.buy_fee_pool_provenance == RealizedPnlBuyFeeAllocationSource.PARTIALLY_ASSUMED_ZERO
+
+    # 이미 섞인 상태에 historical-ish가 또 들어와도 계속 partially_assumed_zero.
+    buy3 = _make_fill(
+        quantity=Decimal("5"), price=Decimal("100"), fee=Decimal("5"),
+        fee_tax_source=RealizedPnlFeeTaxSource.HISTORICAL_POLICY_ESTIMATE,
+        fill_timestamp=_BASE_TS + timedelta(seconds=2),
+    )
+    state3, _ = apply_fill_to_cost_basis(state2, buy3, computation_run_id=_COMPUTATION_RUN_ID)
+    assert state3.buy_fee_pool_provenance == RealizedPnlBuyFeeAllocationSource.PARTIALLY_ASSUMED_ZERO
+
+
+def test_sell_allocation_source_reflects_historically_estimated():
+    """시나리오 6: SELL 시 buy_fee_allocation_source가 historically_estimated를 그대로 반영."""
+    buy = _make_fill(
+        quantity=Decimal("56"), price=Decimal("44153"), fee=Decimal("347"),
+        fee_tax_source=RealizedPnlFeeTaxSource.HISTORICAL_POLICY_ESTIMATE,
+    )
+    state_after_buy, _ = apply_fill_to_cost_basis(None, buy, computation_run_id=_COMPUTATION_RUN_ID)
+
+    sell = _make_fill(
+        side=OrderSide.SELL, quantity=Decimal("56"), price=Decimal("45000"),
+        fill_timestamp=_BASE_TS + timedelta(seconds=1),
+    )
+    state_after_sell, event = apply_fill_to_cost_basis(
+        state_after_buy, sell, computation_run_id=_COMPUTATION_RUN_ID
+    )
+
+    assert event.allocated_buy_fee == Decimal("347")  # 전량 청산 — pool 전액 배분
+    assert event.buy_fee_allocation_source == RealizedPnlBuyFeeAllocationSource.HISTORICALLY_ESTIMATED
+    assert state_after_sell.remaining_buy_fee_pool == Decimal("0")
