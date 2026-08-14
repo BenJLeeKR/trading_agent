@@ -2461,6 +2461,119 @@ class UpdateMaxSinglePositionPctResponse(BaseModel):
     activated_by: str
 
 
+class ExecutionFeeTaxInput(BaseModel):
+    """``POST /config-versions/execution-fee-tax`` 요청의 ``execution.fee_tax`` 본문.
+
+    설계 근거: docs/00_foundational_design/detailed_design/
+    12_realized_pnl_moving_average_ledger.md 13절. 숫자는 반드시
+    문자열로 보낸다(``Decimal`` 직접 입력 불가 — JSON 자체의 한계이자
+    이 저장소의 기존 관례).
+    """
+
+    enabled: bool = Field(
+        ..., description="false면 계산을 하지 않고 assumed_zero로 남긴다"
+    )
+    supported_asset_classes: list[str] = Field(
+        ..., description="예: [\"kr_stock\"] — instruments.asset_class와 정확히 일치해야 매칭된다"
+    )
+    supported_market_segments: list[str] = Field(
+        ..., description="예: [\"KOSPI\", \"KOSDAQ\"] — instruments.market_segment와 정확히 일치해야 매칭된다"
+    )
+    buy_commission_rate_pct: str = Field(
+        ..., description="퍼센트 그 자체 숫자. 예: '0.0140527' (=0.0140527%, 0.00140527이 아님)"
+    )
+    sell_commission_rate_pct: str = Field(
+        ..., description="퍼센트 그 자체 숫자. 예: '0.0140527'"
+    )
+    sell_tax_rate_pct: str = Field(
+        ..., description="매도 증권거래세율(퍼센트). 예: '0.2000' (코스피는 거래세+농특세 합산 정책에 따라 다름)"
+    )
+    sell_agri_tax_rate_pct: str = Field(
+        ..., description="매도 농어촌특별세율(퍼센트). 예: '0.0000' — 코스닥은 통상 0"
+    )
+    rounding_mode: str = Field(
+        ..., description="'round_half_up' | 'round_down' — 다른 값은 등록 단계에서 거부된다"
+    )
+    rounding_unit: str = Field(
+        ..., description="라운딩 단위(원). 예: '1' (원 단위 반올림/절사)"
+    )
+    reason: str = Field(..., description="필수 — 왜 이 정책을 등록/변경하는지(감사 추적)")
+    operator_note: str | None = Field(default=None, description="선택 — 운영자 메모")
+    source_note: str | None = Field(default=None, description="선택 — 요율 근거 출처(예: 계좌 계약서 확인 등)")
+
+
+class FeeTaxPolicyPreviewView(BaseModel):
+    """등록 전(또는 dry-run) 검증을 통과한 정규화된 정책값 + 샘플 계산 결과.
+
+    ``sample_price``/``sample_quantity``는 재무 규칙 확정이 아니라
+    "이 요율로 계산하면 이런 숫자가 나온다"를 운영자가 눈으로 바로
+    확인하기 위한 고정 예시(10만원 x 10주)다.
+    """
+
+    model_config = ConfigDict(from_attributes=True)
+
+    normalized_fee_tax: dict[str, object]
+    sample_price: str
+    sample_quantity: str
+    sample_buy_fee: str
+    sample_sell_fee: str
+    sample_sell_tax: str
+
+
+class PublishFeeTaxPolicyRequest(BaseModel):
+    """``POST /config-versions/execution-fee-tax`` 요청 본문."""
+
+    client_id: str = Field(..., description="Client UUID")
+    environment: str = Field(..., description="'paper' | 'live' only — 'real'은 거부된다")
+    execution_fee_tax: ExecutionFeeTaxInput
+    activated_at: datetime | None = Field(
+        default=None,
+        description=(
+            "생략하면 현재 시각. 지정하면 현재 활성 버전의 activated_at보다 "
+            "반드시 이후여야 한다(동일 시각/과거 시각 등록은 거부)."
+        ),
+    )
+    dry_run: bool = Field(
+        default=False,
+        description="true면 검증/미리보기만 수행하고 아무것도 저장하지 않는다",
+    )
+
+
+class PublishFeeTaxPolicyResponse(BaseModel):
+    """``POST /config-versions/execution-fee-tax`` 응답.
+
+    ``dry_run=true``였으면 ``config_version_id``/``version_tag``/
+    ``activated_at``/``activated_by``는 전부 ``None``이고 ``preview``만
+    채워진다 — 아무것도 저장되지 않았기 때문이다.
+    """
+
+    dry_run: bool
+    config_version_id: str | None = None
+    previous_config_version_id: str | None = None
+    client_id: str
+    environment: str
+    version_tag: str | None = None
+    activated_at: datetime | None = None
+    activated_by: str | None = None
+    preview: FeeTaxPolicyPreviewView
+
+
+class ActiveFeeTaxPolicyResponse(BaseModel):
+    """``GET /config-versions/execution-fee-tax/active|at`` 응답.
+
+    ``config_version_id``/``execution_fee_tax``가 ``None``이면 해당
+    client×environment(×시점)에 아직 fee/tax 정책이 등록되지 않은
+    것이다 — 오류가 아니라 ``compute_fee_tax()``가 ``assumed_zero``로
+    처리하는 정상 상태와 정확히 대응한다.
+    """
+
+    client_id: str
+    environment: str
+    config_version_id: str | None = None
+    activated_at: datetime | None = None
+    execution_fee_tax: dict[str, object] | None = None
+
+
 class ExternalEventView(BaseModel):
     """Lightweight external event view for UI consumption."""
 

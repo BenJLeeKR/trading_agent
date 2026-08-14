@@ -63,6 +63,7 @@ __all__ = [
     "FeeTaxResult",
     "parse_fee_tax_policy",
     "compute_fee_tax",
+    "preview_fee_tax_amounts",
 ]
 
 
@@ -258,3 +259,29 @@ async def compute_fee_tax(
         tax = _compute_amount(fill_price, fill_quantity, combined_tax_rate_pct, policy=policy)
 
     return FeeTaxResult(fee, tax, RealizedPnlFeeTaxSource.CALCULATED_FROM_POLICY)
+
+
+def preview_fee_tax_amounts(
+    policy: FeeTaxPolicy, *, sample_price: Decimal, sample_quantity: Decimal
+) -> dict[str, Decimal]:
+    """이미 파싱된 정책으로 샘플 매수/매도 fee/tax를 계산한다(순수 함수, DB 접근 없음).
+
+    ``compute_fee_tax()``의 계산 단계(자산군 지원 판정 이후)와 **완전히
+    같은 공식**(``_compute_amount``/``_apply_rounding``)을 그대로
+    재사용한다 — 이 함수는 기존 계산 로직을 바꾸지 않고, 등록 전
+    미리보기(운영자가 퍼센트 오입력을 눈으로 확인)를 위해 "이미 손에 쥔
+    정책값으로 계산만 해 보는" 경로를 노출할 뿐이다. 자산군/시장군
+    지원 여부, 활성 정책 조회는 이 함수의 책임이 아니다(호출자가 이미
+    정책을 확정해 넘긴다는 전제).
+    """
+    buy_fee = _compute_amount(
+        sample_price, sample_quantity, policy.buy_commission_rate_pct, policy=policy
+    )
+    sell_fee = _compute_amount(
+        sample_price, sample_quantity, policy.sell_commission_rate_pct, policy=policy
+    )
+    combined_sell_tax_rate_pct = policy.sell_tax_rate_pct + policy.sell_agri_tax_rate_pct
+    sell_tax = _compute_amount(
+        sample_price, sample_quantity, combined_sell_tax_rate_pct, policy=policy
+    )
+    return {"buy_fee": buy_fee, "sell_fee": sell_fee, "sell_tax": sell_tax}

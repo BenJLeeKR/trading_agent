@@ -261,3 +261,228 @@ class TestUpdateMaxSinglePositionPct:
                 },
             )
         assert response.status_code == 401
+
+
+_FEE_TAX_PUBLISH_PATH = "/config-versions/execution-fee-tax"
+_FEE_TAX_ACTIVE_PATH = "/config-versions/execution-fee-tax/active"
+_FEE_TAX_AT_PATH = "/config-versions/execution-fee-tax/at"
+
+_VALID_FEE_TAX_INPUT = {
+    "enabled": True,
+    "supported_asset_classes": ["kr_stock"],
+    "supported_market_segments": ["KOSPI", "KOSDAQ"],
+    "buy_commission_rate_pct": "0.0140527",
+    "sell_commission_rate_pct": "0.0140527",
+    "sell_tax_rate_pct": "0.2000",
+    "sell_agri_tax_rate_pct": "0.0000",
+    "rounding_mode": "round_half_up",
+    "rounding_unit": "1",
+    "reason": "initial live fee/tax policy",
+    "operator_note": "verified against operator contract sheet",
+    "source_note": "manual operator input",
+}
+
+
+class TestExecutionFeeTaxPolicyAdmin:
+    """``execution.fee_tax`` 정책 등록/조회 API 테스트.
+
+    서비스 계층(``validate_and_preview_fee_tax_policy``/``publish_fee_tax_policy``)
+    의 상세 검증 로직은 ``tests/services/test_fee_tax_policy_admin.py``에서
+    다루므로, 여기서는 API 계층(HTTP 상태/응답 shape/RBAC)만 확인한다.
+    """
+
+    def _build(self, *, auth_enabled: bool = True, auth_role: str = "admin"):
+        repos = build_in_memory_repositories()
+        app = create_app(
+            repos=repos,
+            auth_enabled=auth_enabled,
+            auth_token="test-token" if auth_enabled else None,
+            auth_role=auth_role,
+        )
+        return repos, app
+
+    def test_normal_registration_succeeds(self) -> None:
+        repos, app = self._build()
+        client_id = uuid4()
+
+        with TestClient(app) as client:
+            response = client.post(
+                _FEE_TAX_PUBLISH_PATH,
+                json={
+                    "client_id": str(client_id),
+                    "environment": "live",
+                    "execution_fee_tax": _VALID_FEE_TAX_INPUT,
+                },
+                headers=_ADMIN_HEADERS,
+            )
+        assert response.status_code == 200
+        data = response.json()
+        assert data["dry_run"] is False
+        assert data["config_version_id"] is not None
+        assert data["previous_config_version_id"] is None
+        assert data["preview"]["normalized_fee_tax"]["reason"] == "initial live fee/tax policy"
+        assert data["preview"]["sample_buy_fee"] is not None
+
+        active = asyncio.run(repos.config_versions.get_active(client_id, Environment.LIVE))
+        assert active is not None
+        assert str(active.config_version_id) == data["config_version_id"]
+        assert active.config_json["execution"]["fee_tax"]["enabled"] is True
+
+    def test_malformed_policy_is_rejected(self) -> None:
+        repos, app = self._build()
+        client_id = uuid4()
+        malformed = dict(_VALID_FEE_TAX_INPUT)
+        malformed["rounding_mode"] = "round_to_nearest_moon"
+
+        with TestClient(app) as client:
+            response = client.post(
+                _FEE_TAX_PUBLISH_PATH,
+                json={
+                    "client_id": str(client_id),
+                    "environment": "live",
+                    "execution_fee_tax": malformed,
+                },
+                headers=_ADMIN_HEADERS,
+            )
+        assert response.status_code == 400
+
+    def test_duplicate_activated_at_is_rejected(self) -> None:
+        repos, app = self._build()
+        client_id = uuid4()
+        fixed_at = "2026-08-14T09:00:00+00:00"
+
+        with TestClient(app) as client:
+            first = client.post(
+                _FEE_TAX_PUBLISH_PATH,
+                json={
+                    "client_id": str(client_id),
+                    "environment": "live",
+                    "execution_fee_tax": _VALID_FEE_TAX_INPUT,
+                    "activated_at": fixed_at,
+                },
+                headers=_ADMIN_HEADERS,
+            )
+            assert first.status_code == 200
+
+            second = client.post(
+                _FEE_TAX_PUBLISH_PATH,
+                json={
+                    "client_id": str(client_id),
+                    "environment": "live",
+                    "execution_fee_tax": _VALID_FEE_TAX_INPUT,
+                    "activated_at": fixed_at,
+                },
+                headers=_ADMIN_HEADERS,
+            )
+        assert second.status_code == 400
+
+    def test_dry_run_does_not_persist(self) -> None:
+        repos, app = self._build()
+        client_id = uuid4()
+
+        with TestClient(app) as client:
+            response = client.post(
+                _FEE_TAX_PUBLISH_PATH,
+                json={
+                    "client_id": str(client_id),
+                    "environment": "live",
+                    "execution_fee_tax": _VALID_FEE_TAX_INPUT,
+                    "dry_run": True,
+                },
+                headers=_ADMIN_HEADERS,
+            )
+        assert response.status_code == 200
+        data = response.json()
+        assert data["dry_run"] is True
+        assert data["config_version_id"] is None
+        assert data["preview"]["normalized_fee_tax"]["enabled"] is True
+
+        active = asyncio.run(repos.config_versions.get_active(client_id, Environment.LIVE))
+        assert active is None
+
+    def test_get_active_policy(self) -> None:
+        repos, app = self._build()
+        client_id = uuid4()
+
+        with TestClient(app) as client:
+            publish = client.post(
+                _FEE_TAX_PUBLISH_PATH,
+                json={
+                    "client_id": str(client_id),
+                    "environment": "live",
+                    "execution_fee_tax": _VALID_FEE_TAX_INPUT,
+                },
+                headers=_ADMIN_HEADERS,
+            )
+            assert publish.status_code == 200
+
+            response = client.get(
+                _FEE_TAX_ACTIVE_PATH,
+                params={"client_id": str(client_id), "environment": "live"},
+                headers=_ADMIN_HEADERS,
+            )
+        assert response.status_code == 200
+        data = response.json()
+        assert data["config_version_id"] == publish.json()["config_version_id"]
+        assert data["execution_fee_tax"]["enabled"] is True
+
+    def test_get_active_policy_when_none_registered_returns_nulls(self) -> None:
+        repos, app = self._build()
+        client_id = uuid4()
+
+        with TestClient(app) as client:
+            response = client.get(
+                _FEE_TAX_ACTIVE_PATH,
+                params={"client_id": str(client_id), "environment": "live"},
+                headers=_ADMIN_HEADERS,
+            )
+        assert response.status_code == 200
+        data = response.json()
+        assert data["config_version_id"] is None
+        assert data["execution_fee_tax"] is None
+
+    def test_get_policy_at_timestamp(self) -> None:
+        repos, app = self._build()
+        client_id = uuid4()
+
+        with TestClient(app) as client:
+            first = client.post(
+                _FEE_TAX_PUBLISH_PATH,
+                json={
+                    "client_id": str(client_id),
+                    "environment": "live",
+                    "execution_fee_tax": _VALID_FEE_TAX_INPUT,
+                    "activated_at": "2026-01-01T00:00:00+00:00",
+                },
+                headers=_ADMIN_HEADERS,
+            )
+            assert first.status_code == 200
+
+            later_input = dict(_VALID_FEE_TAX_INPUT)
+            later_input["buy_commission_rate_pct"] = "0.02"
+            second = client.post(
+                _FEE_TAX_PUBLISH_PATH,
+                json={
+                    "client_id": str(client_id),
+                    "environment": "live",
+                    "execution_fee_tax": later_input,
+                    "activated_at": "2026-06-01T00:00:00+00:00",
+                },
+                headers=_ADMIN_HEADERS,
+            )
+            assert second.status_code == 200
+
+            # 두 버전 사이 시점 조회 → 첫 번째 버전이 나와야 한다.
+            response = client.get(
+                _FEE_TAX_AT_PATH,
+                params={
+                    "client_id": str(client_id),
+                    "environment": "live",
+                    "at": "2026-03-01T00:00:00+00:00",
+                },
+                headers=_ADMIN_HEADERS,
+            )
+        assert response.status_code == 200
+        data = response.json()
+        assert data["config_version_id"] == first.json()["config_version_id"]
+        assert data["execution_fee_tax"]["buy_commission_rate_pct"] == "0.0140527"
