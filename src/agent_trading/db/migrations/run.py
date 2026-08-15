@@ -170,16 +170,27 @@ async def run_migration(
                 path.name,
             )
             raise
-        except (asyncio.TimeoutError, asyncpg.exceptions.PostgresError) as exc:
-            # TimeoutError (asyncio) 또는 PostgresError (asyncpg) 발생 시
-            # 스키마가 이미 존재하는 상태에서 DDL이 타임아웃되는 경우가 있음.
-            # 이 경우 마이그레이션이 이미 적용된 것으로 간주하고 진행.
-            logger.warning(
-                "Migration may already be applied (timeout/error): %s — %s: %s",
-                path.name,
-                type(exc).__name__,
-                exc,
-            )
+        # 의도적으로 없앤 분기 — "stale migration record" 사고(0062):
+        # 예전에는 여기 `except (asyncio.TimeoutError,
+        # asyncpg.exceptions.PostgresError)` 분기가 있어, timeout이든
+        # `InvalidForeignKeyError`든 `UniqueViolationError`든 문법 오류든
+        # 가리지 않고 "이미 적용된 것으로 간주"하며 예외를 삼켰다. 그 결과
+        # `0062_add_historical_buy_fee_overlays.sql`이 참조 무결성 위반으로
+        # 실제로는 실패했는데도 `run_all_migrations()`가 정상 종료로 보고
+        # `trading.schema_migrations`에 성공으로 기록해버렸고, 실체
+        # (`historical_buy_fee_overlays` 테이블)는 없는 채로 원장만 남는
+        # 사고로 이어졌다. `PostgresError`는 asyncpg의 거의 모든 오류의
+        # 최상위 부모 클래스라 사실상 "DDL이 왜 실패했든 성공으로 본다"는
+        # 뜻이었다.
+        #
+        # 이 러너는 "정말 이미 적용된 상태"만 위의 Duplicate*Error 3종으로
+        # 좁게 판정한다. 그 외의 모든 실패(참조 무결성, unique 위반, 문법
+        # 오류, timeout 등 포함)는 아래 `except Exception`으로 떨어져
+        # 원장에 기록되지 않고 그대로 raise된다 — 실패는 실패로 드러나야
+        # 한다. "timeout 났지만 실체를 재확인해서 이미 적용됨으로 판정"하는
+        # 정교한 경로는 이번 수정에서 의도적으로 도입하지 않았다 — 그런
+        # 판정 로직 자체가 또 다른 형태의 "추정으로 성공 처리"이며, 가장
+        # 보수적인 방향은 모르면 실패로 남기는 것이다.
         except Exception as exc:
             logger.error(
                 "Migration failed: %s — %s: %s",
@@ -282,8 +293,6 @@ def main() -> None:
     )
 
     _load_dotenv()
-
-    import asyncio
 
     try:
         asyncio.run(ensure_schema())

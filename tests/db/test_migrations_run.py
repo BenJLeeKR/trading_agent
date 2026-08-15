@@ -1,13 +1,21 @@
-"""Unit tests for the migration ledger / TooManyColumnsError handling.
+"""Unit tests for the migration ledger / exception handling.
 
-SPPV-2.152 후속(attnum 1600 한도 도달) 대응 — 실제 Postgres 없이 fake
-connection/pool로 다음 두 계약만 검증한다:
+SPPV-2.152 후속(attnum 1600 한도 도달) 대응과 `0062` stale-record 사고
+후속 대응을 실제 Postgres 없이 fake connection/pool로 검증한다:
 
 1. ``TooManyColumnsError``는 다른 ``Duplicate*Error``와 달리 "이미 적용됨"으로
    간주되지 않고 그대로 raise된다(실패 은폐 방지).
-2. 이력(ledger)이 비어 있을 때 기존 스키마(``trading.clients`` 존재)면 현재
-   파일 전체를 백필하고, 완전히 새 DB면 백필하지 않는다.
-3. ``run_all_migrations``는 이력에 이미 기록된 파일을 재실행하지 않는다.
+2. 참조 무결성 위반(``InvalidForeignKeyError``) 등 진짜 DDL 실패는 더 이상
+   "이미 적용됐을 수 있음"으로 삼켜지지 않고 그대로 raise된다 — `0062`가
+   `config_versions`에 PK가 없어 FK 생성에 실패했는데도 원장에는 성공으로
+   남았던 stale-record 사고의 재발 방지.
+3. 그런 실패가 나면 ``run_all_migrations``는 해당 파일을 원장(``trading.
+   schema_migrations``)에 기록하지 않는다 — "실체 없이 원장만 성공으로
+   남는" 상태를 만들지 않는다.
+4. 이력이 비어 있을 때 기존 스키마(``trading.clients`` 존재)면 현재 파일
+   전체를 백필하고, 완전히 새 DB면 백필하지 않는다(이번 수정과 무관한
+   기존 계약, 회귀 방지용으로 유지).
+5. ``run_all_migrations``는 이력에 이미 기록된 파일을 재실행하지 않는다.
 
 실제 DB 연결(``asyncpg.create_pool``)은 fake로 대체해 하네스의
 "신규 KIS 호출 금지 / 외부 API 호출 금지" 원칙과 무관하게 완전히 오프라인으로
@@ -119,6 +127,145 @@ class TestTooManyColumnsErrorNotSwallowed:
         _patch_pool(monkeypatch, conn)
 
         await migrations_run.run_migration(sql_file)  # raise하지 않아야 한다
+
+
+class TestStaleRecordRegressionNotSwallowed:
+    """0062 사고 재발 방지 — 진짜 DDL 실패는 '이미 적용됨'으로 삼켜지면
+    안 되고, 원장에도 기록되면 안 된다."""
+
+    @pytest.mark.asyncio
+    async def test_invalid_foreign_key_error_reraises(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """0062 실사고 재현: 참조 대상에 PK/UNIQUE가 없어 FK 생성이
+        실패하는 경우, 예전 코드는 이걸 '이미 적용됐을 수 있음'으로 보고
+        삼켰다. 지금은 그대로 raise돼야 한다."""
+        sql_file = tmp_path / "0062_add_historical_buy_fee_overlays.sql"
+        sql_file.write_text(
+            "ALTER TABLE trading.historical_buy_fee_overlays "
+            "ADD CONSTRAINT fk FOREIGN KEY (basis_config_version_id) "
+            "REFERENCES trading.config_versions (config_version_id);"
+        )
+
+        conn = _FakeConn(
+            execute_raises={
+                "FOREIGN KEY": asyncpg.exceptions.InvalidForeignKeyError(
+                    "there is no unique constraint matching given keys "
+                    'for referenced table "config_versions"'
+                )
+            }
+        )
+        _patch_pool(monkeypatch, conn)
+
+        with pytest.raises(asyncpg.exceptions.InvalidForeignKeyError):
+            await migrations_run.run_migration(sql_file)
+
+    @pytest.mark.asyncio
+    async def test_unique_violation_error_reraises(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        sql_file = tmp_path / "0099_add_constraint.sql"
+        sql_file.write_text(
+            "ALTER TABLE trading.clients ADD CONSTRAINT uq UNIQUE (client_id);"
+        )
+
+        conn = _FakeConn(
+            execute_raises={
+                "ADD CONSTRAINT": asyncpg.exceptions.UniqueViolationError(
+                    "duplicate key value violates unique constraint"
+                )
+            }
+        )
+        _patch_pool(monkeypatch, conn)
+
+        with pytest.raises(asyncpg.exceptions.UniqueViolationError):
+            await migrations_run.run_migration(sql_file)
+
+    @pytest.mark.asyncio
+    async def test_undefined_table_error_reraises(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        sql_file = tmp_path / "0099_broken_reference.sql"
+        sql_file.write_text("ALTER TABLE trading.does_not_exist ADD COLUMN x INT;")
+
+        conn = _FakeConn(
+            execute_raises={
+                "ALTER TABLE": asyncpg.exceptions.UndefinedTableError(
+                    "relation does not exist"
+                )
+            }
+        )
+        _patch_pool(monkeypatch, conn)
+
+        with pytest.raises(asyncpg.exceptions.UndefinedTableError):
+            await migrations_run.run_migration(sql_file)
+
+    @pytest.mark.asyncio
+    async def test_generic_postgres_error_reraises(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """개별 서브클래스로 분류되지 않는 일반 PostgresError도 더 이상
+        삼켜지면 안 된다 — 예전의 광범위 catch가 커버하던 케이스."""
+        sql_file = tmp_path / "0099_generic_failure.sql"
+        sql_file.write_text("CREATE TABLE trading.broken ( ; )")
+
+        conn = _FakeConn(
+            execute_raises={"CREATE TABLE": asyncpg.exceptions.PostgresError("boom")}
+        )
+        _patch_pool(monkeypatch, conn)
+
+        with pytest.raises(asyncpg.exceptions.PostgresError):
+            await migrations_run.run_migration(sql_file)
+
+    @pytest.mark.asyncio
+    async def test_timeout_error_reraises(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """timeout도 더 이상 '이미 적용됐을 수 있음'으로 추정하지 않는다 —
+        모르면 실패로 남기는 것이 가장 보수적인 방향이다."""
+        sql_file = tmp_path / "0099_slow_migration.sql"
+        sql_file.write_text("CREATE INDEX CONCURRENTLY idx ON trading.fill_events (fill_price);")
+
+        conn = _FakeConn(
+            execute_raises={"CREATE INDEX": TimeoutError("statement timeout")}
+        )
+        _patch_pool(monkeypatch, conn)
+
+        with pytest.raises(TimeoutError):
+            await migrations_run.run_migration(sql_file)
+
+    @pytest.mark.asyncio
+    async def test_failed_migration_never_recorded_in_ledger(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """0062 사고의 핵심 증상 재현: FK 생성 실패가 원장에는 절대 성공
+        으로 남지 않아야 한다 — '실체 없이 원장만 성공'인 stale record를
+        다시 만들지 않는다는 것을 run_all_migrations 레벨에서 확인한다."""
+        (tmp_path / "0062_add_historical_buy_fee_overlays.sql").write_text(
+            "ALTER TABLE trading.historical_buy_fee_overlays "
+            "ADD CONSTRAINT fk FOREIGN KEY (basis_config_version_id) "
+            "REFERENCES trading.config_versions (config_version_id);"
+        )
+
+        conn = _FakeConn(
+            fetchval_returns={"count(*) FROM trading.schema_migrations": 1},
+            fetch_returns={"SELECT filename FROM trading.schema_migrations": []},
+            execute_raises={
+                "FOREIGN KEY": asyncpg.exceptions.InvalidForeignKeyError(
+                    "there is no unique constraint matching given keys "
+                    'for referenced table "config_versions"'
+                )
+            },
+        )
+        _patch_pool(monkeypatch, conn)
+
+        with pytest.raises(asyncpg.exceptions.InvalidForeignKeyError):
+            await migrations_run.run_all_migrations(migrations_dir=tmp_path)
+
+        insert_calls = [
+            sql for sql in conn.executed if "INSERT INTO trading.schema_migrations" in sql
+        ]
+        assert insert_calls == []  # 실패한 migration은 원장에 기록되지 않는다
 
 
 class TestLedgerBootstrap:
