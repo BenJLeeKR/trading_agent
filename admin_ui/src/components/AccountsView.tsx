@@ -9,7 +9,14 @@ import type {
   CashBalanceSnapshotView,
   SnapshotSyncRunSummary,
 } from "../types/api";
-import { getClients, getDefaultClient, getAccounts, getAccountSnapshots, getSnapshotSyncRuns } from "../api/client";
+import {
+  getClients,
+  getDefaultClient,
+  getAccounts,
+  getAccountSnapshots,
+  getSnapshotSyncRuns,
+  getOrders,
+} from "../api/client";
 import { DataTable } from "./common/DataTable";
 import { StatusBadge } from "./common/StatusBadge";
 import { FilterBar } from "./common/FilterBar";
@@ -17,7 +24,7 @@ import { ErrorBanner } from "./common/ErrorBanner";
 import { LoadingSpinner } from "./common/LoadingSpinner";
 import type { Column } from "./common/DataTable";
 import { AlertCircle, Lock, Wallet, TrendingUp, TrendingDown, X, Users } from "lucide-react";
-import { formatKrw, formatKstElapsed } from "@/lib/utils";
+import { formatKrw, formatKstElapsed, getKstTodayString } from "@/lib/utils";
 
 /* ───────────────────────────────────────────
  * Helpers
@@ -49,18 +56,32 @@ function formatUnrealizedPnlRate(pos: PositionSnapshotView): string {
   return `${rate >= 0 ? "+" : ""}${rate.toFixed(2)}%`;
 }
 
-/** KST 기준 YYYY-MM-DD 날짜 문자열 도출 (position row의 조회일 query param용) */
-function toKstDateString(iso: string | null | undefined): string | null {
-  if (!iso) return null;
-  const d = new Date(iso);
-  if (isNaN(d.getTime())) return null;
-  const formatter = new Intl.DateTimeFormat("sv-SE", {
-    timeZone: "Asia/Seoul",
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-  });
-  return formatter.format(d);
+/**
+ * 포지션의 `account_id` + `symbol`에 매칭되는 가장 최근 주문의 실제 주문일자(KST)를 찾는다.
+ *
+ * `snapshot_at`(브로커 스냅샷 시각)은 포지션이 조회된 시점일 뿐 주문일자가 아니므로
+ * "관련 주문 보기" 링크의 `date` query 값으로 쓰면 안 된다 — 최신 스냅샷이 오늘이면
+ * 실제 주문이 다른 날짜에 발생했어도 항상 오늘 날짜로 링크가 만들어져, 주문내역
+ * 화면에서 정작 그 주문을 찾지 못하는 문제가 있었다. 대신 해당 계좌·종목으로 실제
+ * 제출된 주문을 조회해 그 주문의 `created_at`에서 날짜를 도출한다.
+ *
+ * 계정당 최근 주문 최대 `limit`건만 조회하는 좁은 범위 호출이며, 매칭되는 주문이
+ * 없거나 조회 자체가 실패하면 `null`을 반환해 호출부가 날짜 없이(symbol만) 이동하게 한다.
+ */
+async function resolveRelatedOrderDate(
+  accountId: string,
+  symbol: string | null,
+): Promise<string | null> {
+  if (!symbol) return null;
+  try {
+    const orders = await getOrders(undefined, 200, undefined, accountId);
+    const matched = orders.find(
+      (o) => o.symbol && o.symbol.toUpperCase() === symbol.toUpperCase() && o.created_at,
+    );
+    return matched?.created_at ? getKstTodayString(new Date(matched.created_at)) : null;
+  } catch {
+    return null;
+  }
 }
 
 function prioritizeDefaultClient(
@@ -95,7 +116,22 @@ export default function AccountsView() {
   const [latestSyncRun, setLatestSyncRun] = useState<SnapshotSyncRunSummary | null>(null);
   const [syncRunError, setSyncRunError] = useState(false);
   const [showSnapshotHistory, setShowSnapshotHistory] = useState(false);
+  const [resolvingOrderLinkId, setResolvingOrderLinkId] = useState<string | null>(null);
   const navigate = useNavigate();
+
+  // ── 관련 주문 보기 클릭 핸들러 ────────────────────────────────
+  // snapshot_at을 주문일자로 오인해 date query에 넣지 않도록, 클릭 시점에
+  // account_id + symbol로 실제 주문을 조회해 그 주문의 실제 날짜를 사용한다.
+  const handleRelatedOrdersClick = async (pos: PositionSnapshotView) => {
+    setResolvingOrderLinkId(pos.position_snapshot_id);
+    const orderDate = await resolveRelatedOrderDate(pos.account_id, pos.symbol);
+    setResolvingOrderLinkId(null);
+
+    const params = new URLSearchParams();
+    params.set("symbol", pos.symbol ?? "");
+    if (orderDate) params.set("date", orderDate);
+    navigate(`/orders?${params.toString()}`);
+  };
 
   // Filter state
   const [searchText, setSearchText] = useState("");
@@ -395,19 +431,17 @@ export default function AccountsView() {
       key: "actions",
       header: "",
       render: (r) => {
-        const orderDate = toKstDateString(r.snapshot_at);
-        const params = new URLSearchParams();
-        params.set("symbol", r.symbol ?? "");
-        if (orderDate) params.set("date", orderDate);
+        const isResolving = resolvingOrderLinkId === r.position_snapshot_id;
         return (
           <button
             onClick={(e) => {
               e.stopPropagation();
-              navigate(`/orders?${params.toString()}`);
+              void handleRelatedOrdersClick(r);
             }}
-            className="text-xs text-[#3b82f6] hover:text-[#2563eb] font-medium transition-colors whitespace-nowrap"
+            disabled={isResolving}
+            className="text-xs text-[#3b82f6] hover:text-[#2563eb] font-medium transition-colors whitespace-nowrap disabled:opacity-50 disabled:cursor-wait"
           >
-            관련 주문 보기 →
+            {isResolving ? "주문 조회 중…" : "관련 주문 보기 →"}
           </button>
         );
       },

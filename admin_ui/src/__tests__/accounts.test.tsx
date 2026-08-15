@@ -1,5 +1,5 @@
 import { render, screen, waitFor, fireEvent, act, cleanup } from "@testing-library/react";
-import { MemoryRouter } from "react-router-dom";
+import { MemoryRouter, useLocation } from "react-router-dom";
 import { describe, expect, it, afterEach, vi, beforeEach } from "vitest";
 import AccountsView from "../components/AccountsView";
 import { setStoredToken, clearStoredToken } from "../api/client";
@@ -11,6 +11,12 @@ import type { ReactNode } from "react";
 /** Wraps component in MemoryRouter so useNavigate() works. */
 function RouterWrapper({ children }: { children: ReactNode }) {
   return <MemoryRouter>{children}</MemoryRouter>;
+}
+
+/** 현재 URL의 path+search를 노출해 navigate() 목적지를 검증할 수 있게 한다. */
+function LocationProbe() {
+  const location = useLocation();
+  return <div data-testid="location-probe">{location.pathname + location.search}</div>;
 }
 
 /**
@@ -519,6 +525,97 @@ describe("AccountsView snapshot dedup", () => {
 
     // "관련 주문 보기 →" button should be visible
     expect(screen.getByText(/관련 주문 보기/)).toBeInTheDocument();
+  });
+
+  it("관련 주문 보기 클릭 시 snapshot_at이 아니라 매칭된 실제 주문의 created_at 날짜를 사용한다", async () => {
+    vi.spyOn(apiClient, "getClients").mockResolvedValue(mockClients);
+    vi.spyOn(apiClient, "getAccounts").mockResolvedValue(mockAccounts);
+    vi.spyOn(apiClient, "getAccountSnapshots").mockResolvedValue(makeSnapshotResponse());
+    // mockPositions의 snapshot_at은 2024-01-01이지만, 실제 매칭 주문은
+    // 전혀 다른 날짜(2024-01-05)에 발생했다 — 링크는 이 날짜를 따라야 한다.
+    const getOrdersSpy = vi.spyOn(apiClient, "getOrders").mockResolvedValue([
+      {
+        order_request_id: "or-1",
+        client_order_id: "co-1",
+        account_id: "ac-22222222-2222-2222-2222-222222222222",
+        side: "buy",
+        order_type: "market",
+        status: "filled",
+        requested_quantity: 10,
+        requested_price: null,
+        symbol: "AAPL",
+        instrument_name: "Apple Inc.",
+        filled_quantity: 10,
+        avg_fill_price: 150,
+        fill_amount: 1500,
+        correlation_id: "corr-1",
+        trade_decision_id: null,
+        created_at: "2024-01-05T03:00:00Z",
+        updated_at: null,
+        version: 1,
+      },
+    ]);
+
+    render(
+      <MemoryRouter>
+        <AccountsView />
+        <LocationProbe />
+      </MemoryRouter>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("CLIENT1-PAPER-PAPER")).toBeInTheDocument();
+    });
+    screen.getByText("CLIENT1-PAPER-PAPER").click();
+
+    await waitFor(() => {
+      expect(screen.getByText("브로커 스냅샷 — 포지션")).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByText(/관련 주문 보기/));
+
+    await waitFor(() => {
+      expect(screen.getByTestId("location-probe").textContent).toBe(
+        "/orders?symbol=AAPL&date=2024-01-05",
+      );
+    });
+
+    // account_id 기준으로 주문을 조회했는지 확인 (symbol/날짜는 클라이언트에서 매칭)
+    expect(getOrdersSpy).toHaveBeenCalledWith(
+      undefined,
+      expect.any(Number),
+      undefined,
+      "ac-22222222-2222-2222-2222-222222222222",
+    );
+  });
+
+  it("매칭되는 주문이 없으면 관련 주문 보기 링크에 date를 넣지 않는다", async () => {
+    vi.spyOn(apiClient, "getClients").mockResolvedValue(mockClients);
+    vi.spyOn(apiClient, "getAccounts").mockResolvedValue(mockAccounts);
+    vi.spyOn(apiClient, "getAccountSnapshots").mockResolvedValue(makeSnapshotResponse());
+    vi.spyOn(apiClient, "getOrders").mockResolvedValue([]);
+
+    render(
+      <MemoryRouter>
+        <AccountsView />
+        <LocationProbe />
+      </MemoryRouter>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("CLIENT1-PAPER-PAPER")).toBeInTheDocument();
+    });
+    screen.getByText("CLIENT1-PAPER-PAPER").click();
+
+    await waitFor(() => {
+      expect(screen.getByText("브로커 스냅샷 — 포지션")).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByText(/관련 주문 보기/));
+
+    await waitFor(() => {
+      expect(screen.getByTestId("location-probe").textContent).toBe("/orders?symbol=AAPL");
+    });
   });
 
   it("summary cards use dedup data not raw positions", async () => {
