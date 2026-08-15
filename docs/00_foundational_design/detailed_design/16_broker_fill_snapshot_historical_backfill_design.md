@@ -701,6 +701,74 @@ CLI(`scripts/backfill_broker_fill_snapshot_historical_fills.py`) dry-run
 eligible이 되는지, eligible이 된 종목에 대한 실제 apply는 **별도 turn에서
 진행**한다(이번 turn은 운영 apply를 포함하지 않는다).
 
+**후속(별도 turn, 완료)**: 13종목 전부 실제로 `eligible=True, anchor_type=
+initial_entry`로 통과함을 read-only dry-run으로 확인했고, 이후 종목별
+개별 apply(`--use-historical-policy-estimate-for-buy-fee` 포함)까지
+전부 완료됐다. 13종목 모두 `fill_events` append + `buy_fee_pool_provenance
+=historically_estimated`까지 처음부터 정확히 반영됨을 확인했다(§8.11의
+provenance 분류 수정이 신규 apply에는 즉시 올바르게 작동해, `001450`/
+`004370` 때와 달리 별도 정정 recompute가 필요 없었다). `007070`은 이
+initial-entry 트랙과 무관하게 §8.13의 별도 overlay+recompute 트랙으로
+진행한다.
+
+### 8.13 `007070` overlay + recompute 트랙(구현 완료, 운영 apply는 별도 승인 turn)
+
+**성격 구분**: `007070`은 §8.9~§8.12의 initial-entry/historical estimate
+트랙과 **근본적으로 다른 문제**다 — 이미 `fill_events`(BUY 176주, SELL
+88주+70주)와 그 결과인 `realized_pnl_events` 2건이 원장에 존재한다.
+"새 fill을 만드는" initial backfill이 아니라, **이미 확정된 원장을 새
+사실(historical fee estimate)로 재해석**하는 문제다.
+
+**핵심 원칙**: `fill_events` 원본(`fill_fee`/`fill_tax`/`fee_tax_source`)은
+절대 UPDATE하지 않는다 — 이 테이블은 코드 전체에서 UPDATE가 단 한 줄도
+없는 순수 append-only 원장이라는 원칙을 이번에도 유지한다. 대신 "이 BUY
+fill에 대해 이런 historical fee 추정치가 있다"는 **별도 사실**을
+`trading.historical_buy_fee_overlays`에 append하고, `RealizedPnlRecompute
+Service`의 fill 수집 단계에서만 그 overlay를 읽어 병합한다 — 실시간
+경로(`RealizedPnlLedgerService.apply_fill`)는 이 테이블을 전혀 참조하지
+않는다.
+
+**구현**:
+- `trading.historical_buy_fee_overlays`(migration 0062) — `fill_event_id`
+  UNIQUE(같은 fill에 overlay 1건만), `estimated_fee`, `fee_tax_source`
+  (`historical_policy_estimate` 고정), `basis_config_version_id`(어느
+  정책 버전 기준인지 감사), `reason`, `created_by`, `created_at`.
+- `HistoricalBuyFeeOverlayEntity`/`HistoricalBuyFeeOverlayRepository`
+  (postgres+memory, 다른 저장소와 동일한 4계층 패턴: contract→container→
+  memory→postgres bootstrap).
+- **병합 지점**: `RealizedPnlRecomputeService._collect_ordered_normalized_
+  fills()` 단 한 곳 — 각 fill을 조회한 직후 overlay 존재 여부를 확인하고,
+  있으면 `dataclasses.replace()`로 `fill_fee`/`fill_tax=0`/`fee_tax_source
+  =historical_policy_estimate`만 덮어쓴 **사본**을 `build_normalized_fill()`
+  에 넘긴다 — 원본 `FillEventEntity`/`fill_events` 테이블은 그대로다.
+  실시간 경로(`RealizedPnlLedgerService`)는 이 저장소를 import조차 하지
+  않는다.
+- **CLI**: `scripts/apply_historical_buy_fee_overlay.py` — 기본 dry-run.
+  대상 fill의 가격/수량으로 현재 활성 정책 기준 추정 fee를 계산하고
+  (`compute_fee_tax()` 재사용, `CALCULATED_FROM_POLICY`로 성립할 때만
+  진행 — 활성 정책 없으면 거부), `replay_fills()`(순수 함수, DB 미접근)로
+  overlay를 가정한 전체 재계산을 **미리 시뮬레이션**해 기존 SELL 2건의
+  `allocated_buy_fee`/`realized_pnl_net`이 어떻게 바뀔지 전/후 비교로
+  보여준다. `--mode apply`는 overlay append + `recompute_queue` 등록만
+  하고(reason_code='manual_request'), 실제 재계산 실행은 스크립트가
+  하지 않는다 — 기존 `realized-pnl-recompute-worker`가 수행한다(다른
+  모든 파일럿과 동일한 "apply=등록만, 계산=기존 워커" 패턴).
+
+**illustrative 계산(예시, 실제 반영 값 아님)**: BUY 176주×28,000원 ×
+0.0140527% ≈ 692.52 → round_half_up → **693원**. SELL 88주: 비율
+88/176=0.5 → `allocated_buy_fee=346.5`, 남은 pool=346.5. SELL 70주: 비율
+70/88 → `allocated_buy_fee=346.5×70/88=275.625`, 최종 남은 pool=70.875.
+단위 테스트(`test_recompute_merges_historical_buy_fee_overlay_and_
+reallocates_existing_sells`)가 이 수치를 정확히 재현하는 것으로
+구현을 검증했다(`realized_pnl_gross`/`average_cost`/수량은 전혀 안
+바뀜, `allocated_buy_fee`/`realized_pnl_net`/`remaining_buy_fee_pool`/
+`buy_fee_pool_provenance`만 변경).
+
+**이번 turn 범위**: 코드/테스트/문서까지만. 실제 `007070`에 대한 overlay
+append/apply/recompute 실행은 **별도 승인 turn**으로 분리한다 — 이미
+확정된 realized PnL 숫자(-105,600/-94,500)가 실제로 바뀌는 운영 작업이라
+이번 turn에서 자동으로 진행하지 않는다.
+
 ## 9. 리스크
 
 | 리스크 | 평가 |

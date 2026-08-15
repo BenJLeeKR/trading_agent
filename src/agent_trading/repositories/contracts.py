@@ -24,6 +24,7 @@ from agent_trading.domain.entities import (
     FillEventEntity,
     FillSyncRunEntity,
     GuardrailEvaluationEntity,
+    HistoricalBuyFeeOverlayEntity,
     InstrumentEntity,
     InstrumentIndexMembershipEntity,
     InstrumentStatusSnapshotEntity,
@@ -1113,6 +1114,24 @@ class RealizedPnlRecomputeQueueRepository(Protocol):
         resolved_by_computation_run_id: UUID,
         resolved_at: datetime | None = None,
     ) -> RealizedPnlRecomputeQueueEntity | None:
+        ...
+
+
+class HistoricalBuyFeeOverlayRepository(Protocol):
+    """이미 존재하는 BUY ``fill_event``에 대한 소급 fee 추정 append-only 저장소.
+
+    ``fill_events`` 원본은 이 저장소를 통해 절대 수정되지 않는다 —
+    recompute 경로만 이 값을 조회해 병합한다(설계 근거: 16번 문서 §8.13).
+    """
+
+    async def add(
+        self, overlay: HistoricalBuyFeeOverlayEntity
+    ) -> HistoricalBuyFeeOverlayEntity:
+        ...
+
+    async def get_by_fill_event_id(
+        self, fill_event_id: UUID
+    ) -> HistoricalBuyFeeOverlayEntity | None:
         ...
 
 

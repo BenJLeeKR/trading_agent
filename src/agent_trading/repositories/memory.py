@@ -25,6 +25,7 @@ from agent_trading.domain.entities import (
     FillEventEntity,
     FillSyncRunEntity,
     GuardrailEvaluationEntity,
+    HistoricalBuyFeeOverlayEntity,
     InstrumentEntity,
     InstrumentIndexMembershipEntity,
     InstrumentStatusSnapshotEntity,
@@ -1394,6 +1395,25 @@ class InMemoryRealizedPnlRecomputeQueueRepository:
         )
         self._items[recompute_queue_id] = updated
         return updated
+
+
+class InMemoryHistoricalBuyFeeOverlayRepository:
+    def __init__(self) -> None:
+        self._items: dict[UUID, HistoricalBuyFeeOverlayEntity] = {}
+        self._by_fill_event_id: dict[UUID, UUID] = {}
+
+    async def add(
+        self, overlay: HistoricalBuyFeeOverlayEntity
+    ) -> HistoricalBuyFeeOverlayEntity:
+        self._items[overlay.overlay_id] = overlay
+        self._by_fill_event_id[overlay.fill_event_id] = overlay.overlay_id
+        return overlay
+
+    async def get_by_fill_event_id(
+        self, fill_event_id: UUID
+    ) -> HistoricalBuyFeeOverlayEntity | None:
+        overlay_id = self._by_fill_event_id.get(fill_event_id)
+        return self._items.get(overlay_id) if overlay_id is not None else None
 
 
 class InMemoryReconciliationRepository:

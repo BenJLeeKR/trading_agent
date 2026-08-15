@@ -383,6 +383,33 @@ class FillEventEntity:
 
 
 @dataclass(slots=True, frozen=True)
+class HistoricalBuyFeeOverlayEntity:
+    """이미 존재하는 BUY ``fill_event``에 대한 소급 fee 추정 append-only 원장.
+
+    ``trading.historical_buy_fee_overlays``에 대응한다. ``fill_events``
+    원본(``fill_fee``/``fill_tax``/``fee_tax_source``)은 절대 UPDATE하지
+    않는다 — 이 테이블이 "이 fill에 대해 이런 추정치가 있다"는 별도
+    사실을 append로만 기록하고, recompute 경로(``RealizedPnlRecomputeService.
+    _collect_ordered_normalized_fills()``)만 이 값을 읽어 병합한다(설계
+    근거: 16번 문서 §8.13, `007070` 파일럿).
+
+    ``fill_event_id``는 UNIQUE다 — 같은 fill에 대한 overlay는 1건만
+    존재할 수 있다(재정정이 필요하면 이 행을 upsert하는 것이 아니라
+    별도 turn에서 처리 방식을 재검토한다 — 이번 파일럿은 최초 1회
+    등록만 다룬다).
+    """
+
+    overlay_id: UUID
+    fill_event_id: UUID
+    estimated_fee: Decimal
+    fee_tax_source: str
+    basis_config_version_id: UUID
+    reason: str
+    created_by: str
+    created_at: datetime | None = None
+
+
+@dataclass(slots=True, frozen=True)
 class FillSyncRunEntity:
     fill_sync_run_id: UUID
     trigger_type: str

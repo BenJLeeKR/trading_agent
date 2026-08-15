@@ -119,7 +119,7 @@ from agent_trading.domain.entities import (
     RealizedPnlComputationRunEntity,
     RealizedPnlDailyAggregateEntity,
 )
-from agent_trading.domain.enums import RealizedPnlComputationRunType
+from agent_trading.domain.enums import RealizedPnlComputationRunType, RealizedPnlFeeTaxSource
 from agent_trading.repositories.container import RepositoryContainer
 from agent_trading.repositories.filters import OrderQuery
 from agent_trading.services.realized_pnl_engine import (
@@ -309,6 +309,14 @@ class RealizedPnlRecomputeService:
         내려가므로(``RealizedPnlLedgerService._resolve_lineage``의 반대
         방향), 여기서 얻는 fill들은 항상 유효한 lineage를 갖는다 —
         ``UnresolvedFillLineageError``가 발생할 수 없는 방향이다.
+
+        ``historical_buy_fee_overlays``(16번 문서 §8.13, `007070` overlay
+        파일럿)에 이 fill에 대한 overlay가 있으면, ``fill_events`` 원본은
+        그대로 두고 이 조회 단계에서만 ``fill_fee``/``fill_tax``/
+        ``fee_tax_source``를 overlay 값으로 override한 뒤
+        :func:`build_normalized_fill`에 넘긴다 — overlay는 오직 이
+        recompute 경로에서만 반영되고, 실시간 경로(``RealizedPnlLedgerService.
+        apply_fill``)는 이 저장소를 전혀 참조하지 않는다.
         """
         orders = await self._repos.orders.list(
             OrderQuery(account_id=account_id, limit=_ORDER_LOOKUP_LIMIT)
@@ -325,8 +333,19 @@ class RealizedPnlRecomputeService:
                     broker_order.broker_order_id
                 )
                 for fill_event in fills:
+                    overlay = await self._repos.historical_buy_fee_overlays.get_by_fill_event_id(
+                        fill_event.fill_event_id
+                    )
+                    effective_fill_event = fill_event
+                    if overlay is not None:
+                        effective_fill_event = replace(
+                            fill_event,
+                            fill_fee=overlay.estimated_fee,
+                            fill_tax=Decimal("0"),
+                            fee_tax_source=RealizedPnlFeeTaxSource.HISTORICAL_POLICY_ESTIMATE.value,
+                        )
                     normalized = build_normalized_fill(
-                        fill_event,
+                        effective_fill_event,
                         account_id=account_id,
                         instrument_id=instrument_id,
                         order_request_id=order.order_request_id,
