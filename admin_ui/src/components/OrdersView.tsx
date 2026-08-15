@@ -36,7 +36,10 @@ export default function OrdersView() {
   const [searchText, setSearchText] = useState("");
   const [statusFilter, setStatusFilter] = useState("");
   const [sideFilter, setSideFilter] = useState("");
-  const [selectedDate, setSelectedDate] = useState(todayKst());
+  const [selectedDate, setSelectedDate] = useState(() => {
+    const params = new URLSearchParams(window.location.search);
+    return params.get("date") || todayKst();
+  });
   const [selectedOrder, setSelectedOrder] = useState<OrderSummary | null>(null);
   const [currentPage, setCurrentPage] = useState(1);
   const [pageSize, setPageSize] = useState(20);
@@ -44,7 +47,8 @@ export default function OrdersView() {
 
   const location = useLocation();
 
-  // ── Read initial symbol from URL query params ───────────────────
+  // ── Read initial symbol/date from URL query params ──────────────
+  // date는 useState 초기값에서 이미 반영했으므로 여기서는 symbol만 처리한다.
   useEffect(() => {
     const params = new URLSearchParams(location.search);
     const symbolParam = params.get("symbol");

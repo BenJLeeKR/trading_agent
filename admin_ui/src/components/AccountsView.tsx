@@ -17,7 +17,7 @@ import { ErrorBanner } from "./common/ErrorBanner";
 import { LoadingSpinner } from "./common/LoadingSpinner";
 import type { Column } from "./common/DataTable";
 import { AlertCircle, Lock, Wallet, TrendingUp, TrendingDown, X, Users } from "lucide-react";
-import { formatKrw, formatKstElapsed, formatKstDateTime } from "@/lib/utils";
+import { formatKrw, formatKstElapsed } from "@/lib/utils";
 
 /* ───────────────────────────────────────────
  * Helpers
@@ -31,6 +31,36 @@ function formatQty(val: number | null | undefined): string {
 
 function truncateUuid(uuid: string): string {
   return uuid.length > 8 ? uuid.slice(0, 8) + "…" : uuid;
+}
+
+/**
+ * 미실현 손익율(%) = 미실현 손익 / 매입원가 × 100.
+ * 매입원가는 백엔드 `purchase_amount`(매입금액)를 우선 사용하고, 없으면
+ * `average_price * quantity`로 대체 계산한다. 백엔드에 손익율 필드 자체가
+ * 없어(KIS `evlu_pfls_rt` 미수집) 프론트에서 파생 계산한 값이다.
+ * 원가가 0 이하이거나 손익 값이 없으면 판단 불가로 "—"를 반환한다.
+ */
+function formatUnrealizedPnlRate(pos: PositionSnapshotView): string {
+  if (pos.unrealized_pnl == null) return "—";
+  const costBasis = pos.purchase_amount ?? pos.average_price * pos.quantity;
+  if (!costBasis || costBasis <= 0) return "—";
+  const rate = (pos.unrealized_pnl / costBasis) * 100;
+  if (!Number.isFinite(rate)) return "—";
+  return `${rate >= 0 ? "+" : ""}${rate.toFixed(2)}%`;
+}
+
+/** KST 기준 YYYY-MM-DD 날짜 문자열 도출 (position row의 조회일 query param용) */
+function toKstDateString(iso: string | null | undefined): string | null {
+  if (!iso) return null;
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return null;
+  const formatter = new Intl.DateTimeFormat("sv-SE", {
+    timeZone: "Asia/Seoul",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  });
+  return formatter.format(d);
 }
 
 function prioritizeDefaultClient(
@@ -273,11 +303,24 @@ export default function AccountsView() {
     {
       key: "symbol",
       header: "종목",
-      render: (r) => (
-        <span className="text-sm font-medium text-[#0f172a]">
-          {r.symbol ?? truncateUuid(r.instrument_id)}
-        </span>
-      ),
+      render: (r) =>
+        r.symbol ? (
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              navigate(`/operations/realtime-quotes?symbol=${encodeURIComponent(r.symbol as string)}`);
+            }}
+            title="실시간 현재가 보기"
+            className="text-sm font-medium text-[#3b82f6] hover:text-[#2563eb] hover:underline transition-colors"
+          >
+            {r.symbol}
+          </button>
+        ) : (
+          <span className="text-sm font-medium text-[#0f172a]">
+            {truncateUuid(r.instrument_id)}
+          </span>
+        ),
     },
     {
       key: "instrument_name",
@@ -329,21 +372,45 @@ export default function AccountsView() {
         );
       },
     },
-    { key: "snapshot_at", header: "스냅샷 시각", render: (r) => formatKstDateTime(r.snapshot_at) },
+    {
+      key: "unrealized_pnl_rate",
+      header: "미실현 손익율",
+      align: "right",
+      render: (r) => {
+        const label = formatUnrealizedPnlRate(r);
+        if (label === "—") {
+          return <span className="text-xs text-[#94a3b8]">—</span>;
+        }
+        const isPositive = label.startsWith("+");
+        return (
+          <span
+            className={`text-xs font-semibold ${isPositive ? "text-[#16a34a]" : "text-[#dc2626]"}`}
+          >
+            {label}
+          </span>
+        );
+      },
+    },
     {
       key: "actions",
       header: "",
-      render: (r) => (
-        <button
-          onClick={(e) => {
-            e.stopPropagation();
-            navigate(`/orders?symbol=${encodeURIComponent(r.symbol ?? "")}`);
-          }}
-          className="text-xs text-[#3b82f6] hover:text-[#2563eb] font-medium transition-colors whitespace-nowrap"
-        >
-          관련 주문 보기 →
-        </button>
-      ),
+      render: (r) => {
+        const orderDate = toKstDateString(r.snapshot_at);
+        const params = new URLSearchParams();
+        params.set("symbol", r.symbol ?? "");
+        if (orderDate) params.set("date", orderDate);
+        return (
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              navigate(`/orders?${params.toString()}`);
+            }}
+            className="text-xs text-[#3b82f6] hover:text-[#2563eb] font-medium transition-colors whitespace-nowrap"
+          >
+            관련 주문 보기 →
+          </button>
+        );
+      },
     },
   ];
 
