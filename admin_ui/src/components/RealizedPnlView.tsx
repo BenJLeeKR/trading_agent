@@ -84,6 +84,18 @@ function formatSignedKrw(val: number): string {
   return `${val >= 0 ? "+" : ""}${formatKrw(val)}`;
 }
 
+/* ───────────────────────────────────────────
+ * "비용" 표시 = 브로커 비용(fee+tax) + 매수수수료 배분(allocated_buy_fee).
+ * realized_pnl_net(_sum)은 이미 allocated_buy_fee까지 차감한 값이므로,
+ * 화면의 "비용"과 "실현손익(순)"이 서로 설명 가능하도록(비용을 뺀 것이
+ * 실현손익(순)) 두 개념을 합쳐서 보여준다 — 중복 차감이 아니라 표시
+ * 정합성 복구다. 브로커 비용/매수수수료 배분 각각의 값은 tooltip으로
+ * 분리해 드러낸다(설계 근거: 실현손익 화면 비용 표시 정리).
+ * ─────────────────────────────────────────── */
+function costTooltip(brokerFeeTax: number, allocatedBuyFee: number): string {
+  return `브로커 비용(fee+tax): ${formatKrw(brokerFeeTax)}\n매수수수료 배분(allocated_buy_fee): ${formatKrw(allocatedBuyFee)}`;
+}
+
 type TabKey = "daily" | "byInstrument" | "events";
 
 const EVENTS_PAGE_LIMIT = 200;
@@ -273,7 +285,16 @@ export default function RealizedPnlView() {
     { key: "sell_event_count", header: "매도 건수", align: "right", render: (r) => r.sell_event_count.toLocaleString() },
     { key: "buy_amount_sum", header: "매수금액", align: "right", render: (r) => formatKrw(r.buy_amount_sum) },
     { key: "sell_amount_sum", header: "매도금액", align: "right", render: (r) => formatKrw(r.sell_amount_sum) },
-    { key: "fee_tax_sum", header: "비용", align: "right", render: (r) => formatKrw(r.fee_tax_sum) },
+    {
+      key: "fee_tax_sum",
+      header: "비용",
+      align: "right",
+      render: (r) => (
+        <span title={costTooltip(r.fee_tax_sum, r.allocated_buy_fee_sum)}>
+          {formatKrw(r.fee_tax_sum + r.allocated_buy_fee_sum)}
+        </span>
+      ),
+    },
     {
       key: "realized_pnl_net_sum",
       header: "실현손익(순)",
@@ -288,7 +309,16 @@ export default function RealizedPnlView() {
     { key: "sell_event_count", header: "매도 건수", align: "right", render: (r) => r.sell_event_count.toLocaleString() },
     { key: "buy_amount_sum", header: "매수금액", align: "right", render: (r) => formatKrw(r.buy_amount_sum) },
     { key: "sell_amount_sum", header: "매도금액", align: "right", render: (r) => formatKrw(r.sell_amount_sum) },
-    { key: "fee_tax_sum", header: "비용", align: "right", render: (r) => formatKrw(r.fee_tax_sum) },
+    {
+      key: "fee_tax_sum",
+      header: "비용",
+      align: "right",
+      render: (r) => (
+        <span title={costTooltip(r.fee_tax_sum, r.allocated_buy_fee_sum)}>
+          {formatKrw(r.fee_tax_sum + r.allocated_buy_fee_sum)}
+        </span>
+      ),
+    },
     {
       key: "realized_pnl_net_sum",
       header: "실현손익(순)",
@@ -308,7 +338,16 @@ export default function RealizedPnlView() {
     { key: "sell_quantity", header: "수량", align: "right", render: (r) => r.sell_quantity.toLocaleString() },
     { key: "avg_cost_basis_before", header: "매수단가", align: "right", render: (r) => formatKrw(r.avg_cost_basis_before) },
     { key: "sell_price", header: "매도단가", align: "right", render: (r) => formatKrw(r.sell_price) },
-    { key: "fee_tax", header: "비용", align: "right", render: (r) => formatKrw(r.fee + r.tax) },
+    {
+      key: "fee_tax",
+      header: "비용",
+      align: "right",
+      render: (r) => (
+        <span title={costTooltip(r.fee + r.tax, r.allocated_buy_fee)}>
+          {formatKrw(r.fee + r.tax + r.allocated_buy_fee)}
+        </span>
+      ),
+    },
     {
       key: "realized_pnl_net",
       header: "실현손익(순)",
@@ -485,9 +524,14 @@ export default function RealizedPnlView() {
                   매도금액 합계 :{" "}
                   <span className="font-semibold text-[#0f172a]">{formatKrw(summaryData?.sell_amount_sum ?? 0)}</span>
                 </div>
-                <div className="bg-white rounded-xl border border-[#e2e8f0] px-4 py-3 text-sm text-[#475569]">
+                <div
+                  className="bg-white rounded-xl border border-[#e2e8f0] px-4 py-3 text-sm text-[#475569]"
+                  title={costTooltip(summaryData?.fee_tax_sum ?? 0, summaryData?.allocated_buy_fee_sum ?? 0)}
+                >
                   비용 합계 :{" "}
-                  <span className="font-semibold text-[#0f172a]">{formatKrw(summaryData?.fee_tax_sum ?? 0)}</span>
+                  <span className="font-semibold text-[#0f172a]">
+                    {formatKrw((summaryData?.fee_tax_sum ?? 0) + (summaryData?.allocated_buy_fee_sum ?? 0))}
+                  </span>
                 </div>
               </div>
 

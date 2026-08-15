@@ -58,6 +58,7 @@ const mockSummaryAllInstruments: RealizedPnlSummaryResponse = {
   buy_amount_sum: 1000000,
   sell_amount_sum: 1130000,
   fee_tax_sum: 15000,
+  allocated_buy_fee_sum: 0,
   recompute_pending_count: 1,
   by_instrument: [
     {
@@ -69,6 +70,7 @@ const mockSummaryAllInstruments: RealizedPnlSummaryResponse = {
       buy_amount_sum: 800000,
       sell_amount_sum: 950000,
       fee_tax_sum: 10000,
+      allocated_buy_fee_sum: 0,
       recompute_required: false,
     },
     {
@@ -80,6 +82,7 @@ const mockSummaryAllInstruments: RealizedPnlSummaryResponse = {
       buy_amount_sum: 200000,
       sell_amount_sum: 180000,
       fee_tax_sum: 5000,
+      allocated_buy_fee_sum: 0,
       recompute_required: true,
     },
   ],
@@ -104,6 +107,7 @@ const mockSummaryEmpty: RealizedPnlSummaryResponse = {
   buy_amount_sum: 0,
   sell_amount_sum: 0,
   fee_tax_sum: 0,
+  allocated_buy_fee_sum: 0,
   recompute_pending_count: 0,
   by_instrument: [],
 };
@@ -118,6 +122,7 @@ const mockSummarySingleInstrument: RealizedPnlSummaryResponse = {
   buy_amount_sum: 800000,
   sell_amount_sum: 950000,
   fee_tax_sum: 10000,
+  allocated_buy_fee_sum: 0,
   recompute_pending_count: 0,
   by_instrument: [
     {
@@ -129,6 +134,7 @@ const mockSummarySingleInstrument: RealizedPnlSummaryResponse = {
       buy_amount_sum: 800000,
       sell_amount_sum: 950000,
       fee_tax_sum: 10000,
+      allocated_buy_fee_sum: 0,
       recompute_required: false,
     },
   ],
@@ -148,6 +154,7 @@ function makeDailyResponse(instrumentId: string): RealizedPnlDailyResponse {
         buy_amount_sum: 800000,
         sell_amount_sum: 950000,
         fee_tax_sum: 10000,
+        allocated_buy_fee_sum: 0,
       },
     ],
   };
@@ -171,6 +178,7 @@ const mockDailySummaryAllInstruments: RealizedPnlDailySummaryResponse = {
       buy_amount_sum: 400000,
       sell_amount_sum: 477000,
       fee_tax_sum: 4000,
+      allocated_buy_fee_sum: 0,
     },
   ],
 };
@@ -200,6 +208,8 @@ function makeEvent(overrides?: Partial<RealizedPnlEventView>): RealizedPnlEventV
     realized_pnl_net: 24500,
     position_quantity_after: 5,
     fill_timestamp: "2026-08-01T01:00:00Z",
+    allocated_buy_fee: 0,
+    buy_fee_allocation_source: "fully_assumed_zero",
     ...overrides,
   };
 }
