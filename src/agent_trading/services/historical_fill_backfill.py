@@ -64,6 +64,7 @@ _ORDER_LOOKUP_LIMIT = 100_000
 
 __all__ = [
     "BackfillExclusionReason",
+    "BackfillAnchorType",
     "SyntheticFillCandidate",
     "OrderBackfillDetail",
     "BackfillPlan",
@@ -90,6 +91,26 @@ class BackfillExclusionReason:
     UNPRICEABLE_DELTA = "unpriceable_delta"
     FINAL_QUANTITY_MISMATCH = "final_quantity_mismatch"
     LINEAGE_INCONSISTENT = "lineage_inconsistent"
+
+
+class BackfillAnchorType:
+    """원가 완결성 판정에 실제로 쓰인 anchor 종류(설계 근거: 16번 문서 §8.12).
+
+    ``BackfillPlan.eligible=True``일 때만 의미가 있다(``False``면 ``None``).
+
+    - ``ZERO_CROSSING``: 첫 주문 이전 ``position_snapshots``에서
+      ``quantity == 0``인 관측이 발견된 경우(기존 §3.3-1 방식).
+    - ``INITIAL_ENTRY``: 이 계좌×종목에 대해 ``window_start``(``--start-date``)
+      이전 filled 주문 자체가 전혀 없는 경우. "잔고가 0이었다는 관측"이
+      아니라 "그 수량을 바꿀 방법(주문 체결) 자체가 존재하지 않았다"는
+      논리적으로 더 강한 사실이다 — zero-crossing 스냅샷의 대체재가
+      아니라 별도의, 오히려 더 강한 anchor로 취급한다. ``001450``/`004370`
+      과 달리 이 anchor는 스냅샷이 아니라 주문 이력 부재로 판정되므로
+      ``zero_crossing_at``은 ``None``이다.
+    """
+
+    ZERO_CROSSING = "zero_crossing"
+    INITIAL_ENTRY = "initial_entry"
 
 
 @dataclass(slots=True, frozen=True)
@@ -142,6 +163,11 @@ class BackfillPlan:
     expected_final_quantity: Decimal
     broker_reported_quantity: Decimal | None
     broker_reported_quantity_matches: bool | None
+    anchor_type: str | None = None
+    """어느 anchor로 원가 완결성을 인정받았는지 — ``BackfillAnchorType``의
+    값 중 하나(``eligible=False``면 ``None``). ``ZERO_CROSSING``이면
+    ``zero_crossing_at``에 그 스냅샷 시각이 채워지고, ``INITIAL_ENTRY``면
+    ``zero_crossing_at``은 ``None``이다."""
 
 
 @dataclass(slots=True, frozen=True)
@@ -296,32 +322,58 @@ async def build_backfill_plan(
     first_order_time = window_orders[0].created_at or window_start
 
     # §3.3-1: 완전 청산 시작점 — position_snapshots에서 quantity==0인
-    # 가장 최근 관측을 첫 주문 이전에서 찾는다. start_date로 하한을
-    # 제한하지 않는다 — 실제 zero-crossing이 backfill 기간보다 앞설 수
-    # 있다(이번 조사에서 확인된 사례가 정확히 이 형태).
-    anchor = await repos.position_snapshots.get_latest_by_account_and_instrument_before(
+    # 가장 최근 관측을 첫 주문 이전에서 찾는다(ZERO_CROSSING anchor).
+    # start_date로 하한을 제한하지 않는다 — 실제 zero-crossing이 backfill
+    # 기간보다 앞설 수 있다(이번 조사에서 확인된 사례가 정확히 이 형태).
+    zero_crossing_snapshot = await repos.position_snapshots.get_latest_by_account_and_instrument_before(
         account_id, instrument_id, before=first_order_time
     )
-    if anchor is None or anchor.quantity != Decimal("0"):
-        return _empty_plan(BackfillExclusionReason.ZERO_CROSSING_NOT_FOUND)
 
-    # §3.3-2 보강: anchor와 첫 주문 사이에 "누락된" filled 주문이 있으면
-    # (즉 anchor 이후 window_start 이전에 이미 filled된 주문이 있으면)
-    # 원가가 이미 anchor 시점 이후 변했을 수 있으므로 제외한다 — 부분
-    # 반영 금지 원칙(16번 문서 §2, §4.3)의 적용.
-    gap_orders = [
-        o
-        for o in all_filled_orders
-        if anchor.snapshot_at < (o.created_at or anchor.snapshot_at) < first_order_time
-    ]
-    if gap_orders:
-        return _empty_plan(
-            BackfillExclusionReason.GAP_ORDER_BEFORE_WINDOW, anchor.snapshot_at
+    anchor_type: str
+    anchor_at: datetime | None
+
+    if zero_crossing_snapshot is not None and zero_crossing_snapshot.quantity == Decimal("0"):
+        anchor_type = BackfillAnchorType.ZERO_CROSSING
+        anchor_at = zero_crossing_snapshot.snapshot_at
+
+        # §3.3-2 보강: anchor와 첫 주문 사이에 "누락된" filled 주문이 있으면
+        # (즉 anchor 이후 window_start 이전에 이미 filled된 주문이 있으면)
+        # 원가가 이미 anchor 시점 이후 변했을 수 있으므로 제외한다 — 부분
+        # 반영 금지 원칙(16번 문서 §2, §4.3)의 적용.
+        gap_orders = [
+            o
+            for o in all_filled_orders
+            if anchor_at < (o.created_at or anchor_at) < first_order_time
+        ]
+        if gap_orders:
+            return _empty_plan(
+                BackfillExclusionReason.GAP_ORDER_BEFORE_WINDOW, anchor_at
+            )
+    else:
+        # §8.12(16번 문서): INITIAL_ENTRY anchor — window_start 이전에 이
+        # 계좌×종목에 대한 filled 주문 자체가 전혀 없으면, zero-crossing
+        # 스냅샷("잔고가 0이었다는 관측") 없이도 원가 완결성을 인정한다.
+        # "주문 이력 전무"는 "잔고 0 관측"보다 논리적으로 더 강한 사실이다
+        # — 수량이 바뀔 수 있는 유일한 경로(주문 체결) 자체가 없었으므로,
+        # 그 이전 잔고가 0이 아니었을 가능성 자체가 없다. gap_orders 개념은
+        # 이 경로에 적용되지 않는다 — anchor 정의 자체가 "window_start
+        # 이전 filled 주문 전무"라 그 정의상 gap이 있을 수 없다.
+        has_orders_before_window = any(
+            (o.created_at or window_start) < window_start for o in all_filled_orders
         )
+        # "매수가 그 종목의 첫 진입"이라는 전제(16번 문서 §8.12) 그대로
+        # — window 안 첫 주문이 SELL이면 "주문 이력 전무"인 종목을 처음부터
+        # 공매도한다는 뜻이라 논리적으로 성립하지 않는다. 이 경우는
+        # INITIAL_ENTRY anchor로 인정하지 않고 기존과 동일하게 제외한다.
+        if has_orders_before_window or window_orders[0].side != OrderSide.BUY:
+            return _empty_plan(BackfillExclusionReason.ZERO_CROSSING_NOT_FOUND)
+        anchor_type = BackfillAnchorType.INITIAL_ENTRY
+        anchor_at = None
 
     # 이 시점부터 population은 anchor 이후 ~ 지금까지의 filled 주문
-    # 전체다(anchor~window_start 사이에는 gap_orders 체크로 이미 없음을
-    # 확인했으므로 window_orders와 동일하다).
+    # 전체다(ZERO_CROSSING이면 anchor~window_start 사이에는 gap_orders
+    # 체크로, INITIAL_ENTRY면 정의 자체로 이미 없음을 확인했으므로
+    # window_orders와 동일하다).
     population_orders = window_orders
 
     # 정책 기반 fee/tax 계산에 필요한 계좌/종목 정보를 이 호출당 한 번만
@@ -344,14 +396,14 @@ async def build_backfill_plan(
     for order in population_orders:
         raw_snapshots = list(snapshots_by_order.get(order.order_request_id, []))
         if not raw_snapshots:
-            return _empty_plan(BackfillExclusionReason.SNAPSHOT_MISSING, anchor.snapshot_at)
+            return _empty_plan(BackfillExclusionReason.SNAPSHOT_MISSING, anchor_at)
 
         ordered_snapshots = sorted(raw_snapshots, key=_snapshot_sort_key)
 
         broker_native_order_ids = {s.broker_native_order_id for s in ordered_snapshots}
         if len(broker_native_order_ids) != 1:
             return _empty_plan(
-                BackfillExclusionReason.LINEAGE_INCONSISTENT, anchor.snapshot_at
+                BackfillExclusionReason.LINEAGE_INCONSISTENT, anchor_at
             )
         broker_native_order_id = next(iter(broker_native_order_ids))
 
@@ -363,7 +415,7 @@ async def build_backfill_plan(
         ]
         if len(matching_broker_orders) != 1:
             return _empty_plan(
-                BackfillExclusionReason.LINEAGE_INCONSISTENT, anchor.snapshot_at
+                BackfillExclusionReason.LINEAGE_INCONSISTENT, anchor_at
             )
         broker_order_id = matching_broker_orders[0].broker_order_id
 
@@ -374,14 +426,14 @@ async def build_backfill_plan(
         for snap in ordered_snapshots:
             if (snap.cancel_yn or "").strip().upper() == "Y":
                 return _empty_plan(
-                    BackfillExclusionReason.CANCEL_FLAG_PRESENT, anchor.snapshot_at
+                    BackfillExclusionReason.CANCEL_FLAG_PRESENT, anchor_at
                 )
 
             current_qty = snap.filled_quantity
             delta_qty = current_qty - prior_qty
             if delta_qty < 0:
                 return _empty_plan(
-                    BackfillExclusionReason.NEGATIVE_DELTA, anchor.snapshot_at
+                    BackfillExclusionReason.NEGATIVE_DELTA, anchor_at
                 )
             if delta_qty == 0:
                 continue
@@ -394,7 +446,7 @@ async def build_backfill_plan(
             )
             if inferred_price is None:
                 return _empty_plan(
-                    BackfillExclusionReason.UNPRICEABLE_DELTA, anchor.snapshot_at
+                    BackfillExclusionReason.UNPRICEABLE_DELTA, anchor_at
                 )
 
             fill_ts = snap.fill_timestamp or snap.updated_at or datetime.now(timezone.utc)
@@ -457,7 +509,7 @@ async def build_backfill_plan(
 
         if prior_qty != order.requested_quantity:
             return _empty_plan(
-                BackfillExclusionReason.FINAL_QUANTITY_MISMATCH, anchor.snapshot_at
+                BackfillExclusionReason.FINAL_QUANTITY_MISMATCH, anchor_at
             )
 
         signed_delta = prior_qty if order.side == OrderSide.BUY else -prior_qty
@@ -494,7 +546,8 @@ async def build_backfill_plan(
         start_date=start_date,
         eligible=True,
         exclusion_reason=None,
-        zero_crossing_at=anchor.snapshot_at,
+        zero_crossing_at=anchor_at,
+        anchor_type=anchor_type,
         order_details=tuple(order_details),
         synthetic_fills=tuple(all_candidates),
         expected_final_quantity=running_quantity,

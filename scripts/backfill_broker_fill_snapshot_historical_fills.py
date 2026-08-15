@@ -112,7 +112,11 @@ def _print_plan_report(plan: BackfillPlan) -> None:
         print("\n".join(lines))
         return
 
-    lines.append(f"  zero_crossing_at:    {plan.zero_crossing_at.isoformat()}")
+    lines.append(f"  anchor_type:         {plan.anchor_type}")
+    zero_crossing_at_display = (
+        plan.zero_crossing_at.isoformat() if plan.zero_crossing_at is not None else None
+    )
+    lines.append(f"  zero_crossing_at:    {zero_crossing_at_display}")
     lines.append(f"  대상 주문 수:         {len(plan.order_details)}")
     buy_count = sum(1 for d in plan.order_details if d.side.value == "buy")
     sell_count = sum(1 for d in plan.order_details if d.side.value == "sell")
