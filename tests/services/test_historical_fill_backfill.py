@@ -26,6 +26,7 @@ from agent_trading.domain.entities import (
 from agent_trading.domain.enums import Environment, OrderSide, OrderStatus, OrderType, TimeInForce
 from agent_trading.repositories.bootstrap import build_in_memory_repositories
 from agent_trading.services.historical_fill_backfill import (
+    BackfillAnchorType,
     BackfillExclusionReason,
     apply_backfill_plan,
     build_backfill_plan,
@@ -889,3 +890,178 @@ class TestHistoricalPolicyEstimateOverride:
         expected_fee = (Decimal("28000") * Decimal("176") * Decimal("0.015") / 100).to_integral_value()
         assert candidate.fee == expected_fee
         assert candidate.fee_tax_source.value == "calculated_from_policy"
+
+
+class TestInitialEntryAnchor:
+    """`INITIAL_ENTRY` anchor — window_start 이전 filled 주문 자체가 전혀
+    없는 종목은 zero-crossing 스냅샷 없이도 backfill 자격을 인정한다.
+
+    설계 근거: docs/00_foundational_design/detailed_design/
+    16_broker_fill_snapshot_historical_backfill_design.md §8.12.
+    `001450`/`004370`와 달리 zero-crossing 스냅샷 자체가 없는 진짜
+    "이 종목을 처음 산 경우"(예: `009240`, `011200` 등 13종목 파일럿
+    후보)를 재현한다.
+    """
+
+    @pytest.mark.asyncio
+    async def test_initial_entry_passes_without_zero_crossing_snapshot(self, repos):
+        """시나리오 1: zero-crossing 스냅샷 없음 + window 이전 filled 주문
+        없음 + window 안 BUY만 존재 + 기존 안전 조건 만족 → eligible=True,
+        anchor_type=initial_entry."""
+        account_id = uuid4()
+        instrument_id = uuid4()
+        # position_snapshots에 quantity=0 관측을 전혀 심지 않는다 —
+        # 이 종목은 브로커 스냅샷 관측 자체가 없던 신규 종목이라는 뜻.
+        order = _make_order(
+            account_id=account_id, instrument_id=instrument_id, side=OrderSide.BUY,
+            requested_quantity=Decimal("80"), created_at=_dt("2026-08-05 09:00:00"),
+        )
+        await repos.orders.add(order)
+        broker_order = _make_broker_order(order, "9000000001")
+        await repos.broker_orders.add(broker_order)
+        await repos.broker_fill_snapshots.upsert(
+            _make_snapshot(
+                account_id=account_id, order=order, native_id="9000000001",
+                filled_quantity=Decimal("80"), fill_price=Decimal("10000"),
+                updated_at=_dt("2026-08-05 09:01:00"),
+            )
+        )
+        await repos.position_snapshots.add(
+            _make_position(
+                account_id=account_id, instrument_id=instrument_id,
+                quantity=Decimal("80"), average_price=Decimal("10000"),
+                snapshot_at=_dt("2026-08-05 09:02:00"),
+            )
+        )
+
+        plan = await build_backfill_plan(
+            repos, account_id=account_id, instrument_id=instrument_id,
+            start_date=date(2026, 8, 1),
+        )
+
+        assert plan.eligible is True
+        assert plan.exclusion_reason is None
+        assert plan.anchor_type == BackfillAnchorType.INITIAL_ENTRY
+        assert plan.zero_crossing_at is None  # 스냅샷 anchor가 아니므로 None
+        assert plan.expected_final_quantity == Decimal("80")
+        assert plan.broker_reported_quantity == Decimal("80")
+        assert plan.broker_reported_quantity_matches is True
+        assert len(plan.synthetic_fills) == 1
+
+    @pytest.mark.asyncio
+    async def test_existing_zero_crossing_case_still_reports_zero_crossing_anchor_type(self, repos):
+        """시나리오 2(회귀): zero-crossing이 있는 기존 케이스는 그대로
+        anchor_type=zero_crossing으로 보고된다."""
+        account_id = uuid4()
+        instrument_id = uuid4()
+        await repos.position_snapshots.add(
+            _make_position(
+                account_id=account_id, instrument_id=instrument_id,
+                quantity=Decimal("0"), average_price=Decimal("0"),
+                snapshot_at=_dt("2026-06-18 12:00:00"),
+            )
+        )
+        order = _make_order(
+            account_id=account_id, instrument_id=instrument_id, side=OrderSide.BUY,
+            requested_quantity=Decimal("176"), created_at=_dt("2026-08-10 08:58:36"),
+        )
+        await repos.orders.add(order)
+        broker_order = _make_broker_order(order, "0000000871")
+        await repos.broker_orders.add(broker_order)
+        await repos.broker_fill_snapshots.upsert(
+            _make_snapshot(
+                account_id=account_id, order=order, native_id="0000000871",
+                filled_quantity=Decimal("176"), fill_price=Decimal("28000"),
+                updated_at=_dt("2026-08-10 09:01:05"),
+            )
+        )
+        await repos.position_snapshots.add(
+            _make_position(
+                account_id=account_id, instrument_id=instrument_id,
+                quantity=Decimal("176"), average_price=Decimal("28000"),
+                snapshot_at=_dt("2026-08-10 09:02:00"),
+            )
+        )
+
+        plan = await build_backfill_plan(
+            repos, account_id=account_id, instrument_id=instrument_id,
+            start_date=date(2026, 8, 1),
+        )
+
+        assert plan.eligible is True
+        assert plan.anchor_type == BackfillAnchorType.ZERO_CROSSING
+        assert plan.zero_crossing_at == _dt("2026-06-18 12:00:00")
+
+    @pytest.mark.asyncio
+    async def test_orders_before_window_block_initial_entry(self, repos):
+        """시나리오 3: zero-crossing도 없고 window 이전 filled 주문이
+        있으면(=이 종목이 처음 진입이 아니라는 뜻) initial-entry로도
+        통과 못 하고 여전히 제외돼야 한다."""
+        account_id = uuid4()
+        instrument_id = uuid4()
+        # position_snapshots에 zero-crossing 관측 없음.
+        old_order = _make_order(
+            account_id=account_id, instrument_id=instrument_id, side=OrderSide.BUY,
+            requested_quantity=Decimal("10"), created_at=_dt("2026-07-15 09:00:00"),
+        )
+        new_order = _make_order(
+            account_id=account_id, instrument_id=instrument_id, side=OrderSide.BUY,
+            requested_quantity=Decimal("5"), created_at=_dt("2026-08-05 09:00:00"),
+        )
+        await repos.orders.add(old_order)
+        await repos.orders.add(new_order)
+
+        plan = await build_backfill_plan(
+            repos, account_id=account_id, instrument_id=instrument_id,
+            start_date=date(2026, 8, 1),
+        )
+
+        assert plan.eligible is False
+        assert plan.exclusion_reason == BackfillExclusionReason.ZERO_CROSSING_NOT_FOUND
+        assert plan.anchor_type is None
+
+    @pytest.mark.asyncio
+    async def test_initial_entry_first_order_sell_is_rejected(self, repos):
+        """window 이전 주문이 전혀 없어도, window 안 첫 주문이 SELL이면
+        (사기 전에 파는 셈이라 논리적으로 불가능) initial-entry로 인정하지
+        않는다 — 사용자 전제("매수가 그 종목의 첫 진입")를 그대로 반영."""
+        account_id = uuid4()
+        instrument_id = uuid4()
+        order = _make_order(
+            account_id=account_id, instrument_id=instrument_id, side=OrderSide.SELL,
+            requested_quantity=Decimal("10"), created_at=_dt("2026-08-05 09:00:00"),
+        )
+        await repos.orders.add(order)
+
+        plan = await build_backfill_plan(
+            repos, account_id=account_id, instrument_id=instrument_id,
+            start_date=date(2026, 8, 1),
+        )
+
+        assert plan.eligible is False
+        assert plan.exclusion_reason == BackfillExclusionReason.ZERO_CROSSING_NOT_FOUND
+        assert plan.anchor_type is None
+
+    @pytest.mark.asyncio
+    async def test_initial_entry_still_excludes_existing_anomalies(self, repos):
+        """시나리오 4: initial-entry 조건(window 이전 주문 없음)을 만족해도,
+        기존 anomaly 검증(여기서는 snapshot 자체가 없는 경우)은 그대로
+        적용돼 제외된다 — anchor만 넓어졌을 뿐 나머지 안전장치는 완화되지
+        않는다."""
+        account_id = uuid4()
+        instrument_id = uuid4()
+        order = _make_order(
+            account_id=account_id, instrument_id=instrument_id, side=OrderSide.BUY,
+            requested_quantity=Decimal("10"), created_at=_dt("2026-08-05 09:00:00"),
+        )
+        await repos.orders.add(order)
+        # broker_fill_snapshots를 심지 않는다 — SNAPSHOT_MISSING 유발.
+
+        plan = await build_backfill_plan(
+            repos, account_id=account_id, instrument_id=instrument_id,
+            start_date=date(2026, 8, 1),
+        )
+
+        assert plan.eligible is False
+        assert plan.exclusion_reason == BackfillExclusionReason.SNAPSHOT_MISSING
+        assert plan.anchor_type is None

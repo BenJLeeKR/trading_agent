@@ -40,6 +40,16 @@ dry-run/승인 절차)의 최소 구현이 완료됐다.
   `007070`(overlay+recompute) 트랙과 완전히 별개다. `recompute_queue`는
   등록됐고 워커 처리 대기 중(`resolved_at` 아직 `NULL`) — `position_cost_
   basis_state`의 최종 `quantity`/`average_cost`는 그 처리 이후 반영된다.
+- **`buy_fee_pool_provenance` 오분류 버그 수정 + `001450`/`004370` 정정
+  recompute 완료(2026-08-15 KST)**: §8.11/§8.12 참고. 두 종목의
+  `buy_fee_pool_provenance`가 `historically_estimated`로 정확히
+  바로잡혔고, 다른 종목(`007070` 포함)은 영향받지 않았음을 확인했다.
+- **`initial_entry` anchor 신설(구현 완료, apply는 미실행)**: `BackfillAnchorType`
+  (`zero_crossing`/`initial_entry`), `BackfillPlan.anchor_type` 필드 추가.
+  window_start 이전 filled 주문이 전혀 없는 종목(`007070`/`001450`/
+  `004370` 제외 현재 보유 나머지 종목 대상)은 zero-crossing 스냅샷 없이도
+  backfill 자격을 인정한다. 상세는 §8.12. 이번 turn은 코드/테스트/문서
+  까지만 — 13종목의 실제 eligible 재확인과 apply는 별도 turn.
 
 **이 설계는 오직 과거 복원(backfill) 전용이다.** 아래 두 가지를 명확히 구분한다.
 
@@ -624,6 +634,72 @@ provenance 판정 집합이 `historical_policy_estimate`를 인식하지 못해
 참고. 기존 `001450`/`004370` 2건은 이 코드 수정만으로는 안 고쳐지고,
 `fill_events` 원본은 그대로 둔 채 별도 recompute 재실행으로 바로잡아야
 한다(운영 write는 이 문서 갱신 시점 기준 아직 미실행).
+
+**후속(별도 turn)**: `001450`/`004370` 2건은 기존 `realized_pnl_recompute_
+queue` 메커니즘(`reason_code='manual_request'`)을 재사용해 재계산을
+등록하고, 이미 5분 주기로 도는 `realized-pnl-recompute-worker`가 자동
+처리했다. `fill_events` 원본은 전혀 건드리지 않았고(`fill_fee`/`fee_tax_
+source` 불변 확인), `remaining_buy_fee_pool`/`quantity`/`average_cost`도
+그대로 유지된 채 `buy_fee_pool_provenance`만 `fully_assumed_zero` →
+`historically_estimated`로 정확히 바로잡혔다(전/후 값 read-only 대사로
+확인). 이 두 종목 외 다른 종목(`007070` 포함)은 전혀 영향받지 않았음을
+`position_cost_basis_state`/`realized_pnl_recompute_queue`/
+`realized_pnl_computation_runs` 전체 건수 증분(+2, +2)으로 확인했다.
+
+### 8.12 `initial_entry` anchor — zero-crossing 없이도 backfill을 허용하는 두 번째 원가 완결성 anchor(구현 완료)
+
+**배경**: `007070`을 제외한 현재 보유 나머지 종목(13개)은 실제로 `2026-08-01
+KST` 이후 dry-run을 재시도해도 전부 `zero_crossing_not_found`로 막혔다.
+그런데 사용자가 이미 확정한 운영 사실로, 이 13종목은 전부 **그 이전에
+해당 종목에 대한 매수/매도 주문 자체가 없었던, 첫 진입 종목**이다.
+`build_backfill_plan()`의 기존 anchor 판정(`position_snapshots`에서
+`quantity==0`인 관측을 찾는 §3.3-1 방식)은 "관측이 없음"(`anchor is
+None`)과 "관측은 있는데 0이 아님"을 똑같이 위험으로 취급했는데, 전자는
+사실 두 가지로 갈린다 — (a) 스냅샷 폴링 공백(위험, 뭔가 있었을 수도 있음)
+과 (b) 종목 자체가 그 이전엔 존재하지 않았음(안전, 관측할 대상 자체가
+없었던 것). 이 구분을 코드가 하지 않아 (b) 케이스까지 막고 있었다.
+
+**핵심 통찰**: "그 종목에 대한 주문 이력이 아예 없다"는 사실은 "잔고가
+0이었다는 스냅샷 관측"보다 논리적으로 **더 강한 증거**다 — 수량이 바뀔
+수 있는 유일한 경로(주문 체결)가 애초에 발생한 적이 없으므로, 그 이전
+잔고가 0이 아니었을 가능성 자체가 없다. 즉 이건 zero-crossing 규칙을
+느슨하게 하는 게 아니라, **이미 갖고 있던 더 강한 사실을 anchor로
+정식 인정**하는 것이다.
+
+**구현**: `BackfillAnchorType`(`ZERO_CROSSING`/`INITIAL_ENTRY`) 신설,
+`BackfillPlan.anchor_type` 필드 추가(`eligible=False`면 `None`). 판정
+순서:
+1. 기존 방식대로 `position_snapshots`에서 zero-crossing 스냅샷을 먼저
+   시도 — 있으면 `anchor_type=ZERO_CROSSING`(기존 동작 100% 유지, 기존
+   `gap_orders` 검증도 그대로 적용).
+2. 실패하면(`anchor is None` 또는 `quantity != 0`), 이미 `build_backfill_
+   plan()`이 구하고 있는 `all_filled_orders`(새 쿼리 없음)를 그대로
+   재사용해 **`window_start` 이전 filled 주문이 하나도 없는지** 확인한다.
+   있으면(과거 거래 이력 있음) 기존과 동일하게 `ZERO_CROSSING_NOT_FOUND`
+   로 제외. 없고, **window 안 첫 주문이 BUY**이면(사용자 전제 "매수가
+   그 종목의 첫 진입" 그대로 — 첫 주문이 SELL이면 공매도가 되어 논리적
+   으로 성립하지 않으므로 이 경우도 제외) `anchor_type=INITIAL_ENTRY`,
+   `zero_crossing_at=None`으로 계속 진행.
+3. 이후 검증(lineage/snapshot 존재/cancel/negative delta/가격 역산/최종
+   잔량 정합)은 anchor 종류와 무관하게 **전혀 완화하지 않고** 그대로
+   적용된다 — `gap_orders` 개념만 `INITIAL_ENTRY` 경로에서는 정의상
+   no-op이다(anchor 자체가 "window 이전 주문 전무"라 gap이 있을 수 없음).
+
+CLI(`scripts/backfill_broker_fill_snapshot_historical_fills.py`) dry-run
+리포트에 `anchor_type` 줄을 추가해 운영자가 어느 anchor로 통과했는지
+바로 알 수 있게 했다.
+
+**자격 판정(eligibility)과 fee 추정(provenance)의 계층 분리 유지**: 이
+확장은 오직 `build_backfill_plan()`의 anchor 판정에만 관여하며,
+`compute_fee_tax()`/`--use-historical-policy-estimate-for-buy-fee`/
+`historical_policy_estimate`/`historically_estimated`(§8.9~§8.11) 로직은
+전혀 건드리지 않았다 — initial-entry로 통과한 종목의 BUY fee가
+`assumed_zero`가 될지 `historical_policy_estimate`가 될지는 여전히
+완전히 별개의 계층(fee 계산)이 독립적으로 결정한다.
+
+**이번 turn 범위**: 코드/테스트/문서까지만. 13종목이 실제로 이 새 anchor로
+eligible이 되는지, eligible이 된 종목에 대한 실제 apply는 **별도 turn에서
+진행**한다(이번 turn은 운영 apply를 포함하지 않는다).
 
 ## 9. 리스크
 

@@ -325,3 +325,77 @@ async def test_apply_is_noop_when_not_eligible(repos):
     assert exit_code == 1
     all_fill_events = list(repos.fill_events._items.values())  # type: ignore[attr-defined]
     assert all_fill_events == []
+
+
+@pytest.mark.asyncio
+async def test_dry_run_report_shows_initial_entry_anchor_type(repos, capsys):
+    """window_start 이전 filled 주문이 전혀 없는 종목은 zero-crossing
+    스냅샷 없이도 eligible=True가 되고, dry-run 리포트에 anchor_type:
+    initial_entry가 그대로 드러나야 한다."""
+    account_id = uuid4()
+    instrument_id = uuid4()
+
+    order = OrderRequestEntity(
+        order_request_id=uuid4(),
+        account_id=account_id,
+        instrument_id=instrument_id,
+        client_order_id=f"client-{uuid4()}",
+        idempotency_key=f"idem-{uuid4()}",
+        correlation_id=f"corr-{uuid4()}",
+        side=OrderSide.BUY,
+        order_type=OrderType.MARKET,
+        time_in_force=TimeInForce.DAY,
+        requested_quantity=Decimal("10"),
+        status=OrderStatus.FILLED,
+        created_at=_dt("2026-08-05 09:00:00"),
+        updated_at=_dt("2026-08-05 09:00:00"),
+    )
+    repos.orders._items[order.order_request_id] = order  # type: ignore[attr-defined]
+
+    broker_order = BrokerOrderEntity(
+        broker_order_id=uuid4(),
+        order_request_id=order.order_request_id,
+        broker_name="koreainvestment",
+        broker_native_order_id="9000000123",
+        broker_status="filled",
+    )
+    repos.broker_orders._items[broker_order.broker_order_id] = broker_order  # type: ignore[attr-defined]
+
+    snapshot = BrokerFillSnapshotEntity(
+        broker_fill_snapshot_id=uuid4(),
+        account_id=account_id,
+        broker_name="koreainvestment",
+        broker_native_order_id="9000000123",
+        symbol="009240",
+        side="buy",
+        order_date=_dt("2026-08-05 09:05:00").date(),
+        filled_quantity=Decimal("10"),
+        fill_price=Decimal("2000"),
+        dedupe_key=f"dedupe-{uuid4()}",
+        order_request_id=order.order_request_id,
+        ordered_quantity=Decimal("10"),
+        fill_timestamp=_dt("2026-08-05 09:05:00"),
+        updated_at=_dt("2026-08-05 09:05:00"),
+    )
+    repos.broker_fill_snapshots._items[snapshot.broker_fill_snapshot_id] = snapshot  # type: ignore[attr-defined]
+    repos.broker_fill_snapshots._by_dedupe_key[snapshot.dedupe_key] = (  # type: ignore[attr-defined]
+        snapshot.broker_fill_snapshot_id
+    )
+    # position_snapshots에 zero-crossing 관측을 전혀 심지 않는다.
+
+    args = parse_args(
+        [
+            "--account-id", str(account_id),
+            "--instrument-id", str(instrument_id),
+            "--start-date", "2026-08-01",
+        ]
+    )
+    exit_code = await run_backfill(repos, args)
+
+    assert exit_code == 0
+    captured = capsys.readouterr()
+    assert "eligible:            True" in captured.out
+    assert "anchor_type:         initial_entry" in captured.out
+    assert "zero_crossing_at:    None" in captured.out
+    all_fill_events = list(repos.fill_events._items.values())  # type: ignore[attr-defined]
+    assert all_fill_events == []  # dry-run — 여전히 아무것도 쓰지 않음
