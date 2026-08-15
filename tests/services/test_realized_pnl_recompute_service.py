@@ -467,3 +467,121 @@ async def test_recompute_overwrites_phantom_daily_aggregate(
     assert aggregates[0].buy_amount_sum == Decimal("400")  # 4*100
     assert aggregates[0].sell_amount_sum == Decimal("600")  # 4*150
     assert aggregates[0].fee_tax_sum == Decimal("0")
+
+
+# ======================================================================
+# 8. historical_buy_fee_overlays 병합 — `007070` 파일럿 재현
+# ======================================================================
+
+
+@pytest.mark.asyncio
+async def test_recompute_merges_historical_buy_fee_overlay_and_reallocates_existing_sells(
+    recompute_service, repos, account_id, instrument_id
+):
+    """`007070` 실제 이력(BUY 176 → SELL 88 → SELL 70, 잔량 18)을 그대로
+    재현한다. overlay 등록 전에는 BUY fee가 없어 두 SELL 모두
+    allocated_buy_fee=0으로 계산되지만, overlay를 얹고 recompute하면
+    fill_events 원본은 그대로인 채 두 SELL의 allocated_buy_fee/
+    realized_pnl_net과 최종 pool이 재배분돼야 한다."""
+    from agent_trading.domain.entities import (
+        ConfigVersionEntity,
+        HistoricalBuyFeeOverlayEntity,
+    )
+    from agent_trading.domain.enums import Environment, RealizedPnlBuyFeeAllocationSource
+
+    buy_ts = _BASE_TS
+    sell1_ts = _BASE_TS + timedelta(days=3)
+    sell2_ts = _BASE_TS + timedelta(days=3, seconds=1)
+
+    buy_fill = await _seed_order_and_fill(
+        repos, account_id=account_id, instrument_id=instrument_id, side=OrderSide.BUY,
+        quantity=Decimal("176"), price=Decimal("28000"), fill_timestamp=buy_ts,
+        # fill_fee/fill_tax=None — 실제 007070과 동일(정책 등록 이전 backfill).
+    )
+    await _seed_order_and_fill(
+        repos, account_id=account_id, instrument_id=instrument_id, side=OrderSide.SELL,
+        quantity=Decimal("88"), price=Decimal("26800"), fill_timestamp=sell1_ts,
+    )
+    await _seed_order_and_fill(
+        repos, account_id=account_id, instrument_id=instrument_id, side=OrderSide.SELL,
+        quantity=Decimal("70"), price=Decimal("26650"), fill_timestamp=sell2_ts,
+    )
+
+    # --- overlay 등록 전 recompute: BUY fee가 없으므로 allocated_buy_fee=0 ---
+    before = await recompute_service.recompute_account_instrument(account_id, instrument_id)
+    assert before.computation_run.status == "completed"
+    events_before = await repos.realized_pnl_events.list_by_account_and_instrument(
+        account_id, instrument_id
+    )
+    assert len(events_before) == 2
+    assert all(e.allocated_buy_fee == Decimal("0") for e in events_before)
+    assert all(
+        e.buy_fee_allocation_source == RealizedPnlBuyFeeAllocationSource.FULLY_ASSUMED_ZERO
+        for e in events_before
+    )
+
+    # --- overlay 등록(fill_events 원본은 건드리지 않음) ---
+    client_id = uuid4()
+    policy_version = ConfigVersionEntity(
+        config_version_id=uuid4(), client_id=client_id, environment=Environment.PAPER,
+        version_tag="test", config_json={"execution": {"fee_tax": {"buy_commission_rate_pct": "0.0140527"}}},
+        checksum="test", activated_at=datetime.now(timezone.utc),
+    )
+    await repos.config_versions.add(policy_version)
+
+    overlay = HistoricalBuyFeeOverlayEntity(
+        overlay_id=uuid4(),
+        fill_event_id=buy_fill.fill_event_id,
+        estimated_fee=Decimal("693"),  # illustrative: 176*28000*0.0140527% ≈ 692.52 → round_half_up
+        fee_tax_source="historical_policy_estimate",
+        basis_config_version_id=policy_version.config_version_id,
+        reason="007070 파일럿 — 정책 등록 이전 BUY fee 소급 추정",
+        created_by="test-operator",
+    )
+    await repos.historical_buy_fee_overlays.add(overlay)
+
+    # fill_events 원본은 여전히 그대로여야 한다(overlay가 아니라 원본을 다시 조회).
+    original_fills = await repos.fill_events.list_by_broker_order(buy_fill.broker_order_id)
+    original_fill = next(f for f in original_fills if f.fill_event_id == buy_fill.fill_event_id)
+    assert original_fill.fill_fee is None
+    assert original_fill.fee_tax_source is None
+
+    # --- overlay 등록 후 recompute: 두 SELL 모두 재배분돼야 한다 ---
+    after = await recompute_service.recompute_account_instrument(account_id, instrument_id)
+    assert after.computation_run.status == "completed"
+    assert after.computation_run.fills_replayed == 3
+
+    events_after = await repos.realized_pnl_events.list_by_account_and_instrument(
+        account_id, instrument_id
+    )
+    assert len(events_after) == 2
+    sell1_event = next(e for e in events_after if e.sell_quantity == Decimal("88"))
+    sell2_event = next(e for e in events_after if e.sell_quantity == Decimal("70"))
+
+    # pool 693 * (88/176) = 346.5
+    assert sell1_event.allocated_buy_fee == Decimal("346.5")
+    assert sell1_event.buy_fee_allocation_source == RealizedPnlBuyFeeAllocationSource.HISTORICALLY_ESTIMATED
+    # gross는 절대 안 바뀐다: (26800-28000)*88 = -105600
+    assert sell1_event.realized_pnl_gross == Decimal("-105600")
+    # net = gross - fee - tax - allocated_buy_fee = -105600 - 0 - 0 - 346.5
+    assert sell1_event.realized_pnl_net == Decimal("-105946.5")
+
+    # 남은 pool 346.5 * (70/88) = 275.625
+    assert sell2_event.allocated_buy_fee == Decimal("275.625")
+    assert sell2_event.buy_fee_allocation_source == RealizedPnlBuyFeeAllocationSource.HISTORICALLY_ESTIMATED
+    assert sell2_event.realized_pnl_gross == Decimal("-94500")  # (26650-28000)*70
+    assert sell2_event.realized_pnl_net == Decimal("-94775.625")
+
+    # 최종 남은 pool: 693 - 346.5 - 275.625 = 70.875
+    state = await repos.position_cost_basis_states.get(account_id, instrument_id)
+    assert state.quantity == Decimal("18")
+    assert state.average_cost == Decimal("28000")  # average_cost는 절대 안 바뀐다
+    assert state.remaining_buy_fee_pool == Decimal("70.875")
+    assert state.buy_fee_pool_provenance == RealizedPnlBuyFeeAllocationSource.HISTORICALLY_ESTIMATED
+
+    # daily aggregate의 net_sum도 재구성된 값을 반영한다.
+    aggregates = await repos.realized_pnl_daily_aggregates.list_by_account_and_instrument(
+        account_id, instrument_id
+    )
+    total_net = sum((a.realized_pnl_net_sum for a in aggregates), Decimal("0"))
+    assert total_net == Decimal("-105946.5") + Decimal("-94775.625")

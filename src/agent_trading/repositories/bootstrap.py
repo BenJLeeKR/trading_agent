@@ -20,6 +20,7 @@ from agent_trading.repositories.memory import (
     InMemoryFillEventRepository,
     InMemoryFillSyncRunRepository,
     InMemoryGuardrailEvaluationRepository,
+    InMemoryHistoricalBuyFeeOverlayRepository,
     InMemoryInstrumentIndexMembershipRepository,
     InMemoryInstrumentStatusSnapshotRepository,
     InMemoryInstrumentRepository,
@@ -128,6 +129,7 @@ def build_in_memory_repositories() -> RepositoryContainer:
         realized_pnl_daily_aggregates=InMemoryRealizedPnlDailyAggregateRepository(),
         realized_pnl_computation_runs=InMemoryRealizedPnlComputationRunRepository(),
         realized_pnl_recompute_queue=InMemoryRealizedPnlRecomputeQueueRepository(),
+        historical_buy_fee_overlays=InMemoryHistoricalBuyFeeOverlayRepository(),
     )
     # Seed a fresh sync run so pipelines work out of the box.
     _seed_fresh_sync_run(repos.snapshot_sync_runs)
