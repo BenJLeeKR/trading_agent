@@ -33,48 +33,51 @@ export default function OrdersView() {
   const [orders, setOrders] = useState<OrderSummary[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [searchText, setSearchText] = useState("");
   const [statusFilter, setStatusFilter] = useState("");
   const [sideFilter, setSideFilter] = useState("");
-  const [selectedDate, setSelectedDate] = useState(() => {
-    const params = new URLSearchParams(window.location.search);
-    return params.get("date") || todayKst();
-  });
   const [selectedOrder, setSelectedOrder] = useState<OrderSummary | null>(null);
   const [currentPage, setCurrentPage] = useState(1);
   const [pageSize, setPageSize] = useState(20);
   const navigate = useNavigate();
-
   const location = useLocation();
 
-  // ── Read initial symbol/date from URL query params ──────────────
-  // date는 useState 초기값에서 이미 반영했으므로 여기서는 symbol만 처리한다.
-  useEffect(() => {
+  // ── URL query(symbol/date) 초기 반영 ─────────────────────────────
+  // location(useLocation)을 일관되게 사용한다 — mount 시점 값만 반영하고
+  // (기존 동작과 동일하게) 이후 query 변경에는 재반응하지 않는다.
+  // date가 없고 symbol만 있으면(예: 계좌 화면에서 실제 주문일자를 찾지
+  // 못한 "관련 주문 보기" 링크) 임의로 오늘 날짜에 고정하지 않는다 —
+  // 최신 스냅샷이 오늘이라고 주문도 오늘 발생했다는 보장이 없으므로,
+  // 날짜 필터 없이 해당 심볼의 최근 주문을 보여주는 "전체 기간" 모드로
+  // 전환해 조회 기준을 화면에 명확히 표시한다.
+  const [searchText, setSearchText] = useState(
+    () => new URLSearchParams(location.search).get("symbol") || "",
+  );
+  const [dateFilterMode, setDateFilterMode] = useState<"day" | "all">(() => {
     const params = new URLSearchParams(location.search);
-    const symbolParam = params.get("symbol");
-    if (symbolParam) {
-      setSearchText(symbolParam);
-    }
-  }, []);
+    if (params.get("date")) return "day";
+    return params.get("symbol") ? "all" : "day";
+  });
+  const [selectedDate, setSelectedDate] = useState(
+    () => new URLSearchParams(location.search).get("date") || todayKst(),
+  );
 
-  // 조회일(selectedDate)은 UI상 항상 값이 있다("전체 날짜" 옵션 자체가 없음
-  // — date input이 비면 즉시 오늘로 되돌아감). 즉 최종적으로 화면에 보이는
-  // 건 언제나 "그 날짜 하나"뿐인데, 예전에는 서버에서 날짜 필터 없이 전체
-  // 기간(최대 1만 건)을 가져온 뒤 클라이언트에서 그 하루치만 걸러냈다 —
-  // 데이터가 쌓일수록 매번 불필요하게 전체를 가져오는 셈이라, 서버에 날짜를
-  // 그대로 전달해 필요한 하루치만 받도록 바꿨다(주문 건수가 많아질수록
-  // 효과가 커짐). UX상 달라지는 건 없다 — 이전에도 결과는 항상 하루 단위였다.
+  // 조회일(selectedDate)은 "day" 모드에서 항상 값이 있다("전체 날짜" 옵션
+  // 자체가 없음 — date input이 비면 즉시 오늘로 되돌아감). "all" 모드에서는
+  // 날짜 필터 없이(서버에 date 미전달) 최근 주문을 받아온다 — 대량 조회를
+  // 피하기 위해 최근 N건으로 제한한다.
   useEffect(() => {
     setLoading(true);
     setError(null);
-    getOrders(undefined, 10000, selectedDate)
+    const limit = dateFilterMode === "day" ? 10000 : 300;
+    const dateParam = dateFilterMode === "day" ? selectedDate : undefined;
+    getOrders(undefined, limit, dateParam)
       .then(setOrders)
       .catch((err: unknown) => {
         const msg = err instanceof Error ? err.message : "주문을 불러오지 못했습니다";
         setError(msg);
       })
       .finally(() => setLoading(false));
-  }, [selectedDate]);
+  }, [selectedDate, dateFilterMode]);
 
   const filteredOrders = useMemo(() => {
     return orders.filter((o) => {
@@ -200,25 +203,48 @@ export default function OrdersView() {
                   onChange: (v) => { setSideFilter(v); setCurrentPage(1); },
                 },
               ]}
-              rightSlot={(
-                <label className="flex items-center gap-2 text-sm text-[#475569]">
-                  <span>조회일</span>
-                  <input
-                    aria-label="조회일"
-                    type="date"
-                    value={selectedDate}
-                    onChange={(e) => {
-                      setSelectedDate(e.target.value || todayKst());
-                      setCurrentPage(1);
-                    }}
-                    className="rounded-lg border border-[#e2e8f0] bg-white px-3 py-2 text-sm text-[#0f172a] focus:outline-none focus:ring-2 focus:ring-[#3b82f6] focus:border-transparent"
-                  />
-                </label>
-              )}
+              rightSlot={
+                dateFilterMode === "all" ? (
+                  <div className="flex items-center gap-2 text-sm text-[#475569]">
+                    <span
+                      className="inline-flex items-center gap-1 rounded-full bg-[#eff6ff] text-[#2563eb] px-2.5 py-1 text-xs font-medium"
+                      title="조회일 필터 없이 최근 주문을 표시하고 있습니다"
+                    >
+                      전체 기간 · 최근 주문
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setDateFilterMode("day");
+                        setSelectedDate(todayKst());
+                        setCurrentPage(1);
+                      }}
+                      className="text-xs text-[#3b82f6] hover:text-[#2563eb] font-medium transition-colors"
+                    >
+                      오늘 날짜로 보기
+                    </button>
+                  </div>
+                ) : (
+                  <label className="flex items-center gap-2 text-sm text-[#475569]">
+                    <span>조회일</span>
+                    <input
+                      aria-label="조회일"
+                      type="date"
+                      value={selectedDate}
+                      onChange={(e) => {
+                        setSelectedDate(e.target.value || todayKst());
+                        setCurrentPage(1);
+                      }}
+                      className="rounded-lg border border-[#e2e8f0] bg-white px-3 py-2 text-sm text-[#0f172a] focus:outline-none focus:ring-2 focus:ring-[#3b82f6] focus:border-transparent"
+                    />
+                  </label>
+                )
+              }
               onClearAll={() => {
                 setSearchText("");
                 setStatusFilter("");
                 setSideFilter("");
+                setDateFilterMode("day");
                 setSelectedDate(todayKst());
                 setCurrentPage(1);
               }}

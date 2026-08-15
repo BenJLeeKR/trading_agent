@@ -168,11 +168,13 @@ export async function getOrders(
   status?: string,
   limit?: number,
   date?: string,
+  accountId?: string,
 ): Promise<import("../types/api").OrderSummary[]> {
   const params = new URLSearchParams();
   if (status) params.set("status", status);
   if (limit != null) params.set("limit", String(limit));
   if (date) params.set("date", date);
+  if (accountId) params.set("account_id", accountId);
   const query = params.toString() ? `?${params.toString()}` : "";
   return request<import("../types/api").OrderSummary[]>(`/orders${query}`);
 }

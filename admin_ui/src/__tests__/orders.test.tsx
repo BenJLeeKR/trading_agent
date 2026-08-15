@@ -406,3 +406,75 @@ describe("OrdersView symbol deep link", () => {
     expect(screen.queryByText("클라이언트 주문 ID")).not.toBeInTheDocument();
   });
 });
+
+/* ───────────────────────────────────────────
+ * Scenario 12: URL의 symbol/date query 초기 반영
+ * ─────────────────────────────────────────── */
+describe("OrdersView query param initial state", () => {
+  it("반영: symbol과 date가 모두 있으면 해당 날짜를 조회일로 사용한다(전체 기간 배지 없음)", async () => {
+    mockFetchOnce(mockOrders);
+
+    render(
+      <MemoryRouter initialEntries={["/orders?symbol=AAPL&date=2026-05-05"]}>
+        <OrdersView />
+      </MemoryRouter>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("주문")).toBeInTheDocument();
+    });
+
+    // date query가 조회일 input에 반영되어야 한다.
+    expect(screen.getByLabelText("조회일")).toHaveValue("2026-05-05");
+    // symbol query가 검색어에 반영되어야 한다.
+    expect(screen.getByPlaceholderText("심볼 또는 주문 ID 검색...")).toHaveValue("AAPL");
+    // date가 있으므로 "전체 기간" 배지는 보이지 않아야 한다.
+    expect(screen.queryByText(/전체 기간/)).not.toBeInTheDocument();
+  });
+
+  it("symbol만 있고 date가 없으면 오늘 날짜로 고정하지 않고 전체 기간(최근 주문) 모드로 전환한다", async () => {
+    mockFetchOnce(mockOrders);
+
+    render(
+      <MemoryRouter initialEntries={["/orders?symbol=AAPL"]}>
+        <OrdersView />
+      </MemoryRouter>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("주문")).toBeInTheDocument();
+    });
+
+    // "전체 기간" 모드 배지가 표시되고, 날짜 input(조회일)은 렌더링되지 않는다.
+    expect(screen.getByText(/전체 기간/)).toBeInTheDocument();
+    expect(screen.queryByLabelText("조회일")).not.toBeInTheDocument();
+    expect(screen.getByPlaceholderText("심볼 또는 주문 ID 검색...")).toHaveValue("AAPL");
+
+    // symbol과 매칭되는 주문이 실제 조회 응답(날짜 필터 없이 받아온 최근 주문)에 있으면 보여야 한다.
+    await waitFor(() => {
+      expect(screen.getByText("AAPL")).toBeInTheDocument();
+    });
+  });
+
+  it("전체 기간 모드에서 '오늘 날짜로 보기'를 누르면 조회일 지정 모드로 돌아간다", async () => {
+    mockFetchOnce(mockOrders);
+
+    render(
+      <MemoryRouter initialEntries={["/orders?symbol=AAPL"]}>
+        <OrdersView />
+      </MemoryRouter>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText(/전체 기간/)).toBeInTheDocument();
+    });
+
+    mockFetchOnce(mockOrders);
+    fireEvent.click(screen.getByText("오늘 날짜로 보기"));
+
+    await waitFor(() => {
+      expect(screen.queryByText(/전체 기간/)).not.toBeInTheDocument();
+      expect(screen.getByLabelText("조회일")).toBeInTheDocument();
+    });
+  });
+});
