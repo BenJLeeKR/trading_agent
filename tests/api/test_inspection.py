@@ -2091,6 +2091,7 @@ class TestRealizedPnl:
         fill_timestamp,
         realized_pnl_net,
         fee_tax_source=RealizedPnlFeeTaxSource.REPORTED,
+        allocated_buy_fee="0",
     ):
         event = RealizedPnlEventEntity(
             realized_pnl_event_id=uuid4(),
@@ -2110,6 +2111,7 @@ class TestRealizedPnl:
             position_quantity_after=Decimal("5"),
             computation_run_id=uuid4(),
             fill_timestamp=fill_timestamp,
+            allocated_buy_fee=Decimal(allocated_buy_fee),
         )
         asyncio.run(repos.realized_pnl_events.add(event))
         return event
@@ -2244,6 +2246,34 @@ class TestRealizedPnl:
         assert data["events"][0]["fee_tax_source"] == "reported"
         assert Decimal(str(data["events"][1]["realized_pnl_net"])) == Decimal("80")
 
+    def test_events_expose_allocated_buy_fee_separately_from_fee_and_tax(self) -> None:
+        """Admin UI '비용' 표시 정합성(fee+tax+allocated_buy_fee) 근거 — event
+        응답에 allocated_buy_fee/buy_fee_allocation_source가 fee/tax와
+        분리 노출되고, realized_pnl_net은 이미 이를 반영한 값임을 확인한다."""
+        repos, app = self._build()
+        account_id = uuid4()
+        instrument_id = uuid4()
+        self._seed_event(
+            repos, account_id=account_id, instrument_id=instrument_id,
+            fill_timestamp=datetime(2026, 8, 1, 9, 0, tzinfo=timezone.utc),
+            realized_pnl_net="80", allocated_buy_fee="7.5",
+        )
+
+        with TestClient(app) as client:
+            response = client.get(
+                f"/performance/realized-pnl/events?account_id={account_id}&instrument_id={instrument_id}"
+            )
+        assert response.status_code == 200
+        event = response.json()["events"][0]
+        assert Decimal(str(event["fee"])) == Decimal("10")
+        assert Decimal(str(event["tax"])) == Decimal("5")
+        assert Decimal(str(event["allocated_buy_fee"])) == Decimal("7.5")
+        assert event["buy_fee_allocation_source"] == "fully_assumed_zero"
+        # realized_pnl_net은 이미 allocated_buy_fee까지 차감된 값 — UI가
+        # fee+tax+allocated_buy_fee를 "비용"으로 다시 더해도 중복 차감이
+        # 아니라 표시 정합성 복구일 뿐이라는 전제를 재확인한다.
+        assert Decimal(str(event["realized_pnl_net"])) == Decimal("80")
+
     def test_events_missing_instrument_param(self) -> None:
         _repos, app = self._build()
         with TestClient(app) as client:
@@ -2352,6 +2382,47 @@ class TestRealizedPnl:
             "calculated_from_policy": 1,
             "policy_not_applicable": 0,
         }
+
+    def test_daily_allocated_buy_fee_sum_aggregates_events_by_date(self) -> None:
+        """allocated_buy_fee_sum은 fee_tax_sum(저장된 aggregate 컬럼)과
+        별개로, 그 날짜 events에서 그때그때 합산된다 — provenance_breakdown과
+        동일한 조회 경로를 재사용하므로 기간 밖 이벤트는 섞이지 않는다."""
+        repos, app = self._build()
+        account_id = uuid4()
+        instrument_id = uuid4()
+        self._seed_daily(
+            repos, account_id=account_id, instrument_id=instrument_id,
+            trade_date=date(2026, 8, 5), net_sum="200", count=2, fee_tax="30",
+        )
+        self._seed_event(
+            repos, account_id=account_id, instrument_id=instrument_id,
+            fill_timestamp=datetime(2026, 8, 5, 0, 0, tzinfo=timezone.utc),
+            realized_pnl_net="80", allocated_buy_fee="6.5",
+        )
+        self._seed_event(
+            repos, account_id=account_id, instrument_id=instrument_id,
+            fill_timestamp=datetime(2026, 8, 5, 1, 0, tzinfo=timezone.utc),
+            realized_pnl_net="120", allocated_buy_fee="3.25",
+        )
+        # 다른 날짜 이벤트 — 이 날짜의 allocated_buy_fee_sum에 섞이면 안 된다.
+        self._seed_event(
+            repos, account_id=account_id, instrument_id=instrument_id,
+            fill_timestamp=datetime(2026, 8, 6, 0, 0, tzinfo=timezone.utc),
+            realized_pnl_net="50", allocated_buy_fee="100",
+        )
+
+        with TestClient(app) as client:
+            response = client.get(
+                f"/performance/realized-pnl/daily?account_id={account_id}&instrument_id={instrument_id}"
+                "&start_date=2026-08-05&end_date=2026-08-05"
+            )
+        assert response.status_code == 200
+        data = response.json()
+        assert len(data["daily"]) == 1
+        # fee_tax_sum은 저장된 aggregate 값 그대로(변경 없음) — allocated_buy_fee_sum은
+        # 별도 파생 필드로 나란히 존재한다.
+        assert Decimal(str(data["daily"][0]["fee_tax_sum"])) == Decimal("30")
+        assert Decimal(str(data["daily"][0]["allocated_buy_fee_sum"])) == Decimal("9.75")
 
     def test_daily_provenance_breakdown_defaults_to_all_zero(self) -> None:
         """이벤트가 없으면 4키 모두 0으로 채워진 breakdown이 그대로 온다(키 생략 없음)."""
@@ -2519,6 +2590,49 @@ class TestRealizedPnl:
         assert row_b["recompute_required"] is False
         assert Decimal(str(row_b["realized_pnl_net_sum"])) == Decimal("-20")
 
+    def test_summary_allocated_buy_fee_sum_aggregates_by_instrument_and_total(self) -> None:
+        """allocated_buy_fee_sum은 fee_tax_sum과 별개로 종목별/전체 합산된다."""
+        repos, app = self._build()
+        account_id = uuid4()
+        instrument_a = uuid4()
+        instrument_b = uuid4()
+        self._seed_daily(
+            repos, account_id=account_id, instrument_id=instrument_a,
+            trade_date=date(2026, 8, 1), net_sum="100", count=2, fee_tax="10",
+        )
+        self._seed_daily(
+            repos, account_id=account_id, instrument_id=instrument_b,
+            trade_date=date(2026, 8, 2), net_sum="-20", count=1, fee_tax="3",
+        )
+        self._seed_event(
+            repos, account_id=account_id, instrument_id=instrument_a,
+            fill_timestamp=datetime(2026, 8, 1, 0, 0, tzinfo=timezone.utc),
+            realized_pnl_net="80", allocated_buy_fee="4",
+        )
+        self._seed_event(
+            repos, account_id=account_id, instrument_id=instrument_a,
+            fill_timestamp=datetime(2026, 8, 1, 1, 0, tzinfo=timezone.utc),
+            realized_pnl_net="20", allocated_buy_fee="1.5",
+        )
+        self._seed_event(
+            repos, account_id=account_id, instrument_id=instrument_b,
+            fill_timestamp=datetime(2026, 8, 2, 0, 0, tzinfo=timezone.utc),
+            realized_pnl_net="-20", allocated_buy_fee="2",
+        )
+
+        with TestClient(app) as client:
+            response = client.get(
+                f"/performance/realized-pnl/summary?account_id={account_id}"
+                "&start_date=2026-08-01&end_date=2026-08-31"
+            )
+        assert response.status_code == 200
+        data = response.json()
+        assert Decimal(str(data["fee_tax_sum"])) == Decimal("13")
+        assert Decimal(str(data["allocated_buy_fee_sum"])) == Decimal("7.5")
+        by_instrument = {row["instrument_id"]: row for row in data["by_instrument"]}
+        assert Decimal(str(by_instrument[str(instrument_a)]["allocated_buy_fee_sum"])) == Decimal("5.5")
+        assert Decimal(str(by_instrument[str(instrument_b)]["allocated_buy_fee_sum"])) == Decimal("2")
+
     def test_summary_single_instrument_scopes_to_that_instrument(self) -> None:
         """instrument_id를 주면 활동이 없어도 그 종목 1건만 by_instrument에 노출한다."""
         repos, app = self._build()
@@ -2659,6 +2773,41 @@ class TestRealizedPnl:
         row_3 = daily["2026-08-03"]
         assert Decimal(str(row_3["realized_pnl_net_sum"])) == Decimal("50")
         assert row_3["sell_event_count"] == 1
+
+    def test_daily_summary_allocated_buy_fee_sum_across_instruments_by_date(self) -> None:
+        """같은 날짜에 서로 다른 종목의 allocated_buy_fee가 있으면 합쳐져야 한다."""
+        repos, app = self._build()
+        account_id = uuid4()
+        instrument_a = uuid4()
+        instrument_b = uuid4()
+        self._seed_daily(
+            repos, account_id=account_id, instrument_id=instrument_a,
+            trade_date=date(2026, 8, 1), net_sum="100", count=1, fee_tax="10",
+        )
+        self._seed_daily(
+            repos, account_id=account_id, instrument_id=instrument_b,
+            trade_date=date(2026, 8, 1), net_sum="-20", count=1, fee_tax="3",
+        )
+        self._seed_event(
+            repos, account_id=account_id, instrument_id=instrument_a,
+            fill_timestamp=datetime(2026, 8, 1, 0, 0, tzinfo=timezone.utc),
+            realized_pnl_net="100", allocated_buy_fee="4",
+        )
+        self._seed_event(
+            repos, account_id=account_id, instrument_id=instrument_b,
+            fill_timestamp=datetime(2026, 8, 1, 1, 0, tzinfo=timezone.utc),
+            realized_pnl_net="-20", allocated_buy_fee="1.25",
+        )
+
+        with TestClient(app) as client:
+            response = client.get(
+                f"/performance/realized-pnl/daily-summary?account_id={account_id}"
+                "&start_date=2026-08-01&end_date=2026-08-31"
+            )
+        assert response.status_code == 200
+        daily = {row["trade_date"]: row for row in response.json()["daily"]}
+        assert Decimal(str(daily["2026-08-01"]["fee_tax_sum"])) == Decimal("13")
+        assert Decimal(str(daily["2026-08-01"]["allocated_buy_fee_sum"])) == Decimal("5.25")
 
     def test_daily_summary_date_range_filters_out_of_range_rows(self) -> None:
         """기간 필터가 실제로 걸러내는지 확인한다(전체 조회와 별개 시나리오)."""

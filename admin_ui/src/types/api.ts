@@ -199,6 +199,8 @@ export interface RealizedPnlPositionView {
 
 // GET /performance/realized-pnl/daily 한 행 — 일자별 aggregate.
 // buy_amount_sum/sell_amount_sum/fee_tax_sum은 UI용 파생 합계 캐시다(새 손익 계산식 아님).
+// fee_tax_sum은 브로커 비용(fee+tax)만이고 allocated_buy_fee는 포함하지 않는다 —
+// 화면의 "비용"은 fee_tax_sum + allocated_buy_fee_sum으로 합산해서 보여준다.
 export interface RealizedPnlDailyAggregateView {
   trade_date: string;
   realized_pnl_net_sum: number;
@@ -206,6 +208,7 @@ export interface RealizedPnlDailyAggregateView {
   buy_amount_sum: number;
   sell_amount_sum: number;
   fee_tax_sum: number;
+  allocated_buy_fee_sum: number;
 }
 
 export interface RealizedPnlDailyResponse {
@@ -217,6 +220,9 @@ export interface RealizedPnlDailyResponse {
 }
 
 // GET /performance/realized-pnl/events 한 행 — 체결별 realized PnL event.
+// allocated_buy_fee는 이번 SELL에 매수수수료 pool에서 배분된 몫(fee/tax와는
+// 분리 보존) — 화면의 "비용"은 fee + tax + allocated_buy_fee로 합산해서
+// 보여준다. realized_pnl_net은 이미 allocated_buy_fee까지 차감한 값이다.
 export interface RealizedPnlEventView {
   realized_pnl_event_id: string;
   account_id: string;
@@ -234,6 +240,8 @@ export interface RealizedPnlEventView {
   realized_pnl_net: number;
   position_quantity_after: number;
   fill_timestamp: string;
+  allocated_buy_fee: number;
+  buy_fee_allocation_source: string;
 }
 
 export interface RealizedPnlEventsResponse {
@@ -265,6 +273,7 @@ export interface RealizedPnlSummaryInstrumentView {
   buy_amount_sum: number;
   sell_amount_sum: number;
   fee_tax_sum: number;
+  allocated_buy_fee_sum: number;
   recompute_required: boolean;
 }
 
@@ -278,6 +287,7 @@ export interface RealizedPnlSummaryResponse {
   buy_amount_sum: number;
   sell_amount_sum: number;
   fee_tax_sum: number;
+  allocated_buy_fee_sum: number;
   recompute_pending_count: number;
   by_instrument: RealizedPnlSummaryInstrumentView[];
 }

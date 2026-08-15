@@ -279,8 +279,10 @@ async def list_realized_pnl_daily(
     daily: list[RealizedPnlDailyAggregateView] = []
     for row in rows:
         view = RealizedPnlDailyAggregateView.model_validate(row)
-        view.provenance_breakdown = _tally_provenance_breakdown(
-            events_by_date.get(row.trade_date, [])
+        day_events = events_by_date.get(row.trade_date, [])
+        view.provenance_breakdown = _tally_provenance_breakdown(day_events)
+        view.allocated_buy_fee_sum = sum(
+            (e.allocated_buy_fee for e in day_events), Decimal("0")
         )
         daily.append(view)
 
@@ -381,6 +383,7 @@ async def get_realized_pnl_summary(
     total_buy = Decimal("0")
     total_sell = Decimal("0")
     total_fee_tax = Decimal("0")
+    total_allocated_buy_fee = Decimal("0")
     recompute_pending_count = 0
     total_provenance_counts = {
         "reported": 0,
@@ -399,8 +402,10 @@ async def get_realized_pnl_summary(
         recompute_required = recompute_by_instrument.get(iid_key, False)
 
         inst = await repos.instruments.get(iid_key)
-        instrument_breakdown = _tally_provenance_breakdown(
-            events_by_instrument.get(iid_key, [])
+        instrument_events = events_by_instrument.get(iid_key, [])
+        instrument_breakdown = _tally_provenance_breakdown(instrument_events)
+        instrument_allocated_buy_fee = sum(
+            (e.allocated_buy_fee for e in instrument_events), Decimal("0")
         )
         by_instrument.append(
             RealizedPnlSummaryInstrumentView(
@@ -412,6 +417,7 @@ async def get_realized_pnl_summary(
                 buy_amount_sum=buy,
                 sell_amount_sum=sell,
                 fee_tax_sum=fee_tax,
+                allocated_buy_fee_sum=instrument_allocated_buy_fee,
                 recompute_required=recompute_required,
                 provenance_breakdown=instrument_breakdown,
             )
@@ -426,6 +432,7 @@ async def get_realized_pnl_summary(
         total_buy += buy
         total_sell += sell
         total_fee_tax += fee_tax
+        total_allocated_buy_fee += instrument_allocated_buy_fee
         if recompute_required:
             recompute_pending_count += 1
 
@@ -439,6 +446,7 @@ async def get_realized_pnl_summary(
         buy_amount_sum=total_buy,
         sell_amount_sum=total_sell,
         fee_tax_sum=total_fee_tax,
+        allocated_buy_fee_sum=total_allocated_buy_fee,
         recompute_pending_count=recompute_pending_count,
         provenance_breakdown=RealizedPnlProvenanceBreakdown(**total_provenance_counts),
         by_instrument=by_instrument,
@@ -503,6 +511,7 @@ async def get_realized_pnl_daily_summary(
     daily: list[RealizedPnlDailyAggregateView] = []
     for trade_date in sorted(grouped):
         day_rows = grouped[trade_date]
+        day_events = events_by_date.get(trade_date, [])
         daily.append(
             RealizedPnlDailyAggregateView(
                 trade_date=trade_date,
@@ -517,9 +526,10 @@ async def get_realized_pnl_daily_summary(
                     (r.sell_amount_sum for r in day_rows), Decimal("0")
                 ),
                 fee_tax_sum=sum((r.fee_tax_sum for r in day_rows), Decimal("0")),
-                provenance_breakdown=_tally_provenance_breakdown(
-                    events_by_date.get(trade_date, [])
+                allocated_buy_fee_sum=sum(
+                    (e.allocated_buy_fee for e in day_events), Decimal("0")
                 ),
+                provenance_breakdown=_tally_provenance_breakdown(day_events),
             )
         )
 

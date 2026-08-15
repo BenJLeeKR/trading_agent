@@ -3057,6 +3057,16 @@ class RealizedPnlDailyAggregateView(BaseModel):
     buy_amount_sum: Decimal = Decimal("0")
     sell_amount_sum: Decimal = Decimal("0")
     fee_tax_sum: Decimal = Decimal("0")
+    """브로커 비용(``fee + tax``) 합계 — ``allocated_buy_fee``는 포함하지
+    않는다. ``realized_pnl_daily_aggregates.fee_tax_sum`` 컬럼을 그대로
+    읽은 값이며, 이 필드 자체의 의미는 바꾸지 않는다."""
+    allocated_buy_fee_sum: Decimal = Decimal("0")
+    """이 날짜에 배분된 매수 수수료(``allocated_buy_fee``) 합계 — Admin UI
+    "비용" 표시가 ``fee_tax_sum + allocated_buy_fee_sum``(사용자 관점
+    총비용)으로 보이도록 하기 위한 표시 전용 파생 필드다. 저장된 aggregate
+    컬럼이 아니라 이 API가 이미 provenance_breakdown 계산을 위해 조회하는
+    ``realized_pnl_events``에서 그때그때 합산한다 — 새 손익 계산식이
+    아니라 기존 ``allocated_buy_fee`` 값의 단순 합이다."""
     provenance_breakdown: RealizedPnlProvenanceBreakdown = Field(
         default_factory=RealizedPnlProvenanceBreakdown
     )
@@ -3133,6 +3143,11 @@ class RealizedPnlSummaryInstrumentView(BaseModel):
     buy_amount_sum: Decimal
     sell_amount_sum: Decimal
     fee_tax_sum: Decimal
+    """브로커 비용(``fee + tax``) 합계 — ``allocated_buy_fee``는 포함하지
+    않는다(``RealizedPnlDailyAggregateView.fee_tax_sum`` 참고)."""
+    allocated_buy_fee_sum: Decimal = Decimal("0")
+    """이 종목·기간에 배분된 매수 수수료 합계 — 표시 전용 파생 필드
+    (``RealizedPnlDailyAggregateView.allocated_buy_fee_sum`` 참고)."""
     recompute_required: bool
     provenance_breakdown: RealizedPnlProvenanceBreakdown = Field(
         default_factory=RealizedPnlProvenanceBreakdown
@@ -3158,6 +3173,11 @@ class RealizedPnlSummaryResponse(BaseModel):
     buy_amount_sum: Decimal
     sell_amount_sum: Decimal
     fee_tax_sum: Decimal
+    """브로커 비용(``fee + tax``) 합계 — ``allocated_buy_fee``는 포함하지
+    않는다(``RealizedPnlDailyAggregateView.fee_tax_sum`` 참고)."""
+    allocated_buy_fee_sum: Decimal = Decimal("0")
+    """이 기간 전체에 배분된 매수 수수료 합계 — 표시 전용 파생 필드
+    (``RealizedPnlDailyAggregateView.allocated_buy_fee_sum`` 참고)."""
     recompute_pending_count: int
     provenance_breakdown: RealizedPnlProvenanceBreakdown = Field(
         default_factory=RealizedPnlProvenanceBreakdown
