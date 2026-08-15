@@ -806,3 +806,190 @@ describe("RealizedPnlView — 기간 프리셋", () => {
     expect(dailySummaryOptions.endDate).toBe(options.endDate);
   });
 });
+
+/* ───────────────────────────────────────────
+ * 7. "비용 0원" 회귀 방지 — 007070 실측 재현.
+ *
+ * 백엔드는 Decimal 필드를 JSON 문자열로 내려준다(예: "0E-8",
+ * "622.12500000"). 프런트 타입은 number로 선언돼 있지만, 실제 런타임
+ * 값은 이 테스트가 시뮬레이션하는 문자열이다 — 프로덕션 API가 실제로
+ * 이렇게 응답하므로, mock도 그 현실을 그대로 재현한다(`as unknown as`
+ * 캐스팅은 타입 선언과 런타임 값의 간극 자체를 드러내기 위한 의도적
+ * 표현이다). "+"로 바로 합치면 숫자 덧셈이 아니라 문자열 결합이 되어
+ * `parseFloat`가 결과를 0으로 읽어버렸던 실제 사고(007070 일자별 탭
+ * "비용 0원")를 재현하고, 수정 후에는 정상 합산 결과가 보여야 한다.
+ * ─────────────────────────────────────────── */
+describe("RealizedPnlView — 비용 문자열 합산 회귀 방지(007070 재현)", () => {
+  it("일자별 탭: 문자열 Decimal(fee_tax_sum/allocated_buy_fee_sum)이 0원이 아니라 합산된 값으로 보인다", async () => {
+    mockAccountLoading();
+    vi.spyOn(apiClient, "getRealizedPnlPositions").mockResolvedValue(mockPositions);
+    vi.spyOn(apiClient, "getRealizedPnlSummary").mockResolvedValue(mockSummarySingleInstrument);
+    // 종목 선택 조회는 체결별 탭 이벤트도 함께 fetch한다 — 이 테스트의 관심사는
+    // 아니지만 mock이 없으면 실제 네트워크 호출로 새어나가 실패한다.
+    vi.spyOn(apiClient, "getRealizedPnlEvents").mockResolvedValue(mockEventsSinglePage);
+    vi.spyOn(apiClient, "getRealizedPnlDaily").mockResolvedValue({
+      account_id: ACCOUNT_ID,
+      instrument_id: INSTRUMENT_A,
+      start_date: "2026-08-01",
+      end_date: "2026-08-13",
+      daily: [
+        {
+          trade_date: "2026-08-13",
+          realized_pnl_net_sum: -200722.125,
+          sell_event_count: 2,
+          buy_amount_sum: 4424000,
+          sell_amount_sum: 4223900,
+          // 007070 실측값 그대로 — 둘 다 문자열.
+          fee_tax_sum: "0E-8" as unknown as number,
+          allocated_buy_fee_sum: "622.12500000" as unknown as number,
+        },
+      ],
+    });
+
+    render(<RealizedPnlView />);
+    await selectAccount();
+    await waitFor(() => {
+      expect(screen.getByRole("option", { name: /005930/ })).toBeInTheDocument();
+    });
+    await act(async () => {
+      fireEvent.change(screen.getByLabelText(/종목/), { target: { value: INSTRUMENT_A } });
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "조회" }));
+    });
+
+    // 종목 선택 조회는 기본 활성 탭이 체결별이므로, 일자별 탭으로 명시 전환한다.
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "일자별" })).toBeInTheDocument();
+    });
+    fireEvent.click(screen.getByRole("button", { name: "일자별" }));
+
+    await waitFor(() => {
+      expect(screen.getByText("2026-08-13")).toBeInTheDocument();
+    });
+    // 수정 전에는 문자열 결합("0E-8622.12500000")이 parseFloat에서 0으로
+    // 읽혀 "0원"이 표시됐다 — 이 테스트는 정확한 합산 결과가 보이는지로
+    // 그 회귀를 막는다("0원" 페이지 전역 부재 검사는 다른 셀(매수/매도
+    // 금액)이 우연히 "...0원"으로 끝나 오탐할 수 있어 쓰지 않는다).
+    expect(screen.getByText("622원", { exact: false })).toBeInTheDocument();
+  });
+
+  it("체결별 탭: 문자열 Decimal(fee/tax/allocated_buy_fee)이 0원이 아니라 합산된 값으로 보인다", async () => {
+    mockAccountLoading();
+    vi.spyOn(apiClient, "getRealizedPnlPositions").mockResolvedValue(mockPositions);
+    vi.spyOn(apiClient, "getRealizedPnlSummary").mockResolvedValue(mockSummarySingleInstrument);
+    vi.spyOn(apiClient, "getRealizedPnlDaily").mockResolvedValue(makeDailyResponse(INSTRUMENT_A));
+    vi.spyOn(apiClient, "getRealizedPnlEvents").mockResolvedValue({
+      account_id: ACCOUNT_ID,
+      instrument_id: INSTRUMENT_A,
+      limit: 200,
+      before: null,
+      events: [
+        makeEvent({
+          // 007070 SELL1 실측값 그대로 — 전부 문자열.
+          fee: "0E-8" as unknown as number,
+          tax: "0E-8" as unknown as number,
+          allocated_buy_fee: "346.50000000" as unknown as number,
+          buy_fee_allocation_source: "historically_estimated",
+          realized_pnl_net: -105946.5,
+        }),
+      ],
+    });
+
+    render(<RealizedPnlView />);
+    await selectAccount();
+    await waitFor(() => {
+      expect(screen.getByRole("option", { name: /005930/ })).toBeInTheDocument();
+    });
+    await act(async () => {
+      fireEvent.change(screen.getByLabelText(/종목/), { target: { value: INSTRUMENT_A } });
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "조회" }));
+    });
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: /체결별 \(005930\)/ })).toBeInTheDocument();
+    });
+    // 346.5 → ko-KR Intl 반올림 표시(347원)로 합산 결과가 보여야 한다
+    // ("0원" 페이지 전역 부재 검사는 매수/매도단가(70,000원/75,000원)가
+    // 우연히 "...0원"으로 끝나 오탐하므로 쓰지 않는다).
+    expect(screen.getByText("347원", { exact: false })).toBeInTheDocument();
+  });
+
+  it("상단 요약 카드: 문자열 Decimal(fee_tax_sum/allocated_buy_fee_sum)이 0원이 아니라 합산된 값으로 보인다", async () => {
+    mockAccountLoading();
+    vi.spyOn(apiClient, "getRealizedPnlPositions").mockResolvedValue(mockPositions);
+    vi.spyOn(apiClient, "getRealizedPnlSummary").mockResolvedValue({
+      ...mockSummaryAllInstruments,
+      fee_tax_sum: "0E-8" as unknown as number,
+      allocated_buy_fee_sum: "622.12500000" as unknown as number,
+    });
+    vi.spyOn(apiClient, "getRealizedPnlDailySummary").mockResolvedValue(mockDailySummaryAllInstruments);
+
+    render(<RealizedPnlView />);
+    await selectAccount();
+    await waitFor(() => {
+      expect(screen.getByRole("option", { name: /005930/ })).toBeInTheDocument();
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "조회" }));
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText(/비용 합계/)).toBeInTheDocument();
+    });
+    const costCard = screen.getByText(/비용 합계/).closest("div");
+    expect(costCard).not.toBeNull();
+    expect(costCard!.textContent).not.toContain("0원");
+    expect(costCard!.textContent).toContain("622원");
+  });
+
+  it("허용되지 않는 값(null/undefined/깨진 문자열)이 와도 화면이 깨지지 않고 0원으로 안전하게 표시된다", async () => {
+    mockAccountLoading();
+    vi.spyOn(apiClient, "getRealizedPnlPositions").mockResolvedValue(mockPositions);
+    vi.spyOn(apiClient, "getRealizedPnlSummary").mockResolvedValue(mockSummarySingleInstrument);
+    vi.spyOn(apiClient, "getRealizedPnlEvents").mockResolvedValue(mockEventsSinglePage);
+    vi.spyOn(apiClient, "getRealizedPnlDaily").mockResolvedValue({
+      account_id: ACCOUNT_ID,
+      instrument_id: INSTRUMENT_A,
+      start_date: "2026-08-01",
+      end_date: "2026-08-13",
+      daily: [
+        {
+          trade_date: "2026-08-13",
+          realized_pnl_net_sum: 0,
+          sell_event_count: 0,
+          buy_amount_sum: 0,
+          sell_amount_sum: 0,
+          fee_tax_sum: null as unknown as number,
+          allocated_buy_fee_sum: "not-a-number" as unknown as number,
+        },
+      ],
+    });
+
+    render(<RealizedPnlView />);
+    await selectAccount();
+    await waitFor(() => {
+      expect(screen.getByRole("option", { name: /005930/ })).toBeInTheDocument();
+    });
+    await act(async () => {
+      fireEvent.change(screen.getByLabelText(/종목/), { target: { value: INSTRUMENT_A } });
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "조회" }));
+    });
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "일자별" })).toBeInTheDocument();
+    });
+    fireEvent.click(screen.getByRole("button", { name: "일자별" }));
+
+    await waitFor(() => {
+      expect(screen.getByText("2026-08-13")).toBeInTheDocument();
+    });
+    // 화면이 죽지 않고(에러 경계 없이) 안전한 기본값(0원)으로 표시된다 —
+    // buy/sell/cost 등 여러 셀이 0원이라 getAllByText로 개수만 확인한다.
+    expect(screen.getAllByText("0원", { exact: false }).length).toBeGreaterThan(0);
+  });
+});

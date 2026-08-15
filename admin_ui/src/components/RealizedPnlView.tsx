@@ -26,7 +26,7 @@ import { StatusBadge } from "./common/StatusBadge";
 import { ErrorBanner } from "./common/ErrorBanner";
 import { WarningBanner } from "./common/WarningBanner";
 import { LoadingSpinner } from "./common/LoadingSpinner";
-import { formatKrw, formatKstDateTime, getKstTodayString } from "@/lib/utils";
+import { formatKrw, formatKstDateTime, getKstTodayString, toNumeric } from "@/lib/utils";
 
 /* ───────────────────────────────────────────
  * 기간 프리셋 (design/realized_pnl_screen_spec.md §1 — 항상 날짜 범위)
@@ -91,9 +91,24 @@ function formatSignedKrw(val: number): string {
  * 실현손익(순)) 두 개념을 합쳐서 보여준다 — 중복 차감이 아니라 표시
  * 정합성 복구다. 브로커 비용/매수수수료 배분 각각의 값은 tooltip으로
  * 분리해 드러낸다(설계 근거: 실현손익 화면 비용 표시 정리).
+ *
+ * 백엔드는 Decimal 필드를 JSON 문자열로 내려준다(예: `"0E-8"`,
+ * `"622.12500000"`) — 프런트 타입은 `number`로 선언돼 있지만 실제
+ * 런타임 값은 문자열이다. `+`로 바로 더하면 숫자 덧셈이 아니라 문자열
+ * 결합이 되어(`"0E-8" + "622.12500000"` → `"0E-8622.12500000"`)
+ * `formatKrw`의 `parseFloat`가 이를 `0`으로 읽어버린다(007070에서 실측된
+ * "비용 0원" 버그). `sumDisplayCost()`가 각 값을 먼저 `toNumeric()`으로
+ * 정규화한 뒤 더해 이 문제를 근본적으로 막는다.
  * ─────────────────────────────────────────── */
-function costTooltip(brokerFeeTax: number, allocatedBuyFee: number): string {
-  return `브로커 비용(fee+tax): ${formatKrw(brokerFeeTax)}\n매수수수료 배분(allocated_buy_fee): ${formatKrw(allocatedBuyFee)}`;
+function sumDisplayCost(...parts: Array<number | string | null | undefined>): number {
+  return parts.reduce((total: number, part) => total + toNumeric(part), 0);
+}
+
+function costTooltip(
+  brokerFeeTax: number | string | null | undefined,
+  allocatedBuyFee: number | string | null | undefined
+): string {
+  return `브로커 비용(fee+tax): ${formatKrw(toNumeric(brokerFeeTax))}\n매수수수료 배분(allocated_buy_fee): ${formatKrw(toNumeric(allocatedBuyFee))}`;
 }
 
 type TabKey = "daily" | "byInstrument" | "events";
@@ -291,7 +306,7 @@ export default function RealizedPnlView() {
       align: "right",
       render: (r) => (
         <span title={costTooltip(r.fee_tax_sum, r.allocated_buy_fee_sum)}>
-          {formatKrw(r.fee_tax_sum + r.allocated_buy_fee_sum)}
+          {formatKrw(sumDisplayCost(r.fee_tax_sum, r.allocated_buy_fee_sum))}
         </span>
       ),
     },
@@ -315,7 +330,7 @@ export default function RealizedPnlView() {
       align: "right",
       render: (r) => (
         <span title={costTooltip(r.fee_tax_sum, r.allocated_buy_fee_sum)}>
-          {formatKrw(r.fee_tax_sum + r.allocated_buy_fee_sum)}
+          {formatKrw(sumDisplayCost(r.fee_tax_sum, r.allocated_buy_fee_sum))}
         </span>
       ),
     },
@@ -343,8 +358,8 @@ export default function RealizedPnlView() {
       header: "비용",
       align: "right",
       render: (r) => (
-        <span title={costTooltip(r.fee + r.tax, r.allocated_buy_fee)}>
-          {formatKrw(r.fee + r.tax + r.allocated_buy_fee)}
+        <span title={costTooltip(sumDisplayCost(r.fee, r.tax), r.allocated_buy_fee)}>
+          {formatKrw(sumDisplayCost(r.fee, r.tax, r.allocated_buy_fee))}
         </span>
       ),
     },
@@ -526,11 +541,11 @@ export default function RealizedPnlView() {
                 </div>
                 <div
                   className="bg-white rounded-xl border border-[#e2e8f0] px-4 py-3 text-sm text-[#475569]"
-                  title={costTooltip(summaryData?.fee_tax_sum ?? 0, summaryData?.allocated_buy_fee_sum ?? 0)}
+                  title={costTooltip(summaryData?.fee_tax_sum, summaryData?.allocated_buy_fee_sum)}
                 >
                   비용 합계 :{" "}
                   <span className="font-semibold text-[#0f172a]">
-                    {formatKrw((summaryData?.fee_tax_sum ?? 0) + (summaryData?.allocated_buy_fee_sum ?? 0))}
+                    {formatKrw(sumDisplayCost(summaryData?.fee_tax_sum, summaryData?.allocated_buy_fee_sum))}
                   </span>
                 </div>
               </div>
