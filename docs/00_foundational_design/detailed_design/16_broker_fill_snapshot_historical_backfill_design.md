@@ -769,6 +769,83 @@ append/apply/recompute 실행은 **별도 승인 turn**으로 분리한다 — �
 확정된 realized PnL 숫자(-105,600/-94,500)가 실제로 바뀌는 운영 작업이라
 이번 turn에서 자동으로 진행하지 않는다.
 
+### 8.14 `0062` blocker 원인 규명 및 `config_versions` 등 4개 핵심 identity 테이블 PK/UNIQUE drift 복구(설계+migration 구현 완료, 운영 apply는 별도 승인 turn)
+
+**`0062` 적용 시 발생한 오류**: §8.13의 `0062_add_historical_buy_fee_
+overlays.sql`을 운영 DB에 적용하는 과정에서 아래 오류로 막혔다.
+
+```
+InvalidForeignKeyError: there is no unique constraint matching given
+keys for referenced table "config_versions"
+```
+
+**read-only catalog 조사로 확정한 원인**: `\d` 출력만으로 판단하지 않고
+`pg_constraint`/`pg_index`/`information_schema.table_constraints`/
+`key_column_usage`를 직접 조회한 결과, 운영 DB의 `trading.clients`,
+`trading.strategies`, `trading.broker_accounts`, `trading.
+config_versions` **4개 테이블 전부**가 `db/migrations/0001_initial_
+schema.sql`이 선언한 PRIMARY KEY/UNIQUE 제약을 실제로는 갖고 있지
+않았다. `config_versions`만의 문제가 아니라 이 4개 테이블을 참조해야
+할 FK 8개(예: `accounts.client_id`, `strategies.client_id`,
+`decision_contexts.config_version_id` 등)도 운영 DB에 전부 함께
+누락돼 있었다 — Postgres는 참조 대상에 PK/UNIQUE가 없으면 FK 자체를
+생성할 수 없으므로 이는 당연한 연쇄 결과다.
+
+**근본 원인**: `trading.schema_migrations` 원장에서 `0001`~`0050`
+(51개 파일)이 전부 동일한 마이크로초 타임스탬프로 기록돼 있다. 이는
+순차 실행의 결과일 수 없고, `src/agent_trading/db/migrations/run.py`
+의 `_bootstrap_ledger_if_needed()`가 "`trading.clients`가 이미 있으니
+0001~0050은 이미 적용된 것"이라고 **실제 DDL 재검증 없이** 일괄
+backfill한 시그니처와 정확히 일치한다. 즉 이 4개 테이블은 마이그레이션
+이력 시스템 도입 이전에 이미 다른 경로로 운영 DB에 존재하던 테이블이며,
+그 실제 정의가 현재 `0001`의 정의와 어긋난 채로 원장에는 "적용됨"으로만
+남아 있었다.
+
+이 drift의 부작용으로, PK/UNIQUE가 없는 상태에서 idempotent 시드
+스크립트가 재실행되며 4개 테이블 모두에서 **완전히 동일한 값의 행이
+정확히 2번씩** 삽입돼 있었다(중복 쌍마다 business key와 PK 후보 값이
+모두 동일하고, 다른 값은 `created_at`/`activated_at` 계열뿐). 이는
+"서로 다른 두 레코드의 충돌"이 아니라 "같은 seed row의 재삽입"으로
+확인됐다.
+
+**복구 설계 결정**:
+- **범위**: `config_versions` 하나만 떼어 고치지 않고 4개 테이블을
+  한 묶음으로 처리한다 — 4개 모두 같은 시점, 같은 원인(원장 부트스트랩
+  backfill)의 drift이므로 하나만 고치면 나머지가 다음에 같은 방식으로
+  다시 문제를 일으킨다.
+- **FK는 이 복구에서 제외**: FK 복구 대상 중 `order_blocking_locks.
+  strategy_id`는 스키마상 `NOT NULL`임에도 실제로는 NULL인 만료된 과거
+  행 4건이 있어, FK 추가 전 별도의 데이터 정리 판단이 필요하다. PK/
+  UNIQUE 복구(작고 명확한 리스크)와 FK 복구(데이터 정리가 선행돼야
+  하는 더 복잡한 판단)는 감사/승인 단위를 분리하는 것이 안전하다. FK
+  복구는 `0064_repair_core_identity_foreign_keys.sql`(별도 턴)로
+  넘긴다.
+- **순서**: `0063`(이 migration)이 `0062`보다 먼저 적용돼야 한다 —
+  `0062`가 요구하는 `config_versions.config_version_id`의 PK가 없으면
+  `0062`는 항상 실패한다.
+
+**구현(`db/migrations/0063_repair_core_identity_constraints.sql`)**:
+- 4개 테이블 각각에 대해 (1) 중복 제거 → (2) PK 추가 → (3) UNIQUE
+  추가 순서로 구성.
+- 중복 제거는 `row_number() OVER (PARTITION BY <PK 후보> ORDER BY
+  created_at ASC, [activated_at ASC NULLS LAST — config_versions만],
+  ctid ASC)`로 가장 이른 행을 보존하고 나머지를 삭제하는 결정론적
+  방식이다. `ctid`는 이 migration 내부에서 삭제 대상 한 행을 고르는
+  구현 세부사항으로만 쓰이며, 애플리케이션 식별자로 취급하지 않는다.
+- PK/UNIQUE 추가는 각각 `DO $$ ... $$` 블록으로 감싸 `pg_constraint`에
+  해당 제약이 이미 있으면 건너뛴다 — 정상 스키마(0001부터 순서대로
+  실행된 테스트 환경 등)에서는 전부 no-op이 되어 안전하게 재실행
+  가능하다.
+- 제약 이름은 `0001`이 실제로 생성했을 이름(Postgres 기본 명명 규칙
+  또는 `0001`의 명시적 `CONSTRAINT` 이름)과 동일하게 맞췄다
+  (`clients_pkey`/`clients_client_code_key`, `strategies_pkey`/
+  `uq_strategies_code`, `broker_accounts_pkey`/`uq_broker_accounts_ref`,
+  `config_versions_pkey`/`uq_config_versions`).
+
+**이번 turn 범위**: migration 파일 작성 + 이 문서 기록까지만. 운영 DB
+적용, `0062` 재실행, FK 복구(`0064`), `007070` overlay apply는 모두
+**별도 승인 turn**으로 분리한다.
+
 ## 9. 리스크
 
 | 리스크 | 평가 |
