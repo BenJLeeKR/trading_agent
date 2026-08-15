@@ -122,6 +122,27 @@ export function formatKrw(val: number | string | null | undefined): string {
 }
 
 /**
+ * Normalize a possibly-string numeric value to a plain `number`.
+ *
+ * Backend `Decimal` fields serialize to JSON as **strings** (e.g. `"0E-8"`,
+ * `"622.12500000"`), even though the frontend types often declare them as
+ * `number` for convenience. `formatKrw()` already tolerates this for a
+ * *single* value, but combining two such API fields with `+` before calling
+ * `formatKrw()` silently does string concatenation instead of numeric
+ * addition (e.g. `"0E-8" + "622.12500000"` → `"0E-8622.12500000"`, which
+ * `parseFloat()` then reads back as `0`). Always run each operand through
+ * `toNumeric()` before summing to avoid that trap.
+ *
+ * `null`/`undefined`/non-numeric input normalize to `0` (a safe "no value"
+ * default for cost-summation contexts) rather than propagating `NaN`.
+ */
+export function toNumeric(val: number | string | null | undefined): number {
+  if (val == null) return 0;
+  const num = typeof val === "string" ? parseFloat(val) : val;
+  return Number.isNaN(num) ? 0 : num;
+}
+
+/**
  * Format an ISO datetime string as KST datetime with elapsed time.
  *
  * Input:  ISO string (UTC assumed)
