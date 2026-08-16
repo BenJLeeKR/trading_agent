@@ -25,6 +25,7 @@ from agent_trading.domain.entities import (
     FillSyncRunEntity,
     GuardrailEvaluationEntity,
     HistoricalBuyFeeOverlayEntity,
+    HistoricalSellFeeTaxOverlayEntity,
     InstrumentEntity,
     InstrumentIndexMembershipEntity,
     InstrumentStatusSnapshotEntity,
@@ -1132,6 +1133,25 @@ class HistoricalBuyFeeOverlayRepository(Protocol):
     async def get_by_fill_event_id(
         self, fill_event_id: UUID
     ) -> HistoricalBuyFeeOverlayEntity | None:
+        ...
+
+
+class HistoricalSellFeeTaxOverlayRepository(Protocol):
+    """이미 존재하는 SELL ``fill_event``에 대한 소급 매도 수수료+매도세
+    추정 append-only 저장소.
+
+    ``fill_events`` 원본은 이 저장소를 통해 절대 수정되지 않는다 —
+    recompute 경로만 이 값을 조회해 병합한다(설계 근거: 16번 문서 §8.15).
+    """
+
+    async def add(
+        self, overlay: HistoricalSellFeeTaxOverlayEntity
+    ) -> HistoricalSellFeeTaxOverlayEntity:
+        ...
+
+    async def get_by_fill_event_id(
+        self, fill_event_id: UUID
+    ) -> HistoricalSellFeeTaxOverlayEntity | None:
         ...
 
 

@@ -317,6 +317,16 @@ class RealizedPnlRecomputeService:
         :func:`build_normalized_fill`에 넘긴다 — overlay는 오직 이
         recompute 경로에서만 반영되고, 실시간 경로(``RealizedPnlLedgerService.
         apply_fill``)는 이 저장소를 전혀 참조하지 않는다.
+
+        ``historical_sell_fee_tax_overlays``(16번 문서 §8.15, `007070`
+        SELL fee/tax historical estimate 파일럿)도 같은 병합 지점에서
+        같은 방식으로 처리한다 — BUY overlay를 먼저 적용한 사본 위에
+        SELL overlay를 이어서 적용한다(한 fill은 실제로는 BUY 또는 SELL
+        둘 중 하나이므로 두 overlay가 같은 fill에 동시에 존재하지는
+        않지만, 순서를 고정해 어느 쪽이 있어도 결정론적으로 동작하게
+        한다). BUY overlay는 ``fill_tax``를 항상 0으로 두지만, SELL
+        overlay는 ``estimated_fee``/``estimated_tax``를 둘 다 반영한다
+        (매도는 매도 수수료와 매도세가 별개로 존재하기 때문).
         """
         orders = await self._repos.orders.list(
             OrderQuery(account_id=account_id, limit=_ORDER_LOOKUP_LIMIT)
@@ -333,17 +343,30 @@ class RealizedPnlRecomputeService:
                     broker_order.broker_order_id
                 )
                 for fill_event in fills:
-                    overlay = await self._repos.historical_buy_fee_overlays.get_by_fill_event_id(
+                    effective_fill_event = fill_event
+
+                    buy_overlay = await self._repos.historical_buy_fee_overlays.get_by_fill_event_id(
                         fill_event.fill_event_id
                     )
-                    effective_fill_event = fill_event
-                    if overlay is not None:
+                    if buy_overlay is not None:
                         effective_fill_event = replace(
-                            fill_event,
-                            fill_fee=overlay.estimated_fee,
+                            effective_fill_event,
+                            fill_fee=buy_overlay.estimated_fee,
                             fill_tax=Decimal("0"),
                             fee_tax_source=RealizedPnlFeeTaxSource.HISTORICAL_POLICY_ESTIMATE.value,
                         )
+
+                    sell_overlay = await self._repos.historical_sell_fee_tax_overlays.get_by_fill_event_id(
+                        fill_event.fill_event_id
+                    )
+                    if sell_overlay is not None:
+                        effective_fill_event = replace(
+                            effective_fill_event,
+                            fill_fee=sell_overlay.estimated_fee,
+                            fill_tax=sell_overlay.estimated_tax,
+                            fee_tax_source=RealizedPnlFeeTaxSource.HISTORICAL_POLICY_ESTIMATE.value,
+                        )
+
                     normalized = build_normalized_fill(
                         effective_fill_event,
                         account_id=account_id,

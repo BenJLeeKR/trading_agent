@@ -843,8 +843,107 @@ backfill한 시그니처와 정확히 일치한다. 즉 이 4개 테이블은 �
   `config_versions_pkey`/`uq_config_versions`).
 
 **이번 turn 범위**: migration 파일 작성 + 이 문서 기록까지만. 운영 DB
-적용, `0062` 재실행, FK 복구(`0064`), `007070` overlay apply는 모두
-**별도 승인 turn**으로 분리한다.
+적용, `0062` 재실행, FK 복구(번호 미정 — `0064`는 이후 §8.15의 SELL
+fee/tax historical estimate 트랙에서 사용됐다), `007070` overlay apply는
+모두 **별도 승인 turn**으로 분리한다.
+
+### 8.15 `007070` SELL fee/tax historical estimate overlay(구현 완료, 운영 apply/recompute는 별도 승인 turn)
+
+**성격 구분**: §8.13(BUY fee overlay)과 같은 방법론(append-only 원장 위
+overlay + recompute)이지만, 다루는 대상과 무게가 다르다. §8.13은 "한
+번도 노출된 적 없던 BUY fee"를 채웠지만, 이번 트랙은 **이미 recompute를
+한 번 거쳐 사용자에게 노출된 SELL 2건의 `realized_pnl_net`을 두 번째로
+재해석**한다(설계 검토 턴 Q1 결론). 이 차이 때문에 실제 운영 apply는
+사전 사용자 승인을 반드시 선행해야 한다는 점을 강조한다.
+
+**배경**: `007070`의 BUY 1건(176주)은 이미 historical BUY fee overlay로
+보정됐고, 그 결과 SELL 2건은 `allocated_buy_fee`(346.5/275.625)까지는
+반영됐지만 SELL 자체의 매도 수수료/매도세는 여전히 `fee=0`/`tax=0`/
+`fee_tax_source=assumed_zero`다. 이유는 `compute_fee_tax()`가 **체결
+시각 기준** 활성 정책만 보는데(`get_active_at(client_id, environment,
+fill_timestamp)`), SELL 체결(2026-08-13)이 정책 활성 시각(2026-08-14)보다
+앞서 있어 그 시점 기준으로는 정책이 없었다고 정확히 판정했기 때문이다
+— 이 시맨틱 자체는 옳고, 이번 트랙에서도 절대 바꾸지 않는다.
+
+**핵심 원칙**: `fill_events` 원본은 절대 UPDATE하지 않는다. 대신 "이
+SELL fill에 대해 이런 historical 매도 수수료/매도세 추정치가 있다"는
+별도 사실을 `trading.historical_sell_fee_tax_overlays`에 append하고,
+`RealizedPnlRecomputeService`의 기존 병합 지점에서만 그 overlay를 읽어
+병합한다.
+
+**BUY overlay와의 차이(설계 검토 턴 Q2/Q7 결론)**:
+- BUY overlay 테이블(`historical_buy_fee_overlays`)을 억지로 재사용하지
+  않고 **별도 테이블**로 분리했다 — BUY는 `estimated_fee` 하나만
+  필요하지만(매수에는 세금 개념이 없음), SELL은 매도 수수료와 매도세가
+  별개로 존재하므로 `estimated_fee`/`estimated_tax` 두 컬럼이 필요하다.
+- provenance는 BUY와 **동일하게 `historical_policy_estimate`를 재사용**
+  한다(설계 검토 턴 Q3 결론) — "체결 시각 기준으로는 정책이 없어
+  assumed_zero였지만, 현재 활성 정책을 소급 추정으로 적용한 값"이라는
+  인과관계가 BUY/SELL 모두 동일하기 때문이다. 새 enum 값은 추가하지
+  않았다.
+
+**구현**:
+- `trading.historical_sell_fee_tax_overlays`(migration 0064) —
+  `fill_event_id` UNIQUE(같은 fill에 overlay 1건만), `estimated_fee`,
+  `estimated_tax`, `fee_tax_source`(`historical_policy_estimate` 고정),
+  `basis_config_version_id`, `reason`, `created_by`, `created_at`.
+- `HistoricalSellFeeTaxOverlayEntity`/`HistoricalSellFeeTaxOverlayRepository`
+  (postgres+memory, BUY overlay와 동일한 4계층 패턴: contract→container→
+  memory→postgres bootstrap).
+- **병합 지점 확장**: `RealizedPnlRecomputeService._collect_ordered_
+  normalized_fills()` 한 곳을 그대로 확장했다(새 병합 지점을 만들지
+  않음) — 각 fill을 조회한 직후 BUY overlay를 먼저 적용한 사본 위에,
+  SELL overlay가 있으면 이어서 `fill_fee`/`fill_tax`/`fee_tax_source`를
+  덮어쓴다. 한 fill은 실제로는 BUY 또는 SELL 둘 중 하나이므로 두 overlay가
+  동시에 존재하지는 않지만, 순서를 고정해 어느 쪽이 있어도 결정론적으로
+  동작한다. 실시간 경로(`RealizedPnlLedgerService`)는 이 저장소도 여전히
+  참조하지 않는다.
+- **recompute 범위**: BUY overlay와 동일하게 계좌×종목 전체 replay다
+  (SELL 2건만 부분 재계산하는 경로는 현재 아키텍처에 없다). `fill_events`
+  는 불변, SELL 2건의 `realized_pnl_events`(fee/tax/realized_pnl_net)와
+  `realized_pnl_daily_aggregates`가 재구성된다. `position_cost_basis_
+  state`(quantity/average_cost/remaining_buy_fee_pool)는 이 오버레이와
+  무관하게 유지된다 — 매도 비용은 매수 수수료 pool 배분에 영향을 주지
+  않기 때문이다.
+- **CLI**: `scripts/apply_historical_sell_fee_tax_overlay.py` — 기본
+  dry-run. `compute_fee_tax(side=OrderSide.SELL)`로 현재 활성 정책 기준
+  매도 수수료+매도세를 추정하고(`CALCULATED_FROM_POLICY`로 성립할 때만
+  진행), 대상 fill이 **이미 `realized_pnl_events`에 확정 기록이 있어야만**
+  진행한다(아직 한 번도 recompute된 적 없는 SELL에는 이 스크립트를 쓰지
+  않는다 — 이 트랙은 "재해석" 전용이지 "신규 계산" 스크립트가 아니다).
+  dry-run 출력은 "이 SELL은 이미 한 번 확정된 값을 두 번째로 재해석한다"는
+  점을 명시적으로 경고 문구로 출력한 뒤, `replay_fills()`(순수 함수, DB
+  미접근)로 overlay 반영 전체 재계산을 미리 시뮬레이션해 기존/예상
+  fee·tax·realized_pnl_net과 일자 합계 변화를 전/후 비교로 보여준다.
+  `--mode apply`는 overlay append + `recompute_queue` 등록만 하고
+  (`reason_code='manual_request'`), 실제 재계산 실행은 스크립트가 하지
+  않는다 — 기존 `realized-pnl-recompute-worker`가 수행한다.
+
+**illustrative 계산(예시, 실제 반영 값 아님, 설계 검토 턴 §5에서 제시된
+현재 활성 정책 기준 추정)**:
+- SELL1(26800×88): 매도 수수료 ≈ 331원, 매도세 ≈ 4717원 → 합계 ≈ 5048원.
+  `realized_pnl_net = -105600 - 331 - 4717 - 346.5 = -110994.5`.
+- SELL2(26650×70): 매도 수수료 ≈ 262원, 매도세 ≈ 3731원 → 합계 ≈ 3993원.
+  `realized_pnl_net = -94500 - 262 - 3731 - 275.625 = -98768.625`.
+- 일자 합계: 기존 `-200722.125` → `-209763.125`(추가 악화 ≈ 9041원).
+- 단위 테스트(`test_recompute_merges_historical_sell_fee_tax_overlay_
+  and_reinterprets_existing_sells`)가 이 수치를 정확히 재현하는 것으로
+  구현을 검증했다(`realized_pnl_gross`/`allocated_buy_fee`/
+  `average_cost`/`remaining_buy_fee_pool`은 전혀 안 바뀜, `fee`/`tax`/
+  `fee_tax_source`/`realized_pnl_net`만 변경).
+
+**설계 검토 턴에서 확정된 리스크 관리 원칙(다음 turn에 반드시 유지)**:
+- 이미 노출된 `realized_pnl_net` 숫자가 두 번째로 바뀐다는 점은 기술로
+  해결할 수 없는 문제이며, **실제 운영 apply 전 반드시 사용자의 명시적
+  사전 승인**이 있어야 한다(단순 dry-run 확인으로 대체하지 않는다).
+- `historical_policy_estimate` provenance는 "확정된 사실"이 아니라
+  "소급 추정"이라는 의미를 계속 유지해야 하며, dry-run/보고서/문서
+  어디에서도 이 추정 성격을 숨기거나 확정값처럼 표현하지 않는다.
+
+**이번 turn 범위**: 코드/테스트/문서까지만. 실제 `007070` SELL 2건에
+대한 overlay append/apply/recompute 실행은 **별도 승인 turn**으로
+분리한다 — 이미 확정된 realized PnL 숫자(-105946.5/-94775.625)가 실제로
+또 한 번 바뀌는 운영 작업이라 이번 turn에서 자동으로 진행하지 않는다.
 
 ## 9. 리스크
 

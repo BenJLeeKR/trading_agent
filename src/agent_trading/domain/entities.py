@@ -410,6 +410,36 @@ class HistoricalBuyFeeOverlayEntity:
 
 
 @dataclass(slots=True, frozen=True)
+class HistoricalSellFeeTaxOverlayEntity:
+    """이미 존재하는 SELL ``fill_event``에 대한 소급 매도 수수료+매도세
+    추정 append-only 원장.
+
+    ``trading.historical_sell_fee_tax_overlays``에 대응한다.
+    :class:`HistoricalBuyFeeOverlayEntity`와 같은 원칙(``fill_events``
+    원본 절대 UPDATE 금지, recompute 경로에서만 조회·병합)을 따르되,
+    BUY는 ``estimated_fee`` 하나만 필요한 것과 달리 SELL은 매도 수수료
+    (commission)와 매도세(tax)가 별개로 존재하므로 ``estimated_fee``/
+    ``estimated_tax``를 함께 갖는다 — BUY overlay 테이블을 억지로
+    재사용하지 않고 별도 테이블로 분리한 이유다(설계 근거: 16번 문서
+    §8.15, `007070` 파일럿).
+
+    ``fill_event_id``는 UNIQUE다 — 같은 fill에 대한 overlay는 1건만
+    존재할 수 있다(BUY overlay와 동일하게, 재정정은 이번 파일럿 범위
+    밖이며 이 행을 upsert하지 않는다).
+    """
+
+    overlay_id: UUID
+    fill_event_id: UUID
+    estimated_fee: Decimal
+    estimated_tax: Decimal
+    fee_tax_source: str
+    basis_config_version_id: UUID
+    reason: str
+    created_by: str
+    created_at: datetime | None = None
+
+
+@dataclass(slots=True, frozen=True)
 class FillSyncRunEntity:
     fill_sync_run_id: UUID
     trigger_type: str

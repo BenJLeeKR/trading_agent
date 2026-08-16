@@ -44,6 +44,9 @@ from agent_trading.repositories.postgres.guardrail_evaluations import (
 from agent_trading.repositories.postgres.historical_buy_fee_overlays import (
     PostgresHistoricalBuyFeeOverlayRepository,
 )
+from agent_trading.repositories.postgres.historical_sell_fee_tax_overlays import (
+    PostgresHistoricalSellFeeTaxOverlayRepository,
+)
 from agent_trading.repositories.postgres.instruments import (
     PostgresInstrumentRepository,
 )
@@ -187,4 +190,5 @@ def build_postgres_repositories(
         realized_pnl_computation_runs=PostgresRealizedPnlComputationRunRepository(tx),
         realized_pnl_recompute_queue=PostgresRealizedPnlRecomputeQueueRepository(tx),
         historical_buy_fee_overlays=PostgresHistoricalBuyFeeOverlayRepository(tx),
+        historical_sell_fee_tax_overlays=PostgresHistoricalSellFeeTaxOverlayRepository(tx),
     )
