@@ -455,6 +455,56 @@ class PostgresTradeDecisionRepository:
             return None
         return row_to_entity(row, TradeDecisionEntity)
 
+    async def sync_shadow_risk_bot_observation(
+        self,
+        trade_decision_id: UUID,
+        *,
+        shadow_risk_bot_payload: dict[str, object],
+    ) -> TradeDecisionEntity | None:
+        row = await self._tx.connection.fetchrow(
+            """
+            UPDATE trading.trade_decisions
+            SET decision_json = jsonb_set(
+                COALESCE(decision_json, '{}'::jsonb),
+                '{shadow_risk_bot}',
+                $2::jsonb,
+                true
+            )
+            WHERE trade_decision_id = $1
+            RETURNING *
+            """,
+            trade_decision_id,
+            json.dumps(shadow_risk_bot_payload),
+        )
+        if row is None:
+            return None
+        return row_to_entity(row, TradeDecisionEntity)
+
+    async def sync_shadow_event_bot_observation(
+        self,
+        trade_decision_id: UUID,
+        *,
+        shadow_event_bot_payload: dict[str, object],
+    ) -> TradeDecisionEntity | None:
+        row = await self._tx.connection.fetchrow(
+            """
+            UPDATE trading.trade_decisions
+            SET decision_json = jsonb_set(
+                COALESCE(decision_json, '{}'::jsonb),
+                '{shadow_event_bot}',
+                $2::jsonb,
+                true
+            )
+            WHERE trade_decision_id = $1
+            RETURNING *
+            """,
+            trade_decision_id,
+            json.dumps(shadow_event_bot_payload),
+        )
+        if row is None:
+            return None
+        return row_to_entity(row, TradeDecisionEntity)
+
     async def list_loss_cut_shadow_observations(
         self,
         account_id: UUID,

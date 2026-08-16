@@ -591,6 +591,31 @@ def _resolve_loss_cut_shadow_hard_threshold_pct() -> Decimal:
     return Decimal(os.getenv("LOSS_CUT_SHADOW_HARD_THRESHOLD_PCT", "12"))
 
 
+def _resolve_ar_shadow_bot_enabled() -> bool:
+    """AR(``ai_risk``) **shadow bot 관측**(관측 전용, 결정 미개입) on/off
+    스위치를 ``AR_SHADOW_BOT_ENABLED`` env에서 읽는다.
+
+    ``loss_cut_shadow_enabled``와 동일한 패턴 — 기본값 ``False``,
+    ``True``여도 `risk_check_passed`/`risk_opinion`/`decision_type`/주문
+    제출은 전혀 바뀌지 않는다. `trade_decisions.decision_json.
+    shadow_risk_bot`에 deterministic rule 기반 가상 판정만 기록한다.
+    """
+    raw = os.getenv("AR_SHADOW_BOT_ENABLED", "false")
+    return raw.strip().lower() == "true"
+
+
+def _resolve_ei_shadow_bot_enabled() -> bool:
+    """EI(``event_interpretation``) **shadow bot 관측**(관측 전용) on/off
+    스위치를 ``EI_SHADOW_BOT_ENABLED`` env에서 읽는다.
+
+    기본값 ``False``, ``True``여도 EI 출력/AR·FDC·AC 입력/`decision_type`/
+    주문 제출에는 전혀 개입하지 않는다. `trade_decisions.decision_json.
+    shadow_event_bot`에 정형 이벤트 기반 가상 판정만 기록한다.
+    """
+    raw = os.getenv("EI_SHADOW_BOT_ENABLED", "false")
+    return raw.strip().lower() == "true"
+
+
 def _resolve_kis_fill_incremental_append_enabled() -> bool:
     """KIS 누적 체결량(``TOT_CCLD_QTY``)을 증분으로 해석해 실제
     ``fill_events``에 append할지 여부를 ``KIS_FILL_INCREMENTAL_APPEND_
@@ -874,6 +899,24 @@ class AppSettings:
     )
     """`LOSS_CUT_SHADOW_HARD_THRESHOLD_PCT` env(기본값 ``12``). 관측
     전용 임계치 — 정식 정책값이 아니다."""
+
+    # ---- AR(ai_risk)/EI(event_interpretation) shadow bot 관측 -----------
+    ar_shadow_bot_enabled: bool = field(
+        default_factory=_resolve_ar_shadow_bot_enabled
+    )
+    """`AR_SHADOW_BOT_ENABLED` env로 제어하는 관측 전용 스위치. 기본값
+    ``False``. ``True``여도 `risk_check_passed`/`risk_opinion`/
+    `decision_type`/주문 제출에는 전혀 개입하지 않는다 —
+    `trade_decisions.decision_json.shadow_risk_bot`에 deterministic rule
+    기반 가상 판정만 기록한다."""
+
+    ei_shadow_bot_enabled: bool = field(
+        default_factory=_resolve_ei_shadow_bot_enabled
+    )
+    """`EI_SHADOW_BOT_ENABLED` env로 제어하는 관측 전용 스위치. 기본값
+    ``False``. ``True``여도 EI 출력/AR·FDC·AC 입력/`decision_type`/주문
+    제출에는 전혀 개입하지 않는다 — `trade_decisions.decision_json.
+    shadow_event_bot`에 정형 이벤트 기반 가상 판정만 기록한다."""
 
     # ---- KIS 누적 체결량 → 증분 fill 해석 (설계 문서 14번) ---------------
     kis_fill_incremental_append_enabled: bool = field(

@@ -674,6 +674,36 @@ class InMemoryTradeDecisionRepository:
         self._items[trade_decision_id] = updated
         return updated
 
+    async def sync_shadow_risk_bot_observation(
+        self,
+        trade_decision_id: UUID,
+        *,
+        shadow_risk_bot_payload: dict[str, object],
+    ) -> TradeDecisionEntity | None:
+        existing = self._items.get(trade_decision_id)
+        if existing is None:
+            return None
+        merged_decision_json = dict(existing.decision_json or {})
+        merged_decision_json["shadow_risk_bot"] = dict(shadow_risk_bot_payload)
+        updated = replace(existing, decision_json=merged_decision_json)
+        self._items[trade_decision_id] = updated
+        return updated
+
+    async def sync_shadow_event_bot_observation(
+        self,
+        trade_decision_id: UUID,
+        *,
+        shadow_event_bot_payload: dict[str, object],
+    ) -> TradeDecisionEntity | None:
+        existing = self._items.get(trade_decision_id)
+        if existing is None:
+            return None
+        merged_decision_json = dict(existing.decision_json or {})
+        merged_decision_json["shadow_event_bot"] = dict(shadow_event_bot_payload)
+        updated = replace(existing, decision_json=merged_decision_json)
+        self._items[trade_decision_id] = updated
+        return updated
+
     async def list_loss_cut_shadow_observations(
         self,
         account_id: UUID,

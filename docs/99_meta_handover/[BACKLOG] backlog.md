@@ -6757,3 +6757,39 @@ gate) 구현 완료", `[PRIORITY_MAP]` 동일 날짜 항목.
   않는다. AR은 `risk_opinion`/`risk_score`/held_position override/FDC
   skip/execution risk-off 일치율을, EI는 정형 이벤트 detection/bias/
   reason code/no-material-event 일치율을 shadow로 먼저 기록한다.
+
+## AR/EI shadow bot 관측값 저장 완료 및 후속(2026-08-16 KST)
+
+상세: `docs/30_work_log/2026-08-16_ar_ei_shadow_bot.md`.
+
+- 위 "남은 backlog 2"를 구현했다. `services/shadow_bots.py`에 순수
+  계산 함수 `compute_shadow_risk_bot()`/`compute_shadow_event_bot()`을
+  추가하고, `decision_orchestrator.py`에 `_record_ar_shadow_bot_
+  observation()`/`_record_ei_shadow_bot_observation()`을 `loss_cut_
+  shadow`와 동일한 관측 전용 원칙(결정 mutating guard 목록에 미포함,
+  `assemble()` 최말단에서만 호출, 반환값 없음)으로 추가했다.
+- 저장 위치: `trade_decisions.decision_json.shadow_risk_bot`/
+  `shadow_event_bot`(JSONB, DB migration 없음). feature flag
+  `AR_SHADOW_BOT_ENABLED`/`EI_SHADOW_BOT_ENABLED`(기본값 `false`, 관측
+  기록 여부만 통제).
+- AR bot은 `held_position_override_*_would_trigger`/`fdc_skip_*_would_
+  trigger`를 실제 override/skip 판정 함수(`_check_held_position_sell_
+  override`/`_should_skip_final_decision_composer`)에 bot 산출값을
+  담은 synthetic `AIRiskOutput`을 넣어 재사용해 계산한다 — 로직
+  duplication 없이 "AI라면"/"bot이라면" 두 경로를 모두 실제 코드로
+  재현한다.
+- EV gate 관련 입력은 AR/EI shadow bot의 핵심 판단 로직에 사용하지
+  않았다(2026-08-07 신규매수 EV gate 무력화 정책 반영).
+- **남은 backlog 1 — 배포 후 운영 실측**: 다음 거래일 이후
+  `AR_SHADOW_BOT_ENABLED=true`/`EI_SHADOW_BOT_ENABLED=true`로 켜고
+  `trade_decisions.decision_json.shadow_risk_bot`/`shadow_event_bot`
+  적재 여부와 `opinion_agreement`/`bias_agreement` 등 분포를 확인한다.
+- **남은 backlog 2 — shadow agreement 집계 쿼리/API**: `loss_cut_shadow`의
+  `list_loss_cut_shadow_observations()` 선례처럼, shadow_risk_bot/
+  shadow_event_bot 값을 계좌/기간/일치율 기준으로 집계하는 read-only
+  쿼리 또는 API를 추가한다.
+- **남은 backlog 3 — 사후 성과 분석**: 일치율뿐 아니라 AI/bot이
+  다르게 판단한 구간의 사후 실현손익/MFE/MAE/기회비용을 비교한다.
+- **남은 backlog 4 — bot 대체 여부 결정**: 위 실측이 쌓인 뒤 AR/EI를
+  부분/전체 deterministic bot으로 전환할지, AI를 유지할지 결정하는
+  턴을 별도로 진행한다.
