@@ -26,6 +26,7 @@ from agent_trading.domain.entities import (
     FillSyncRunEntity,
     GuardrailEvaluationEntity,
     HistoricalBuyFeeOverlayEntity,
+    HistoricalSellFeeTaxOverlayEntity,
     InstrumentEntity,
     InstrumentIndexMembershipEntity,
     InstrumentStatusSnapshotEntity,
@@ -1412,6 +1413,25 @@ class InMemoryHistoricalBuyFeeOverlayRepository:
     async def get_by_fill_event_id(
         self, fill_event_id: UUID
     ) -> HistoricalBuyFeeOverlayEntity | None:
+        overlay_id = self._by_fill_event_id.get(fill_event_id)
+        return self._items.get(overlay_id) if overlay_id is not None else None
+
+
+class InMemoryHistoricalSellFeeTaxOverlayRepository:
+    def __init__(self) -> None:
+        self._items: dict[UUID, HistoricalSellFeeTaxOverlayEntity] = {}
+        self._by_fill_event_id: dict[UUID, UUID] = {}
+
+    async def add(
+        self, overlay: HistoricalSellFeeTaxOverlayEntity
+    ) -> HistoricalSellFeeTaxOverlayEntity:
+        self._items[overlay.overlay_id] = overlay
+        self._by_fill_event_id[overlay.fill_event_id] = overlay.overlay_id
+        return overlay
+
+    async def get_by_fill_event_id(
+        self, fill_event_id: UUID
+    ) -> HistoricalSellFeeTaxOverlayEntity | None:
         overlay_id = self._by_fill_event_id.get(fill_event_id)
         return self._items.get(overlay_id) if overlay_id is not None else None
 

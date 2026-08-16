@@ -20,6 +20,7 @@ from agent_trading.repositories.contracts import (
     FillSyncRunRepository,
     GuardrailEvaluationRepository,
     HistoricalBuyFeeOverlayRepository,
+    HistoricalSellFeeTaxOverlayRepository,
     InstrumentIndexMembershipRepository,
     InstrumentStatusSnapshotRepository,
     InstrumentRepository,
@@ -92,3 +93,4 @@ class RepositoryContainer:
     realized_pnl_computation_runs: RealizedPnlComputationRunRepository
     realized_pnl_recompute_queue: RealizedPnlRecomputeQueueRepository
     historical_buy_fee_overlays: HistoricalBuyFeeOverlayRepository
+    historical_sell_fee_tax_overlays: HistoricalSellFeeTaxOverlayRepository
