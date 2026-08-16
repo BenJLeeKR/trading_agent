@@ -510,6 +510,72 @@ async def test_run_agents_in_subprocess_with_decision_context() -> None:
     assert result.ai_inputs.decision_type in ("HOLD", "APPROVE", "REJECT", "WATCH", "EXIT", "REDUCE")
 
 
+@pytest.mark.asyncio
+async def test_rehydrate_subprocess_agent_runs_records_all_four() -> None:
+    """subprocess 결과 rehydrate가 EI/AR/AC/FDC 4개 모두 기록해야 한다.
+
+    2026-08-16 이전에는 AC(``ai_compliance``) record가 rehydrate 코드에서
+    누락되어 있었다(``agent_runs``에 ``ai_compliance`` row가 전혀 쌓이지
+    않던 원인). ``_rehydrate_subprocess_agent_runs()``로 추출한 뒤 이
+    회귀를 직접 검증한다.
+    """
+    from agent_trading.services.ai_agents.recorder import AgentRunRecorder
+    from agent_trading.services.decision_orchestrator import (
+        DecisionOrchestratorService,
+    )
+
+    from unittest.mock import MagicMock
+
+    mock_repos = MagicMock()
+    mock_repos.unit_of_work = MagicMock()
+    mock_repos.unit_of_work.connection = None
+
+    orchestrator = DecisionOrchestratorService(
+        repos=mock_repos,  # type: ignore[arg-type]
+        use_subprocess_isolation=False,
+        # repo=None → 순수 in-memory 기록(MagicMock().add()가
+        # awaitable이 아니라서 발생하는 TypeError를 피한다).
+        agent_recorder=AgentRunRecorder(),
+    )
+
+    ctx_id = uuid4()
+    context = AssembledContext(source_type="core")
+    request = AgentExecutionRequest(
+        decision_context_id=ctx_id,
+        correlation_id="test-rehydrate-four",
+        context=context,
+        symbol="005930",
+        market="KRX",
+    )
+
+    bundle = await orchestrator._run_agents_in_subprocess(
+        request=request,
+        assembled_context=context,
+    )
+
+    fdc_run_id = await orchestrator._rehydrate_subprocess_agent_runs(
+        resolved_context_id=ctx_id,
+        agent_bundle=bundle,
+    )
+
+    runs = await orchestrator._agent_recorder.list_by_decision_context(ctx_id)
+    recorded_agent_types = {run.agent_type for run in runs}
+
+    assert recorded_agent_types == {
+        "event_interpretation",
+        "ai_risk",
+        "ai_compliance",
+        "final_decision_composer",
+    }
+    assert fdc_run_id is not None
+
+    ac_run = next(run for run in runs if run.agent_type == "ai_compliance")
+    assert ac_run.structured_output_json.get("agent_name") == "ai_compliance"
+    assert ac_run.structured_output_json.get("compliance_opinion") in {
+        "allow", "warn", "review", "reject",
+    }
+
+
 # =========================================================================
 # _use_subprocess_isolation flag tests
 #

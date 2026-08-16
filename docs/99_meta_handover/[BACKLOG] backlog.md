@@ -6736,3 +6736,24 @@ gate) 구현 완료", `[PRIORITY_MAP]` 동일 날짜 항목.
 - **신규 backlog**: 다음 장중 실측에서 daily cap 소진 이후 실제
   AI 호출 감소량 확인, `guardrail_evaluations`에 `general_buy_
   budget_exhausted` 신규 기록 여부 확인.
+
+## AI Compliance deterministic bot 전환 완료 및 AR/EI shadow bot 후속(2026-08-16 KST)
+
+상세: `docs/30_work_log/2026-08-16_ai_compliance_deterministic_bot_pr277.md`.
+
+- PR #277에서 `ai_compliance` 실행 경로를 LLM 호출 없는
+  `DeterministicAIComplianceAgent`로 전환했다. 기존 `agent_type`은
+  `ai_compliance`로 유지해 API/UI 호환을 보존하고, deterministic 여부는
+  `reason_codes`/`summary`에 남긴다.
+- subprocess rehydrate 경로가 EI/AR/FDC만 `agent_runs`에 기록하고 AC를
+  누락하던 버그를 함께 수정했다. 배포 후 다음 거래일에
+  `agent_runs.agent_type='ai_compliance'` row가 실제로 쌓이는지 실측이
+  필요하다.
+- **남은 backlog 1 — 배포 후 운영 실측**: 다음 거래일에
+  `trade_decisions.decision_json.compliance_*`,
+  `agent_runs.ai_compliance`, `guardrail_evaluations.ai_compliance_alignment`
+  분포를 확인한다.
+- **남은 backlog 2 — AR/EI shadow bot 구현**: AR/EI는 즉시 대체하지
+  않는다. AR은 `risk_opinion`/`risk_score`/held_position override/FDC
+  skip/execution risk-off 일치율을, EI는 정형 이벤트 detection/bias/
+  reason code/no-material-event 일치율을 shadow로 먼저 기록한다.

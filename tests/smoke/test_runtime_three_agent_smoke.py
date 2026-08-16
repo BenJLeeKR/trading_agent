@@ -2,13 +2,15 @@
 
 Verifies that:
 * ``build_default_runtime()`` creates real ``EventInterpretationAgent``,
-  ``AIRiskAgent``, ``AIComplianceAgent``, and
-  ``FinalDecisionComposerAgent`` when provider credentials are configured,
-  and falls back to ``None`` (stub) for all four when they are missing.
+  ``AIRiskAgent``, and ``FinalDecisionComposerAgent`` when provider
+  credentials are configured, and falls back to ``None`` (stub) for all
+  three when they are missing. AI Compliance is always the deterministic
+  ``DeterministicAIComplianceAgent`` (2026-08-16부터 LLM 호출 없음) —
+  provider 설정 유무와 무관하게 동일하다.
 * ``orchestrator.assemble()`` executes the full EI → AR → AC → FDC chain
-  via real provider calls, records all 4 runs, and assembles a valid
+  (AC는 항상 deterministic), records all 4 runs, and assembles a valid
   ``AIDecisionInputs`` contract on ``OrderIntent``.
-* Partial chains (EI-only real, EI+AR+AC real) correctly mix real and
+* Partial chains (EI-only real, EI+AR real) correctly mix real and
   stub agents, with the recorder and ``AIDecisionInputs`` reflecting the
   expected combination.
 
@@ -32,8 +34,8 @@ from agent_trading.domain.models import SubmitOrderRequest
 from agent_trading.repositories.container import RepositoryContainer
 from agent_trading.runtime.bootstrap import build_default_runtime
 from agent_trading.services.ai_agents import (
-    AIComplianceAgent,
     AIRiskAgent,
+    DeterministicAIComplianceAgent,
     EventInterpretationAgent,
     FinalDecisionComposerAgent,
 )
@@ -233,8 +235,8 @@ class TestRuntimeThreeAgentSmoke:
         assert isinstance(ar, AIRiskAgent), (
             f"Expected AIRiskAgent, got {type(ar).__name__}"
         )
-        assert isinstance(ac, AIComplianceAgent), (
-            f"Expected AIComplianceAgent, got {type(ac).__name__}"
+        assert isinstance(ac, DeterministicAIComplianceAgent), (
+            f"Expected DeterministicAIComplianceAgent, got {type(ac).__name__}"
         )
         assert isinstance(fdc, FinalDecisionComposerAgent), (
             f"Expected FinalDecisionComposerAgent, got {type(fdc).__name__}"
@@ -419,10 +421,10 @@ class TestRuntimeThreeAgentPartialChain:
     @pytest.fixture(scope="class")
     def real_ac(
         self, full_runtime: dict[str, object]
-    ) -> AIComplianceAgent:
-        """Extract the real ``AIComplianceAgent``."""
+    ) -> DeterministicAIComplianceAgent:
+        """Extract the deterministic AI Compliance bot."""
         agent = full_runtime["ai_compliance_agent"]
-        assert isinstance(agent, AIComplianceAgent)
+        assert isinstance(agent, DeterministicAIComplianceAgent)
         return agent
 
     # ------------------------------------------------------------------
@@ -490,7 +492,7 @@ class TestRuntimeThreeAgentPartialChain:
         self,
         real_ei: EventInterpretationAgent,
         real_ar: AIRiskAgent,
-        real_ac: AIComplianceAgent,
+        real_ac: DeterministicAIComplianceAgent,
         repos: RepositoryContainer,
     ) -> None:
         """Real EI + real AR + real AC + stub FDC — recorder shows 3 real + 1 stub

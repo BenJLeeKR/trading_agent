@@ -20,8 +20,8 @@ from agent_trading.repositories.container import RepositoryContainer
 from agent_trading.repositories.contracts import ExternalEventRepository
 from agent_trading.repositories.postgres.bootstrap import build_postgres_repositories
 from agent_trading.services.ai_agents import (
-    AIComplianceAgent,
     AIRiskAgent,
+    DeterministicAIComplianceAgent,
     EventInterpretationAgent,
     FinalDecisionComposerAgent,
     OpenAICompatibleClient,
@@ -459,36 +459,19 @@ def _build_ai_risk_agent(settings: AppSettings) -> AIRiskAgent | None:
     )
 
 
-def _build_ai_compliance_agent(settings: AppSettings) -> AIComplianceAgent | None:
-    """Build a real ``AIComplianceAgent`` if provider settings are complete."""
-    if not settings.provider_api_key:
-        logger.info(
-            "Provider API key not configured — "
-            "using stub AIComplianceAgent"
-        )
-        return None
-    if not settings.provider_base_url:
-        logger.warning(
-            "provider_base_url is empty — "
-            "using stub AIComplianceAgent"
-        )
-        return None
-    if not settings.provider_model_id:
-        logger.warning(
-            "provider_model_id is empty — "
-            "using stub AIComplianceAgent"
-        )
-        return None
+def _build_ai_compliance_agent(
+    settings: AppSettings,
+) -> DeterministicAIComplianceAgent | None:
+    """Build the deterministic AI Compliance bot.
 
-    client = OpenAICompatibleClient(
-        api_key=settings.provider_api_key,
-        base_url=settings.provider_base_url,
-        timeout_seconds=settings.provider_timeout_seconds,
-    )
-    return AIComplianceAgent(
-        provider_client=client,
-        model_id=settings.provider_model_id,
-    )
+    2026-08-16 결정: LLM 기반 ``AIComplianceAgent``는 더 이상 이 경로로
+    wiring하지 않는다(provider 설정 유무와 무관하게 LLM 호출이 발생하지
+    않아야 한다). Authoritative 차단은 이미 submit-time deterministic
+    validator가 담당하므로, 여기서는 관측/감사용 compliance projection만
+    계산하는 ``DeterministicAIComplianceAgent``를 always 반환한다.
+    ``settings``는 다른 agent builder들과 시그니처를 맞추기 위해 유지한다.
+    """
+    return DeterministicAIComplianceAgent()
 
 
 def _build_final_decision_agent(
@@ -588,7 +571,7 @@ def _build_orchestrator(
     settings: AppSettings,
     event_interpretation_agent: EventInterpretationAgent | None = None,
     ai_risk_agent: AIRiskAgent | None = None,
-    ai_compliance_agent: AIComplianceAgent | None = None,
+    ai_compliance_agent: DeterministicAIComplianceAgent | None = None,
     final_decision_agent: FinalDecisionComposerAgent | None = None,
 ) -> DecisionOrchestratorService:
     """Build a ``DecisionOrchestratorService`` with provider agent injection.

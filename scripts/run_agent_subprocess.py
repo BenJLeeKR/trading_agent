@@ -51,8 +51,7 @@ from agent_trading.services.ai_agents.event_interpretation import (
 from agent_trading.services.ai_agents.ai_risk import AIRiskAgent
 from agent_trading.services.ai_agents.ai_risk import StubAIRiskAgent
 from agent_trading.services.ai_agents.ai_compliance import (
-    AIComplianceAgent,
-    StubAIComplianceAgent,
+    DeterministicAIComplianceAgent,
 )
 from agent_trading.services.ai_agents.final_decision_composer import (
     FinalDecisionComposerAgent,
@@ -229,14 +228,18 @@ def _build_agent_triplet(
 ) -> tuple[
     EventInterpretationAgent | StubEventInterpretationAgent,
     AIRiskAgent | StubAIRiskAgent,
-    AIComplianceAgent | StubAIComplianceAgent,
+    DeterministicAIComplianceAgent,
     FinalDecisionComposerAgent | StubFinalDecisionComposerAgent,
 ]:
-    """Provider 설정 유무에 따라 subprocess용 agent 3종을 생성한다.
+    """Provider 설정 유무에 따라 subprocess용 agent 4종을 생성한다.
 
     Provider 설정이 비어 있으면 bootstrap/orchestrator와 동일하게
     real agent + ``None`` provider 조합을 만들지 않고 즉시 stub으로 내린다.
     이렇게 해야 EI가 ``NoneType.generate_structured``로 깨지지 않는다.
+
+    AI Compliance는 2026-08-16부터 provider 설정 유무와 무관하게 항상
+    ``DeterministicAIComplianceAgent``(LLM 호출 없음)를 반환한다 —
+    in-process 경로(``runtime/bootstrap.py``)와 동일한 wiring이다.
     """
     if provider_client is None:
         logger.info(
@@ -246,7 +249,7 @@ def _build_agent_triplet(
         return (
             StubEventInterpretationAgent(),
             StubAIRiskAgent(),
-            StubAIComplianceAgent(),
+            DeterministicAIComplianceAgent(),
             StubFinalDecisionComposerAgent(),
         )
 
@@ -259,10 +262,7 @@ def _build_agent_triplet(
             provider_client=provider_client,
             model_id=model_id,
         ),
-        AIComplianceAgent(
-            provider_client=provider_client,
-            model_id=model_id,
-        ),
+        DeterministicAIComplianceAgent(),
         FinalDecisionComposerAgent(
             provider_client=provider_client,
             model_id=model_id,
