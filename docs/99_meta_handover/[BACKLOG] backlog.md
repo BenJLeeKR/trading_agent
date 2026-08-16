@@ -6810,7 +6810,39 @@ gate) 구현 완료", `[PRIORITY_MAP]` 동일 날짜 항목.
   머지된 뒤 **ops-scheduler 컨테이너가 재생성되는 순간** 실제로 shadow
   관측이 즉시 켜진다 — "값 설정 + 재생성" 두 단계가 아니라 "재생성"
   한 단계만 남아 있다. 재생성 승인 전에 이 사실을 반드시 확인할 것.
-- **남은 backlog 1**: ops-scheduler 컨테이너 재생성 여부/시점을
-  사용자와 명시적으로 확인한다(현재 세션에서는 재기동하지 않았다).
-- **남은 backlog 2**: 재생성 이후 다음 거래일 `trade_decisions.
-  decision_json.shadow_risk_bot`/`shadow_event_bot` 적재를 확인한다.
+- **남은 backlog 1(완료)**: ops-scheduler 컨테이너를 2026-08-17
+  KST 08:20경 사용자 승인 하에 재생성했다. `LLM_PROVIDER=gemini`,
+  `AR_SHADOW_BOT_ENABLED=true`, `EI_SHADOW_BOT_ENABLED=true`가 실제
+  프로세스에 반영됨을 확인했다. 단 2026-08-17이 KIS 휴장일로 확인돼
+  예약된 decision loop는 다음 거래일(2026-08-18)까지 idle 상태다.
+  `app` 컨테이너에서 EI/AR/FDC 3-agent 체인을 Gemini로 1회 수동
+  dry-run한 결과 정상 동작을 확인했다(DB 쓰기/주문 없음).
+- **남은 backlog 2**: 다음 거래일(2026-08-18) 이후 실제 decision loop
+  기준 `trade_decisions.decision_json.shadow_risk_bot`/`shadow_event_bot`
+  적재와 `agent_runs`의 Gemini 기반 EI/AR/FDC 기록을 확인한다.
+
+## EI/AR 100% deterministic bot 전환 설계 검토 완료(2026-08-16 KST)
+
+상세: `docs/30_work_log/2026-08-16_ei_ar_deterministic_bot_design_review.md`.
+
+- 사용자 결정: EI(`event_interpretation`)/AR(`ai_risk`)을 100%
+  deterministic bot으로 전환한다(AC는 이미 완료, FDC는 유지). 이번
+  턴은 설계 문서만 작성했고 코드 변경은 없다.
+- EI bot은 `_reconstruct_events()`(이미 존재하는 factual-only 이벤트
+  재구성 함수)와 `compute_shadow_event_bot()`을 재사용해
+  `EventInterpretationOutput`을 그대로 채우는 방식으로 설계했다.
+- AR bot은 `compute_shadow_risk_bot()`을 재사용하되, **`"reject"`
+  opinion 트리거가 현재 룰셋에 없어 극단 위험 신호를 놓칠 수 있는
+  리스크를 확인**했다 — PR2에서 반드시 보강해야 한다.
+- 기존 LLM `EventInterpretationAgent`/`AIRiskAgent` 클래스는 삭제하지
+  않고 legacy/테스트 전용으로 보존하는 방향(AC 전환 선례와 동일,
+  옵션 B)을 권장안으로 제시했다.
+- `agent_type`/`agent_name`은 `event_interpretation`/`ai_risk` 그대로
+  유지, deterministic 여부는 `reason_codes`의
+  `deterministic_rule_set:{ei_bot_v1,ar_bot_v1}` 마커로 구분한다.
+- **남은 backlog 1**: PR 1(EI deterministic 본경로 전환) 구현 착수
+  여부 결정.
+- **남은 backlog 2**: PR 2(AR deterministic 본경로 전환, `"reject"`
+  트리거 보강 포함) — PR 1 배포 후 실측을 먼저 확인한 뒤 착수.
+- **남은 backlog 3**: PR 3(legacy LLM EI/AR 클래스·shadow 필드 정리)
+  — PR 1/2 배포 후 관측 기간을 거쳐 별도 결정.
