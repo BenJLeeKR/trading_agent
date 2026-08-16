@@ -28,6 +28,13 @@ from agent_trading.domain.entities import (
 from agent_trading.domain.enums import DecisionType, OrderSide
 from agent_trading.domain.models import SubmitOrderRequest
 from agent_trading.services.loss_cut_shadow import evaluate_loss_cut_shadow
+from agent_trading.services.shadow_bots import (
+    AR_SHADOW_RULE_SET_VERSION,
+    EI_SHADOW_RULE_SET_VERSION,
+    compute_shadow_event_bot,
+    compute_shadow_risk_bot,
+    risk_score_bucket,
+)
 from agent_trading.services.order_manager import OrderManager
 from agent_trading.services.order_sync_service import OrderSyncService
 from agent_trading.services.reverse_trade_hysteresis import (
@@ -105,7 +112,10 @@ from agent_trading.services.translation import (
     build_submit_order_request_from_decision as build_submit_order_request_from_decision,
     calculate_max_order_value,
 )
-from agent_trading.services.decision_agent_runner import DecisionAgentRunner
+from agent_trading.services.decision_agent_runner import (
+    DecisionAgentRunner,
+    _should_skip_final_decision_composer,
+)
 from agent_trading.services.validators import ValidationContext, ValidationResult
 
 logger = logging.getLogger(__name__)
@@ -282,6 +292,9 @@ class DecisionOrchestratorService:
         loss_cut_shadow_enabled: bool = False,
         loss_cut_shadow_soft_threshold_pct: Decimal = Decimal("7"),
         loss_cut_shadow_hard_threshold_pct: Decimal = Decimal("12"),
+        # --- AR(ai_risk)/EI(event_interpretation) shadow bot 관측 (관측 전용, 결정 미개입) ---
+        ar_shadow_bot_enabled: bool = False,
+        ei_shadow_bot_enabled: bool = False,
     ) -> None:
         self._repos = repos
         self._decision_context_service = DecisionContextService(repos)
@@ -341,6 +354,12 @@ class DecisionOrchestratorService:
         self._loss_cut_shadow_enabled = loss_cut_shadow_enabled
         self._loss_cut_shadow_soft_threshold_pct = loss_cut_shadow_soft_threshold_pct
         self._loss_cut_shadow_hard_threshold_pct = loss_cut_shadow_hard_threshold_pct
+        # AR/EI shadow bot 관측도 loss_cut_shadow와 동일한 원칙을 따른다:
+        # 결정 mutating guard 목록에 속하지 않고, assemble() 최말단에서
+        # 관측 전용으로만 호출되며 decision_type/side/주문 제출을 절대
+        # 바꾸지 않는다.
+        self._ar_shadow_bot_enabled = ar_shadow_bot_enabled
+        self._ei_shadow_bot_enabled = ei_shadow_bot_enabled
         # --- Execution Service (execution pipeline state: sell guard, quote CB, fresh check) ---
         self._execution_service = ExecutionService(
             repos=repos,
@@ -831,6 +850,215 @@ class DecisionOrchestratorService:
         except Exception:
             logger.warning(
                 "loss_cut_shadow observation sync failed: trade_decision_id=%s",
+                trade_decision_id,
+                exc_info=True,
+            )
+
+    async def _record_ar_shadow_bot_observation(
+        self,
+        *,
+        trade_decision_id: UUID | None,
+        assembled_context: AssembledContext,
+        ai_policy_context: AIPolicyContextView,
+        ar_output: AIRiskOutput | None,
+        composer_output: FinalDecisionComposerOutput | None,
+    ) -> None:
+        """AR(``ai_risk``) shadow bot 관측을 기록한다(관측 전용, 결정 미개입).
+
+        ``_record_loss_cut_shadow_observation()``과 동일한 원칙 — 이
+        메서드는 ``assemble()``의 결정 확정 이후에만 호출되며, 반환값이
+        없고 어떤 결정 필드도 mutate하지 않는다. held_position override/
+        FDC skip "would trigger" 비교는 실제 override/skip 판정 함수를
+        그대로 재사용해(bot 산출값을 담은 synthetic ``AIRiskOutput``만
+        바꿔치기) 로직 drift 없이 재현한다.
+        """
+        if not self._ar_shadow_bot_enabled:
+            return
+        if trade_decision_id is None or ar_output is None:
+            return
+
+        source_type = (assembled_context.source_type or "core").strip().lower()
+
+        try:
+            bot_result = compute_shadow_risk_bot(
+                portfolio_allocation=assembled_context.portfolio_allocation,
+                market_regime=assembled_context.market_regime,
+                deterministic_trigger=assembled_context.deterministic_trigger,
+                recent_events=assembled_context.recent_events,
+            )
+            bot_ar_output = AIRiskOutput(
+                risk_opinion=bot_result.risk_opinion,
+                risk_score=bot_result.risk_score,
+                risk_flags=bot_result.risk_flags,
+                reason_codes=bot_result.reason_codes,
+                confidence=bot_result.confidence,
+            )
+            ai_opinion = (ar_output.risk_opinion or "allow").strip().lower()
+            ai_score = float(ar_output.risk_score or 0.0)
+
+            held_override_ai = self._check_held_position_sell_override(
+                source_type=source_type,
+                ar_output=ar_output,
+                fdc_output=composer_output,
+            ) is not None
+            held_override_bot = self._check_held_position_sell_override(
+                source_type=source_type,
+                ar_output=bot_ar_output,
+                fdc_output=composer_output,
+            ) is not None
+
+            fdc_skip_ai = _should_skip_final_decision_composer(
+                ai_policy_context, ar_output,
+            )
+            fdc_skip_bot = _should_skip_final_decision_composer(
+                ai_policy_context, bot_ar_output,
+            )
+
+            exec_risk_off_ai = ai_opinion != "allow" or ai_score >= 0.6
+            exec_risk_off_bot = (
+                bot_result.risk_opinion != "allow" or bot_result.risk_score >= 0.6
+            )
+
+            payload: dict[str, object] = {
+                "rule_set_version": AR_SHADOW_RULE_SET_VERSION,
+                "bot_risk_opinion": bot_result.risk_opinion,
+                "bot_risk_score": bot_result.risk_score,
+                "bot_reason_codes": list(bot_result.reason_codes),
+                "bot_risk_flags": list(bot_result.risk_flags),
+                "bot_confidence": bot_result.confidence,
+                "ai_risk_opinion": ai_opinion,
+                "ai_risk_score_bucket": risk_score_bucket(ai_score),
+                "bot_risk_score_bucket": risk_score_bucket(bot_result.risk_score),
+                "opinion_agreement": ai_opinion == bot_result.risk_opinion,
+                "score_bucket_agreement": (
+                    risk_score_bucket(ai_score)
+                    == risk_score_bucket(bot_result.risk_score)
+                ),
+                "held_position_override_ai_would_trigger": held_override_ai,
+                "held_position_override_bot_would_trigger": held_override_bot,
+                "held_position_override_agreement": (
+                    held_override_ai == held_override_bot
+                ),
+                "fdc_skip_ai_would_trigger": fdc_skip_ai,
+                "fdc_skip_bot_would_trigger": fdc_skip_bot,
+                "fdc_skip_agreement": fdc_skip_ai == fdc_skip_bot,
+                "execution_risk_off_ai_would_trigger": exec_risk_off_ai,
+                "execution_risk_off_bot_would_trigger": exec_risk_off_bot,
+                "execution_risk_off_agreement": (
+                    exec_risk_off_ai == exec_risk_off_bot
+                ),
+                "shadow_only": True,
+                "decision_unaffected_by_shadow": True,
+            }
+        except Exception as exc:
+            logger.warning(
+                "shadow_risk_bot computation failed: trade_decision_id=%s",
+                trade_decision_id,
+                exc_info=True,
+            )
+            payload = {
+                "rule_set_version": AR_SHADOW_RULE_SET_VERSION,
+                "shadow_error": str(exc),
+                "shadow_only": True,
+                "decision_unaffected_by_shadow": True,
+            }
+
+        try:
+            await self._repos.trade_decisions.sync_shadow_risk_bot_observation(
+                trade_decision_id,
+                shadow_risk_bot_payload=payload,
+            )
+        except Exception:
+            logger.warning(
+                "shadow_risk_bot observation sync failed: trade_decision_id=%s",
+                trade_decision_id,
+                exc_info=True,
+            )
+
+    async def _record_ei_shadow_bot_observation(
+        self,
+        *,
+        trade_decision_id: UUID | None,
+        assembled_context: AssembledContext,
+        event_output: EventInterpretationOutput | None,
+    ) -> None:
+        """EI(``event_interpretation``) shadow bot 관측을 기록한다(관측
+        전용, 결정 미개입). 정형 이벤트 필드(``direction``/``severity``/
+        ``source_reliability_tier``)만 사용하고 비정형 헤드라인/본문 텍스트
+        해석은 하지 않는다.
+        """
+        if not self._ei_shadow_bot_enabled:
+            return
+        if trade_decision_id is None:
+            return
+
+        try:
+            bot_result = compute_shadow_event_bot(assembled_context.recent_events)
+
+            ai_detected = event_output.detected_event_count if event_output else 0
+            ai_interpreted = (
+                event_output.interpreted_event_count if event_output else 0
+            )
+            ai_bias = (
+                event_output.aggregate_view.overall_bias
+                if event_output is not None
+                else "neutral"
+            )
+            ai_conflict = (
+                event_output.aggregate_view.event_conflict
+                if event_output is not None
+                else False
+            )
+            ai_no_material_events = (
+                event_output.aggregate_view.no_material_events
+                if event_output is not None
+                else True
+            )
+
+            payload: dict[str, object] = {
+                "rule_set_version": EI_SHADOW_RULE_SET_VERSION,
+                "bot_detected_event_count": bot_result.detected_event_count,
+                "bot_interpreted_event_count": bot_result.interpreted_event_count,
+                "bot_event_bias": bot_result.event_bias,
+                "bot_event_conflict": bot_result.event_conflict,
+                "bot_evidence_strength": bot_result.evidence_strength,
+                "bot_no_material_events": bot_result.no_material_events,
+                "bot_reason_codes": list(bot_result.reason_codes),
+                "ai_detected_event_count": ai_detected,
+                "ai_interpreted_event_count": ai_interpreted,
+                "ai_event_bias": ai_bias,
+                "ai_event_conflict": ai_conflict,
+                "ai_no_material_events": ai_no_material_events,
+                "event_count_agreement": ai_detected == bot_result.detected_event_count,
+                "bias_agreement": ai_bias == bot_result.event_bias,
+                "conflict_agreement": ai_conflict == bot_result.event_conflict,
+                "no_material_events_agreement": (
+                    ai_no_material_events == bot_result.no_material_events
+                ),
+                "shadow_only": True,
+                "decision_unaffected_by_shadow": True,
+            }
+        except Exception as exc:
+            logger.warning(
+                "shadow_event_bot computation failed: trade_decision_id=%s",
+                trade_decision_id,
+                exc_info=True,
+            )
+            payload = {
+                "rule_set_version": EI_SHADOW_RULE_SET_VERSION,
+                "shadow_error": str(exc),
+                "shadow_only": True,
+                "decision_unaffected_by_shadow": True,
+            }
+
+        try:
+            await self._repos.trade_decisions.sync_shadow_event_bot_observation(
+                trade_decision_id,
+                shadow_event_bot_payload=payload,
+            )
+        except Exception:
+            logger.warning(
+                "shadow_event_bot observation sync failed: trade_decision_id=%s",
                 trade_decision_id,
                 exc_info=True,
             )
@@ -2581,6 +2809,22 @@ class DecisionOrchestratorService:
             position_snapshot=assembled_context.position_snapshot,
             source_type=assembled_context.source_type,
             composer_output=agent_bundle.composer_output,
+        )
+
+        # --- AR/EI shadow bot 관측 (관측 전용, loss_cut_shadow와 동일 원칙 —
+        # 이 시점 이후 decision_type/side/주문 수량을 mutate하는 코드는
+        # 없으므로 여기서 관측해도 실주문 판단에 영향 없음) ---
+        await self._record_ar_shadow_bot_observation(
+            trade_decision_id=trade_decision_id,
+            assembled_context=assembled_context,
+            ai_policy_context=ai_policy_context,
+            ar_output=agent_bundle.risk_output,
+            composer_output=agent_bundle.composer_output,
+        )
+        await self._record_ei_shadow_bot_observation(
+            trade_decision_id=trade_decision_id,
+            assembled_context=assembled_context,
+            event_output=agent_bundle.event_output,
         )
 
         # --- Generate decision_id if not provided ---

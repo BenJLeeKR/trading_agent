@@ -37,7 +37,9 @@ from agent_trading.domain.models import SubmitOrderRequest
 from agent_trading.services.order_manager import OrderManager
 from agent_trading.repositories.bootstrap import build_in_memory_repositories
 from agent_trading.services.ai_agents.schemas import (
+    AggregateEventView,
     AIRiskOutput,
+    EventInterpretationOutput,
     FinalDecisionComposerOutput,
 )
 from agent_trading.services.common_types import AgentExecutionBundle
@@ -3183,6 +3185,118 @@ class TestAssembleAndCreateOrderFullFlow:
         # The recorder and audit log are independent storage backends
         assert await service._agent_recorder.list_all() is not audit_logs
 
+    @pytest.mark.asyncio
+    async def test_ar_ei_shadow_bot_enabled_does_not_change_full_flow(
+        self, sample_request
+    ):
+        """AR/EI shadow bot을 켜도 실제 assemble()→create_order() 전체
+        흐름(decision_type, order 생성, DRAFT 상태)이 100% 동일하게
+        유지되어야 한다 — 오직 decision_json에 shadow_risk_bot/
+        shadow_event_bot 키만 추가된다."""
+        repos = build_in_memory_repositories()
+        now = datetime.now(timezone.utc)
+
+        account = AccountEntity(
+            account_id=uuid4(),
+            client_id=uuid4(),
+            broker_account_id=uuid4(),
+            environment=Environment.PAPER,
+            account_alias="test_account",
+            account_masked="test-****",
+            status="active",
+        )
+        repos.accounts._items[account.account_id] = account
+
+        config_version = ConfigVersionEntity(
+            config_version_id=uuid4(),
+            client_id=account.client_id,
+            environment=Environment.PAPER,
+            version_tag="v1",
+            config_json={},
+            checksum="cfg-1",
+            activated_at=now,
+        )
+        repos.config_versions._items[config_version.config_version_id] = config_version
+
+        decision_context = DecisionContextEntity(
+            decision_context_id=uuid4(),
+            account_id=account.account_id,
+            strategy_id=uuid4(),
+            config_version_id=config_version.config_version_id,
+            market_timestamp=now,
+            correlation_id="corr-shadow-bot-full-flow",
+            created_at=now,
+        )
+        repos.decision_contexts._items[decision_context.decision_context_id] = (
+            decision_context
+        )
+
+        instrument = InstrumentEntity(
+            instrument_id=uuid4(),
+            symbol="005930",
+            market_code="KRX",
+            asset_class="stock",
+            currency="KRW",
+            name="Samsung Electronics",
+        )
+        repos.instruments._items[instrument.instrument_id] = instrument
+
+        await repos.external_events.add(
+            ExternalEventEntity(
+                event_id=uuid4(),
+                event_type="news",
+                source_name="naver",
+                published_at=now,
+                symbol=instrument.symbol,
+                market=instrument.market_code,
+            )
+        )
+
+        service = DecisionOrchestratorService(
+            repos=repos,
+            use_subprocess_isolation=False,
+            ar_shadow_bot_enabled=True,
+            ei_shadow_bot_enabled=True,
+        )
+        manager = OrderManager(repos=repos, reconciliation_service=None)
+
+        intent = await service.assemble(
+            sample_request,
+            decision_context_id=decision_context.decision_context_id,
+        )
+
+        # 4개 agent run은 shadow bot 여부와 무관하게 그대로 유지된다.
+        runs = await service._agent_recorder.list_all()
+        assert len(runs) == 4
+        agent_types = {r.agent_type for r in runs}
+        assert agent_types == {
+            "event_interpretation",
+            "ai_risk",
+            "ai_compliance",
+            "final_decision_composer",
+        }
+
+        created = await manager.create_order(intent.request)
+        assert created.status == OrderStatus.DRAFT
+        assert created.trade_decision_id is not None
+
+        persisted = await repos.trade_decisions.get_by_context(
+            decision_context.decision_context_id
+        )
+        assert persisted is not None
+        # 실제 결정 필드는 shadow bot이 개입하지 않았을 때와 동일한 방식
+        # (assemble()이 산출한 ai_backend_inputs.decision_type 그대로)으로
+        # 채워져야 한다 — shadow bot이 이 값을 덮어쓰지 않았다는 증거.
+        assert (
+            persisted.decision_type.value.upper()
+            == (intent.ai_backend_inputs.decision_type or "").upper()
+        )
+        # shadow 관측 필드가 추가로 기록됐는지만 확인한다.
+        assert "shadow_risk_bot" in persisted.decision_json
+        assert persisted.decision_json["shadow_risk_bot"]["shadow_only"] is True
+        assert "shadow_event_bot" in persisted.decision_json
+        assert persisted.decision_json["shadow_event_bot"]["shadow_only"] is True
+
 
 # ---------------------------------------------------------------------------
 # Decision context auto-creation tests
@@ -4285,3 +4399,356 @@ class TestLossCutShadowObservation:
             composer_output=FinalDecisionComposerOutput(decision_type="HOLD", side=""),
         )
         repos.trade_decisions.sync_loss_cut_shadow_observation.assert_awaited_once()
+
+
+# =============================================================================
+# AR/EI shadow bot 관측 — 관측 전용, 결정 미개입 회귀 테스트
+# =============================================================================
+
+
+class TestArShadowBotObservation:
+    """`_record_ar_shadow_bot_observation`은 관측 전용이다 — 어떤 실행
+    경로에서도 `decision_type`/`side`를 바꾸지 않는다는 것을 이 클래스의
+    테스트들이 직접 증명한다."""
+
+    def _make_decision(self, *, decision_type=DecisionType.HOLD, side=None):
+        return TradeDecisionEntity(
+            trade_decision_id=uuid4(),
+            decision_context_id=uuid4(),
+            decision_type=decision_type,
+            side=side,
+            strategy_id=uuid4(),
+            symbol="005930",
+            market="KRX",
+            entry_style=EntryStyle.LIMIT,
+            created_at=datetime.now(timezone.utc),
+            decision_json={"existing": True},
+        )
+
+    @pytest.mark.asyncio
+    async def test_disabled_flag_is_a_full_noop(self) -> None:
+        repos = build_in_memory_repositories()
+        service = DecisionOrchestratorService(repos=repos, use_subprocess_isolation=False)
+        decision = self._make_decision()
+        await repos.trade_decisions.add(decision)
+
+        assembled_context = AssembledContext(source_type="held_position")
+        ai_policy_context = service._build_ai_policy_context_view(assembled_context)
+
+        await service._record_ar_shadow_bot_observation(
+            trade_decision_id=decision.trade_decision_id,
+            assembled_context=assembled_context,
+            ai_policy_context=ai_policy_context,
+            ar_output=AIRiskOutput(risk_opinion="allow", risk_score=0.1),
+            composer_output=FinalDecisionComposerOutput(decision_type="HOLD", side=""),
+        )
+
+        updated = await repos.trade_decisions.get(decision.trade_decision_id)
+        assert updated is not None
+        assert updated.decision_type == DecisionType.HOLD
+        assert updated.side is None
+        assert "shadow_risk_bot" not in updated.decision_json
+
+    @pytest.mark.asyncio
+    async def test_enabled_records_disagreement_without_changing_decision(self) -> None:
+        repos = build_in_memory_repositories()
+        service = DecisionOrchestratorService(
+            repos=repos, use_subprocess_isolation=False, ar_shadow_bot_enabled=True,
+        )
+        decision = self._make_decision(decision_type=DecisionType.HOLD, side=None)
+        await repos.trade_decisions.add(decision)
+
+        portfolio_allocation = PortfolioAllocationAssessment(
+            target_weight_pct=8.0,
+            current_weight_pct=9.0,
+            max_single_position_pct=10.0,
+            remaining_concentration_pct=-1.0,  # over limit
+            remaining_gross_budget_pct=-1.0,  # insufficient cash
+            max_new_capital_pct=0.0,
+            orderable_cash=Decimal("0"),
+            available_allocation_cash=Decimal("0"),
+            recommended_max_order_value=Decimal("0"),
+            allocation_bias="reduce",
+            confidence=0.7,
+        )
+        market_regime = MarketRegimeAssessment(
+            regime_label="bearish_trend",
+            volatility_regime="high_volatility",
+            risk_tone="risk_off",
+            confidence=0.7,
+            half_life_hours=24,
+        )
+        assembled_context = AssembledContext(
+            source_type="held_position",
+            portfolio_allocation=portfolio_allocation,
+            market_regime=market_regime,
+        )
+        ai_policy_context = service._build_ai_policy_context_view(assembled_context)
+
+        # AI는 문제 없다고 판단(allow/0.1)하지만, bot은 concentration/cash/
+        # regime 신호가 전부 나쁘게 나와 score=1.0(clamp) -> opinion="reduce"
+        # 로 계산되어야 한다.
+        ar_output = AIRiskOutput(risk_opinion="allow", risk_score=0.1)
+        composer_output = FinalDecisionComposerOutput(decision_type="HOLD", side="")
+
+        await service._record_ar_shadow_bot_observation(
+            trade_decision_id=decision.trade_decision_id,
+            assembled_context=assembled_context,
+            ai_policy_context=ai_policy_context,
+            ar_output=ar_output,
+            composer_output=composer_output,
+        )
+
+        updated = await repos.trade_decisions.get(decision.trade_decision_id)
+        assert updated is not None
+        # 실제 결정 필드는 shadow 관측 전과 완전히 동일해야 한다.
+        assert updated.decision_type == DecisionType.HOLD
+        assert updated.side is None
+        assert updated.decision_json["existing"] is True
+
+        shadow = updated.decision_json["shadow_risk_bot"]
+        assert shadow["rule_set_version"] == "ar_shadow_v1"
+        assert shadow["bot_risk_opinion"] == "reduce"
+        assert shadow["bot_risk_score"] == 1.0
+        assert shadow["ai_risk_opinion"] == "allow"
+        assert shadow["opinion_agreement"] is False
+        # held_position + bot의 강한 신호 -> bot쪽만 override가 발동해야 함.
+        assert shadow["held_position_override_ai_would_trigger"] is False
+        assert shadow["held_position_override_bot_would_trigger"] is True
+        assert shadow["held_position_override_agreement"] is False
+        # execution risk-off도 bot만 발동해야 함(opinion!=allow).
+        assert shadow["execution_risk_off_ai_would_trigger"] is False
+        assert shadow["execution_risk_off_bot_would_trigger"] is True
+        assert shadow["execution_risk_off_agreement"] is False
+        assert shadow["shadow_only"] is True
+        assert shadow["decision_unaffected_by_shadow"] is True
+
+    @pytest.mark.asyncio
+    async def test_enabled_but_trade_decision_id_none_is_noop(self) -> None:
+        repos = build_in_memory_repositories()
+        service = DecisionOrchestratorService(
+            repos=repos, use_subprocess_isolation=False, ar_shadow_bot_enabled=True,
+        )
+        assembled_context = AssembledContext(source_type="core")
+        ai_policy_context = service._build_ai_policy_context_view(assembled_context)
+
+        await service._record_ar_shadow_bot_observation(
+            trade_decision_id=None,
+            assembled_context=assembled_context,
+            ai_policy_context=ai_policy_context,
+            ar_output=AIRiskOutput(risk_opinion="allow", risk_score=0.1),
+            composer_output=None,
+        )
+
+    @pytest.mark.asyncio
+    async def test_enabled_but_ar_output_none_is_noop(self) -> None:
+        repos = build_in_memory_repositories()
+        service = DecisionOrchestratorService(
+            repos=repos, use_subprocess_isolation=False, ar_shadow_bot_enabled=True,
+        )
+        decision = self._make_decision()
+        await repos.trade_decisions.add(decision)
+        assembled_context = AssembledContext(source_type="core")
+        ai_policy_context = service._build_ai_policy_context_view(assembled_context)
+
+        await service._record_ar_shadow_bot_observation(
+            trade_decision_id=decision.trade_decision_id,
+            assembled_context=assembled_context,
+            ai_policy_context=ai_policy_context,
+            ar_output=None,
+            composer_output=None,
+        )
+
+        updated = await repos.trade_decisions.get(decision.trade_decision_id)
+        assert updated is not None
+        assert "shadow_risk_bot" not in updated.decision_json
+
+    @pytest.mark.asyncio
+    async def test_repository_write_failure_is_logged_not_raised(self) -> None:
+        repos = build_in_memory_repositories()
+        service = DecisionOrchestratorService(
+            repos=repos, use_subprocess_isolation=False, ar_shadow_bot_enabled=True,
+        )
+        assembled_context = AssembledContext(source_type="core")
+        ai_policy_context = service._build_ai_policy_context_view(assembled_context)
+        repos.trade_decisions.sync_shadow_risk_bot_observation = AsyncMock(
+            side_effect=RuntimeError("boom")
+        )
+
+        await service._record_ar_shadow_bot_observation(
+            trade_decision_id=uuid4(),
+            assembled_context=assembled_context,
+            ai_policy_context=ai_policy_context,
+            ar_output=AIRiskOutput(risk_opinion="allow", risk_score=0.1),
+            composer_output=FinalDecisionComposerOutput(decision_type="HOLD", side=""),
+        )
+        repos.trade_decisions.sync_shadow_risk_bot_observation.assert_awaited_once()
+
+
+class TestEiShadowBotObservation:
+    """`_record_ei_shadow_bot_observation`은 관측 전용이다."""
+
+    def _make_decision(self):
+        return TradeDecisionEntity(
+            trade_decision_id=uuid4(),
+            decision_context_id=uuid4(),
+            decision_type=DecisionType.HOLD,
+            side=None,
+            strategy_id=uuid4(),
+            symbol="005930",
+            market="KRX",
+            entry_style=EntryStyle.LIMIT,
+            created_at=datetime.now(timezone.utc),
+            decision_json={"existing": True},
+        )
+
+    def _make_events(self, now: datetime) -> tuple[ExternalEventEntity, ...]:
+        return (
+            ExternalEventEntity(
+                event_id=uuid4(), event_type="filing", source_name="dart",
+                published_at=now, symbol="005930", market="KRX",
+                source_reliability_tier="T1", direction="positive",
+            ),
+            ExternalEventEntity(
+                event_id=uuid4(), event_type="filing", source_name="dart",
+                published_at=now, symbol="005930", market="KRX",
+                source_reliability_tier="T1", direction="positive",
+            ),
+            ExternalEventEntity(
+                event_id=uuid4(), event_type="news", source_name="naver",
+                published_at=now, symbol="005930", market="KRX",
+                source_reliability_tier="T3", direction="negative",
+            ),
+        )
+
+    @pytest.mark.asyncio
+    async def test_disabled_flag_is_a_full_noop(self) -> None:
+        repos = build_in_memory_repositories()
+        service = DecisionOrchestratorService(repos=repos, use_subprocess_isolation=False)
+        decision = self._make_decision()
+        await repos.trade_decisions.add(decision)
+
+        now = datetime.now(timezone.utc)
+        assembled_context = AssembledContext(
+            source_type="core", recent_events=self._make_events(now),
+        )
+
+        await service._record_ei_shadow_bot_observation(
+            trade_decision_id=decision.trade_decision_id,
+            assembled_context=assembled_context,
+            event_output=EventInterpretationOutput(
+                detected_event_count=1, interpreted_event_count=1,
+            ),
+        )
+
+        updated = await repos.trade_decisions.get(decision.trade_decision_id)
+        assert updated is not None
+        assert updated.decision_type == DecisionType.HOLD
+        assert "shadow_event_bot" not in updated.decision_json
+
+    @pytest.mark.asyncio
+    async def test_enabled_records_disagreement_without_changing_decision(self) -> None:
+        repos = build_in_memory_repositories()
+        service = DecisionOrchestratorService(
+            repos=repos, use_subprocess_isolation=False, ei_shadow_bot_enabled=True,
+        )
+        decision = self._make_decision()
+        await repos.trade_decisions.add(decision)
+
+        now = datetime.now(timezone.utc)
+        events = self._make_events(now)
+        assembled_context = AssembledContext(source_type="core", recent_events=events)
+
+        # AI EI는 이벤트 1건/neutral/no_conflict로 판단했다고 가정 —
+        # bot은 3건(2 positive + 1 negative, T1 포함)을 보고 positive/
+        # conflict=True/strong으로 계산해야 한다.
+        ai_event_output = EventInterpretationOutput(
+            detected_event_count=1,
+            interpreted_event_count=1,
+            aggregate_view=AggregateEventView(
+                overall_bias="neutral", event_conflict=False,
+                no_material_events=False,
+            ),
+        )
+
+        await service._record_ei_shadow_bot_observation(
+            trade_decision_id=decision.trade_decision_id,
+            assembled_context=assembled_context,
+            event_output=ai_event_output,
+        )
+
+        updated = await repos.trade_decisions.get(decision.trade_decision_id)
+        assert updated is not None
+        assert updated.decision_type == DecisionType.HOLD
+        assert updated.decision_json["existing"] is True
+
+        shadow = updated.decision_json["shadow_event_bot"]
+        assert shadow["rule_set_version"] == "ei_shadow_v1"
+        assert shadow["bot_detected_event_count"] == 3
+        assert shadow["bot_interpreted_event_count"] == 3
+        assert shadow["bot_event_bias"] == "positive"
+        assert shadow["bot_event_conflict"] is True
+        assert shadow["bot_evidence_strength"] == "strong"
+        assert shadow["bot_no_material_events"] is False
+        assert shadow["ai_detected_event_count"] == 1
+        assert shadow["ai_event_bias"] == "neutral"
+        assert shadow["event_count_agreement"] is False
+        assert shadow["bias_agreement"] is False
+        assert shadow["conflict_agreement"] is False
+        assert shadow["shadow_only"] is True
+        assert shadow["decision_unaffected_by_shadow"] is True
+
+    @pytest.mark.asyncio
+    async def test_enabled_no_events_is_no_material_events(self) -> None:
+        repos = build_in_memory_repositories()
+        service = DecisionOrchestratorService(
+            repos=repos, use_subprocess_isolation=False, ei_shadow_bot_enabled=True,
+        )
+        decision = self._make_decision()
+        await repos.trade_decisions.add(decision)
+        assembled_context = AssembledContext(source_type="core", recent_events=())
+
+        await service._record_ei_shadow_bot_observation(
+            trade_decision_id=decision.trade_decision_id,
+            assembled_context=assembled_context,
+            event_output=EventInterpretationOutput(),
+        )
+
+        updated = await repos.trade_decisions.get(decision.trade_decision_id)
+        assert updated is not None
+        shadow = updated.decision_json["shadow_event_bot"]
+        assert shadow["bot_detected_event_count"] == 0
+        assert shadow["bot_no_material_events"] is True
+        assert shadow["bot_event_bias"] == "neutral"
+
+    @pytest.mark.asyncio
+    async def test_enabled_but_trade_decision_id_none_is_noop(self) -> None:
+        repos = build_in_memory_repositories()
+        service = DecisionOrchestratorService(
+            repos=repos, use_subprocess_isolation=False, ei_shadow_bot_enabled=True,
+        )
+        assembled_context = AssembledContext(source_type="core", recent_events=())
+
+        await service._record_ei_shadow_bot_observation(
+            trade_decision_id=None,
+            assembled_context=assembled_context,
+            event_output=None,
+        )
+
+    @pytest.mark.asyncio
+    async def test_repository_write_failure_is_logged_not_raised(self) -> None:
+        repos = build_in_memory_repositories()
+        service = DecisionOrchestratorService(
+            repos=repos, use_subprocess_isolation=False, ei_shadow_bot_enabled=True,
+        )
+        assembled_context = AssembledContext(source_type="core", recent_events=())
+        repos.trade_decisions.sync_shadow_event_bot_observation = AsyncMock(
+            side_effect=RuntimeError("boom")
+        )
+
+        await service._record_ei_shadow_bot_observation(
+            trade_decision_id=uuid4(),
+            assembled_context=assembled_context,
+            event_output=EventInterpretationOutput(),
+        )
+        repos.trade_decisions.sync_shadow_event_bot_observation.assert_awaited_once()
