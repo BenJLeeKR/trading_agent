@@ -6793,3 +6793,24 @@ gate) 구현 완료", `[PRIORITY_MAP]` 동일 날짜 항목.
 - **남은 backlog 4 — bot 대체 여부 결정**: 위 실측이 쌓인 뒤 AR/EI를
   부분/전체 deterministic bot으로 전환할지, AI를 유지할지 결정하는
   턴을 별도로 진행한다.
+
+## AR/EI shadow bot compose env wiring 보강 완료(2026-08-16 KST)
+
+상세: `docs/30_work_log/2026-08-16_ar_ei_shadow_bot_env_wiring.md`.
+
+- PR #278에서 추가한 `AR_SHADOW_BOT_ENABLED`/`EI_SHADOW_BOT_ENABLED`가
+  `docker-compose.yml`의 `ops-scheduler.environment` 화이트리스트에
+  선언돼 있지 않아, `/etc/agent_trading/runtime.env`에 값을 넣어도
+  컨테이너 실제 프로세스에는 전달되지 않는 문제(`LOSS_CUT_SHADOW_ENABLED`
+  등과 동일한 배선 누락 패턴)를 wiring만 보강해 해결했다. 기본값은
+  `false`로 유지했고, 이 PR 자체는 값을 켜지 않았다.
+- **중요 관측 사항**: `docker compose config` 정적 확인 결과,
+  `/etc/agent_trading/runtime.env`에 두 키가 이미 `true`로 설정돼
+  있음을 확인했다(누가/언제 설정했는지는 미확인). 즉 이 wiring PR이
+  머지된 뒤 **ops-scheduler 컨테이너가 재생성되는 순간** 실제로 shadow
+  관측이 즉시 켜진다 — "값 설정 + 재생성" 두 단계가 아니라 "재생성"
+  한 단계만 남아 있다. 재생성 승인 전에 이 사실을 반드시 확인할 것.
+- **남은 backlog 1**: ops-scheduler 컨테이너 재생성 여부/시점을
+  사용자와 명시적으로 확인한다(현재 세션에서는 재기동하지 않았다).
+- **남은 backlog 2**: 재생성 이후 다음 거래일 `trade_decisions.
+  decision_json.shadow_risk_bot`/`shadow_event_bot` 적재를 확인한다.

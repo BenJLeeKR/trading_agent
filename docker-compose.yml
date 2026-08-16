@@ -364,6 +364,17 @@ services:
       LOSS_CUT_SHADOW_ENABLED: "${LOSS_CUT_SHADOW_ENABLED:-false}"
       LOSS_CUT_SHADOW_SOFT_THRESHOLD_PCT: "${LOSS_CUT_SHADOW_SOFT_THRESHOLD_PCT:-7}"
       LOSS_CUT_SHADOW_HARD_THRESHOLD_PCT: "${LOSS_CUT_SHADOW_HARD_THRESHOLD_PCT:-12}"
+      # AR(ai_risk)/EI(event_interpretation) shadow bot 관측 전용
+      # 스위치(PR #278) — 위 loss-cut shadow와 동일한 이유로 이
+      # 화이트리스트에 선언돼 있지 않으면 `/etc/agent_trading/runtime.env`에
+      # 값을 설정해도 이 컨테이너의 실제 run_decision_loop.py 프로세스에는
+      # 전달되지 않는다. decision_type/side/주문 수량/guard·override
+      # 결과에는 전혀 개입하지 않고 trade_decisions.decision_json.
+      # shadow_risk_bot/shadow_event_bot에 관측값만 남기는 스위치다.
+      # 기본값 false는 기존 운영 동작을 그대로 유지한다(이 PR은 wiring만
+      # 보강하며 값을 true로 켜지 않는다).
+      AR_SHADOW_BOT_ENABLED: "${AR_SHADOW_BOT_ENABLED:-false}"
+      EI_SHADOW_BOT_ENABLED: "${EI_SHADOW_BOT_ENABLED:-false}"
       # KIS 누적 체결량(TOT_CCLD_QTY) → 증분 fill 해석 shadow 스위치(설계
       # 문서 14번 6.1절) — 위 loss-cut shadow와 같은 이유로 이 화이트리스트에
       # 미리 선언해 둔다. run_post_submit_sync_loop.py는 ops-scheduler의
