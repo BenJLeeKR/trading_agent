@@ -2171,41 +2171,10 @@ class DecisionOrchestratorService:
             # The subprocess path does NOT call recorder.record() internally
             # (unlike _run_agents()).  We rehydrate here so that AgentRuns
             # persistence works identically for both paths.
-            _fdc_run_id: UUID | None = None
-            try:
-                # ★ subprocess 경로: EI 실패 시 error metadata를 __error__로 주입
-                _ei_structured = dataclass_to_dict(agent_bundle.event_output)
-                if agent_bundle.ei_error_metadata is not None:
-                    _ei_structured["__error__"] = agent_bundle.ei_error_metadata
-                _ei_run = await self._agent_recorder.record(
-                    decision_context_id=resolved_context_id,
-                    agent_type=self._event_interpretation_agent.agent_name,
-                    structured_output=_ei_structured,
-                )
-                _ar_run = await self._agent_recorder.record(
-                    decision_context_id=resolved_context_id,
-                    agent_type=self._ai_risk_agent.agent_name,
-                    structured_output=dataclass_to_dict(agent_bundle.risk_output),
-                )
-                _fdc_run = await self._agent_recorder.record(
-                    decision_context_id=resolved_context_id,
-                    agent_type=self._final_decision_agent.agent_name,
-                    structured_output=dataclass_to_dict(agent_bundle.composer_output),
-                )
-                _fdc_run_id = _fdc_run.agent_run_id
-                logger.info(
-                    'Rehydrated %d agent runs from subprocess output '
-                    '(decision_context_id=%s fdc_run_id=%s)',
-                    3, resolved_context_id, _fdc_run_id,
-                )
-            except Exception:
-                logger.warning(
-                    'Failed to rehydrate agent runs from subprocess output — '
-                    'AgentRuns will be missing for this cycle. '
-                    'decision_context_id=%s',
-                    resolved_context_id,
-                    exc_info=True,
-                )
+            _fdc_run_id = await self._rehydrate_subprocess_agent_runs(
+                resolved_context_id=resolved_context_id,
+                agent_bundle=agent_bundle,
+            )
         else:
             agent_bundle = await self._run_agents(
                 request=agent_request,
@@ -2920,3 +2889,64 @@ class DecisionOrchestratorService:
             request=request,
             assembled_context=assembled_context,
         )
+
+    async def _rehydrate_subprocess_agent_runs(
+        self,
+        *,
+        resolved_context_id: UUID | None,
+        agent_bundle: AgentExecutionBundle,
+    ) -> UUID | None:
+        """subprocess 결과로부터 4개 AgentRunEntity를 rehydrate한다.
+
+        subprocess 경로(``_run_agents_in_subprocess``)는 내부에서
+        ``recorder.record()``를 호출하지 않으므로(in-process 경로인
+        ``_run_agents()``와 달리), 여기서 EI/AR/AC/FDC 4개를 모두
+        기록해야 두 경로의 ``agent_runs`` 영속화 결과가 동일해진다.
+
+        2026-08-16 수정: 이전에는 EI/AR/FDC 3개만 기록하고 AC(AI
+        Compliance) record가 누락되어 있었다(subprocess rehydrate
+        누락 버그) — ``agent_runs``에 ``ai_compliance`` row가 전혀
+        쌓이지 않던 원인이 이것이었다. AC가 deterministic bot으로
+        전환된 지금은 4개 모두 기록한다.
+        """
+        fdc_run_id: UUID | None = None
+        try:
+            # ★ subprocess 경로: EI 실패 시 error metadata를 __error__로 주입
+            ei_structured = dataclass_to_dict(agent_bundle.event_output)
+            if agent_bundle.ei_error_metadata is not None:
+                ei_structured["__error__"] = agent_bundle.ei_error_metadata
+            await self._agent_recorder.record(
+                decision_context_id=resolved_context_id,
+                agent_type=self._event_interpretation_agent.agent_name,
+                structured_output=ei_structured,
+            )
+            await self._agent_recorder.record(
+                decision_context_id=resolved_context_id,
+                agent_type=self._ai_risk_agent.agent_name,
+                structured_output=dataclass_to_dict(agent_bundle.risk_output),
+            )
+            await self._agent_recorder.record(
+                decision_context_id=resolved_context_id,
+                agent_type=self._ai_compliance_agent.agent_name,
+                structured_output=dataclass_to_dict(agent_bundle.compliance_output),
+            )
+            fdc_run = await self._agent_recorder.record(
+                decision_context_id=resolved_context_id,
+                agent_type=self._final_decision_agent.agent_name,
+                structured_output=dataclass_to_dict(agent_bundle.composer_output),
+            )
+            fdc_run_id = fdc_run.agent_run_id
+            logger.info(
+                'Rehydrated %d agent runs from subprocess output '
+                '(decision_context_id=%s fdc_run_id=%s)',
+                4, resolved_context_id, fdc_run_id,
+            )
+        except Exception:
+            logger.warning(
+                'Failed to rehydrate agent runs from subprocess output — '
+                'AgentRuns will be missing for this cycle. '
+                'decision_context_id=%s',
+                resolved_context_id,
+                exc_info=True,
+            )
+        return fdc_run_id

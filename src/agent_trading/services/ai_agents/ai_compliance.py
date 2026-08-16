@@ -210,3 +210,119 @@ class AIComplianceAgent:
         lines.append("Decide whether the current context is policy-safe, ambiguous, or should be flagged for review.")
         lines.append("Focus on strategy-policy mismatch, source-policy ambiguity, market-rule ambiguity, and event-driven restriction context.")
         return "\n".join(lines)
+
+
+# ============================================================================
+# Deterministic AI Compliance bot (2026-08-16 결정)
+# ============================================================================
+#
+# LLM 기반 AIComplianceAgent는 더 이상 실행 경로(bootstrap/subprocess)에
+# 연결하지 않는다. Authoritative 차단은 이미 submit-time deterministic
+# validator(§`08_ai_decision_policy.md` §4.5, §8.6)가 담당하므로, 이
+# deterministic bot은 hard block을 새로 만들지 않고 이미 계산된 신호
+# (ai_risk opinion, event conflict, deterministic trigger eligibility)를
+# compliance projection 형태로 재구성해 관측/감사 가능하게 만드는 역할만
+# 한다. 위 ``AIComplianceAgent``(LLM) 클래스는 하위 호환/테스트용으로
+# 그대로 남겨둔다.
+
+_DETERMINISTIC_RULE_SET_VERSION = "deterministic_v1"
+
+
+def _compute_deterministic_compliance(
+    request: AgentExecutionRequest,
+    *,
+    rule_set_version: str = _DETERMINISTIC_RULE_SET_VERSION,
+) -> AIComplianceOutput:
+    """정형 신호만으로 compliance projection을 계산한다(LLM 호출 없음).
+
+    hard block 조건(broker capability, restricted symbol, 필수 필드
+    누락 등)은 이미 deterministic compliance validator가 담당하므로
+    여기서 다시 판단하지 않는다. 여기서는 이미 계산된 AR/EI/deterministic
+    trigger 신호를 compliance 관점의 관측치로 투영만 한다.
+    """
+    reason_codes: list[str] = [f"compliance_rule_set:{rule_set_version}"]
+    policy_flags: list[str] = []
+    opinion = "allow"
+    score = 0.0
+
+    source_type = (request.source_type or "core").strip().lower()
+    reason_codes.append(f"source_type_{source_type}")
+
+    ar_output = request.ai_risk_output
+    proposed_side = ar_output.proposed_side if ar_output is not None else ""
+    if ar_output is not None:
+        if ar_output.risk_opinion == "reject":
+            opinion = "review"
+            score = max(score, 0.6)
+            reason_codes.append("ai_risk_opinion_reject")
+        elif ar_output.risk_opinion == "reduce":
+            if opinion == "allow":
+                opinion = "warn"
+            score = max(score, 0.3)
+            reason_codes.append("ai_risk_opinion_reduce")
+
+    ei_output = request.event_interpretation_output
+    if ei_output is not None and ei_output.aggregate_view.event_conflict:
+        if opinion == "allow":
+            opinion = "warn"
+        score = max(score, 0.2)
+        reason_codes.append("event_conflict_detected")
+
+    deterministic_trigger = getattr(request.context, "deterministic_trigger", None)
+    if deterministic_trigger is not None and not bool(
+        getattr(deterministic_trigger, "eligibility_passed", True)
+    ):
+        eligibility_reasons = tuple(
+            getattr(deterministic_trigger, "eligibility_reasons", ()) or ()
+        )
+        policy_flags.extend(eligibility_reasons)
+        reason_codes.append("deterministic_eligibility_not_passed")
+
+    summary = (
+        f"Deterministic compliance projection({rule_set_version}): "
+        f"opinion={opinion} source_type={source_type} "
+        "(LLM 호출 없음, hard block은 submit-time deterministic validator가 담당)."
+    )
+
+    return AIComplianceOutput(
+        agent_name="ai_compliance",
+        decision_context_id=(
+            str(request.decision_context_id)
+            if request.decision_context_id
+            else None
+        ),
+        symbol=request.symbol or "",
+        proposed_side=proposed_side,
+        compliance_opinion=opinion,
+        compliance_score=score,
+        confidence=1.0,
+        policy_flags=tuple(policy_flags),
+        reason_codes=tuple(reason_codes),
+        summary=summary,
+    )
+
+
+class DeterministicAIComplianceAgent:
+    """Deterministic rule-based AI Compliance projection (LLM 호출 없음).
+
+    ``agent_name``은 기존 API/UI(`api/routes/decisions.py`의
+    ``agent_type="ai_compliance"`` 필터)와의 호환을 위해 그대로
+    ``"ai_compliance"``를 유지한다. LLM이 아니라는 사실은 ``reason_codes``의
+    ``compliance_rule_set:*`` 항목과 ``summary``로 구분한다.
+    """
+
+    def __init__(self, rule_set_version: str = _DETERMINISTIC_RULE_SET_VERSION) -> None:
+        self._rule_set_version = rule_set_version
+
+    @property
+    def agent_name(self) -> str:
+        return "ai_compliance"
+
+    @property
+    def schema_version(self) -> str:
+        return "v1"
+
+    async def run(self, request: AgentExecutionRequest) -> AIComplianceOutput:
+        return _compute_deterministic_compliance(
+            request, rule_set_version=self._rule_set_version
+        )

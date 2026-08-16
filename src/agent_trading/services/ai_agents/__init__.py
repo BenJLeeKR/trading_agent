@@ -18,7 +18,9 @@ event_interpretation.py
 ai_risk.py
     ``StubAIRiskAgent``.
 ai_compliance.py
-    ``StubAIComplianceAgent`` and ``AIComplianceAgent`` (real).
+    ``StubAIComplianceAgent``, ``AIComplianceAgent``(LLM, 하위 호환용) and
+    ``DeterministicAIComplianceAgent``(2026-08-16부터 실제 wiring 대상, LLM
+    호출 없음).
 final_decision_composer.py
     ``StubFinalDecisionComposerAgent`` and ``FinalDecisionComposerAgent`` (real).
 """
@@ -46,6 +48,7 @@ from agent_trading.services.ai_agents.event_interpretation import (
 from agent_trading.services.ai_agents.ai_risk import AIRiskAgent, StubAIRiskAgent
 from agent_trading.services.ai_agents.ai_compliance import (
     AIComplianceAgent,
+    DeterministicAIComplianceAgent,
     StubAIComplianceAgent,
 )
 from agent_trading.services.ai_agents.final_decision_composer import (
@@ -69,6 +72,7 @@ __all__ = [
     "AIRiskAgent",
     "StubAIRiskAgent",
     "AIComplianceAgent",
+    "DeterministicAIComplianceAgent",
     "StubAIComplianceAgent",
     "FinalDecisionComposerAgent",
     "StubFinalDecisionComposerAgent",
