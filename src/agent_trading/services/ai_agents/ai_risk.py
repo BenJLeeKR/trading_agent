@@ -35,6 +35,10 @@ from agent_trading.services.ai_agents.base import (
     RawProviderResponse,
 )
 from agent_trading.services.ai_agents.schemas import AIRiskOutput, generate_json_schema
+from agent_trading.services.shadow_bots import (
+    AR_BOT_RULE_SET_VERSION,
+    compute_shadow_risk_bot,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -142,6 +146,12 @@ class StubAIRiskAgent:
 # ---------------------------------------------------------------------------
 # Real implementation
 # ---------------------------------------------------------------------------
+#
+# 2026-08-17 결정: AR(ai_risk)을 100% deterministic bot(아래
+# DeterministicAIRiskAgent)으로 본경로 전환한다(PR2). 이 클래스는
+# 삭제하지 않고 legacy/테스트 전용으로 보존한다(EI/AC 전환 때와 동일한
+# 보수적 접근). runtime/bootstrap.py와 scripts/run_agent_subprocess.py는
+# 더 이상 이 클래스를 wiring하지 않는다.
 
 
 class AIRiskAgent:
@@ -719,3 +729,106 @@ class AIRiskAgent:
             lines.append(f"  {tagged}{stale_mark} {headline}")
 
         return "\n".join(lines)
+
+
+# ============================================================================
+# Deterministic AI Risk bot (2026-08-17 결정, PR2)
+# ============================================================================
+#
+# LLM 기반 AIRiskAgent는 더 이상 실행 경로(bootstrap/subprocess)에
+# 연결하지 않는다. 정형 신호(portfolio_allocation/market_regime/
+# deterministic_trigger/recent_events)만으로 계산 가능한 판단은
+# deterministic bot이 담당한다. size_adjustment_factor는 실제
+# sizing_engine에 프로그램적으로 연결되지 않고(FDC 자신의 sizing_hint만
+# 실제 사이징에 쓰인다) FDC 프롬프트 텍스트 입력 성격이므로, 여기서도
+# 새로운 sizing 연결은 만들지 않고 risk_opinion에 연동된 참고용 값만
+# 채운다. 설계 근거: docs/30_work_log/2026-08-16_ei_ar_deterministic_
+# bot_design_review.md §5, docs/30_work_log/2026-08-17_ar_deterministic_
+# bot_pr2.md.
+
+_SIZE_ADJUSTMENT_FACTOR_BY_OPINION: dict[str, float] = {
+    "allow": 0.0,
+    "review": 0.2,
+    "reduce": 0.5,
+    "reject": 0.8,
+}
+
+
+def _compute_deterministic_ai_risk(
+    request: AgentExecutionRequest,
+    *,
+    rule_set_version: str = AR_BOT_RULE_SET_VERSION,
+) -> AIRiskOutput:
+    """정형 신호만으로 AIRiskOutput을 계산한다(LLM 호출 없음).
+
+    ``compute_shadow_risk_bot()``(shadow_bots.py)과 완전히 동일한
+    계산 로직을 공유하되, ``rule_set_marker``만
+    ``deterministic_rule_set:{rule_set_version}``으로 넘겨 관측 전용
+    shadow 호출과 본경로 호출을 reason_codes로 구분한다.
+    """
+    context = request.context
+    bot_result = compute_shadow_risk_bot(
+        portfolio_allocation=context.portfolio_allocation if context else None,
+        market_regime=context.market_regime if context else None,
+        deterministic_trigger=context.deterministic_trigger if context else None,
+        recent_events=context.recent_events if context else (),
+        rule_set_marker=f"deterministic_rule_set:{rule_set_version}",
+    )
+
+    size_adjustment_factor = _SIZE_ADJUSTMENT_FACTOR_BY_OPINION.get(
+        bot_result.risk_opinion, 0.0
+    )
+
+    summary = (
+        f"Deterministic risk projection({rule_set_version}): "
+        f"opinion={bot_result.risk_opinion} score={bot_result.risk_score:.2f} "
+        "(LLM 호출 없음, size_adjustment_factor는 FDC 프롬프트 텍스트 "
+        "참고용이며 실제 사이징에 프로그램적으로 연결되지 않는다)."
+    )
+
+    return AIRiskOutput(
+        agent_name="ai_risk",
+        decision_context_id=(
+            str(request.decision_context_id)
+            if request.decision_context_id
+            else None
+        ),
+        symbol=request.symbol or "",
+        risk_opinion=bot_result.risk_opinion,
+        risk_score=bot_result.risk_score,
+        confidence=bot_result.confidence,
+        size_adjustment_factor=size_adjustment_factor,
+        risk_flags=bot_result.risk_flags,
+        reason_codes=bot_result.reason_codes,
+        summary=summary,
+    )
+
+
+class DeterministicAIRiskAgent:
+    """Deterministic rule-based AI Risk bot (LLM 호출 없음).
+
+    ``agent_name``은 기존 API/UI/분석 쿼리(``agent_type=="ai_risk"``)
+    호환을 위해 그대로 유지한다. LLM이 아니라는 사실은 ``reason_codes``의
+    ``deterministic_rule_set:*`` 항목으로 구분한다.
+
+    ``last_error_metadata``는 정의하지 않는다 — ``StubAIRiskAgent``/
+    ``AIRiskAgent``(LLM) 모두 이 프로퍼티를 갖지 않으며,
+    ``decision_agent_runner.py``도 AR에 대해서는 이 프로퍼티를 참조하지
+    않는다(EI와 달리 AR에는 이 개념이 없다).
+    """
+
+    def __init__(self, rule_set_version: str = AR_BOT_RULE_SET_VERSION) -> None:
+        self._rule_set_version = rule_set_version
+
+    @property
+    def agent_name(self) -> str:
+        return "ai_risk"
+
+    @property
+    def schema_version(self) -> str:
+        return "v1"
+
+    async def run(self, request: AgentExecutionRequest) -> AIRiskOutput:
+        return _compute_deterministic_ai_risk(
+            request, rule_set_version=self._rule_set_version
+        )

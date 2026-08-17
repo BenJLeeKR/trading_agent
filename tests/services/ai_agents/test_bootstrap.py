@@ -29,7 +29,7 @@ from agent_trading.runtime.bootstrap import (
     shutdown_postgres_runtime,
 )
 from agent_trading.services.ai_agents import (
-    AIRiskAgent,
+    DeterministicAIRiskAgent,
     DeterministicEventInterpretationAgent,
     EventInterpretationAgent,
     FinalDecisionComposerAgent,
@@ -158,8 +158,8 @@ class TestBuildDefaultRuntime:
         assert "final_decision_agent" in runtime
 
     def test_uses_stub_when_no_api_key(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """Provider 설정 없으면 AR/FDC는 None(stub fallback)이지만, EI는
-        provider 설정과 무관하게 항상 deterministic bot이다.
+        """Provider 설정 없으면 FDC는 None(stub fallback)이지만, EI/AR은
+        provider 설정과 무관하게 항상 각각의 deterministic bot이다.
 
         Clears provider API key env vars to stay deterministic regardless
         of ``.env`` content.
@@ -172,13 +172,15 @@ class TestBuildDefaultRuntime:
             runtime["event_interpretation_agent"],
             DeterministicEventInterpretationAgent,
         )
-        assert runtime["ai_risk_agent"] is None
+        assert isinstance(
+            runtime["ai_risk_agent"], DeterministicAIRiskAgent,
+        )
         assert runtime["final_decision_agent"] is None
 
     def test_uses_real_agent_when_api_key_set(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """DeepSeek 설정 완전 → AR/FDC는 real agent, EI는 deterministic bot."""
+        """DeepSeek 설정 완전 → FDC는 real agent, EI/AR은 deterministic bot."""
         monkeypatch.setenv("DEEPSEEK_API_KEY", "sk-test")
         monkeypatch.setenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com")
         monkeypatch.setenv("DEEPSEEK_MODEL_ID", "deepseek-chat")
@@ -189,7 +191,7 @@ class TestBuildDefaultRuntime:
         assert ei_agent is not None
         assert isinstance(ei_agent, DeterministicEventInterpretationAgent)
         assert ar_agent is not None
-        assert isinstance(ar_agent, AIRiskAgent)
+        assert isinstance(ar_agent, DeterministicAIRiskAgent)
         assert fdc_agent is not None
         assert isinstance(fdc_agent, FinalDecisionComposerAgent)
 
@@ -264,7 +266,8 @@ class TestBuildPostgresRuntime:
         assert "final_decision_agent" in runtime
 
     async def test_uses_stub_when_no_api_key(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """Provider API key 없으면 AR/FDC는 None(stub fallback), EI는 항상 deterministic bot.
+        """Provider API key 없으면 FDC는 None(stub fallback), EI/AR은 항상
+        각각의 deterministic bot이다.
 
         Clears provider API key env vars to stay deterministic regardless
         of ``.env`` content.
@@ -278,13 +281,15 @@ class TestBuildPostgresRuntime:
             runtime["event_interpretation_agent"],
             DeterministicEventInterpretationAgent,
         )
-        assert runtime["ai_risk_agent"] is None
+        assert isinstance(
+            runtime["ai_risk_agent"], DeterministicAIRiskAgent,
+        )
         assert runtime["final_decision_agent"] is None
 
     async def test_uses_real_agent_when_api_key_set(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """설정이 완전하면 AR/FDC는 real agent, EI는 deterministic bot."""
+        """설정이 완전하면 FDC는 real agent, EI/AR은 deterministic bot."""
         monkeypatch.setenv("DEEPSEEK_API_KEY", "sk-test")
         monkeypatch.setenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com")
         monkeypatch.setenv("DEEPSEEK_MODEL_ID", "deepseek-chat")
@@ -295,7 +300,7 @@ class TestBuildPostgresRuntime:
         assert ei_agent is not None
         assert isinstance(ei_agent, DeterministicEventInterpretationAgent)
         assert ar_agent is not None
-        assert isinstance(ar_agent, AIRiskAgent)
+        assert isinstance(ar_agent, DeterministicAIRiskAgent)
         assert fdc_agent is not None
         assert isinstance(fdc_agent, FinalDecisionComposerAgent)
 
@@ -315,10 +320,11 @@ class TestBuildPostgresRuntime:
         }
         assert expected_keys.issubset(runtime.keys())
 
-    async def test_shutdown_closes_both_provider_agents(
+    async def test_shutdown_closes_provider_agents(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """shutdown_postgres_runtime()이 두 provider agent를 모두 정리함."""
+        """shutdown_postgres_runtime()이 예외 없이 정리함(EI/AR은
+        deterministic bot이라 provider client가 없고, FDC만 real agent)."""
         monkeypatch.setenv("DEEPSEEK_API_KEY", "sk-test")
         monkeypatch.setenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com")
         monkeypatch.setenv("DEEPSEEK_MODEL_ID", "deepseek-chat")
@@ -332,10 +338,10 @@ class TestBuildPostgresRuntime:
         assert ei_agent is not None
         assert isinstance(ei_agent, DeterministicEventInterpretationAgent)
         assert ar_agent is not None
-        assert isinstance(ar_agent, AIRiskAgent)
+        assert isinstance(ar_agent, DeterministicAIRiskAgent)
 
-        # shutdown — provider client close(AR real agent) + pool close.
-        # EI는 이제 deterministic bot이라 provider client가 없지만,
+        # shutdown — provider client close(FDC real agent) + pool close.
+        # EI/AR은 이제 deterministic bot이라 provider client가 없지만,
         # _close_provider_agent()는 provider가 없는 객체도 안전하게
         # 처리한다(TestCloseProviderAgent.test_handles_agent_without_provider).
         await shutdown_postgres_runtime(runtime)
