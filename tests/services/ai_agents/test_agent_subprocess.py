@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import replace
+from types import SimpleNamespace
 from typing import Any
 from uuid import UUID, uuid4
 
@@ -474,51 +475,180 @@ async def test_run_agents_in_subprocess_success() -> None:
     assert isinstance(result.composer_output, FinalDecisionComposerOutput)
 
 
-class TestWriteOutputIncludesComplianceOutput:
-    """``_write_output()``의 stdout JSON payload에 ``compliance_output``
-    키가 포함되는지 정적으로 검사한다.
+class TestWriteAgentSubprocessOutputRoundTrip:
+    """``write_agent_subprocess_output()`` → JSON → ``deserialize_agent_output()``
+    실제 round-trip이 AC 값을 보존하는지 검증한다.
 
-    2026-08-17 회귀 수정 검증: ``scripts/run_agent_subprocess.py``는 모듈
-    최상단에서 ``_os.makedirs("/workspace/agent_trading/logs", ...)``를
-    무조건 실행하므로, 이 모듈을 직접 import하거나 실제 subprocess로
-    스폰하면 이 harness의 dev-validation 컨테이너(``/workspace``
-    read-only)에서 항상 ``OSError``로 실패한다
-    (``tests/scripts/test_fdc_skip.py``와 동일한 사전 존재 인프라 이슈,
-    PR #277/#281/#282 검토에서 이미 확인됨 — 이번 PR과 무관).
+    배경(2026-08-17 PR #283): ``scripts/run_agent_subprocess.py::
+    _write_output()``이 한때 stdout JSON에 ``compliance_output`` 키를
+    쓰지 않아, 부모 프로세스가 항상 default ``AIComplianceOutput()``으로
+    복원하던 회귀가 있었다. 그 PR에서는 이 모듈이 import-time에
+    ``/workspace`` 디렉터리를 생성하려 시도해(이 harness dev-validation
+    컨테이너에서는 read-only라 실패) 실제 함수 호출 대신 AST 정적
+    파싱으로만 키 존재를 확인했었다.
 
-    이 인프라 제약과 무관하게 ``_write_output()``의 실제 동작(JSON 키
-    포함 여부)만 검증하기 위해, 모듈을 import하지 않고 소스 코드를
-    AST로 직접 파싱한다.
+    이번 PR에서 payload 생성 로직을
+    ``agent_trading.services.ai_agents.subprocess_io``로 분리했다 — 이
+    모듈은 import-time 부작용이 전혀 없으므로, 여기서는 실제
+    ``write_agent_subprocess_output()``을 호출하고 그 출력을 실제
+    ``deserialize_agent_output()``에 넣어 ``AgentExecutionBundle``/
+    ``AIDecisionInputs``까지 값이 보존되는지 끝까지 검증한다 — AST 정적
+    검사보다 훨씬 강한 검증이므로 이전의 AST 테스트는 제거했다(중복이자
+    더 약한 검증이었기 때문).
     """
 
-    def test_write_output_json_payload_includes_compliance_output_key(
+    def test_round_trip_preserves_compliance_output_default_marker(
         self,
+        sample_event_output: EventInterpretationOutput,
+        sample_risk_output: AIRiskOutput,
+        sample_compliance_output: AIComplianceOutput,
+        sample_composer_output: FinalDecisionComposerOutput,
     ) -> None:
-        import ast
-        from pathlib import Path
+        """default(``sample_compliance_output``, opinion="warn")로도 키가 실제로
+        전달되는지 확인 — payload 자체에 ``compliance_output`` 키가 없으면
+        ``deserialize_agent_output()``이 default ``AIComplianceOutput()``
+        (``compliance_opinion="allow"``)으로 복원해버려 이 테스트가 실패한다.
+        """
+        from io import StringIO
 
-        source_path = (
-            Path(__file__).resolve().parents[3]
-            / "scripts"
-            / "run_agent_subprocess.py"
+        from agent_trading.services.ai_agents.subprocess_io import (
+            write_agent_subprocess_output,
         )
-        tree = ast.parse(source_path.read_text(encoding="utf-8"))
 
-        write_output_fn = next(
-            node
-            for node in ast.walk(tree)
-            if isinstance(node, ast.FunctionDef) and node.name == "_write_output"
+        fake_output = SimpleNamespace(
+            success=True,
+            event_output=dataclass_to_dict(sample_event_output),
+            risk_output=dataclass_to_dict(sample_risk_output),
+            compliance_output=dataclass_to_dict(sample_compliance_output),
+            composer_output=dataclass_to_dict(sample_composer_output),
+            error=None,
+            duration_seconds=1.23,
+            ei_error_metadata=None,
         )
-        dict_literal = next(
-            node for node in ast.walk(write_output_fn) if isinstance(node, ast.Dict)
+
+        stream = StringIO()
+        write_agent_subprocess_output(fake_output, stream)
+        raw_json = stream.getvalue()
+
+        # 페이로드 자체에 키가 존재하는지도 직접 확인(회귀의 정확한 지점).
+        payload = json.loads(raw_json)
+        assert "compliance_output" in payload
+
+        bundle = deserialize_agent_output(raw_json)
+        assert bundle.compliance_output.compliance_opinion == "warn"
+        assert bundle.ai_inputs.compliance_opinion == "warn"
+
+    def test_round_trip_preserves_all_compliance_fields_and_ai_inputs(
+        self,
+        sample_event_output: EventInterpretationOutput,
+        sample_risk_output: AIRiskOutput,
+        sample_composer_output: FinalDecisionComposerOutput,
+    ) -> None:
+        """default와 뚜렷이 구분되는 AC 값이 ``bundle.compliance_output``과
+        ``bundle.ai_inputs.compliance_*`` 양쪽 모두에 온전히 보존돼야 한다.
+        """
+        from io import StringIO
+
+        from agent_trading.services.ai_agents.subprocess_io import (
+            write_agent_subprocess_output,
         )
-        keys = {
-            key.value for key in dict_literal.keys if isinstance(key, ast.Constant)
+
+        ctx_id = uuid4()
+        ac = AIComplianceOutput(
+            agent_name="ai_compliance",
+            schema_version="v1",
+            decision_context_id=str(ctx_id),
+            symbol="005930",
+            compliance_opinion="review",
+            compliance_score=0.7,
+            confidence=1.0,
+            reason_codes=(
+                "compliance_rule_set:deterministic_v1",
+                "risk_reject_review",
+            ),
+            policy_flags=("eligibility_xxx",),
+        )
+
+        fake_output = SimpleNamespace(
+            success=True,
+            event_output=dataclass_to_dict(sample_event_output),
+            risk_output=dataclass_to_dict(sample_risk_output),
+            compliance_output=dataclass_to_dict(ac),
+            composer_output=dataclass_to_dict(sample_composer_output),
+            error=None,
+            duration_seconds=2.5,
+            ei_error_metadata=None,
+        )
+
+        stream = StringIO()
+        write_agent_subprocess_output(fake_output, stream)
+        bundle = deserialize_agent_output(stream.getvalue())
+
+        # --- AgentExecutionBundle.compliance_output ---
+        assert bundle.compliance_output.compliance_opinion == "review"
+        assert bundle.compliance_output.compliance_score == 0.7
+        assert bundle.compliance_output.confidence == 1.0
+        assert bundle.compliance_output.reason_codes == (
+            "compliance_rule_set:deterministic_v1",
+            "risk_reject_review",
+        )
+        assert bundle.compliance_output.policy_flags == ("eligibility_xxx",)
+        assert bundle.compliance_output.decision_context_id == str(ctx_id)
+        assert bundle.compliance_output.symbol == "005930"
+
+        # --- AIDecisionInputs.compliance_* ---
+        assert bundle.ai_inputs.compliance_opinion == "review"
+        assert bundle.ai_inputs.compliance_score == 0.7
+        assert bundle.ai_inputs.compliance_confidence == 1.0
+        assert bundle.ai_inputs.compliance_reason_codes == (
+            "compliance_rule_set:deterministic_v1",
+            "risk_reject_review",
+        )
+        assert bundle.ai_inputs.compliance_policy_flags == ("eligibility_xxx",)
+        # "review"는 {"allow", "warn"}에 속하지 않으므로 False여야 한다.
+        assert bundle.ai_inputs.compliance_check_passed is False
+
+    def test_allow_and_warn_opinions_pass_compliance_check(
+        self,
+        sample_event_output: EventInterpretationOutput,
+        sample_risk_output: AIRiskOutput,
+        sample_composer_output: FinalDecisionComposerOutput,
+    ) -> None:
+        """``compliance_check_passed``는 allow/warn=True, review/reject=False다."""
+        from io import StringIO
+
+        from agent_trading.services.ai_agents.subprocess_io import (
+            write_agent_subprocess_output,
+        )
+
+        expectations = {
+            "allow": True,
+            "warn": True,
+            "review": False,
+            "reject": False,
         }
-        assert "compliance_output" in keys, (
-            "_write_output()의 JSON payload에 'compliance_output' 키가 "
-            f"없음(2026-08-17 회귀) — 실제 키: {keys!r}"
-        )
+        for opinion, expected_passed in expectations.items():
+            ac = AIComplianceOutput(
+                agent_name="ai_compliance",
+                compliance_opinion=opinion,
+            )
+            fake_output = SimpleNamespace(
+                success=True,
+                event_output=dataclass_to_dict(sample_event_output),
+                risk_output=dataclass_to_dict(sample_risk_output),
+                compliance_output=dataclass_to_dict(ac),
+                composer_output=dataclass_to_dict(sample_composer_output),
+                error=None,
+                duration_seconds=0.1,
+                ei_error_metadata=None,
+            )
+            stream = StringIO()
+            write_agent_subprocess_output(fake_output, stream)
+            bundle = deserialize_agent_output(stream.getvalue())
+            assert bundle.ai_inputs.compliance_check_passed is expected_passed, (
+                f"opinion={opinion!r}: expected compliance_check_passed="
+                f"{expected_passed}, got {bundle.ai_inputs.compliance_check_passed}"
+            )
 
 
 @pytest.mark.asyncio
