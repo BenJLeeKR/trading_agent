@@ -6918,3 +6918,40 @@ gate) 구현 완료", `[PRIORITY_MAP]` 동일 날짜 항목.
   미탐/지연시간) 측정.
 - **남은 backlog 4**: legacy LLM EI/AR/AC 클래스 제거 여부 — 관측
   기간을 거쳐 별도 결정(PR3).
+
+## AC subprocess 직렬화 버그 수정 완료(2026-08-17 KST)
+
+상세: `docs/30_work_log/2026-08-17_ac_subprocess_serialization_fix.md`.
+
+- PR#277/#281/#282 read-only 전체 경로 검토 턴에서 재확인한 사전 존재
+  버그를 수정했다: `scripts/run_agent_subprocess.py::_write_output()`가
+  stdout JSON에 `compliance_output` 키를 쓰지 않아, 부모 프로세스의
+  `subprocess_helpers.py::deserialize_agent_output()`이 항상 default
+  `AIComplianceOutput()`(`compliance_opinion="allow"`)으로 복원하던
+  결함. `docs/20_system_analysis/ai_agent_vs_deterministic_bot_
+  replacement_analysis.md`(§4.1)에서 이미 근본 원인으로 지목된 것과
+  동일한 코드 위치다 — 최초 커밋부터 있던 결함으로, 이번 3개 PR
+  (#277/#281/#282)이 만든 문제는 아니다.
+- 수정: `_write_output()` JSON payload에
+  `"compliance_output": output.compliance_output` 추가.
+  `subprocess_helpers.py`는 이미 이 키를 올바르게 읽고 있어 수정 불필요.
+- 회귀 테스트: `tests/services/ai_agents/test_agent_subprocess.py`에
+  `TestWriteOutputIncludesComplianceOutput` 추가 — 실제 subprocess를
+  스폰하는 방식 대신, 모듈 소스를 AST로 정적 파싱해
+  `_write_output()`의 dict literal에 `"compliance_output"` 키가
+  있는지 검증한다(이 harness의 dev-validation 컨테이너는 `/workspace`
+  read-only라서 `scripts.run_agent_subprocess`를 import/subprocess
+  스폰하면 항상 무관한 인프라 이유로 실패하기 때문 —
+  `tests/scripts/test_fdc_skip.py`와 동일 이슈). `git stash`로 수정
+  전 코드에서 이 새 테스트가 실제로 실패함을 확인해 진짜 회귀 테스트임을
+  검증했다.
+- 영향: 이 수정이 반영된 뒤 재배포되면, subprocess 경로(운영 기본값)에서
+  `agent_runs.ai_compliance.structured_output_json`과
+  `decision_json.compliance_*`가 AC deterministic bot의 실제 계산
+  결과(`compliance_rule_set:deterministic_v1` 마커 포함)를 반영하게
+  된다. AR/EI/AC/FDC 정책 의미, 주문 gate, EV gate는 전혀 건드리지
+  않았다 — 순수 직렬화 배관 수정이다.
+- **남은 backlog 5**: 재배포 후 `agent_runs.ai_compliance.
+  structured_output_json`에 `compliance_rule_set:*` 마커가 실제로
+  기록되는지, `decision_json.compliance_opinion` 분포가 더 이상
+  100% `"allow"`로 고정되지 않는지 실측한다.

@@ -1138,12 +1138,22 @@ async def main() -> None:
 
 
 def _write_output(output: AgentSubprocessOutput) -> None:
-    """Serialize output to stdout as JSON."""
+    """Serialize output to stdout as JSON.
+
+    2026-08-17 버그 수정: ``compliance_output``이 이 payload에서 누락되어
+    있었다 — ``AgentSubprocessOutput``에는 채워지지만 stdout JSON에 쓰이지
+    않아, 부모 프로세스(``subprocess_helpers.py::deserialize_agent_output()``)가
+    항상 default ``AIComplianceOutput()``(``compliance_opinion="allow"``)으로
+    복원하는 결과를 낳았다. AC가 deterministic bot으로 전환된 뒤에도 실제
+    계산 결과가 ``agent_runs``/``decision_json``에 반영되지 않던 근본
+    원인이었다.
+    """
     json.dump(
         {
             "success": output.success,
             "event_output": output.event_output,
             "risk_output": output.risk_output,
+            "compliance_output": output.compliance_output,
             "composer_output": output.composer_output,
             "error": output.error,
             "duration_seconds": output.duration_seconds,

@@ -470,7 +470,55 @@ async def test_run_agents_in_subprocess_success() -> None:
     assert isinstance(result, AgentExecutionBundle)
     assert isinstance(result.event_output, EventInterpretationOutput)
     assert isinstance(result.risk_output, AIRiskOutput)
+    assert isinstance(result.compliance_output, AIComplianceOutput)
     assert isinstance(result.composer_output, FinalDecisionComposerOutput)
+
+
+class TestWriteOutputIncludesComplianceOutput:
+    """``_write_output()``의 stdout JSON payload에 ``compliance_output``
+    키가 포함되는지 정적으로 검사한다.
+
+    2026-08-17 회귀 수정 검증: ``scripts/run_agent_subprocess.py``는 모듈
+    최상단에서 ``_os.makedirs("/workspace/agent_trading/logs", ...)``를
+    무조건 실행하므로, 이 모듈을 직접 import하거나 실제 subprocess로
+    스폰하면 이 harness의 dev-validation 컨테이너(``/workspace``
+    read-only)에서 항상 ``OSError``로 실패한다
+    (``tests/scripts/test_fdc_skip.py``와 동일한 사전 존재 인프라 이슈,
+    PR #277/#281/#282 검토에서 이미 확인됨 — 이번 PR과 무관).
+
+    이 인프라 제약과 무관하게 ``_write_output()``의 실제 동작(JSON 키
+    포함 여부)만 검증하기 위해, 모듈을 import하지 않고 소스 코드를
+    AST로 직접 파싱한다.
+    """
+
+    def test_write_output_json_payload_includes_compliance_output_key(
+        self,
+    ) -> None:
+        import ast
+        from pathlib import Path
+
+        source_path = (
+            Path(__file__).resolve().parents[3]
+            / "scripts"
+            / "run_agent_subprocess.py"
+        )
+        tree = ast.parse(source_path.read_text(encoding="utf-8"))
+
+        write_output_fn = next(
+            node
+            for node in ast.walk(tree)
+            if isinstance(node, ast.FunctionDef) and node.name == "_write_output"
+        )
+        dict_literal = next(
+            node for node in ast.walk(write_output_fn) if isinstance(node, ast.Dict)
+        )
+        keys = {
+            key.value for key in dict_literal.keys if isinstance(key, ast.Constant)
+        }
+        assert "compliance_output" in keys, (
+            "_write_output()의 JSON payload에 'compliance_output' 키가 "
+            f"없음(2026-08-17 회귀) — 실제 키: {keys!r}"
+        )
 
 
 @pytest.mark.asyncio
