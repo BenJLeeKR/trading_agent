@@ -6955,3 +6955,29 @@ gate) 구현 완료", `[PRIORITY_MAP]` 동일 날짜 항목.
   structured_output_json`에 `compliance_rule_set:*` 마커가 실제로
   기록되는지, `decision_json.compliance_opinion` 분포가 더 이상
   100% `"allow"`로 고정되지 않는지 실측한다.
+
+## AC subprocess round-trip 테스트 보강 완료(2026-08-17 KST)
+
+상세: `docs/30_work_log/2026-08-17_ac_subprocess_roundtrip_test_hardening.md`.
+
+- PR #283의 `_write_output()` AST 정적 테스트는 "JSON 키가 소스 코드에
+  있다"만 확인했지, 실제 JSON round-trip 후 AC 값이 부모 번들/
+  `ai_inputs`까지 보존되는지는 증명하지 못했다. 이번 PR에서 payload
+  생성 로직을 `agent_trading.services.ai_agents.subprocess_io`
+  (신규, import-time 부작용 없음)로 분리하고, `scripts/run_agent_
+  subprocess.py::_write_output()`은 이를 호출하는 얇은 wrapper로
+  바꿨다.
+- `StringIO` 기반 round-trip 테스트 3건 추가 — `write_agent_
+  subprocess_output()` → JSON → `deserialize_agent_output()`까지
+  실제로 왕복시켜 `bundle.compliance_output.*`과 `bundle.ai_inputs.
+  compliance_*`(opinion/score/confidence/reason_codes/policy_flags/
+  compliance_check_passed) 전 필드가 보존됨을 확인. allow/warn/
+  review/reject 4개 opinion 전부에 대한 `compliance_check_passed`
+  기대값도 검증.
+- 이전 AST 테스트는 제거했다 — 더 강한(실제 round-trip) 검증으로
+  대체되어 중복이었기 때문. `git stash` 상당 검증으로 새 테스트가
+  키 누락 시 실제로 실패함을 재확인.
+- AC/AR/EI/FDC 정책, 주문 gate, EV gate는 전혀 변경하지 않았다 —
+  순수 테스트 신뢰도 보강.
+- 배포 후 실측 항목은 PR #283과 동일하게 유지(위 "남은 backlog 5"
+  참고).
