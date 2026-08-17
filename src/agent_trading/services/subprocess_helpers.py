@@ -93,7 +93,9 @@ def deserialize_agent_output(
     raw_json
         Raw JSON string from subprocess stdout.
         Expected keys: ``ei_output``, ``ar_output``, ``ac_output``, ``fdc_output``,
-        ``ei_error_metadata``.
+        ``ei_error_metadata``, ``ei_skipped``, ``ar_skipped``, ``fdc_skipped``,
+        ``skip_reason_codes``(2026-08-17 추가 — 없으면 False/()로 안전하게
+        기본값 처리해 구버전 payload와도 호환된다).
 
     Returns
     -------
@@ -125,6 +127,23 @@ def deserialize_agent_output(
     )  # type: ignore[arg-type]
 
     ei_error_metadata: dict[str, object] | None = data.get("ei_error_metadata")  # type: ignore[assignment]
+
+    # 2026-08-17 관측성 수정: ei_skipped/ar_skipped/fdc_skipped/
+    # skip_reason_codes가 stdout payload에 없는 구버전 subprocess 출력과의
+    # 호환을 위해 키 부재 시 안전한 default(False/())를 쓴다.
+    ei_skipped = bool(data.get("ei_skipped", False))
+    ar_skipped = bool(data.get("ar_skipped", False))
+    fdc_skipped = bool(data.get("fdc_skipped", False))
+    skip_reason_codes_raw = data.get("skip_reason_codes")
+    if isinstance(skip_reason_codes_raw, (list, tuple)):
+        skip_reason_codes: tuple[str, ...] = tuple(
+            str(code) for code in skip_reason_codes_raw
+        )
+    elif isinstance(skip_reason_codes_raw, str) and skip_reason_codes_raw:
+        # 단일 문자열로 잘못 전달된 경우도 방어적으로 1-tuple로 감싼다.
+        skip_reason_codes = (skip_reason_codes_raw,)
+    else:
+        skip_reason_codes = ()
 
     # --- Assemble AIDecisionInputs (same logic as _run_agents()) ---
     ai_inputs = AIDecisionInputs(
@@ -171,6 +190,12 @@ def deserialize_agent_output(
             ("ai_compliance", ac_output.schema_version),
             ("final_decision_composer", fdc_output.schema_version),
         ),
+        # 2026-08-17 관측성 수정: subprocess가 실제로 EI/FDC를 생략했는지를
+        # in-process 경로(decision_agent_runner.py)와 동일하게 반영한다.
+        ei_skipped=ei_skipped,
+        ar_skipped=ar_skipped,
+        fdc_skipped=fdc_skipped,
+        skip_reason_codes=skip_reason_codes,
     )
 
     logger.info(

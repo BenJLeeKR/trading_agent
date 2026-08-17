@@ -182,6 +182,14 @@ class AgentSubprocessOutput:
     duration_seconds: float = 0.0
     # ★ EI 실패 시 error metadata (orchestrator가 structured_output_json["__error__"]에 주입)
     ei_error_metadata: dict[str, Any] | None = None
+    # 2026-08-17 관측성 수정: in-process 경로(decision_agent_runner.py)의
+    # AIDecisionInputs.ei_skipped/ar_skipped/fdc_skipped/skip_reason_codes와
+    # 대응 — 이 subprocess가 실제로 EI/FDC를 생략했는지를 부모 프로세스에
+    # 전달한다. AR은 이 스크립트에서 생략 로직이 없으므로 항상 False다.
+    ei_skipped: bool = False
+    ar_skipped: bool = False
+    fdc_skipped: bool = False
+    skip_reason_codes: tuple[str, ...] = ()
 
 
 # ---------------------------------------------------------------------------
@@ -1117,6 +1125,10 @@ async def main() -> None:
         ei_error_metadata: dict[str, Any] | None = getattr(ei_agent, "last_error_metadata", None)
 
         # ── 3. Serialize output ────────────────────────────────────────
+        # 2026-08-17: fdc_skipped/skip_reason_codes는 위 "FDC Skip Check"
+        # (skip_fdc/skip_reason)의 실제 결과를 그대로 반영한다 — 이 스크립트는
+        # EI를 생략하는 로직이 없으므로 ei_skipped는 항상 False, AR도 항상
+        # 실행되므로 ar_skipped도 항상 False다.
         output = AgentSubprocessOutput(
             success=True,
             event_output=dataclass_to_dict(event_output),
@@ -1125,6 +1137,10 @@ async def main() -> None:
             composer_output=dataclass_to_dict(composer_output),
             duration_seconds=duration,
             ei_error_metadata=ei_error_metadata,
+            ei_skipped=False,
+            ar_skipped=False,
+            fdc_skipped=skip_fdc,
+            skip_reason_codes=(skip_reason,) if skip_fdc and skip_reason else (),
         )
         _write_output(output)
         if skip_fdc:

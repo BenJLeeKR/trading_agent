@@ -6981,3 +6981,37 @@ gate) 구현 완료", `[PRIORITY_MAP]` 동일 날짜 항목.
   순수 테스트 신뢰도 보강.
 - 배포 후 실측 항목은 PR #283과 동일하게 유지(위 "남은 backlog 5"
   참고).
+
+## FDC skip 관측성 버그 수정 완료(2026-08-17 KST)
+
+상세: `docs/30_work_log/2026-08-17_fdc_skipped_subprocess_ai_call_path_fix.md`.
+
+- 전체 매수 경로 read-only 검토 턴에서 발견한 관측성 결함을 수정했다:
+  subprocess 경로(운영 기본값)에서 `run_agent_subprocess.py`의
+  `_check_fdc_skip()`이 실제로 FDC를 생략해도, 그 사실이 부모 프로세스로
+  전달되지 않아 `decision_json.ai_call_path.fdc_skipped`/
+  `skip_reason_codes`가 항상 default(False/())로 오기록되던 문제.
+- 수정: `AgentSubprocessOutput`/`subprocess_io.py`/`deserialize_agent_
+  output()`에 `ei_skipped`/`ar_skipped`/`fdc_skipped`/`skip_reason_codes`
+  4개 필드 추가. `ei_skipped`/`ar_skipped`는 이 스크립트에 해당 skip
+  로직이 없어 항상 `False`. `fdc_skipped`/`skip_reason_codes`는
+  `_check_fdc_skip()`의 실제 반환값을 그대로 반영.
+- **reason code 명명 불일치 확인·보류**: subprocess의 `_check_fdc_skip()`
+  reason("risk_reject"/"no_events_no_position"/"cash_shortage")은
+  in-process `_should_skip_final_decision_composer()`의
+  reason("skip_fdc_high_risk")과 문자열이 다르다 — 두 함수의 skip
+  판정 조건 자체가 다르기 때문(subprocess는 3개 조건, in-process는 1개
+  조건)이며, 각각 이미 `tests/scripts/test_fdc_skip.py`/
+  `tests/scripts/test_run_decision_loop.py`에 정확한 문자열로 고정
+  테스트돼 있어 이번 PR 범위(skip 로직 재설계 금지)에서 통일하지
+  않았다.
+- 주문 gate/EV gate/정책 의미 변경 없음 — 순수 관측성(저장값) 수정.
+- 회귀 테스트 2건 추가(`TestWriteAgentSubprocessOutputRoundTrip`):
+  fdc_skipped=True round-trip 보존 확인, 구버전 payload(키 없음)와의
+  하위 호환 확인. `decision_factory.py` 저장 projection은 기존
+  `test_build_trade_decision_entity_stores_ai_call_path_skip_metadata`
+  가 이미 커버(미변경 확인).
+- **남은 backlog 6**: 재배포 후 subprocess 경로로 처리된 결정의
+  `decision_json.ai_call_path.fdc_skipped` 분포가 실제 FDC 생략
+  발생과 일치하는지 실측한다(과거 데이터는 자동 보정되지 않음 — 재배포
+  이후 신규 기록부터만 정확해진다).

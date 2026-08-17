@@ -524,6 +524,10 @@ class TestWriteAgentSubprocessOutputRoundTrip:
             error=None,
             duration_seconds=1.23,
             ei_error_metadata=None,
+            ei_skipped=False,
+            ar_skipped=False,
+            fdc_skipped=False,
+            skip_reason_codes=(),
         )
 
         stream = StringIO()
@@ -578,6 +582,10 @@ class TestWriteAgentSubprocessOutputRoundTrip:
             error=None,
             duration_seconds=2.5,
             ei_error_metadata=None,
+            ei_skipped=False,
+            ar_skipped=False,
+            fdc_skipped=False,
+            skip_reason_codes=(),
         )
 
         stream = StringIO()
@@ -641,6 +649,10 @@ class TestWriteAgentSubprocessOutputRoundTrip:
                 error=None,
                 duration_seconds=0.1,
                 ei_error_metadata=None,
+                ei_skipped=False,
+                ar_skipped=False,
+                fdc_skipped=False,
+                skip_reason_codes=(),
             )
             stream = StringIO()
             write_agent_subprocess_output(fake_output, stream)
@@ -649,6 +661,84 @@ class TestWriteAgentSubprocessOutputRoundTrip:
                 f"opinion={opinion!r}: expected compliance_check_passed="
                 f"{expected_passed}, got {bundle.ai_inputs.compliance_check_passed}"
             )
+
+    def test_round_trip_preserves_fdc_skipped_metadata(
+        self,
+        sample_event_output: EventInterpretationOutput,
+        sample_risk_output: AIRiskOutput,
+        sample_compliance_output: AIComplianceOutput,
+        sample_composer_output: FinalDecisionComposerOutput,
+    ) -> None:
+        """2026-08-17 관측성 수정 회귀 테스트.
+
+        subprocess 경로에서 ``scripts/run_agent_subprocess.py::_check_fdc_skip()``
+        가 실제로 FDC를 생략했을 때, 그 사실(``fdc_skipped=True``,
+        ``skip_reason_codes``)이 stdout JSON → ``deserialize_agent_output()``을
+        거쳐 ``bundle.ai_inputs.fdc_skipped``/``skip_reason_codes``까지
+        보존돼야 한다. 이 필드가 없으면(구버전 payload) 안전하게
+        False/()로 기본값 처리되는지도 함께 확인한다.
+        """
+        from io import StringIO
+
+        from agent_trading.services.ai_agents.subprocess_io import (
+            write_agent_subprocess_output,
+        )
+
+        fake_output = SimpleNamespace(
+            success=True,
+            event_output=dataclass_to_dict(sample_event_output),
+            risk_output=dataclass_to_dict(sample_risk_output),
+            compliance_output=dataclass_to_dict(sample_compliance_output),
+            composer_output=dataclass_to_dict(sample_composer_output),
+            error=None,
+            duration_seconds=0.5,
+            ei_error_metadata=None,
+            ei_skipped=False,
+            ar_skipped=False,
+            fdc_skipped=True,
+            skip_reason_codes=("risk_reject",),
+        )
+
+        stream = StringIO()
+        write_agent_subprocess_output(fake_output, stream)
+        raw_json = stream.getvalue()
+
+        payload = json.loads(raw_json)
+        assert payload["fdc_skipped"] is True
+        assert payload["skip_reason_codes"] == ["risk_reject"]
+
+        bundle = deserialize_agent_output(raw_json)
+        assert bundle.ai_inputs.ei_skipped is False
+        assert bundle.ai_inputs.ar_skipped is False
+        assert bundle.ai_inputs.fdc_skipped is True
+        assert bundle.ai_inputs.skip_reason_codes == ("risk_reject",)
+
+    def test_deserialize_missing_skip_fields_defaults_to_false(
+        self,
+        sample_event_output: EventInterpretationOutput,
+        sample_risk_output: AIRiskOutput,
+        sample_compliance_output: AIComplianceOutput,
+        sample_composer_output: FinalDecisionComposerOutput,
+    ) -> None:
+        """구버전 payload(``ei_skipped``/``ar_skipped``/``fdc_skipped``/
+        ``skip_reason_codes`` 키가 아예 없음)와의 하위 호환 — 예외 없이
+        안전한 default(False/())로 복원돼야 한다."""
+        legacy_payload = {
+            "success": True,
+            "event_output": dataclass_to_dict(sample_event_output),
+            "risk_output": dataclass_to_dict(sample_risk_output),
+            "compliance_output": dataclass_to_dict(sample_compliance_output),
+            "composer_output": dataclass_to_dict(sample_composer_output),
+            "error": None,
+            "duration_seconds": 0.1,
+            "ei_error_metadata": None,
+            # ei_skipped/ar_skipped/fdc_skipped/skip_reason_codes 키 없음
+        }
+        bundle = deserialize_agent_output(json.dumps(legacy_payload))
+        assert bundle.ai_inputs.ei_skipped is False
+        assert bundle.ai_inputs.ar_skipped is False
+        assert bundle.ai_inputs.fdc_skipped is False
+        assert bundle.ai_inputs.skip_reason_codes == ()
 
 
 @pytest.mark.asyncio
