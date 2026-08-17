@@ -45,8 +45,7 @@ from agent_trading.services.ai_agents.base import (
     AIProviderClient,
 )
 from agent_trading.services.ai_agents.event_interpretation import (
-    EventInterpretationAgent,
-    StubEventInterpretationAgent,
+    DeterministicEventInterpretationAgent,
 )
 from agent_trading.services.ai_agents.ai_risk import AIRiskAgent
 from agent_trading.services.ai_agents.ai_risk import StubAIRiskAgent
@@ -226,7 +225,7 @@ def _build_agent_triplet(
     provider_client: AIProviderClient | None,
     model_id: str | None,
 ) -> tuple[
-    EventInterpretationAgent | StubEventInterpretationAgent,
+    DeterministicEventInterpretationAgent,
     AIRiskAgent | StubAIRiskAgent,
     DeterministicAIComplianceAgent,
     FinalDecisionComposerAgent | StubFinalDecisionComposerAgent,
@@ -235,11 +234,13 @@ def _build_agent_triplet(
 
     Provider 설정이 비어 있으면 bootstrap/orchestrator와 동일하게
     real agent + ``None`` provider 조합을 만들지 않고 즉시 stub으로 내린다.
-    이렇게 해야 EI가 ``NoneType.generate_structured``로 깨지지 않는다.
+    이렇게 해야 AR/FDC가 ``NoneType.generate_structured``로 깨지지 않는다.
 
-    AI Compliance는 2026-08-16부터 provider 설정 유무와 무관하게 항상
-    ``DeterministicAIComplianceAgent``(LLM 호출 없음)를 반환한다 —
-    in-process 경로(``runtime/bootstrap.py``)와 동일한 wiring이다.
+    AI Compliance는 2026-08-16부터, Event Interpretation은 2026-08-17
+    부터 provider 설정 유무와 무관하게 항상 각각의 deterministic bot
+    (LLM 호출 없음)을 반환한다 — in-process 경로(``runtime/
+    bootstrap.py``)와 동일한 wiring이다. AR/FDC는 이번 전환 대상이
+    아니므로 기존 provider/stub 판단을 그대로 유지한다.
     """
     if provider_client is None:
         logger.info(
@@ -247,17 +248,14 @@ def _build_agent_triplet(
         )
         _diag("Provider client unavailable — using stub agents")
         return (
-            StubEventInterpretationAgent(),
+            DeterministicEventInterpretationAgent(),
             StubAIRiskAgent(),
             DeterministicAIComplianceAgent(),
             StubFinalDecisionComposerAgent(),
         )
 
     return (
-        EventInterpretationAgent(
-            provider_client=provider_client,
-            model_id=model_id,
-        ),
+        DeterministicEventInterpretationAgent(),
         AIRiskAgent(
             provider_client=provider_client,
             model_id=model_id,

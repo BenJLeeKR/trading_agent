@@ -6840,9 +6840,43 @@ gate) 구현 완료", `[PRIORITY_MAP]` 동일 날짜 항목.
 - `agent_type`/`agent_name`은 `event_interpretation`/`ai_risk` 그대로
   유지, deterministic 여부는 `reason_codes`의
   `deterministic_rule_set:{ei_bot_v1,ar_bot_v1}` 마커로 구분한다.
-- **남은 backlog 1**: PR 1(EI deterministic 본경로 전환) 구현 착수
-  여부 결정.
+- **남은 backlog 1(완료)**: PR 1(EI deterministic 본경로 전환) 구현
+  완료. 상세는 아래 항목 참고.
 - **남은 backlog 2**: PR 2(AR deterministic 본경로 전환, `"reject"`
   트리거 보강 포함) — PR 1 배포 후 실측을 먼저 확인한 뒤 착수.
 - **남은 backlog 3**: PR 3(legacy LLM EI/AR 클래스·shadow 필드 정리)
   — PR 1/2 배포 후 관측 기간을 거쳐 별도 결정.
+
+## PR1: EI deterministic 본경로 전환 완료(2026-08-17 KST)
+
+상세: `docs/30_work_log/2026-08-17_ei_deterministic_bot_pr1.md`.
+
+- `DeterministicEventInterpretationAgent`를 추가해 `event_interpretation`
+  agent_type/agent_name을 유지한 채 LLM 호출 없이 `EventInterpretationOutput`을
+  그대로 반환하도록 전환했다. `_reconstruct_events()`(기존
+  factual-only 이벤트 재구성 함수)와 `compute_shadow_event_bot()`(새
+  `rule_set_marker` 파라미터로 본경로/shadow 마커 구분)을 재사용했다.
+- `bootstrap.py`/`scripts/run_agent_subprocess.py` 양쪽 in-process/
+  subprocess wiring을 provider 설정 유무와 무관하게 EI가 deterministic
+  bot을 쓰도록 교체했다(AC 전환과 동일 패턴). `decision_agent_runner.py`/
+  `decision_orchestrator.py`/`subprocess_helpers.py`는 구조적 타입
+  덕분에 전혀 수정하지 않았다.
+- 기존 LLM `EventInterpretationAgent`는 삭제하지 않고 legacy/테스트
+  전용으로 보존했다(주석으로 명시).
+- AR(`ai_risk`)/FDC(`final_decision_composer`)/EV gate는 이번 PR에서
+  전혀 건드리지 않았다.
+- 테스트: `tests/services/ai_agents/test_ei_deterministic.py`(신규,
+  12건), `tests/services/ai_agents/test_bootstrap.py`(EI 관련
+  assertion 전면 갱신, 32건 전체 통과), `tests/services/ai_agents/
+  test_agent_subprocess.py`(20건, 실제 subprocess 스폰 경유 회귀 없음
+  확인), `tests/services/test_decision_orchestrator.py`(81건, EI
+  wiring 변경이 orchestrator 동작에 영향 없음 확인).
+- **부수 발견**: `tests/smoke/test_runtime_three_agent_smoke.py`의
+  `TestRuntimeThreeAgentFallback`(smoke 마커 없이 상시 실행되는
+  클래스)이 PR #277(AC 전환) 이후 `ai_compliance_agent is None` 단언이
+  갱신되지 않은 채 남아 있던 것을 발견해 이번 기회에 함께 바로잡았다
+  (AC 코드 자체는 미변경, 단언만 교정). 이 파일은 `smoke` 경로
+  제한으로 이번 세션에서 실행 검증은 못 했다(컴파일만 확인).
+- **남은 backlog**: 다음 거래일 이후 실제 decision loop 기준
+  `agent_runs.agent_type='event_interpretation'` 기록과
+  `trade_decisions.decision_json.event_*` 필드 분포를 확인한다.

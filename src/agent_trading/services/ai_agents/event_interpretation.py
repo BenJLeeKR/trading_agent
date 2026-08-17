@@ -42,6 +42,10 @@ from agent_trading.services.ai_agents.schemas import (
     AggregateEventView,
     generate_json_schema,
 )
+from agent_trading.services.shadow_bots import (
+    EI_BOT_RULE_SET_VERSION,
+    compute_shadow_event_bot,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -473,6 +477,15 @@ class StubEventInterpretationAgent:
 # ---------------------------------------------------------------------------
 # Real implementation
 # ---------------------------------------------------------------------------
+#
+# 2026-08-17 결정: EI(event_interpretation)를 100% deterministic bot
+# (아래 DeterministicEventInterpretationAgent)으로 본경로 전환한다.
+# 이 클래스는 삭제하지 않고 legacy/테스트 전용으로 보존한다(AC 전환
+# 때 AIComplianceAgent를 남긴 선례와 동일한 보수적 접근) — 향후 재검토
+# 시 원복이 필요할 수 있고, 기존 LLM 프롬프트 계약 테스트
+# (test_ai_compliance_prompt.py류)가 이 클래스를 직접 참조하기 때문이다.
+# runtime/bootstrap.py와 scripts/run_agent_subprocess.py는 더 이상 이
+# 클래스를 wiring하지 않는다.
 
 
 class EventInterpretationAgent:
@@ -863,3 +876,101 @@ class EventInterpretationAgent:
             lines.append(f"  {tagged}{stale_mark} {headline}")
 
         return "\n".join(lines)
+
+
+# ============================================================================
+# Deterministic Event Interpretation bot (2026-08-17 결정)
+# ============================================================================
+#
+# LLM 기반 EventInterpretationAgent는 더 이상 실행 경로(bootstrap/
+# subprocess)에 연결하지 않는다. 정형 이벤트 필드(direction/severity/
+# source_reliability_tier)만으로 계산 가능한 판단은 deterministic bot이
+# 담당하고, 비정형 헤드라인/본문 텍스트의 뉘앙스 해석은 하지 않는다
+# (이 부분을 필요로 하는 판단은 여전히 FDC의 LLM 판단으로 보완된다).
+# 설계 근거: docs/30_work_log/2026-08-16_ei_ar_deterministic_bot_
+# design_review.md §4.
+
+
+def _compute_deterministic_event_interpretation(
+    request: AgentExecutionRequest,
+    *,
+    rule_set_version: str = EI_BOT_RULE_SET_VERSION,
+) -> EventInterpretationOutput:
+    """정형 이벤트 필드만으로 EventInterpretationOutput을 계산한다
+    (LLM 호출 없음).
+
+    ``compute_shadow_event_bot()``(shadow_bots.py)과 완전히 동일한
+    계산 로직을 공유하되, ``rule_set_marker``만
+    ``deterministic_rule_set:{rule_set_version}``으로 넘겨 관측 전용
+    shadow 호출과 본경로 호출을 reason_codes로 구분한다. 개별 이벤트
+    (``events[]``)와 ``interpreted_event_count``/``summary_basis``/
+    ``summary``는 기존 ``_finalize_ei_output()``(LLM detected-only
+    fallback 경로가 이미 쓰던 것과 동일한 함수)에 위임한다 — 이 함수가
+    내부적으로 ``_reconstruct_events()``를 호출해 factual 필드만 채운
+    ``InterpretedEvent``를 만든다(LLM-only 필드는 절대 조작하지 않음).
+    """
+    context = request.context
+    recent_events = context.recent_events if context is not None else ()
+
+    bot_result = compute_shadow_event_bot(
+        recent_events,
+        rule_set_marker=f"deterministic_rule_set:{rule_set_version}",
+    )
+
+    aggregate_view = AggregateEventView(
+        overall_bias=bot_result.event_bias,
+        event_conflict=bot_result.event_conflict,
+        top_reason_codes=bot_result.reason_codes,
+        evidence_strength=bot_result.evidence_strength,
+        event_count=bot_result.detected_event_count,
+        no_material_events=bot_result.no_material_events,
+    )
+
+    output = EventInterpretationOutput(
+        agent_name="event_interpretation",
+        decision_context_id=(
+            str(request.decision_context_id)
+            if request.decision_context_id
+            else None
+        ),
+        symbol=request.symbol or "",
+        detected_event_count=bot_result.detected_event_count,
+        aggregate_view=aggregate_view,
+    )
+
+    return _finalize_ei_output(
+        output,
+        input_event_count=len(recent_events),
+        recent_events=recent_events,
+    )
+
+
+class DeterministicEventInterpretationAgent:
+    """Deterministic rule-based Event Interpretation bot (LLM 호출 없음).
+
+    ``agent_name``은 기존 API/UI/분석 쿼리(``agent_type==
+    "event_interpretation"``) 호환을 위해 그대로 유지한다. LLM이
+    아니라는 사실은 ``aggregate_view.top_reason_codes``의
+    ``deterministic_rule_set:*`` 항목으로 구분한다.
+    """
+
+    def __init__(self, rule_set_version: str = EI_BOT_RULE_SET_VERSION) -> None:
+        self._rule_set_version = rule_set_version
+
+    @property
+    def agent_name(self) -> str:
+        return "event_interpretation"
+
+    @property
+    def schema_version(self) -> str:
+        return "v1"
+
+    @property
+    def last_error_metadata(self) -> dict[str, object] | None:
+        """Deterministic 계산은 provider 오류가 없으므로 항상 ``None``."""
+        return None
+
+    async def run(self, request: AgentExecutionRequest) -> EventInterpretationOutput:
+        return _compute_deterministic_event_interpretation(
+            request, rule_set_version=self._rule_set_version
+        )

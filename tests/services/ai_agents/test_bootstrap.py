@@ -1,14 +1,15 @@
 """Tests for runtime wiring — provider agent injection in bootstrap.
 
 Verifies that:
-* ``_build_provider_agent()`` returns ``None`` when provider settings are incomplete.
-* ``_build_provider_agent()`` returns a real ``EventInterpretationAgent`` when
-  all three settings (api_key, base_url, model_id) are present.
-* ``LLM_PROVIDER`` controls which provider env vars are read (deepseek / openai).
+* ``_build_provider_agent()`` — 2026-08-17부터 provider 설정 유무와
+  무관하게 항상 ``DeterministicEventInterpretationAgent``(LLM 호출
+  없음)를 반환한다. EI는 더 이상 stub으로 fallback하지 않는다.
+* ``LLM_PROVIDER``는 여전히 AR/FDC(provider 기반 real agent)가 어떤
+  provider env var를 읽을지 통제한다.
 * All three runtime factories (default, postgres, postgres context manager)
   include an ``orchestrator`` key with the same shape.
-* Without provider API key the orchestrator falls back to
-  ``StubEventInterpretationAgent``.
+* Without provider API key, AR/FDC fall back to ``None``(stub) while EI
+  stays deterministic.
 * ``_close_provider_agent()`` safely cleans up the underlying HTTP client.
 """
 
@@ -29,12 +30,10 @@ from agent_trading.runtime.bootstrap import (
 )
 from agent_trading.services.ai_agents import (
     AIRiskAgent,
+    DeterministicEventInterpretationAgent,
     EventInterpretationAgent,
     FinalDecisionComposerAgent,
     OpenAICompatibleClient,
-)
-from agent_trading.services.ai_agents.event_interpretation import (
-    StubEventInterpretationAgent,
 )
 from agent_trading.services.decision_orchestrator import (
     DecisionOrchestratorService,
@@ -47,10 +46,13 @@ from agent_trading.services.decision_orchestrator import (
 
 
 class TestBuildProviderAgent:
-    """_build_provider_agent() returns None when settings incomplete."""
+    """_build_provider_agent()는 2026-08-17부터 provider 설정 유무와
+    무관하게 항상 DeterministicEventInterpretationAgent를 반환한다."""
 
-    def test_returns_none_when_no_api_key(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """provider_api_key가 비어있으면 None 반환.
+    def test_returns_deterministic_agent_when_no_api_key(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """provider_api_key가 없어도 deterministic bot을 반환한다(더 이상 None 아님).
 
         Clears provider API key env vars to stay deterministic regardless
         of ``.env`` content (which may set DEEPSEEK_API_KEY / OPENAI_API_KEY / GEMINI_API_KEY).
@@ -60,30 +62,13 @@ class TestBuildProviderAgent:
         monkeypatch.delenv("GEMINI_API_KEY", raising=False)
         settings = AppSettings()
         agent = _build_provider_agent(settings)
-        assert agent is None
+        assert agent is not None
+        assert isinstance(agent, DeterministicEventInterpretationAgent)
 
-    def test_returns_none_when_no_base_url(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """provider_base_url이 비어있으면 None 반환."""
-        monkeypatch.setenv("LLM_PROVIDER", "deepseek")
-        monkeypatch.setenv("DEEPSEEK_API_KEY", "sk-test")
-        monkeypatch.setenv("DEEPSEEK_BASE_URL", "")
-        settings = AppSettings()
-        agent = _build_provider_agent(settings)
-        assert agent is None
-
-    def test_returns_none_when_no_model_id(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """provider_model_id가 비어있으면 None 반환."""
-        monkeypatch.setenv("LLM_PROVIDER", "deepseek")
-        monkeypatch.setenv("DEEPSEEK_API_KEY", "sk-test")
-        monkeypatch.setenv("DEEPSEEK_MODEL_ID", "")
-        settings = AppSettings()
-        agent = _build_provider_agent(settings)
-        assert agent is None
-
-    def test_returns_agent_when_all_settings_present(
+    def test_returns_deterministic_agent_when_all_settings_present(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """모든 provider 설정이 있으면 EventInterpretationAgent 반환."""
+        """provider 설정이 있어도 여전히 DeterministicEventInterpretationAgent(LLM 호출 없음)."""
         monkeypatch.setenv("LLM_PROVIDER", "deepseek")
         monkeypatch.setenv("DEEPSEEK_API_KEY", "sk-test")
         monkeypatch.setenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com")
@@ -91,20 +76,9 @@ class TestBuildProviderAgent:
         settings = AppSettings()
         agent = _build_provider_agent(settings)
         assert agent is not None
-        assert isinstance(agent, EventInterpretationAgent)
+        assert isinstance(agent, DeterministicEventInterpretationAgent)
         assert agent.agent_name == "event_interpretation"
         assert agent.schema_version == "v1"
-
-    def test_uses_custom_model_id(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """provider_model_id가 agent에 전달됨."""
-        monkeypatch.setenv("LLM_PROVIDER", "deepseek")
-        monkeypatch.setenv("DEEPSEEK_API_KEY", "sk-test")
-        monkeypatch.setenv("DEEPSEEK_MODEL_ID", "custom-model-v2")
-        settings = AppSettings()
-        agent = _build_provider_agent(settings)
-        assert agent is not None
-        # model_id는 private attribute로 보관되므로 직접 검증하지 않음
-        assert isinstance(agent, EventInterpretationAgent)
 
 
 # ---------------------------------------------------------------------------
@@ -184,7 +158,8 @@ class TestBuildDefaultRuntime:
         assert "final_decision_agent" in runtime
 
     def test_uses_stub_when_no_api_key(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """Provider 설정 없으면 세 agent 모두 None (stub fallback).
+        """Provider 설정 없으면 AR/FDC는 None(stub fallback)이지만, EI는
+        provider 설정과 무관하게 항상 deterministic bot이다.
 
         Clears provider API key env vars to stay deterministic regardless
         of ``.env`` content.
@@ -193,14 +168,17 @@ class TestBuildDefaultRuntime:
         monkeypatch.delenv("OPENAI_API_KEY", raising=False)
         monkeypatch.delenv("GEMINI_API_KEY", raising=False)
         runtime = build_default_runtime()
-        assert runtime["event_interpretation_agent"] is None
+        assert isinstance(
+            runtime["event_interpretation_agent"],
+            DeterministicEventInterpretationAgent,
+        )
         assert runtime["ai_risk_agent"] is None
         assert runtime["final_decision_agent"] is None
 
     def test_uses_real_agent_when_api_key_set(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """DeepSeek 설정 완전 → 세 real agent 모두 주입."""
+        """DeepSeek 설정 완전 → AR/FDC는 real agent, EI는 deterministic bot."""
         monkeypatch.setenv("DEEPSEEK_API_KEY", "sk-test")
         monkeypatch.setenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com")
         monkeypatch.setenv("DEEPSEEK_MODEL_ID", "deepseek-chat")
@@ -209,7 +187,7 @@ class TestBuildDefaultRuntime:
         ar_agent = runtime["ai_risk_agent"]
         fdc_agent = runtime["final_decision_agent"]
         assert ei_agent is not None
-        assert isinstance(ei_agent, EventInterpretationAgent)
+        assert isinstance(ei_agent, DeterministicEventInterpretationAgent)
         assert ar_agent is not None
         assert isinstance(ar_agent, AIRiskAgent)
         assert fdc_agent is not None
@@ -286,7 +264,7 @@ class TestBuildPostgresRuntime:
         assert "final_decision_agent" in runtime
 
     async def test_uses_stub_when_no_api_key(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """Provider API key 없으면 세 agent 모두 None (stub fallback).
+        """Provider API key 없으면 AR/FDC는 None(stub fallback), EI는 항상 deterministic bot.
 
         Clears provider API key env vars to stay deterministic regardless
         of ``.env`` content.
@@ -296,14 +274,17 @@ class TestBuildPostgresRuntime:
         monkeypatch.delenv("OPENAI_API_KEY", raising=False)
         monkeypatch.delenv("GEMINI_API_KEY", raising=False)
         runtime = await build_postgres_runtime(run_migrations=False)
-        assert runtime["event_interpretation_agent"] is None
+        assert isinstance(
+            runtime["event_interpretation_agent"],
+            DeterministicEventInterpretationAgent,
+        )
         assert runtime["ai_risk_agent"] is None
         assert runtime["final_decision_agent"] is None
 
     async def test_uses_real_agent_when_api_key_set(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """설정이 완전하면 세 real agent 모두 주입."""
+        """설정이 완전하면 AR/FDC는 real agent, EI는 deterministic bot."""
         monkeypatch.setenv("DEEPSEEK_API_KEY", "sk-test")
         monkeypatch.setenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com")
         monkeypatch.setenv("DEEPSEEK_MODEL_ID", "deepseek-chat")
@@ -312,7 +293,7 @@ class TestBuildPostgresRuntime:
         ar_agent = runtime["ai_risk_agent"]
         fdc_agent = runtime["final_decision_agent"]
         assert ei_agent is not None
-        assert isinstance(ei_agent, EventInterpretationAgent)
+        assert isinstance(ei_agent, DeterministicEventInterpretationAgent)
         assert ar_agent is not None
         assert isinstance(ar_agent, AIRiskAgent)
         assert fdc_agent is not None
@@ -349,11 +330,14 @@ class TestBuildPostgresRuntime:
         ei_agent = runtime["event_interpretation_agent"]
         ar_agent = runtime["ai_risk_agent"]
         assert ei_agent is not None
-        assert isinstance(ei_agent, EventInterpretationAgent)
+        assert isinstance(ei_agent, DeterministicEventInterpretationAgent)
         assert ar_agent is not None
         assert isinstance(ar_agent, AIRiskAgent)
 
-        # shutdown — provider client close + pool close (both agents)
+        # shutdown — provider client close(AR real agent) + pool close.
+        # EI는 이제 deterministic bot이라 provider client가 없지만,
+        # _close_provider_agent()는 provider가 없는 객체도 안전하게
+        # 처리한다(TestCloseProviderAgent.test_handles_agent_without_provider).
         await shutdown_postgres_runtime(runtime)
         # 예외 없이 통과하면 성공
 
@@ -473,7 +457,7 @@ class TestOpenAIWiring:
     def test_openai_complete_env_creates_real_agent(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """OpenAI 설정 완전 → EventInterpretationAgent 주입."""
+        """OpenAI 설정 완전해도 EI는 여전히 deterministic bot(LLM 호출 없음)."""
         monkeypatch.setenv("LLM_PROVIDER", "openai")
         monkeypatch.setenv("OPENAI_API_KEY", "sk-oa-test")
         monkeypatch.setenv("OPENAI_BASE_URL", "https://api.openai.com/v1")
@@ -481,88 +465,42 @@ class TestOpenAIWiring:
         runtime = build_default_runtime()
         agent = runtime["event_interpretation_agent"]
         assert agent is not None
-        assert isinstance(agent, EventInterpretationAgent)
+        assert isinstance(agent, DeterministicEventInterpretationAgent)
 
-    def test_openai_missing_key_uses_stub(
+    def test_openai_missing_key_ei_still_deterministic(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """OpenAI key 없으면 stub fallback."""
+        """OpenAI key가 없어도 EI는 deterministic bot(더 이상 stub/None 아님)."""
         monkeypatch.setenv("LLM_PROVIDER", "openai")
         monkeypatch.setenv("OPENAI_API_KEY", "")
         monkeypatch.setenv("OPENAI_BASE_URL", "https://api.openai.com/v1")
         monkeypatch.setenv("OPENAI_MODEL_ID", "gpt-4o")
         runtime = build_default_runtime()
-        assert runtime["event_interpretation_agent"] is None
+        assert isinstance(
+            runtime["event_interpretation_agent"],
+            DeterministicEventInterpretationAgent,
+        )
 
-    def test_openai_missing_base_url_uses_stub(
+    def test_unsupported_provider_ei_still_deterministic(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """OpenAI base_url 없으면 stub fallback."""
-        monkeypatch.setenv("LLM_PROVIDER", "openai")
-        monkeypatch.setenv("OPENAI_API_KEY", "sk-oa-test")
-        monkeypatch.setenv("OPENAI_BASE_URL", "")
-        monkeypatch.setenv("OPENAI_MODEL_ID", "gpt-4o")
-        runtime = build_default_runtime()
-        assert runtime["event_interpretation_agent"] is None
-
-    def test_openai_missing_model_id_uses_stub(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        """OpenAI model_id 없으면 stub fallback."""
-        monkeypatch.setenv("LLM_PROVIDER", "openai")
-        monkeypatch.setenv("OPENAI_API_KEY", "sk-oa-test")
-        monkeypatch.setenv("OPENAI_BASE_URL", "https://api.openai.com/v1")
-        monkeypatch.setenv("OPENAI_MODEL_ID", "")
-        runtime = build_default_runtime()
-        assert runtime["event_interpretation_agent"] is None
-
-    def test_unsupported_provider_uses_stub(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        """지원되지 않는 LLM_PROVIDER → stub fallback."""
+        """지원되지 않는 LLM_PROVIDER여도 EI는 deterministic bot."""
         monkeypatch.setenv("LLM_PROVIDER", "claude")
         monkeypatch.setenv("CLAUDE_API_KEY", "sk-cl-test")
         runtime = build_default_runtime()
-        assert runtime["event_interpretation_agent"] is None
-
-    def test_deepseek_ignores_openai_env(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        """DeepSeek 모드에서 OPENAI_* env var는 무시됨."""
-        monkeypatch.setenv("LLM_PROVIDER", "deepseek")
-        monkeypatch.setenv("OPENAI_API_KEY", "sk-oa-test")
-        monkeypatch.setenv("OPENAI_BASE_URL", "https://api.openai.com/v1")
-        monkeypatch.setenv("OPENAI_MODEL_ID", "gpt-4o")
-        # DeepSeek key가 없으므로 stub fallback
-        monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
-        runtime = build_default_runtime()
-        assert runtime["event_interpretation_agent"] is None
-
-    def test_openai_ignores_deepseek_env(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        """OpenAI 모드에서 DEEPSEEK_* env var는 무시됨."""
-        monkeypatch.setenv("LLM_PROVIDER", "openai")
-        monkeypatch.setenv("OPENAI_API_KEY", "sk-oa-test")
-        monkeypatch.setenv("OPENAI_BASE_URL", "https://api.openai.com/v1")
-        monkeypatch.setenv("OPENAI_MODEL_ID", "gpt-4o")
-        # DEEPSEEK_*는 설정되어 있어도 OPENAI 모드에서는 읽히지 않음
-        monkeypatch.setenv("DEEPSEEK_API_KEY", "sk-ds-test")
-        monkeypatch.setenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com")
-        monkeypatch.setenv("DEEPSEEK_MODEL_ID", "deepseek-chat")
-        runtime = build_default_runtime()
-        agent = runtime["event_interpretation_agent"]
-        assert agent is not None
-        assert isinstance(agent, EventInterpretationAgent)
+        assert isinstance(
+            runtime["event_interpretation_agent"],
+            DeterministicEventInterpretationAgent,
+        )
 
 
 class TestGeminiWiring:
     """build_default_runtime() with LLM_PROVIDER=gemini."""
 
-    def test_gemini_complete_env_creates_real_agent(
+    def test_gemini_complete_env_ei_still_deterministic(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """Gemini 설정 완전 → EventInterpretationAgent 주입."""
+        """Gemini 설정 완전해도 EI는 여전히 deterministic bot(LLM 호출 없음)."""
         monkeypatch.setenv("LLM_PROVIDER", "gemini")
         monkeypatch.setenv("GEMINI_API_KEY", "sk-gm-test")
         monkeypatch.setenv(
@@ -573,12 +511,12 @@ class TestGeminiWiring:
         runtime = build_default_runtime()
         agent = runtime["event_interpretation_agent"]
         assert agent is not None
-        assert isinstance(agent, EventInterpretationAgent)
+        assert isinstance(agent, DeterministicEventInterpretationAgent)
 
-    def test_gemini_missing_key_uses_stub(
+    def test_gemini_missing_key_ei_still_deterministic(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """Gemini key 없으면 stub fallback."""
+        """Gemini key가 없어도 EI는 deterministic bot(더 이상 stub/None 아님)."""
         monkeypatch.setenv("LLM_PROVIDER", "gemini")
         monkeypatch.setenv("GEMINI_API_KEY", "")
         monkeypatch.setenv(
@@ -587,4 +525,7 @@ class TestGeminiWiring:
         )
         monkeypatch.setenv("GEMINI_MODEL_ID", "gemini-3.5-flash")
         runtime = build_default_runtime()
-        assert runtime["event_interpretation_agent"] is None
+        assert isinstance(
+            runtime["event_interpretation_agent"],
+            DeterministicEventInterpretationAgent,
+        )

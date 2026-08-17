@@ -14,7 +14,9 @@ recorder.py
 provider_client.py
     ``OpenAICompatibleClient`` — HTTP-based OpenAI-compatible provider client.
 event_interpretation.py
-    ``StubEventInterpretationAgent`` and ``EventInterpretationAgent`` (real).
+    ``StubEventInterpretationAgent``, ``EventInterpretationAgent``(LLM, 하위
+    호환용) and ``DeterministicEventInterpretationAgent``(2026-08-17부터
+    실제 wiring 대상, LLM 호출 없음).
 ai_risk.py
     ``StubAIRiskAgent``.
 ai_compliance.py
@@ -42,6 +44,7 @@ from agent_trading.services.ai_agents.provider_client import (
     OpenAICompatibleClient,
 )
 from agent_trading.services.ai_agents.event_interpretation import (
+    DeterministicEventInterpretationAgent,
     EventInterpretationAgent,
     StubEventInterpretationAgent,
 )
@@ -68,6 +71,7 @@ __all__ = [
     "AgentRunRecorder",
     "OpenAICompatibleClient",
     "EventInterpretationAgent",
+    "DeterministicEventInterpretationAgent",
     "StubEventInterpretationAgent",
     "AIRiskAgent",
     "StubAIRiskAgent",

@@ -26,6 +26,11 @@ from agent_trading.services.portfolio_allocation import PortfolioAllocationAsses
 
 AR_SHADOW_RULE_SET_VERSION = "ar_shadow_v1"
 EI_SHADOW_RULE_SET_VERSION = "ei_shadow_v1"
+EI_BOT_RULE_SET_VERSION = "ei_bot_v1"
+"""EI가 deterministic bot으로 본경로 전환된 뒤(PR1) 사용하는 rule set
+버전 — ``EI_SHADOW_RULE_SET_VERSION``과 동일한 계산 로직을 쓰지만,
+관측 전용 shadow 호출과 본경로 호출을 reason_codes 마커로 구분하기
+위한 별도 상수다."""
 
 # risk_score를 사람이 비교하기 쉬운 구간으로 나누는 고정 경계값.
 # AI risk_score와 bot risk_score를 같은 버킷 기준으로 비교하기 위한 것으로,
@@ -173,13 +178,23 @@ class ShadowEventBotResult:
 
 def compute_shadow_event_bot(
     recent_events: tuple[ExternalEventEntity, ...],
+    *,
+    rule_set_marker: str = f"shadow_rule_set:{EI_SHADOW_RULE_SET_VERSION}",
 ) -> ShadowEventBotResult:
     """정형 이벤트 필드(``direction``/``severity``/``source_reliability_tier``)
     만으로 이벤트 해석을 계산한다(LLM 호출 없음, 비정형 헤드라인/본문
     텍스트 해석은 하지 않는다).
+
+    ``rule_set_marker``: 첫 번째 ``reason_codes`` 항목으로 남는 마커
+    문자열. 기본값은 관측 전용 shadow bot 호출(``decision_
+    orchestrator.py._record_ei_shadow_bot_observation``)과 호환되는
+    ``shadow_rule_set:*``이며, 본경로 EI bot(``DeterministicEvent
+    InterpretationAgent``)은 ``deterministic_rule_set:ei_bot_v1``을
+    넘겨 shadow 관측용 마커와 구분한다. 계산 로직 자체는 두 호출자가
+    완전히 동일하게 공유한다.
     """
     count = len(recent_events)
-    reason_codes: list[str] = [f"shadow_rule_set:{EI_SHADOW_RULE_SET_VERSION}"]
+    reason_codes: list[str] = [rule_set_marker]
 
     if count == 0:
         return ShadowEventBotResult(
