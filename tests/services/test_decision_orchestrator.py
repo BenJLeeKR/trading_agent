@@ -4486,8 +4486,8 @@ class TestArShadowBotObservation:
         ai_policy_context = service._build_ai_policy_context_view(assembled_context)
 
         # AI는 문제 없다고 판단(allow/0.1)하지만, bot은 concentration/cash/
-        # regime 신호가 전부 나쁘게 나와 score=1.0(clamp) -> opinion="reduce"
-        # 로 계산되어야 한다.
+        # regime 신호가 전부 나쁘게 나와 score=1.0(clamp) -> opinion="reject"
+        # 로 계산되어야 한다(2026-08-17 PR2에서 reject 등급 추가, score>=0.9).
         ar_output = AIRiskOutput(risk_opinion="allow", risk_score=0.1)
         composer_output = FinalDecisionComposerOutput(decision_type="HOLD", side="")
 
@@ -4508,7 +4508,7 @@ class TestArShadowBotObservation:
 
         shadow = updated.decision_json["shadow_risk_bot"]
         assert shadow["rule_set_version"] == "ar_shadow_v1"
-        assert shadow["bot_risk_opinion"] == "reduce"
+        assert shadow["bot_risk_opinion"] == "reject"
         assert shadow["bot_risk_score"] == 1.0
         assert shadow["ai_risk_opinion"] == "allow"
         assert shadow["opinion_agreement"] is False

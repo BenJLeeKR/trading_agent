@@ -31,6 +31,11 @@ EI_BOT_RULE_SET_VERSION = "ei_bot_v1"
 버전 — ``EI_SHADOW_RULE_SET_VERSION``과 동일한 계산 로직을 쓰지만,
 관측 전용 shadow 호출과 본경로 호출을 reason_codes 마커로 구분하기
 위한 별도 상수다."""
+AR_BOT_RULE_SET_VERSION = "ar_bot_v1"
+"""AR이 deterministic bot으로 본경로 전환된 뒤(PR2) 사용하는 rule set
+버전 — ``AR_SHADOW_RULE_SET_VERSION``과 동일한 계산 로직을 쓰지만,
+관측 전용 shadow 호출과 본경로 호출을 reason_codes 마커로 구분하기
+위한 별도 상수다."""
 
 # risk_score를 사람이 비교하기 쉬운 구간으로 나누는 고정 경계값.
 # AI risk_score와 bot risk_score를 같은 버킷 기준으로 비교하기 위한 것으로,
@@ -82,14 +87,33 @@ def compute_shadow_risk_bot(
     market_regime: MarketRegimeAssessment | None,
     deterministic_trigger: DeterministicTriggerAssessment | None,
     recent_events: tuple[ExternalEventEntity, ...] = (),
+    rule_set_marker: str = f"shadow_rule_set:{AR_SHADOW_RULE_SET_VERSION}",
 ) -> ShadowRiskBotResult:
     """정형 신호만으로 risk_opinion/risk_score를 계산한다(LLM 호출 없음).
 
     확실한 정형 근거가 없으면 과도하게 차단하지 않는다 — 근거가 있는
     조건만 점수에 반영하고, 아무 근거도 없으면 항상 ``allow``/``0.0``이다.
+
+    ``rule_set_marker``: 첫 번째 ``reason_codes`` 항목으로 남는 마커
+    문자열. 기본값은 관측 전용 shadow bot 호출(``decision_
+    orchestrator.py._record_ar_shadow_bot_observation``)과 호환되는
+    ``shadow_rule_set:*``이며, 본경로 AR bot(``DeterministicAIRiskAgent``,
+    PR2)은 ``deterministic_rule_set:ar_bot_v1``을 넘겨 shadow 관측용
+    마커와 구분한다. 계산 로직 자체는 두 호출자가 완전히 동일하게
+    공유한다.
+
+    ``risk_opinion`` 등급(2026-08-17 PR2에서 ``reject`` 등급 추가):
+    ``score>=0.9`` → ``reject``(예: concentration 초과(0.4) + 현금
+    부족(0.3) + risk-off regime(0.2) 동시 발생 = 0.9의 극단 조합),
+    ``0.8<=score<0.9`` → ``reduce``, ``0.5<=score<0.8`` → ``review``,
+    그 미만은 ``allow``. ``reject``는 새 주문 차단을 추가하는 것이
+    아니라, 이미 존재하는 held_position override(``risk_opinion in
+    ("reject","reduce")``)/FDC skip(``risk_opinion=="reject"`` 조건이
+    score와 무관하게 즉시 skip) 판정이 기대하는 신호를 deterministic
+    bot도 낼 수 있게 하는 것이다(design review §5.4/5.6 참고).
     """
     score = 0.0
-    reason_codes: list[str] = [f"shadow_rule_set:{AR_SHADOW_RULE_SET_VERSION}"]
+    reason_codes: list[str] = [rule_set_marker]
     risk_flags: list[str] = []
 
     if portfolio_allocation is not None:
@@ -140,9 +164,14 @@ def compute_shadow_risk_bot(
     ):
         reason_codes.append("deterministic_eligibility_not_passed")
 
-    score = max(0.0, min(1.0, score))
+    # round()로 부동소수점 가산 오차(예: 0.4+0.3+0.2 == 0.8999999999999999)를
+    # 제거한다 — 그렇지 않으면 정확히 threshold에 걸치는 조합이 threshold
+    # 미만으로 판정되는 경계값 버그가 생긴다.
+    score = round(max(0.0, min(1.0, score)), 4)
 
-    if score >= 0.8:
+    if score >= 0.9:
+        opinion = "reject"
+    elif score >= 0.8:
         opinion = "reduce"
     elif score >= 0.5:
         opinion = "review"

@@ -20,8 +20,8 @@ from agent_trading.repositories.container import RepositoryContainer
 from agent_trading.repositories.contracts import ExternalEventRepository
 from agent_trading.repositories.postgres.bootstrap import build_postgres_repositories
 from agent_trading.services.ai_agents import (
-    AIRiskAgent,
     DeterministicAIComplianceAgent,
+    DeterministicAIRiskAgent,
     DeterministicEventInterpretationAgent,
     FinalDecisionComposerAgent,
     OpenAICompatibleClient,
@@ -406,40 +406,19 @@ def _build_provider_agent(
     return DeterministicEventInterpretationAgent()
 
 
-def _build_ai_risk_agent(settings: AppSettings) -> AIRiskAgent | None:
-    """Build a real ``AIRiskAgent`` if provider settings are complete.
+def _build_ai_risk_agent(
+    settings: AppSettings,
+) -> DeterministicAIRiskAgent | None:
+    """Build the deterministic AI Risk bot.
 
-    Returns ``None`` when settings are incomplete — caller falls back to
-    ``StubAIRiskAgent``.
+    2026-08-17 결정: LLM 기반 ``AIRiskAgent``는 더 이상 이 경로로
+    wiring하지 않는다(provider 설정 유무와 무관하게 LLM 호출이 발생하지
+    않아야 한다). 정형 신호(portfolio_allocation/market_regime/
+    deterministic_trigger/recent_events)만으로 계산하는
+    ``DeterministicAIRiskAgent``를 always 반환한다. ``settings``는 다른
+    agent builder들과 시그니처를 맞추기 위해 유지한다.
     """
-    if not settings.provider_api_key:
-        logger.info(
-            "Provider API key not configured — "
-            "using stub AIRiskAgent"
-        )
-        return None
-    if not settings.provider_base_url:
-        logger.warning(
-            "provider_base_url is empty — "
-            "using stub AIRiskAgent"
-        )
-        return None
-    if not settings.provider_model_id:
-        logger.warning(
-            "provider_model_id is empty — "
-            "using stub AIRiskAgent"
-        )
-        return None
-
-    client = OpenAICompatibleClient(
-        api_key=settings.provider_api_key,
-        base_url=settings.provider_base_url,
-        timeout_seconds=settings.provider_timeout_seconds,
-    )
-    return AIRiskAgent(
-        provider_client=client,
-        model_id=settings.provider_model_id,
-    )
+    return DeterministicAIRiskAgent()
 
 
 def _build_ai_compliance_agent(
@@ -553,7 +532,7 @@ def _build_orchestrator(
     repos: RepositoryContainer,
     settings: AppSettings,
     event_interpretation_agent: DeterministicEventInterpretationAgent | None = None,
-    ai_risk_agent: AIRiskAgent | None = None,
+    ai_risk_agent: DeterministicAIRiskAgent | None = None,
     ai_compliance_agent: DeterministicAIComplianceAgent | None = None,
     final_decision_agent: FinalDecisionComposerAgent | None = None,
 ) -> DecisionOrchestratorService:

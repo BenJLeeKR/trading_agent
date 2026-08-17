@@ -6880,3 +6880,41 @@ gate) 구현 완료", `[PRIORITY_MAP]` 동일 날짜 항목.
 - **남은 backlog**: 다음 거래일 이후 실제 decision loop 기준
   `agent_runs.agent_type='event_interpretation'` 기록과
   `trade_decisions.decision_json.event_*` 필드 분포를 확인한다.
+
+## PR2: AR deterministic 본경로 전환 완료(2026-08-17 KST)
+
+상세: `docs/30_work_log/2026-08-17_ar_deterministic_bot_pr2.md`.
+
+- `DeterministicAIRiskAgent`를 추가해 `ai_risk` agent_type/agent_name을
+  유지한 채 LLM 호출 없이 `AIRiskOutput`을 그대로 반환하도록 전환했다.
+  `compute_shadow_risk_bot()`(shadow_bots.py)을 재사용하되
+  `rule_set_marker` 파라미터로 본경로/shadow 마커를 구분했다.
+- **`"reject"` opinion 등급을 신설**했다(score>=0.9) —
+  concentration_over_limit(0.4)+insufficient_cash(0.3)+
+  risk_off_regime(0.2)=0.9의 극단 조합이 대표 예시. 부동소수점 가산
+  오차(0.4+0.3+0.2==0.8999999999999999) 때문에 `round(score, 4)`를
+  추가해 정확한 threshold 도달을 보장했다(발견 즉시 수정).
+- `bootstrap.py`/`scripts/run_agent_subprocess.py` 양쪽 wiring을
+  provider 설정 유무와 무관하게 AR이 deterministic bot을 쓰도록
+  교체(EI/AC 전환과 동일 패턴). `decision_agent_runner.py`/
+  `decision_orchestrator.py`는 구조적 타이핑 덕분에 전혀 수정하지
+  않았다.
+- 기존 LLM `AIRiskAgent`는 삭제하지 않고 legacy/테스트 전용으로 보존.
+- **구현 중 발견·수정한 버그**: 파일 편집 과정에서 실수로
+  `AIRiskAgent._build_user_prompt()`의 `return` 문을 파일 맨 끝으로
+  밀어내 해당 메서드가 항상 `None`을 반환하게 만든 것을 `test_agents.py`
+  29건 실패로 발견하고 즉시 원위치로 복구했다(`git stash`로 회귀임을
+  확인 후 수정, 최종적으로 117건 전체 통과 재확인).
+- held_position override/FDC skip/execution risk-off/EXIT 승격 4개
+  실제 영향 경로 전부에 대해 회귀 테스트를 확인했다(기존 테스트 파일
+  변경 없이 그대로 통과 — 판정 함수 자체를 건드리지 않았기 때문).
+- EV gate/`risk_check_passed` 신규 연결 없음.
+- **남은 backlog 1**: 다음 거래일 이후 실제 decision loop 기준
+  `agent_runs.agent_type='ai_risk'` 기록과 `decision_json.risk_*` 필드
+  분포, `reject` 등급 실제 발동 빈도를 확인한다.
+- **남은 backlog 2**: `shadow_risk_bot`/`shadow_event_bot` 정리 여부
+  결정(현재는 AI가 모두 사라져 "AI vs bot" 비교 의미가 옅어짐).
+- **남은 backlog 3**: FDC만 LLM으로 남은 구조의 성과(기대수익률/오탐/
+  미탐/지연시간) 측정.
+- **남은 backlog 4**: legacy LLM EI/AR/AC 클래스 제거 여부 — 관측
+  기간을 거쳐 별도 결정(PR3).

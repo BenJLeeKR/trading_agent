@@ -18,7 +18,9 @@ event_interpretation.py
     호환용) and ``DeterministicEventInterpretationAgent``(2026-08-17부터
     실제 wiring 대상, LLM 호출 없음).
 ai_risk.py
-    ``StubAIRiskAgent``.
+    ``StubAIRiskAgent``, ``AIRiskAgent``(LLM, 하위 호환용) and
+    ``DeterministicAIRiskAgent``(2026-08-17부터 실제 wiring 대상, LLM
+    호출 없음).
 ai_compliance.py
     ``StubAIComplianceAgent``, ``AIComplianceAgent``(LLM, 하위 호환용) and
     ``DeterministicAIComplianceAgent``(2026-08-16부터 실제 wiring 대상, LLM
@@ -48,7 +50,11 @@ from agent_trading.services.ai_agents.event_interpretation import (
     EventInterpretationAgent,
     StubEventInterpretationAgent,
 )
-from agent_trading.services.ai_agents.ai_risk import AIRiskAgent, StubAIRiskAgent
+from agent_trading.services.ai_agents.ai_risk import (
+    AIRiskAgent,
+    DeterministicAIRiskAgent,
+    StubAIRiskAgent,
+)
 from agent_trading.services.ai_agents.ai_compliance import (
     AIComplianceAgent,
     DeterministicAIComplianceAgent,
@@ -74,6 +80,7 @@ __all__ = [
     "DeterministicEventInterpretationAgent",
     "StubEventInterpretationAgent",
     "AIRiskAgent",
+    "DeterministicAIRiskAgent",
     "StubAIRiskAgent",
     "AIComplianceAgent",
     "DeterministicAIComplianceAgent",

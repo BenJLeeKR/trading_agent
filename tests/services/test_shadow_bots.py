@@ -126,7 +126,10 @@ class TestComputeShadowRiskBot:
         assert result.risk_opinion == "review"
         assert "insufficient_cash" in result.risk_flags
 
-    def test_all_negative_signals_clamp_to_one_and_reduce(self) -> None:
+    def test_all_negative_signals_clamp_to_one_and_reject(self) -> None:
+        """concentration+cash+regime+volatility 4개 신호가 모두 겹치면
+        score가 1.0(clamp)까지 올라가 reject 등급(>=0.9)에 도달한다
+        (2026-08-17 PR2에서 reject 등급 추가)."""
         result = compute_shadow_risk_bot(
             portfolio_allocation=_portfolio_allocation(
                 remaining_concentration_pct=-1.0,
@@ -138,9 +141,23 @@ class TestComputeShadowRiskBot:
             deterministic_trigger=None,
         )
         assert result.risk_score == 1.0
-        assert result.risk_opinion == "reduce"
+        assert result.risk_opinion == "reject"
         assert "risk_off_regime" in result.risk_flags
         assert "volatility_elevated" in result.risk_flags
+
+    def test_concentration_cash_and_regime_combo_reaches_reject(self) -> None:
+        """concentration_over_limit(0.4) + insufficient_cash(0.3) +
+        risk_off_regime(0.2) = 0.9 — reject 등급의 대표 예시 조합."""
+        result = compute_shadow_risk_bot(
+            portfolio_allocation=_portfolio_allocation(
+                remaining_concentration_pct=-1.0,
+                remaining_gross_budget_pct=-1.0,
+            ),
+            market_regime=_market_regime(risk_tone="risk_off"),
+            deterministic_trigger=None,
+        )
+        assert result.risk_score == 0.9
+        assert result.risk_opinion == "reject"
 
     def test_healthy_allocation_records_positive_reason_codes(self) -> None:
         result = compute_shadow_risk_bot(
