@@ -6346,3 +6346,102 @@ stash`로 정정 전 코드에서도 동일하게 실패함을 확인) 때문에
 - `risk_off + bearish_trend`/`range_bound` 등 비교 국면 표본은
   여전히 이 기간에 0건이다.
 - `matched` 표본의 forward return은 여전히 확보되지 않았다.
+
+## 32. `held_position` — FDC decision_type 선택지 축소(AI 토큰 낭비 제거, 2026-08-18 KST, 코드 구현)
+
+### 32.1 배경(factual)
+
+- 직전 read-only 조사(같은 세션)에서 확인된 사실: `deterministic_
+  trigger_engine.py`는 `held_position`에 대해 `buy_candidate`를
+  아예 만들지 않는다(206~304행) — 신규 매수 후보 자체가 deterministic
+  레벨에서 이미 차단돼 있다.
+- 그럼에도 `final_decision_composer.py`의 FDC 시스템 프롬프트는
+  `decision_type` 허용 목록을 source_type과 무관하게 항상 `APPROVE,
+  BUY, SELL, HOLD, WATCH, EXIT, REDUCE` 7종 전부로 열어두고 있었다.
+- 실측(오늘 `009240`, `agent_runs.structured_output_json.summary`
+  직접 조회)으로 확인: FDC가 `held_position`에 대해서도 매 cycle
+  "추가 매수는 제한/보류"류 문장을 실제로 생성하고 있었다 — 즉
+  `decision_type`이 최종적으로 `HOLD`/`WATCH`로 나오더라도, FDC는
+  APPROVE/BUY를 하나의 선택지로 놓고 그걸 기각하는 추론을 매번
+  수행하고 있었다(토큰 낭비의 실제 근거).
+- `source_policy_guard`(`decision_orchestrator.py`, 사후 강등)는
+  코드 도입(2026-06-24) 이후 실제로 발동한 적이 0건(DB/로그 전수
+  확인) — 즉 "최종 결과가 잘못 나가는" 문제는 없었지만, "그 결과에
+  도달하기까지 FDC가 불필요하게 BUY를 검토하는" 비용은 별개로
+  존재했다.
+
+### 32.2 구현 내용(factual)
+
+- `src/agent_trading/services/source_policy.py`: `allowed_fdc_
+  decision_types(source_type)` 헬퍼 추가 — `held_position`이면
+  `("REDUCE", "EXIT", "HOLD", "WATCH")`, 그 외(`None` 포함, 기존
+  호출부 하위 호환)는 기존 7종 전체(`DEFAULT_ALLOWED_DECISION_
+  TYPES`)를 반환. `SELL`을 제외한 근거: `held_position_policy.
+  is_held_position_sell_path()`의 canonical held_position sell
+  정의가 `decision_type in (REDUCE, EXIT) and side==SELL`이라
+  `SELL` 자체는 원래도 이 lane의 계약에 없고, DB 실측(최근 7일
+  `trade_decisions`)에서도 `held_position`에 `decision_type='sell'`
+  이 사실상 쓰이지 않음을 확인했다.
+- `src/agent_trading/services/ai_agents/final_decision_composer.py`:
+  - `_build_system_prompt(self, *, source_type: str | None = None)`로
+    시그니처 확장(기존 무인자 호출은 `None` → 기존 7종 전체 유지,
+    하위 호환). `held_position`이면 canonical enum 안내 줄이
+    `REDUCE, EXIT, HOLD, WATCH`만 나열하고, "## Held Position
+    Decision Scope" 섹션을 추가해 "APPROVE and BUY are INVALID for
+    an already-held symbol"을 명시.
+  - `run()`에서 `self._build_system_prompt(source_type=request.
+    source_type)`로 호출.
+  - 신규 `_guard_held_position_decision_type()`: FDC 출력이 파싱된
+    직후, `held_position`인데 허용 목록 밖(APPROVE/BUY/SELL)이면
+    `decision_type="HOLD"`, `side=""`로 정규화하고 `reason_codes`에
+    `fdc_held_position_decision_type_guard`를 추가한다. 이는
+    `decision_orchestrator._check_source_policy_upgrade_guard()`
+    (오케스트레이터 레벨 최종 안전판)와 **의도적으로 별개 계층**
+    이며, 그 사후 guard를 대체하지 않는다.
+- `deterministic_trigger_engine.py`/`source_policy.py`의 `evaluate_
+  action_envelope()`/`translation.py`의 `side != SELL` 최종 차단은
+  **일절 수정하지 않았다.**
+
+### 32.3 왜 사후 차단 강화가 아니라 "AI 선택지 제거"인가(해석)
+
+- 기존 안전장치(deterministic trigger 미부여 → source_policy_guard
+  사후 강등 → translation 최종 차단)는 "잘못된 결과가 제출되지
+  않게" 만드는 데는 이미 충분했다(발동 0건 자체가 증거) — 이번
+  변경의 목적은 그게 아니라 "FDC가 애초에 그 선택지를 고려하며
+  토큰을 쓰지 않게" 만드는 것이다.
+- 따라서 이번 변경은 (1) 프롬프트의 canonical enum 목록 축소,
+  (2) FDC 에이전트 경계에서의 출력 정규화 두 곳에만 있고, orchestrator
+  레벨 guard/translation 최종 차단은 그대로 남아 3중 방어 구조를
+  유지한다(하나가 실패해도 다른 계층이 여전히 막는다).
+
+### 32.4 검증(factual)
+
+- 신규 테스트: `tests/services/test_source_policy.py`(+3),
+  `tests/services/ai_agents/test_fdc_prompt.py`(+16, prompt 문구
+  검증 4 + `_guard_held_position_decision_type()` 단위 검증 9 +
+  `run()` end-to-end 검증 3) — dev validation container에서 전부
+  PASS.
+- `tests/services/ai_agents/` 전체(479건) PASS, 기존
+  `TestBuildSubmitOrderRequestWatch`의 5건 실패는 `git stash`로
+  정정 전 코드에서도 동일하게 재현돼 이번 변경과 무관함을 확인.
+- `tests/services/test_held_position_sell_override.py` 20건 전부
+  PASS — held_position SELL/REDUCE/EXIT 경로 무영향 확인.
+- `accept style`/`accept no-bypass`(hard_bypass_count=0)/`accept
+  architecture` 전부 PASS. `accept backend-file
+  final_decision_composer.py`는 import-graph로 선택된 `test_fdc_
+  skip.py`의 host 환경 read-only 파일시스템 오류(하네스 자체
+  환경 이슈) + 위 5건의 기존 실패 때문에 FAIL로 표시되나, `git
+  stash`로 정정 전 코드에서 동일 명령을 재실행해 **동일한 FAIL
+  (test_failed_count=2)**이 재현됨을 확인 — 이번 변경과 무관.
+
+### 32.5 미확정
+
+- 실제 운영 배포 후 `009240`류 held_position 심볼의 FDC `summary`
+  텍스트 길이/토큰 사용량이 실제로 줄어드는지는 다음 장중 실측
+  필요(이번 턴은 코드 구현+단위 테스트만).
+- `fdc_held_position_decision_type_guard`가 실제 운영에서 얼마나
+  자주 발동하는지(즉 모델이 프롬프트 제약을 어기는 빈도)는 배포
+  후 관측 필요.
+- FDC의 REDUCE/EXIT/HOLD/WATCH 판단 "품질"(정확도)이 선택지 축소로
+  인해 변화하는지는 이번 턴에서 측정하지 않았다 — 다음 장중 실측
+  대상.

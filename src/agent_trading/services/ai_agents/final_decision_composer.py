@@ -13,6 +13,7 @@ ensures that the calling orchestrator can always proceed.
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 import json
 import logging
 import socket
@@ -37,6 +38,7 @@ from agent_trading.services.ai_agents.schemas import (
     FinalDecisionComposerOutput,
     generate_json_schema,
 )
+from agent_trading.services.source_policy import allowed_fdc_decision_types
 
 logger = logging.getLogger(__name__)
 
@@ -184,7 +186,7 @@ class FinalDecisionComposerAgent:
         )
 
         try:
-            system_prompt = self._build_system_prompt()
+            system_prompt = self._build_system_prompt(source_type=request.source_type)
             user_prompt = self._build_user_prompt(request)
 
             raw_response: RawProviderResponse = await self._provider.generate_structured(
@@ -218,6 +220,9 @@ class FinalDecisionComposerAgent:
                 sizing_hint=result.sizing_hint,
                 exit_plan_hint=result.exit_plan_hint,
                 summary=result.summary,
+            )
+            result = self._guard_held_position_decision_type(
+                result, source_type=request.source_type,
             )
 
             logger.info(
@@ -255,11 +260,35 @@ class FinalDecisionComposerAgent:
             )
             return fallback
 
-    def _build_system_prompt(self) -> str:
-        """Build the system prompt describing the expected output schema."""
+    def _build_system_prompt(self, *, source_type: str | None = None) -> str:
+        """Build the system prompt describing the expected output schema.
+
+        ``source_type``이 ``"held_position"``이면 ``decision_type`` 허용
+        목록을 ``REDUCE``/``EXIT``/``HOLD``/``WATCH``로 좁힌다(2026-08-18
+        KST 추가) — 신규 매수(APPROVE/BUY)는 이 lane에서 의미론적으로
+        허용 대상이 아니므로, 모델이 매번 "왜 안 사는지"를 추론/서술하는
+        토큰 낭비를 프롬프트 단계에서부터 줄인다. 나머지 source_type
+        (``None`` 포함, 기존 호출부 하위 호환)은 기존 전체 허용 목록을
+        그대로 유지한다.
+        """
         schema_json = json.dumps(
             generate_json_schema(FinalDecisionComposerOutput), indent=2
         )
+        allowed_decision_types = allowed_fdc_decision_types(source_type)
+        normalized_source_type = (source_type or "core").strip().lower()
+
+        held_position_scope_section = ""
+        if normalized_source_type == "held_position":
+            held_position_scope_section = (
+                "## Held Position Decision Scope (source_type=held_position)\n"
+                "- This symbol is ALREADY HELD. Valid decision_type is ONLY: "
+                "REDUCE, EXIT, HOLD, WATCH.\n"
+                "- APPROVE and BUY are INVALID for source_type=held_position — "
+                "do NOT consider or reason about additional buying for an "
+                "already-held symbol. Only evaluate whether to reduce/exit the "
+                "position, or continue holding/watching it.\n\n"
+            )
+
         return (
             "You are a Final Decision Composer for a trading system. "
             "Synthesise the outputs of the Event Interpretation Agent and "
@@ -268,11 +297,12 @@ class FinalDecisionComposerAgent:
             "Output must be valid JSON matching this schema:\n"
             f"{schema_json}\n\n"
             "IMPORTANT: The following fields MUST use canonical English enum values:\n"
-            "- decision_type: one of APPROVE, BUY, SELL, HOLD, WATCH, EXIT, REDUCE\n"
+            f"- decision_type: one of {', '.join(allowed_decision_types)}\n"
             "- side: BUY or SELL\n"
             "- entry_style: LIMIT, MARKET, VWAP, TWAP\n"
             "- time_horizon: short, swing, long\n"
             "- reason_codes: machine-readable English codes\n\n"
+            f"{held_position_scope_section}"
             "## No-Event Policy\n"
             "- no_material_events + evidence_strength=none (core): "
             "insufficient information to act → HOLD. "
@@ -291,10 +321,64 @@ class FinalDecisionComposerAgent:
             "IMPORTANT: 'negative signal' is NOT the same as 'no event'.\n\n"
             "## Source Type Consideration\n"
             "- core → conservative; WATCH may be viable when evidence is weak.\n"
-            "- held_position → need clear signal;\n"
+            "- held_position → need clear signal; additional buying "
+            "(APPROVE/BUY) is out of scope — see Held Position Decision "
+            "Scope above;\n"
             "- event_overlay → consider events; market_overlay → no-event OK.\n\n"
             "Narrative fields (summary, opposing_evidence) MUST be written in Korean. "
             "Machine-readable fields listed above MUST remain in English."
+        )
+
+    def _guard_held_position_decision_type(
+        self,
+        result: FinalDecisionComposerOutput,
+        *,
+        source_type: str | None,
+    ) -> FinalDecisionComposerOutput:
+        """held_position에서 허용 범위 밖 ``decision_type``을 정규화한다.
+
+        이 검증은 ``decision_orchestrator._check_source_policy_upgrade_
+        guard()``(오케스트레이터 레벨 최종 안전판)와는 **다른 계층**이다.
+        여기서는 FDC 에이전트 출력이 애초에 스키마상 유효한 선택지를
+        반환했는지를 에이전트 경계에서 확인한다 — 오케스트레이터 guard가
+        실행되기 전에 한 번 더 방어하는 것이며, 의도적으로 중복을
+        허용한다(두 계층의 목적이 다름: 여기는 "AI 선택지 제한",
+        오케스트레이터 쪽은 "최종 제출 안전판"). ``deterministic_trigger``의
+        WATCH/HOLD 세부 판단은 오케스트레이터 guard가 여전히 authoritative
+        하게 담당하므로, 여기서는 안전한 기본값(HOLD)으로만 정규화한다.
+        """
+        allowed = allowed_fdc_decision_types(source_type)
+        normalized_type = (result.decision_type or "").strip().upper()
+        if not normalized_type or normalized_type in allowed:
+            return result
+
+        logger.warning(
+            "FDC returned out-of-scope decision_type for source_type=%s: "
+            "decision_type=%s allowed=%s — normalizing to HOLD.",
+            source_type,
+            result.decision_type,
+            allowed,
+        )
+        guarded_reason_codes = tuple(
+            dict.fromkeys(
+                tuple(result.reason_codes or ())
+                + ("fdc_held_position_decision_type_guard",)
+            )
+        )
+        guard_note = (
+            f"[fdc_held_position_decision_type_guard] decision_type="
+            f"{normalized_type} is invalid for source_type={source_type} "
+            "— normalized to HOLD."
+        )
+        guarded_summary = (
+            f"{result.summary} | {guard_note}" if result.summary else guard_note
+        )
+        return dataclasses.replace(
+            result,
+            decision_type="HOLD",
+            side="",
+            reason_codes=guarded_reason_codes,
+            summary=guarded_summary,
         )
 
     def _build_user_prompt(self, request: AgentExecutionRequest) -> str:
