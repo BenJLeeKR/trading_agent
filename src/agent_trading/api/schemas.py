@@ -1761,6 +1761,17 @@ class PositionSnapshotView(BaseModel):
     """Human-readable instrument name resolved from ``instrument_id``
     (e.g. ``Samsung Electronics Co., Ltd.``)."""
 
+    remaining_buy_fee_pool: float | None = None
+    """현재 보유 수량에 대응하는, 아직 SELL에 배분되지 않은 누적 매수 수수료.
+
+    브로커 스냅샷 자체 필드가 아니라 ``position_cost_basis_state``
+    (``PositionCostBasisStateEntity.remaining_buy_fee_pool``)에서 조인해
+    채운다. 해당 계좌×종목의 cost-basis state가 없으면 ``None``이다
+    (포지션 이력이 내부 원장에 없다는 뜻 — ``0``과 구분해야 한다).
+    이미 SELL에 배분된 몫(``RealizedPnlEventEntity.allocated_buy_fee``,
+    ``realized_pnl_net_sum``에 반영됨)과는 별개의 값이므로 실현손익과
+    합산해도 이중 차감이 아니다."""
+
 
 class CashBalanceSnapshotView(BaseModel):
     """``GET /cash-balances`` — latest cash balance snapshot.
