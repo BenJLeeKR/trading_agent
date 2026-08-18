@@ -78,7 +78,26 @@ def _make_intent(
         price=Decimal("50000"),
         time_in_force=TimeInForce.DAY,
     )
-    ai = AIDecisionInputs(decision_type=decision_type)
+    # 2026-08-18 KST 수정: translation._has_required_expected_value_anchor()는
+    # APPROVE/BUY/SELL/EXIT/REDUCE(actionable_types)에 대해 8개 EV anchor
+    # 필드가 전부 채워져 있을 것을 요구하고, SELL/EXIT/REDUCE는 추가로
+    # expected_value_gate_passed(또는 ev_gate_near_miss_override_applied)도
+    # 요구한다 — 이 fixture가 decision_type만 채우고 나머지를 비워둬서
+    # build_submit_order_request_from_decision()가 항상 None을 반환하는
+    # 계약 불일치가 있었다(WATCH/HOLD는 애초에 이 검사 이전에 걸러져
+    # 영향받지 않았음). 아래 필드들로 실제 production contract를 충족한다.
+    ai = AIDecisionInputs(
+        decision_type=decision_type,
+        expected_return_bps=Decimal("50"),
+        expected_downside_bps=Decimal("20"),
+        net_expected_value_bps=Decimal("30"),
+        final_trade_score=Decimal("0.70"),
+        minimum_required_edge_bps=Decimal("10"),
+        edge_after_cost_bps=Decimal("15"),
+        estimated_round_trip_cost_bps=Decimal("8"),
+        slippage_buffer_bps=Decimal("5"),
+        expected_value_gate_passed=True,
+    )
     dc_id = decision_context_id if decision_context_id is not None else uuid4()
     return OrderIntent(
         decision_context_id=dc_id,
