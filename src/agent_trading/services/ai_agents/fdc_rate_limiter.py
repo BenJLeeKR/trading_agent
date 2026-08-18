@@ -25,9 +25,12 @@ concurrency.md`` 참고). 이번 모듈은 그 rollback과 함께, **실제로
 - 최근 ``window_seconds`` 이내에 기록된 호출 타임스탬프 수가
   ``max_calls`` 이상이면, 가장 오래된 타임스탬프가 윈도우를 벗어날
   때까지 짧게 대기(polling)한 뒤 재시도한다.
-- ``max_wait_seconds``를 넘도록 슬롯을 못 얻으면 — per-agent timeout
-  (30초)을 침범하지 않도록 — 대기를 포기하고 즉시 통과시킨다
-  (fail-open, 단 경고 로그를 남긴다. 조용한 bypass가 아니다).
+- ``max_wait_seconds``를 넘도록 슬롯을 못 얻으면 — subprocess 전체
+  timeout(기본 90초) 예산을 침범하지 않도록 — 대기를 포기하고 즉시
+  통과시킨다(fail-open, 단 경고 로그를 남긴다. 조용한 bypass가 아니다).
+  이 대기는 FDC 호출 자체의 30초 per-agent timeout 블록 **앞에서**
+  별도로 일어나므로 그 30초 예산과는 별개다(``DEFAULT_MAX_WAIT_
+  SECONDS`` 상수 주석 참고).
 - 상태 파일 접근 자체가 실패하면(파일시스템 오류 등) 마찬가지로
   경고 로그를 남기고 즉시 통과시킨다.
 - **import-time 부작용 없음** — 모듈을 import하는 것만으로는 파일이나
@@ -62,10 +65,26 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_MAX_CALLS_PER_WINDOW = 10
 DEFAULT_WINDOW_SECONDS = 60.0
-# per-agent timeout(30초)을 침범하지 않도록 대기 상한을 그보다 충분히
-# 짧게 둔다 — 이 대기 이후에도 실제 FDC 호출+재시도(최대 ~3.5초)가
-# 남아있어야 한다.
-DEFAULT_MAX_WAIT_SECONDS = 15.0
+# 2026-08-18 조정(15.0 → 20.0): `wait_for_fdc_slot()`은
+# `scripts/run_agent_subprocess.py`에서 `asyncio.wait_for(fdc_agent.run(...),
+# timeout=_PER_AGENT_TIMEOUT)`(30초) 블록 **앞에서** 별도로 호출된다 —
+# 즉 이 대기 시간은 FDC의 30초 per-agent timeout에 포함되지 않고, 대신
+# subprocess 전체 timeout(``DecisionAgentRunner.subprocess_timeout``,
+# 기본 90초 — EI/AR/AC는 수 ms로 사실상 무시 가능)의 여유분을 쓴다.
+# 20초 + FDC 최악 소요(30초 timeout 상한) = 50초로 여전히 90초 예산 안에서
+# 충분한 여유(40초)가 남는다.
+#
+# 실측 근거(2026-08-18 13:28~13:29 KST, 36개 종목 1개 사이클): 실제로
+# 대기 후 슬롯을 확보한 3건이 각각 13.0s/14.0s/13.0s를 기다렸다 — 기존
+# 상한(15.0s)에 바짝 붙어 있어, 조금만 더 여유를 주면 그 경계에 걸려
+# bypass됐을 호출 중 일부가 정상 대기로 전환될 가능성이 있다(반대로
+# bypass된 16건은 15.0s를 다 채우고 포기한 것이므로, 그중 실제로 몇 초를
+# 더 기다리면 슬롯을 얻었을지는 이 로그만으로는 알 수 없다 — 미확인).
+# 25초 이상으로 더 키우지 않은 이유: 관측된 성공 대기가 13~14초 구간에
+# 몰려 있어 20초로도 그 경계값을 충분히 덮고, 그 이상은 bypass되는
+# 호출들의 대기만 늘릴 뿐 추가 효과가 검증되지 않은 추측성 비용이기
+# 때문이다.
+DEFAULT_MAX_WAIT_SECONDS = 20.0
 DEFAULT_POLL_INTERVAL_SECONDS = 1.0
 _STATE_FILENAME = "agent_trading_fdc_rate_limiter_state.json"
 

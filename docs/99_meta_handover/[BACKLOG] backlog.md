@@ -7081,3 +7081,32 @@ gate) 구현 완료", `[PRIORITY_MAP]` 동일 날짜 항목.
   fallback 비율, cycle wall-clock, `FDC rate limiter` 대기/bypass
   로그 발생 빈도를 실측해 정책값(60초당 10회, 대기 상한 15초)이
   적절한지 재평가한다.
+- **후속 실측 결과(2026-08-18 13:28~13:29 KST, 배포 후 첫 사이클,
+  36개 종목)**: shared rate limiter가 실제로 작동함을 로그로 직접
+  확인(대기 후 성공 3건: 13.0s/14.0s/13.0s). `provider_rate_limit`
+  fallback은 4/36(11.1%)로 직전 관측치(47.2%~50.0%)보다 크게 감소.
+  다만 대기 후 성공한 3건이 기존 상한(15.0s)에 바짝 붙어 있어,
+  bypass(16건, `max_wait_exceeded`)로 처리된 것 중 일부는 조금만 더
+  기다렸으면 정상 대기로 전환됐을 가능성이 있음을 확인 → 아래
+  후속 PR에서 `DEFAULT_MAX_WAIT_SECONDS`를 15.0→20.0으로 조정.
+
+## FDC rate limiter `DEFAULT_MAX_WAIT_SECONDS` 15.0→20.0 조정(2026-08-18 KST)
+
+상세: `docs/30_work_log/2026-08-18_fdc_rate_limiter_max_wait_20s.md`.
+
+- 위 실측 근거(대기 성공 사례가 13~14초에 몰림, 기존 상한 15.0s에
+  근접)에 따라 `fdc_rate_limiter.py`의 `DEFAULT_MAX_WAIT_SECONDS`를
+  20.0으로 늘렸다.
+- **구조적 확인**: 이 대기는 FDC 호출 자체의 30초 per-agent timeout
+  블록 앞에서 별도로 일어나므로 그 30초 예산과 무관하며, subprocess
+  전체 timeout(기본 90초) 예산을 쓴다 — 20초(대기)+30초(FDC timeout
+  상한)=50초로 90초 예산 안에서 여유(40초)가 충분함을 확인 후 조정.
+- `DEFAULT_MAX_CALLS_PER_WINDOW=10`(60초당 호출 상한)은 이번 턴에서
+  건드리지 않음 — 429 발생 자체를 줄이는 조정이 아니라, limiter의
+  bypass 비율을 낮춰 fallback 비율을 더 낮추려는 조정.
+- 정책 영향 없음(주문 gate/EV gate/sizing/EI·AR·AC·FDC 역할분리/
+  fallback HOLD 정책 전부 미변경).
+- **남은 backlog 9**: 재배포 후 새 상한(20.0s)에서 대기 후 성공/
+  bypass 비율이 실제로 어떻게 바뀌는지, `provider_rate_limit`
+  fallback 비율이 추가로 낮아지는지, cycle wall-clock이 어느 정도
+  늘어나는지 실측한다.

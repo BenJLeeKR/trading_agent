@@ -20,6 +20,7 @@ from pathlib import Path
 import pytest
 
 from agent_trading.services.ai_agents.fdc_rate_limiter import (
+    DEFAULT_MAX_WAIT_SECONDS,
     FdcRateLimitResult,
     default_state_path,
     wait_for_fdc_slot,
@@ -41,6 +42,29 @@ class TestDefaultStatePath:
         # 이미 다른 프로세스/테스트가 만들어뒀을 수 있으니 존재 여부가 아니라
         # "이 호출 자체가 부작용을 만들지 않는다"만 확인한다(예외 없이 반환).
         assert isinstance(path, str) and path
+
+
+class TestDefaultMaxWaitSeconds:
+    """``DEFAULT_MAX_WAIT_SECONDS`` — 2026-08-18 15.0→20.0 조정.
+
+    배경: 이 대기는 FDC 호출 자체의 30초 per-agent timeout 블록 앞에서
+    별도로 일어나므로 그 30초 예산에 포함되지 않고, subprocess 전체
+    timeout(기본 90초) 예산을 쓴다 — 20초로 늘려도 여유가 충분하다.
+    실측(2026-08-18 13:28~13:29 KST)에서 대기 후 슬롯을 확보한 사례가
+    13~14초에 몰려 있어(기존 상한 15.0s에 근접), 상한을 20.0s로 늘려
+    그 경계에서 bypass되던 호출 일부가 정상 대기로 전환될 여지를 준다.
+    """
+
+    def test_default_is_20_seconds(self) -> None:
+        assert DEFAULT_MAX_WAIT_SECONDS == 20.0
+
+    def test_default_plus_fdc_timeout_stays_within_subprocess_budget(self) -> None:
+        """20초(대기) + 30초(FDC per-agent timeout 상한) = 50초로,
+        subprocess 전체 timeout 기본값(90초) 안에서 여유가 남아야 한다."""
+        fdc_per_agent_timeout = 30.0
+        subprocess_timeout_default = 90.0
+        worst_case = DEFAULT_MAX_WAIT_SECONDS + fdc_per_agent_timeout
+        assert worst_case < subprocess_timeout_default
 
 
 class TestWaitForFdcSlotBasic:
