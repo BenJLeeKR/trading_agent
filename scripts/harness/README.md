@@ -41,6 +41,8 @@ GitHub Actions도 사람과 AI가 쓰는 동일한 하네스를 사용한다. CI
 - 관련 지표: `deploy_sync_pending_runtime_file_count`, `deploy_sync_blocked_by_pending_runtime_count`. 차단 시 `DETAIL pending_runtime_files:`로 대상 파일을 나열한다.
 - runtime 영향 경로 규칙은 `changes` job에 한 번만 정의하고 `runtime_affecting_pattern` output으로 `sync_source`에 전달한다. 같은 규칙을 두 곳에 중복 정의하지 않는다.
 - 장중 수동 재배포는 `allow_market_hours_deploy=true`일 때만 허용하고 `deploy_market_hours_override_count=1`을 출력한다.
+- 프런트 전용 변경(`frontend_only_activate=1`)은 장중에도 자동 배포를 허용하고 `deploy_market_hours_frontend_only_pass_count=1`을 출력한다. `admin_ui/`는 어떤 컨테이너에도 bind mount되지 않고 Admin UI는 read/inspect 전용이라 `ops-scheduler`·`reconciliation-worker`·`api`에 영향이 없다. 장중 차단을 유지하면 `allow_market_hours_deploy` override 사용이 습관이 되어 가드 자체가 무력해진다.
+- 이때 `sync_source`의 대기 변경 판정은 계속 적용된다. 판정 기준은 `allow_deploy`가 아니라 **`activate_runtime`이 전체 재기동을 하는가**다. 프런트 전용은 `allow_deploy=1`이지만 `frontend`만 재빌드하므로, 함께 내려온 백엔드 변경이 bind mount된 `src/`·`scripts/`에 남아 재기동 없이 적용될 수 있다. 이 경로에서는 `admin_ui/` 변경만 대기 대상에서 제외한다(프런트 재빌드로 실제 반영되므로).
 - 장중 source sync와 activate 분리 설계 초안은 `docs/80_harness_engineering/deploy_sync_activation_contract.md`를 따른다.
 - 남은 실검증은 장 외 시간 `push main`에서 `activate_runtime=success`가 나오는 자연 경로 `1`건이며, 기대 조합은 `deploy_market_hours_override_count=0`, `Sync source after safe harness=success`, `Activate runtime after source sync=success`다.
 - 거래소 휴장일 캘린더는 아직 연동하지 않았으므로 1차 가드는 평일 시간대 기준이다.
