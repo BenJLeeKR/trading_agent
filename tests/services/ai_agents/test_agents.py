@@ -1823,6 +1823,163 @@ class TestFinalDecisionComposerAgent:
         assert result.decision_type == "HOLD"
         assert result.symbol == ""
 
+    # ── 2026-08-18: fallback reason_codes 분류 테스트 ────────────────────
+    # 배경: 오늘 실측(429 대량 발생)에서 FDC fallback이 정상 HOLD와
+    # decision_json 저장값만으로 구분되지 않던 문제(reason_codes=()가
+    # 항상 비어있음)를 고쳤다. decision_type="HOLD" fallback 정책 자체는
+    # 그대로이며, 아래 테스트는 reason_codes/summary 분류만 검증한다.
+
+    @pytest.mark.asyncio
+    async def test_run_fallback_on_http_429_sets_rate_limit_reason(
+        self,
+        sample_request: AgentExecutionRequest,
+    ) -> None:
+        """httpx.HTTPStatusError(429) → reason_codes=('provider_rate_limit',)."""
+        http_provider = AsyncMock(spec=AIProviderClient)
+
+        async def _http_429(**kwargs: object) -> object:
+            mock_request = MagicMock(spec=httpx.Request)
+            mock_response = MagicMock(spec=httpx.Response)
+            mock_response.status_code = 429
+            raise httpx.HTTPStatusError(
+                "Rate limit exceeded",
+                request=mock_request,
+                response=mock_response,
+            )
+
+        http_provider.generate_structured = _http_429  # type: ignore[method-assign]
+
+        agent = FinalDecisionComposerAgent(provider_client=http_provider)
+        result = await agent.run(sample_request)
+        assert isinstance(result, FinalDecisionComposerOutput)
+        assert result.decision_type == "HOLD"
+        assert result.reason_codes == ("provider_rate_limit",)
+        assert "rate_limit" in result.summary
+
+    @pytest.mark.asyncio
+    async def test_run_fallback_on_http_500_sets_provider_error_reason(
+        self,
+        sample_request: AgentExecutionRequest,
+    ) -> None:
+        """httpx.HTTPStatusError(500) → reason_codes=('provider_error',)."""
+        http_provider = AsyncMock(spec=AIProviderClient)
+
+        async def _http_500(**kwargs: object) -> object:
+            mock_request = MagicMock(spec=httpx.Request)
+            mock_response = MagicMock(spec=httpx.Response)
+            mock_response.status_code = 500
+            raise httpx.HTTPStatusError(
+                "Internal server error",
+                request=mock_request,
+                response=mock_response,
+            )
+
+        http_provider.generate_structured = _http_500  # type: ignore[method-assign]
+
+        agent = FinalDecisionComposerAgent(provider_client=http_provider)
+        result = await agent.run(sample_request)
+        assert result.reason_codes == ("provider_error",)
+
+    @pytest.mark.asyncio
+    async def test_run_fallback_on_json_decode_error_sets_parse_error_reason(
+        self,
+        sample_request: AgentExecutionRequest,
+    ) -> None:
+        """json.JSONDecodeError → reason_codes=('provider_parse_error',)."""
+        import json as _json
+
+        bad_provider = AsyncMock(spec=AIProviderClient)
+
+        async def _bad_json(**kwargs: object) -> object:
+            raise _json.JSONDecodeError("Expecting value", "doc", 0)
+
+        bad_provider.generate_structured = _bad_json  # type: ignore[method-assign]
+
+        agent = FinalDecisionComposerAgent(provider_client=bad_provider)
+        result = await agent.run(sample_request)
+        assert result.decision_type == "HOLD"
+        assert result.reason_codes == ("provider_parse_error",)
+        assert "parse_error" in result.summary
+
+    @pytest.mark.asyncio
+    async def test_run_fallback_on_value_error_sets_parse_error_reason(
+        self,
+        sample_request: AgentExecutionRequest,
+    ) -> None:
+        """ValueError(dataclass 구성 실패 등) → reason_codes=('provider_parse_error',)."""
+        bad_provider = AsyncMock(spec=AIProviderClient)
+
+        async def _bad_generate(**kwargs: object) -> RawProviderResponse:
+            raise ValueError("Invalid JSON")
+
+        bad_provider.generate_structured = _bad_generate  # type: ignore[method-assign]
+
+        agent = FinalDecisionComposerAgent(provider_client=bad_provider)
+        result = await agent.run(sample_request)
+        assert result.reason_codes == ("provider_parse_error",)
+
+    @pytest.mark.asyncio
+    async def test_run_fallback_on_timeout_sets_timeout_reason(
+        self,
+        sample_request: AgentExecutionRequest,
+    ) -> None:
+        """httpx.TimeoutException → reason_codes=('provider_timeout',)."""
+        timeout_provider = AsyncMock(spec=AIProviderClient)
+
+        async def _timeout(**kwargs: object) -> object:
+            raise httpx.TimeoutException("Connection timed out")
+
+        timeout_provider.generate_structured = _timeout  # type: ignore[method-assign]
+
+        agent = FinalDecisionComposerAgent(provider_client=timeout_provider)
+        result = await agent.run(sample_request)
+        assert result.reason_codes == ("provider_timeout",)
+
+    @pytest.mark.asyncio
+    async def test_run_fallback_on_generic_error_sets_provider_error_reason(
+        self,
+        sample_request: AgentExecutionRequest,
+    ) -> None:
+        """분류되지 않는 일반 예외 → reason_codes=('provider_error',)."""
+        failing_provider = AsyncMock(spec=AIProviderClient)
+
+        async def _raise(**kwargs: object) -> object:
+            raise RuntimeError("Provider unavailable")
+
+        failing_provider.generate_structured = _raise  # type: ignore[method-assign]
+
+        agent = FinalDecisionComposerAgent(provider_client=failing_provider)
+        result = await agent.run(sample_request)
+        assert result.decision_type == "HOLD"
+        assert result.reason_codes == ("provider_error",)
+        assert "provider_error" in result.summary
+
+    @pytest.mark.asyncio
+    async def test_fallback_still_preserves_agent_identity(
+        self,
+        sample_request: AgentExecutionRequest,
+    ) -> None:
+        """fallback에서도 schema_version/agent_name/decision_context_id는
+        기존과 동일하게 보존돼야 한다(관측성 개선이 기존 계약을 깨지 않음)."""
+        failing_provider = AsyncMock(spec=AIProviderClient)
+
+        async def _raise(**kwargs: object) -> object:
+            raise RuntimeError("boom")
+
+        failing_provider.generate_structured = _raise  # type: ignore[method-assign]
+
+        agent = FinalDecisionComposerAgent(
+            provider_client=failing_provider, schema_version="v1",
+        )
+        result = await agent.run(sample_request)
+        assert result.schema_version == "v1"
+        assert result.agent_name == "final_decision_composer"
+        assert result.decision_context_id == (
+            str(sample_request.decision_context_id)
+            if sample_request.decision_context_id
+            else None
+        )
+
     @pytest.mark.asyncio
     async def test_decision_context_id_set_when_provided(
         self,

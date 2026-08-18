@@ -12,9 +12,13 @@ ensures that the calling orchestrator can always proceed.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
+import socket
 from datetime import datetime, timezone
+
+import httpx
 
 from agent_trading.config.settings import _resolve_provider_model_id
 from agent_trading.services.ai_agents._prompt_config import (
@@ -35,6 +39,29 @@ from agent_trading.services.ai_agents.schemas import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _classify_provider_exception(exc: Exception) -> str:
+    """예외를 fallback ``reason_codes`` 마커로 분류한다(관측성 전용).
+
+    2026-08-18 결정: FDC provider 호출 실패 시 fallback이 정상 HOLD와
+    저장값만으로 구분되지 않던 문제(429 재시도 소진 시 ``reason_codes``가
+    항상 빈 튜플)를 고치기 위한 분류다. 이 마커는 관측 용도이며,
+    ``decision_type="HOLD"`` fallback 정책 자체를 바꾸지 않는다.
+    """
+    if isinstance(exc, httpx.HTTPStatusError):
+        status = exc.response.status_code
+        if status == 429:
+            return "provider_rate_limit"
+        if 500 <= status < 600:
+            return "provider_error"
+    if isinstance(exc, (json.JSONDecodeError, TypeError, ValueError)):
+        return "provider_parse_error"
+    if isinstance(exc, (asyncio.TimeoutError, httpx.TimeoutException)):
+        return "provider_timeout"
+    if isinstance(exc, (httpx.TransportError, socket.gaierror)):
+        return "provider_error"
+    return "provider_error"
 
 
 class StubFinalDecisionComposerAgent:
@@ -202,14 +229,19 @@ class FinalDecisionComposerAgent:
             )
             return result
 
-        except Exception:
+        except Exception as exc:
+            reason_marker = _classify_provider_exception(exc)
             logger.warning(
                 "FinalDecisionComposerAgent failed — returning default HOLD output "
-                "(safe fallback). decision_context_id=%s",
+                "(safe fallback). decision_context_id=%s reason=%s",
                 request.decision_context_id,
+                reason_marker,
                 exc_info=True,
             )
-            # Preserve agent identity and request metadata in fallback output
+            # Preserve agent identity and request metadata in fallback output.
+            # 2026-08-18: reason_codes/summary에 fallback 사유를 남겨
+            # decision_json/agent_runs 저장값만으로 정상 HOLD와 구분 가능하게
+            # 한다(decision_type="HOLD" fallback 정책 자체는 그대로 유지).
             fallback = FinalDecisionComposerOutput(
                 schema_version=self._schema_version,
                 agent_name=self.agent_name,
@@ -218,6 +250,8 @@ class FinalDecisionComposerAgent:
                     if request.decision_context_id
                     else None
                 ),
+                reason_codes=(reason_marker,),
+                summary=f"provider fallback: {reason_marker}",
             )
             return fallback
 
