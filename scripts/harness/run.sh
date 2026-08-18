@@ -433,6 +433,45 @@ deploy_without_change_detector_count = (
     0 if deploy_change_detector_present else len(deploy_workflows)
 )
 
+# 배포 분기 블록을 잘라 분기별로 계약을 검증한다. 파일 전체 문자열 존재
+# 검사만으로는 "프런트 전용 분기가 migrate를 건너뛰는 것"과 "전체 배포 경로가
+# migrate를 잃는 것"을 구분하지 못한다.
+frontend_only_branch = section_between(
+    workflow_text,
+    'if [ "${{ needs.changes.outputs.frontend_only_activate }}" = "1" ]; then',
+    "            else",
+)
+full_deploy_branch = section_between(
+    workflow_text,
+    "              bash scripts/harness/docker_compose_env.sh run --build --rm migrate",
+    "            fi",
+)
+def command_lines_only(block: str) -> str:
+    """주석 줄을 걸러 실제 실행 명령만 남긴다.
+
+    분기 안의 설명 주석이 플래그 이름을 언급했다는 이유로 계약이 실패하면
+    안 되므로, 계약은 명령 줄만 대상으로 판정한다.
+    """
+    return "\n".join(
+        line for line in block.splitlines() if not line.strip().startswith("#")
+    )
+
+frontend_only_commands = command_lines_only(frontend_only_branch)
+frontend_only_branch_present_count = int(bool(frontend_only_branch))
+frontend_only_branch_scoped_count = int(
+    "docker_compose_env.sh up -d --build frontend" in frontend_only_commands
+    and "--remove-orphans" not in frontend_only_commands
+    and "--rm migrate" not in frontend_only_commands
+)
+full_deploy_commands = command_lines_only(full_deploy_branch)
+full_deploy_migration_order_count = 0
+if full_deploy_commands:
+    migrate_index = full_deploy_commands.find("run --build --rm migrate")
+    up_index = full_deploy_commands.find("up -d --build --remove-orphans")
+    full_deploy_migration_order_count = int(
+        migrate_index >= 0 and up_index >= 0 and migrate_index < up_index
+    )
+
 safe_section = section_between(workflow_text, "  safe:", "  heavy:")
 check_quick_section = section_between(
     (root / "scripts" / "harness" / "run.sh").read_text(),
@@ -632,9 +671,16 @@ contract_checks = [
     ("workflow_deploy_change_detector_defines_sync_only_allowlist", deploy_sync_only_allowlist_defined_count == 1),
     ("workflow_deploy_change_detector_defines_runtime_affecting_rules", deploy_runtime_affecting_path_rule_count == 1),
     ("workflow_deploy_emits_sync_activate_metrics", deploy_sync_only_run_metric_count == 1 and deploy_activate_run_metric_count == 1 and deploy_activate_skipped_by_market_hours_metric_count == 1),
-    ("workflow_deploy_runs_migration_before_restart", (
-        contains(workflow, "docker compose run --build --rm migrate", "docker compose up -d --build --remove-orphans")
-        or contains(workflow, "bash scripts/harness/docker_compose_env.sh run --build --rm migrate", "bash scripts/harness/docker_compose_env.sh up -d --build --remove-orphans")
+    ("workflow_deploy_runs_migration_before_restart", full_deploy_migration_order_count == 1),
+    ("workflow_deploy_frontend_only_branch_scoped", (
+        frontend_only_branch_present_count == 1 and frontend_only_branch_scoped_count == 1
+    )),
+    ("workflow_deploy_frontend_only_emits_metrics", contains(
+        workflow,
+        "deploy_frontend_only_activate_count=1",
+        "deploy_migration_run=0",
+        "frontend_only_activate=",
+        "non_frontend_runtime_file_count=",
     )),
     ("workflow_deploy_reloads_proxy_after_restart", contains(workflow, "docker exec nginx-proxy nginx -s reload", "deploy_proxy_reload_run=1")),
     ("readme_declares_ci_harness", contains(readme, "CI 검증 기준", ".github/workflows/harness.yml", "bash scripts/harness/run.sh", "Require Harness on main", "Safe harness contracts")),
