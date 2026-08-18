@@ -16,6 +16,7 @@ import {
   getAccountSnapshots,
   getSnapshotSyncRuns,
   getOrders,
+  getRealizedPnlSummary,
 } from "../api/client";
 import { DataTable } from "./common/DataTable";
 import { StatusBadge } from "./common/StatusBadge";
@@ -39,6 +40,12 @@ function formatQty(val: number | null | undefined): string {
 function truncateUuid(uuid: string): string {
   return uuid.length > 8 ? uuid.slice(0, 8) + "…" : uuid;
 }
+
+/**
+ * "총손익" 카드의 실현손익 누적 시작일(KST). 계좌 생성일 등 다른 기준이 아니라
+ * 사용자 지정 고정 시작일이다 — 그 이전 실현손익은 이 카드에 반영되지 않는다.
+ */
+const REALIZED_PNL_CUMULATIVE_START_DATE = "2026-08-01";
 
 /**
  * 미실현 손익율(%) = 미실현 손익 / 매입원가 × 100.
@@ -117,6 +124,11 @@ export default function AccountsView() {
   const [syncRunError, setSyncRunError] = useState(false);
   const [showSnapshotHistory, setShowSnapshotHistory] = useState(false);
   const [resolvingOrderLinkId, setResolvingOrderLinkId] = useState<string | null>(null);
+  // 실현손익 합계(REALIZED_PNL_CUMULATIVE_START_DATE ~ 오늘, KST 누적).
+  // null = 아직 로딩 중이거나 조회 실패 — 0으로 치환하지 않고 "총손익" 카드에서
+  // "—"로 표시해 실패를 정상값처럼 감추지 않는다.
+  const [realizedPnlSum, setRealizedPnlSum] = useState<number | null>(null);
+  const [realizedPnlError, setRealizedPnlError] = useState(false);
   const navigate = useNavigate();
 
   // ── 관련 주문 보기 클릭 핸들러 ────────────────────────────────
@@ -216,6 +228,25 @@ export default function AccountsView() {
       .finally(() => setDetailLoading(false));
   }, [selectedAccount]);
 
+  // ── Fetch realized PnL cumulative sum (총손익 카드용) ────────────
+  // 2026-08-01 KST부터 오늘까지 누적 — 계좌 생성일 등 다른 기준이 아니라
+  // 사용자가 지정한 고정 시작일이다.
+  useEffect(() => {
+    if (!selectedAccount) {
+      setRealizedPnlSum(null);
+      setRealizedPnlError(false);
+      return;
+    }
+    setRealizedPnlSum(null);
+    setRealizedPnlError(false);
+    getRealizedPnlSummary(selectedAccount, {
+      startDate: REALIZED_PNL_CUMULATIVE_START_DATE,
+      endDate: getKstTodayString(),
+    })
+      .then((summary) => setRealizedPnlSum(summary.realized_pnl_net_sum))
+      .catch(() => setRealizedPnlError(true));
+  }, [selectedAccount]);
+
   // ── Snapshot dedup: instrument별 최신 snapshot 1건 ──────────────
   // 수량 0인 종목(전량 매도 후 잔여 row)은 현재 포지션에서 제외
   const latestPositions = useMemo(() => {
@@ -275,6 +306,14 @@ export default function AccountsView() {
     }
     return latestPositions.reduce((sum, p) => sum + (p.unrealized_pnl ?? 0), 0);
   }, [latestPositions, cashBalance]);
+
+  // ── 총손익 = 미실현 손익(totalPnl) + 실현 손익 합계(realizedPnlSum) ──────
+  // realizedPnlSum이 아직 없거나(로딩 중) 조회에 실패했으면, 0으로 대체해
+  // 미실현 손익만을 총손익인 것처럼 보여주지 않고 "—"로 명시적으로 표시한다.
+  const totalPnlAll = useMemo(() => {
+    if (realizedPnlSum == null) return null;
+    return totalPnl + realizedPnlSum;
+  }, [totalPnl, realizedPnlSum]);
 
   // ── Column definitions ──────────────────────────────────────────
   const accountColumns: Column<AccountSummary>[] = [
@@ -670,10 +709,8 @@ export default function AccountsView() {
                 <LoadingSpinner text="계좌 상세 로딩 중..." />
               ) : (
                 <>
-                  {/* Summary cards — 40px 높이로 압축한 한 줄 레이아웃.
-                      TODO: 맨 오른쪽 "총 손익률" 카드 추가는 라벨(%)과 계산식(금액)이
-                      맞지 않아 사용자 확인 대기 중(그리드는 아직 3열). */}
-                  <div className="grid grid-cols-3 gap-4">
+                  {/* Summary cards — 40px 높이로 압축한 한 줄 레이아웃. */}
+                  <div className="grid grid-cols-4 gap-4">
                     <div className="h-10 bg-white rounded-xl border border-[#e2e8f0] px-3 flex items-center gap-2">
                       <div className="p-1 rounded-md bg-[#eef2ff] text-[#6366f1] shrink-0">
                         <Wallet className="h-3.5 w-3.5" />
@@ -716,6 +753,46 @@ export default function AccountsView() {
                       >
                         {totalPnl >= 0 ? "+" : ""}
                         {formatKrw(totalPnl)}
+                      </span>
+                    </div>
+                    <div
+                      className="h-10 bg-white rounded-xl border border-[#e2e8f0] px-3 flex items-center gap-2"
+                      title={
+                        realizedPnlError
+                          ? "실현손익 조회에 실패해 총손익을 계산할 수 없습니다"
+                          : `총손익 = 미실현 손익 + 실현 손익 합계(${REALIZED_PNL_CUMULATIVE_START_DATE} ~ 오늘, KST 누적)`
+                      }
+                    >
+                      <div
+                        className={`p-1 rounded-md shrink-0 ${
+                          totalPnlAll == null
+                            ? "bg-[#f1f5f9] text-[#94a3b8]"
+                            : totalPnlAll >= 0
+                              ? "bg-[#ecfdf5] text-[#10b981]"
+                              : "bg-[#fef2f2] text-[#ef4444]"
+                        }`}
+                      >
+                        {totalPnlAll == null || totalPnlAll >= 0 ? (
+                          <TrendingUp className="h-3.5 w-3.5" />
+                        ) : (
+                          <TrendingDown className="h-3.5 w-3.5" />
+                        )}
+                      </div>
+                      <span className="text-xs text-[#64748b] shrink-0">총손익</span>
+                      <span
+                        className={`text-sm font-semibold truncate ${
+                          totalPnlAll == null
+                            ? "text-[#94a3b8]"
+                            : totalPnlAll >= 0
+                              ? "text-[#16a34a]"
+                              : "text-[#dc2626]"
+                        }`}
+                      >
+                        {realizedPnlError
+                          ? "—"
+                          : totalPnlAll == null
+                            ? "…"
+                            : `${totalPnlAll >= 0 ? "+" : ""}${formatKrw(totalPnlAll)}`}
                       </span>
                     </div>
                   </div>

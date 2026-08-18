@@ -1,4 +1,4 @@
-import { render, screen, waitFor, fireEvent, act, cleanup } from "@testing-library/react";
+import { render, screen, waitFor, fireEvent, act, cleanup, within } from "@testing-library/react";
 import { MemoryRouter, useLocation } from "react-router-dom";
 import { describe, expect, it, afterEach, vi, beforeEach } from "vitest";
 import AccountsView from "../components/AccountsView";
@@ -668,6 +668,71 @@ describe("AccountsView snapshot dedup", () => {
     expect(screen.getByText("1,550,000원", { exact: false })).toBeInTheDocument();
     // "+500원" appears in summary card AND positions table → use getAllByText
     expect(screen.getAllByText("+500원", { exact: false }).length).toBeGreaterThanOrEqual(1);
+  });
+
+  it("총손익 카드는 미실현 손익 + 실현 손익 합계이며, 2026-08-01부터 오늘까지 누적 조회한다", async () => {
+    vi.spyOn(apiClient, "getClients").mockResolvedValue(mockClients);
+    vi.spyOn(apiClient, "getAccounts").mockResolvedValue(mockAccounts);
+    vi.spyOn(apiClient, "getAccountSnapshots").mockResolvedValue(makeSnapshotResponse());
+    const getRealizedPnlSummarySpy = vi
+      .spyOn(apiClient, "getRealizedPnlSummary")
+      .mockResolvedValue({
+        account_id: "ac-22222222-2222-2222-2222-222222222222",
+        instrument_id: null,
+        start_date: "2026-08-01",
+        end_date: "2026-08-18",
+        realized_pnl_net_sum: 300,
+        sell_event_count: 1,
+        buy_amount_sum: 0,
+        sell_amount_sum: 0,
+        fee_tax_sum: 0,
+        allocated_buy_fee_sum: 0,
+        recompute_pending_count: 0,
+        by_instrument: [],
+      });
+
+    render(<AccountsView />, { wrapper: RouterWrapper });
+
+    await waitFor(() => {
+      expect(screen.getByText("CLIENT1-PAPER-PAPER")).toBeInTheDocument();
+    });
+    screen.getByText("CLIENT1-PAPER-PAPER").click();
+
+    // mockCashBalance.total_unrealized_pnl = 500(미실현) + realized_pnl_net_sum 300(실현) = 800
+    await waitFor(() => {
+      expect(screen.getByText("총손익")).toBeInTheDocument();
+      expect(screen.getByText("+800원", { exact: false })).toBeInTheDocument();
+    });
+
+    // 실현손익 합계는 2026-08-01 KST부터 누적 조회해야 한다(계좌 생성일 등 다른 기준 아님).
+    expect(getRealizedPnlSummarySpy).toHaveBeenCalledWith(
+      "ac-22222222-2222-2222-2222-222222222222",
+      expect.objectContaining({ startDate: "2026-08-01" }),
+    );
+  });
+
+  it("실현손익 조회가 실패하면 총손익을 0으로 대체하지 않고 '—'로 표시한다", async () => {
+    vi.spyOn(apiClient, "getClients").mockResolvedValue(mockClients);
+    vi.spyOn(apiClient, "getAccounts").mockResolvedValue(mockAccounts);
+    vi.spyOn(apiClient, "getAccountSnapshots").mockResolvedValue(makeSnapshotResponse());
+    vi.spyOn(apiClient, "getRealizedPnlSummary").mockRejectedValue(new Error("network error"));
+
+    render(<AccountsView />, { wrapper: RouterWrapper });
+
+    await waitFor(() => {
+      expect(screen.getByText("CLIENT1-PAPER-PAPER")).toBeInTheDocument();
+    });
+    screen.getByText("CLIENT1-PAPER-PAPER").click();
+
+    await waitFor(() => {
+      expect(screen.getByText("총손익")).toBeInTheDocument();
+    });
+
+    await waitFor(() => {
+      const totalPnlCard = screen.getByText("총손익").closest("div");
+      expect(totalPnlCard).not.toBeNull();
+      expect(within(totalPnlCard!).getByText("—")).toBeInTheDocument();
+    });
   });
 
   it("falls back to calculated values when KIS fields are undefined", async () => {
