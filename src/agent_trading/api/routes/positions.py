@@ -87,6 +87,9 @@ async def list_positions(
         if inst is not None:
             view.symbol = inst.symbol
             view.instrument_name = inst.name
+        cost_basis_state = await repos.position_cost_basis_states.get(aid, s.instrument_id)
+        if cost_basis_state is not None:
+            view.remaining_buy_fee_pool = float(cost_basis_state.remaining_buy_fee_pool)
         result.append(view)
     return result
 

@@ -1961,6 +1961,8 @@ class TestPositions:
         # ── Lineage visibility: symbol/name resolved from instrument_id ──
         assert pos["symbol"] == "AAPL"
         assert pos["instrument_name"] == "Apple Inc."
+        # ── position_cost_basis_state가 없으면 None (0과 구분) ──
+        assert pos["remaining_buy_fee_pool"] is None
 
     def test_list_positions_missing_param(self, client: TestClient) -> None:
         """``GET /positions`` returns 422 when account_id is missing."""
@@ -1977,6 +1979,67 @@ class TestPositions:
         response = client.get("/positions?account_id=00000000-0000-0000-0000-000000000000")
         assert response.status_code == 200
         assert response.json() == []
+
+    def test_list_positions_includes_remaining_buy_fee_pool(self) -> None:
+        """``GET /positions``는 ``position_cost_basis_state.remaining_buy_fee_pool``을
+
+        조인해 노출한다 — 현재 보유 수량에 대응하는, 아직 SELL에 배분되지
+        않은 누적 매수 수수료다. 실현손익(``allocated_buy_fee``)에 이미
+        반영된 몫과는 별개 필드다.
+        """
+        repos = build_in_memory_repositories()
+        app = create_app(repos=repos, auth_enabled=False)
+        account_id = uuid4()
+        instrument_id = uuid4()
+        now = datetime.now(timezone.utc)
+
+        asyncio.run(
+            repos.instruments.add(
+                InstrumentEntity(
+                    instrument_id=instrument_id,
+                    symbol="005930",
+                    market_code="KOSPI",
+                    asset_class="equity",
+                    currency="KRW",
+                    name="Samsung Electronics",
+                )
+            )
+        )
+        asyncio.run(
+            repos.position_snapshots.add(
+                PositionSnapshotEntity(
+                    position_snapshot_id=uuid4(),
+                    account_id=account_id,
+                    instrument_id=instrument_id,
+                    quantity=Decimal("10"),
+                    average_price=Decimal("70000"),
+                    market_price=Decimal("72000"),
+                    unrealized_pnl=Decimal("20000"),
+                    source_of_truth="broker",
+                    snapshot_at=now,
+                    created_at=now,
+                )
+            )
+        )
+        asyncio.run(
+            repos.position_cost_basis_states.upsert(
+                PositionCostBasisStateEntity(
+                    account_id=account_id,
+                    instrument_id=instrument_id,
+                    quantity=Decimal("10"),
+                    average_cost=Decimal("70000"),
+                    remaining_buy_fee_pool=Decimal("1234.56"),
+                    updated_at=now,
+                )
+            )
+        )
+
+        with TestClient(app) as client:
+            response = client.get(f"/positions?account_id={account_id}")
+        assert response.status_code == 200
+        data = response.json()
+        assert len(data) == 1
+        assert data[0]["remaining_buy_fee_pool"] == 1234.56
 
     def test_get_cash_balance(self, client: TestClient) -> None:
         """``GET /cash-balances?account_id=...`` returns seeded cash balance."""
@@ -2050,6 +2113,73 @@ class TestPositions:
         assert data["cash_balance"] is not None
         assert data["cash_balance"]["orderable_amount"] == 443598.0
         assert data["cash_balance"]["settlement_amount"] == 445828.0
+
+    def test_get_account_snapshots_latest_includes_remaining_buy_fee_pool(self) -> None:
+        """포지션 각 행에 ``position_cost_basis_state.remaining_buy_fee_pool``이
+
+        조인되어 노출된다(sync_run_id 없는 legacy timestamp-fallback 경로 포함).
+        state가 없는 종목은 ``None``이다.
+        """
+        repos = build_in_memory_repositories()
+        app = create_app(repos=repos, auth_enabled=False)
+        account_id = uuid4()
+        instrument_with_state = uuid4()
+        instrument_without_state = uuid4()
+        now = datetime.now(timezone.utc)
+
+        for iid, symbol in (
+            (instrument_with_state, "005930"),
+            (instrument_without_state, "000660"),
+        ):
+            asyncio.run(
+                repos.instruments.add(
+                    InstrumentEntity(
+                        instrument_id=iid,
+                        symbol=symbol,
+                        market_code="KOSPI",
+                        asset_class="equity",
+                        currency="KRW",
+                        name=symbol,
+                    )
+                )
+            )
+            asyncio.run(
+                repos.position_snapshots.add(
+                    PositionSnapshotEntity(
+                        position_snapshot_id=uuid4(),
+                        account_id=account_id,
+                        instrument_id=iid,
+                        quantity=Decimal("10"),
+                        average_price=Decimal("70000"),
+                        market_price=Decimal("72000"),
+                        unrealized_pnl=Decimal("20000"),
+                        source_of_truth="broker",
+                        snapshot_at=now,
+                        created_at=now,
+                    )
+                )
+            )
+
+        asyncio.run(
+            repos.position_cost_basis_states.upsert(
+                PositionCostBasisStateEntity(
+                    account_id=account_id,
+                    instrument_id=instrument_with_state,
+                    quantity=Decimal("10"),
+                    average_cost=Decimal("70000"),
+                    remaining_buy_fee_pool=Decimal("999.99"),
+                    updated_at=now,
+                )
+            )
+        )
+
+        with TestClient(app) as client:
+            response = client.get(f"/account-snapshots/latest?account_id={account_id}")
+        assert response.status_code == 200
+        data = response.json()
+        by_instrument = {p["instrument_id"]: p for p in data["positions"]}
+        assert by_instrument[str(instrument_with_state)]["remaining_buy_fee_pool"] == 999.99
+        assert by_instrument[str(instrument_without_state)]["remaining_buy_fee_pool"] is None
 
 
 class TestRealizedPnl:

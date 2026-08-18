@@ -79,6 +79,31 @@ async def _build_cash_balance_view(
     return CashBalanceSnapshotView.model_validate(effective_snapshot)
 
 
+async def _build_position_view(
+    repos: RepositoryContainer,
+    account_id: UUID,
+    snapshot,
+) -> PositionSnapshotView:
+    """스냅샷 엔티티 하나를 symbol/instrument_name/remaining_buy_fee_pool까지
+    채운 ``PositionSnapshotView``로 변환한다.
+
+    이 파일의 4개 코드 경로(same_run / partial_position_only /
+    after_hours_cash_updated / timestamp_proximity fallback)가 동일한
+    enrichment 로직을 반복해 쓰므로 하나로 묶었다.
+    """
+    view = PositionSnapshotView.model_validate(snapshot)
+    inst = await repos.instruments.get(snapshot.instrument_id)
+    if inst is not None:
+        view.symbol = inst.symbol
+        view.instrument_name = inst.name
+    cost_basis_state = await repos.position_cost_basis_states.get(
+        account_id, snapshot.instrument_id,
+    )
+    if cost_basis_state is not None:
+        view.remaining_buy_fee_pool = float(cost_basis_state.remaining_buy_fee_pool)
+    return view
+
+
 def _compute_alignment_status(
     positions_snapshot_at: datetime | None,
     cash_snapshot_at: datetime | None,
@@ -162,14 +187,9 @@ async def get_latest_account_snapshots(
             aid, sync_run_id,
         )
 
-        positions: list[PositionSnapshotView] = []
-        for s in sync_positions:
-            view = PositionSnapshotView.model_validate(s)
-            inst = await repos.instruments.get(s.instrument_id)
-            if inst is not None:
-                view.symbol = inst.symbol
-                view.instrument_name = inst.name
-            positions.append(view)
+        positions: list[PositionSnapshotView] = [
+            await _build_position_view(repos, aid, s) for s in sync_positions
+        ]
 
         cash_balance = await _build_cash_balance_view(repos, aid, sync_cash)
 
@@ -236,14 +256,7 @@ async def get_latest_account_snapshots(
             aid, sync_run_id,
         )
 
-        positions = []
-        for s in sync_positions:
-            view = PositionSnapshotView.model_validate(s)
-            inst = await repos.instruments.get(s.instrument_id)
-            if inst is not None:
-                view.symbol = inst.symbol
-                view.instrument_name = inst.name
-            positions.append(view)
+        positions = [await _build_position_view(repos, aid, s) for s in sync_positions]
 
         cash_balance = None
         positions_snapshot_at = (
@@ -279,14 +292,7 @@ async def get_latest_account_snapshots(
             aid, cash_sync_id,
         )
 
-        positions = []
-        for s in pos_positions:
-            view = PositionSnapshotView.model_validate(s)
-            inst = await repos.instruments.get(s.instrument_id)
-            if inst is not None:
-                view.symbol = inst.symbol
-                view.instrument_name = inst.name
-            positions.append(view)
+        positions = [await _build_position_view(repos, aid, s) for s in pos_positions]
 
         cash_balance = await _build_cash_balance_view(repos, aid, sync_cash)
 
@@ -314,12 +320,7 @@ async def get_latest_account_snapshots(
     positions = []
     positions_snapshot_at = None
     for s in snapshots:
-        view = PositionSnapshotView.model_validate(s)
-        inst = await repos.instruments.get(s.instrument_id)
-        if inst is not None:
-            view.symbol = inst.symbol
-            view.instrument_name = inst.name
-        positions.append(view)
+        positions.append(await _build_position_view(repos, aid, s))
         if positions_snapshot_at is None or s.snapshot_at > positions_snapshot_at:
             positions_snapshot_at = s.snapshot_at
 
