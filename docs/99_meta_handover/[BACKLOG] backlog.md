@@ -7043,3 +7043,41 @@ gate) 구현 완료", `[PRIORITY_MAP]` 동일 날짜 항목.
   `provider_rate_limit` reason_codes 건수/HOLD fallback 비율/
   BUY·APPROVE 전환율/latency 변화를 실측해 동시성 값(3)이 적절한지
   재평가한다.
+- **후속 실측 결과(2026-08-18 10:36~10:37 KST, PR #286 반영 후 첫
+  사이클)**: `reason_codes` 구조화는 완전히 검증됨(silent fallback
+  0건). 그러나 429 건수는 기준선과 동일(72건/사이클, 변화 없음),
+  fallback 비율은 오히려 소폭 상승(47.2%→50.0%), cycle wall-clock은
+  거의 2배로 증가(약 30초→56.7초). **동시성 완화(5→3)는 429 감소
+  효과가 입증되지 않았고 latency만 늘렸다** — 아래 후속 PR에서
+  rollback.
+- **추가 발견**: `.env.example`에 문서화한 `DECISION_LOOP_MAX_
+  CONCURRENCY`가 `docker-compose.yml`의 `ops-scheduler` `environment:`
+  블록에 선언돼 있지 않아, env 파일에 값을 설정해도 컨테이너로
+  전달되지 않는 배선 누락이 있었다(PR #279에서 고쳤던 SPPV-2.73과
+  동일 패턴의 회귀). 이번 후속 PR에서 해당 변수 자체를 제거하며
+  함께 정리됨(더 이상 유지할 필요 없음).
+
+## FDC provider 호출 shared rate limiter 도입 + 동시성 완화 rollback(2026-08-18 KST)
+
+상세: `docs/30_work_log/2026-08-18_fdc_shared_rate_limiter.md`.
+
+- 위 실측 결과에 따라 PR #286의 `DECISION_LOOP_MAX_CONCURRENCY`
+  (기본값 3, 종목 동시 처리 상한 완화)을 완전히 rollback했다 —
+  `_SEMAPHORE_MAX`를 원래 하드코딩 5로 복원, 관련 env var/헬퍼 함수/
+  `.env.example` 항목/테스트를 모두 제거.
+- 대신 `agent_trading.services.ai_agents.fdc_rate_limiter`(신규)를
+  도입 — 파일 락(`fcntl.flock`) + sliding-window 타임스탬프 기록으로
+  **실제로 프로세스 간에 공유되는** rate limiter(`asyncio.Semaphore`는
+  프로세스 경계를 못 넘어 "가짜 shared limiter"였음). 기본 정책은
+  60초 윈도우당 최대 10회 호출(Gemini RPM limit=15 대비 여유),
+  대기 상한 15초 초과 또는 상태 파일 오류 시 fail-open bypass(경고
+  로그 남김, 조용한 통과 아님).
+- `scripts/run_agent_subprocess.py`가 FDC 호출 직전(provider_client가
+  실제로 있을 때만)에 이 limiter를 통과시킨다.
+- PR #286의 `reason_codes`(`provider_rate_limit` 등) 관측성 개선은
+  그대로 유지.
+- 주문 gate/EV gate/sizing/FDC 판단 정책/fallback HOLD 정책 변경 없음.
+- **남은 backlog 8**: 재배포 후 429 건수, `provider_rate_limit`
+  fallback 비율, cycle wall-clock, `FDC rate limiter` 대기/bypass
+  로그 발생 빈도를 실측해 정책값(60초당 10회, 대기 상한 15초)이
+  적절한지 재평가한다.

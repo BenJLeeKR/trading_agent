@@ -58,6 +58,9 @@ from agent_trading.services.ai_agents.final_decision_composer import (
 from agent_trading.services.ai_agents.subprocess_io import (
     write_agent_subprocess_output,
 )
+from agent_trading.services.ai_agents.fdc_rate_limiter import (
+    wait_for_fdc_slot,
+)
 from agent_trading.services.ai_agents.schemas import (
     AIComplianceOutput,
     AIRiskOutput,
@@ -1076,6 +1079,17 @@ async def main() -> None:
             )
         else:
             # --- 2d. Final Decision Composer Agent ---
+            # 2026-08-18: 실제 provider 호출(FinalDecisionComposerAgent) 직전에
+            # 프로세스 간 공유 rate limiter를 통과시킨다. StubFinalDecisionComposerAgent
+            # (provider 미설정)는 네트워크 호출이 없으므로 대기시키지 않는다.
+            if provider_client is not None:
+                _diag("Waiting for FDC rate limiter slot ...")
+                rate_limit_result = await wait_for_fdc_slot()
+                _diag(
+                    f"FDC rate limiter: waited={rate_limit_result.waited_seconds:.1f}s "
+                    f"bypassed={rate_limit_result.bypassed} "
+                    f"reason={rate_limit_result.bypass_reason}"
+                )
             logger.info("Starting FinalDecisionComposerAgent.run() ...")
             _diag("Starting FinalDecisionComposerAgent.run() ...")
             request_with_ei_ar_ac = _reconstruct_request(
