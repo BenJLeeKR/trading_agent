@@ -28,6 +28,10 @@ GitHub Actions도 사람과 AI가 쓰는 동일한 하네스를 사용한다. CI
 - 문서만 변경된 `main` push는 `docs/` 경로가 sync-only 허용 대상으로 잡히면 `sync_source`만 실행하고 `activate_runtime`은 실행하지 않는다.
 - 이 경로는 `market_hours_guard`가 `skipped`여도 `sync_source`의 `always()` 조건으로 분기 평가가 계속 진행돼야 한다.
 - `changes` job은 `activate_required`, `sync_only_candidate_count`, `sync_only_allowlist_count`, `sync_only_blocked_count`를 함께 출력해 장중 sync-only 후보와 runtime 영향 변경을 구분한다.
+- runtime 영향 변경이 전부 `admin_ui/` 아래면 `frontend_only_activate=1`로 판정하고, `activate_runtime`은 `docker compose up -d --build frontend`만 실행한다. 프런트 전용 변경에는 DB 스키마 변경이 있을 수 없으므로 `migrate`를 실행하지 않고(`deploy_migration_run=0`), 단일 서비스 지정에 `--remove-orphans`를 함께 쓰지 않는다.
+- `nginx-proxy`의 `proxy_pass`는 리터럴 호스트명을 쓰고 `resolver`가 없어 기동 시 1회만 DNS를 해석한다. `frontend`를 recreate하면 IP가 바뀌므로 `docker exec nginx-proxy nginx -s reload`는 프런트 전용 분기와 전체 배포 분기 **양쪽 모두**에서 실행한다.
+- 관련 지표: `frontend_only_activate_count`, `non_frontend_runtime_file_count`(`changes` job), `deploy_frontend_only_activate_count`, `deploy_migration_run`(`activate_runtime` job).
+- `market_hours_guard`의 장중(평일 09:00-15:30 KST) 배포 차단은 이번 분기 도입으로 바뀌지 않는다. 프런트 전용 변경도 장중에는 그대로 차단되며, 예외는 여전히 `workflow_dispatch`의 `allow_market_hours_deploy` 뿐이다.
 - 수동 재배포는 `workflow_dispatch`의 `deploy_main=true` 입력으로만 연다.
 - 수동 재배포는 과거 workflow run을 재개하지 않고, 실행 시점의 최신 `origin/main` SHA를 다시 fetch한 뒤 그 SHA를 배포한다.
 - `market_hours_guard` job은 `Asia/Seoul` 기준 평일 `09:00-15:30 KST`를 장중으로 계산한다.

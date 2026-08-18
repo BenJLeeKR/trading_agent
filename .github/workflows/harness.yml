@@ -49,6 +49,8 @@ jobs:
       sync_only_allowlist_count: ${{ steps.detect.outputs.sync_only_allowlist_count }}
       sync_only_blocked_count: ${{ steps.detect.outputs.sync_only_blocked_count }}
       deploy_manual_dispatch_requested_count: ${{ steps.detect.outputs.deploy_manual_dispatch_requested_count }}
+      frontend_only_activate: ${{ steps.detect.outputs.frontend_only_activate }}
+      non_frontend_runtime_file_count: ${{ steps.detect.outputs.non_frontend_runtime_file_count }}
     steps:
       - name: Checkout
         uses: actions/checkout@v5
@@ -76,6 +78,8 @@ jobs:
               echo "sync_only_allowlist_count=0"
               echo "sync_only_blocked_count=0"
               echo "deploy_manual_dispatch_requested_count=$deploy_manual_dispatch_requested_count"
+              echo "frontend_only_activate=0"
+              echo "non_frontend_runtime_file_count=0"
             } >> "$GITHUB_OUTPUT"
 
             echo "changed_file_count=0"
@@ -87,6 +91,8 @@ jobs:
             echo "sync_only_blocked_count=0"
             echo "deploy_skipped_by_docs_only_count=0"
             echo "deploy_manual_dispatch_requested_count=$deploy_manual_dispatch_requested_count"
+            echo "frontend_only_activate_count=0"
+            echo "non_frontend_runtime_file_count=0"
             exit 0
           fi
 
@@ -125,6 +131,15 @@ jobs:
           sync_only_blocked_count="$((sync_only_candidate_count - sync_only_allowlist_count))"
           deploy_relevant_file_count="$(printf '%s\n' "$deploy_relevant_files" | sed '/^$/d' | wc -l | tr -d ' ')"
           activate_relevant_file_count="$(printf '%s\n' "$runtime_affecting_files" | sed '/^$/d' | wc -l | tr -d ' ')"
+          # 런타임 영향 파일이 전부 admin_ui/ 아래면 프런트 전용 배포로 본다.
+          # admin_ui/AGENTS.md 같은 비런타임 파일은 애초에 runtime_affecting_pattern에
+          # 걸리지 않으므로 여기서 따로 걸러낼 필요가 없다.
+          non_frontend_runtime_files="$(
+            printf '%s\n' "$runtime_affecting_files" |
+              sed '/^$/d' |
+              grep -vE '^admin_ui/' || true
+          )"
+          non_frontend_runtime_file_count="$(printf '%s\n' "$non_frontend_runtime_files" | sed '/^$/d' | wc -l | tr -d ' ')"
 
           if [ "$deploy_relevant_file_count" -gt 0 ]; then
             deploy_required="1"
@@ -140,6 +155,12 @@ jobs:
             activate_required="0"
           fi
 
+          if [ "$activate_required" = "1" ] && [ "$non_frontend_runtime_file_count" -eq 0 ]; then
+            frontend_only_activate="1"
+          else
+            frontend_only_activate="0"
+          fi
+
           {
             echo "deploy_required=$deploy_required"
             echo "activate_required=$activate_required"
@@ -149,6 +170,8 @@ jobs:
             echo "sync_only_allowlist_count=$sync_only_allowlist_count"
             echo "sync_only_blocked_count=$sync_only_blocked_count"
             echo "deploy_manual_dispatch_requested_count=0"
+            echo "frontend_only_activate=$frontend_only_activate"
+            echo "non_frontend_runtime_file_count=$non_frontend_runtime_file_count"
           } >> "$GITHUB_OUTPUT"
 
           echo "changed_file_count=$changed_file_count"
@@ -160,6 +183,8 @@ jobs:
           echo "sync_only_blocked_count=$sync_only_blocked_count"
           echo "deploy_skipped_by_docs_only_count=$deploy_skipped_by_docs_only_count"
           echo "deploy_manual_dispatch_requested_count=0"
+          echo "frontend_only_activate_count=$frontend_only_activate"
+          echo "non_frontend_runtime_file_count=$non_frontend_runtime_file_count"
 
   safe:
     name: Safe harness contracts
@@ -397,12 +422,26 @@ jobs:
 
             cd /workspace/agent_trading
 
-            bash scripts/harness/docker_compose_env.sh run --build --rm migrate
-            echo "deploy_migration_run=1"
+            if [ "${{ needs.changes.outputs.frontend_only_activate }}" = "1" ]; then
+              # 프런트 전용 변경: frontend 이미지만 재빌드한다. DB 스키마 변경이
+              # 있을 수 없으므로 migrate를 돌리지 않고, 단일 서비스 지정에
+              # --remove-orphans를 함께 쓰면 나머지 서비스가 orphan으로 판정될 수
+              # 있으므로 쓰지 않는다.
+              bash scripts/harness/docker_compose_env.sh up -d --build frontend
+              echo "deploy_migration_run=0"
+              echo "deploy_frontend_only_activate_count=1"
+            else
+              bash scripts/harness/docker_compose_env.sh run --build --rm migrate
+              echo "deploy_migration_run=1"
 
-            bash scripts/harness/docker_compose_env.sh up -d --build --remove-orphans
+              bash scripts/harness/docker_compose_env.sh up -d --build --remove-orphans
+              echo "deploy_frontend_only_activate_count=0"
+            fi
             echo "deploy_restart_run=1"
 
+            # nginx-proxy의 proxy_pass가 리터럴 호스트명을 쓰고 resolver가 없어
+            # 기동 시 1회만 DNS를 해석한다. frontend를 recreate하면 IP가 바뀌므로
+            # reload가 없으면 502가 난다. 두 분기 모두에서 생략하지 않는다.
             docker exec nginx-proxy nginx -s reload
             echo "deploy_proxy_reload_run=1"
             echo "deploy_activate_run_count=1"
