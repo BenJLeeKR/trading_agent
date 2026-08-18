@@ -295,8 +295,17 @@ export default function AccountsView() {
       },
     },
     {
-      key: "broker_account_code",
+      key: "broker_account_ref",
       header: "계좌번호",
+      render: (r) => (
+        <span className="text-xs font-mono text-[#64748b]">
+          {r.broker_account_ref || "—"}
+        </span>
+      ),
+    },
+    {
+      key: "broker_account_code",
+      header: "브로커 코드",
       render: (r) => {
         const code = r.broker_account_code;
         const masked = r.account_masked;
@@ -521,6 +530,9 @@ export default function AccountsView() {
         <div>
           {/* Accounts List */}
           <div className="mb-4">
+            {/* 계좌 검색/필터 도구 — 요청에 따라 화면에서 숨김. 복원 시 이 주석만
+                해제하면 된다(아래 searchText/envFilter state와 filteredAccounts는
+                그대로 유지되어 있음).
             <FilterBar
               searchPlaceholder="계좌 별칭 또는 번호 검색..."
               searchValue={searchText}
@@ -542,6 +554,7 @@ export default function AccountsView() {
                 setEnvFilter("");
               }}
             />
+            */}
             <DataTable
               columns={accountColumns}
               data={filteredAccounts}
@@ -555,6 +568,18 @@ export default function AccountsView() {
           {/* Account Detail Panel */}
           {safeSelectedAccount && selectedAccountDetail && (
             <div className="space-y-4 mt-6">
+              {/* Account Detail header — 계좌 메타데이터 카드 제거 후 패널 전체를 닫는
+                  X만 남긴 슬림 헤더. 세로 공간을 아끼기 위해 카드/패딩 없이 제목줄만 둔다. */}
+              <div className="flex items-center justify-between">
+                <h3 className="text-lg font-semibold text-[#0f172a]">계좌 상세</h3>
+                <button
+                  onClick={() => setSelectedAccount(null)}
+                  className="p-1 text-[#94a3b8] hover:text-[#64748b] transition-colors"
+                >
+                  <X className="h-5 w-5" />
+                </button>
+              </div>
+
               {/* Locked warning */}
               {selectedAccountDetail.status === "locked" && (
                 <div className="flex items-center gap-2 bg-[#fef2f2] border border-[#f87171] rounded-lg px-4 py-3">
@@ -565,82 +590,6 @@ export default function AccountsView() {
                   </span>
                 </div>
               )}
-
-              {/* Account Detail card */}
-              <div className="bg-white rounded-xl border border-[#e2e8f0] p-5">
-                <div className="flex items-center justify-between mb-4">
-                  <h3 className="text-lg font-semibold text-[#0f172a]">계좌 메타데이터</h3>
-                  <button
-                    onClick={() => setSelectedAccount(null)}
-                    className="p-1 text-[#94a3b8] hover:text-[#64748b] transition-colors"
-                  >
-                    <X className="h-5 w-5" />
-                  </button>
-                </div>
-                <dl className="flex flex-wrap items-center gap-x-6 gap-y-2 text-sm">
-                  <div className="flex items-center gap-2">
-                    <dt className="text-[#64748b]">계좌 코드</dt>
-                    <dd className="font-mono text-[#0f172a]">
-                      {selectedAccountDetail.account_code ?? "—"}
-                    </dd>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <dt className="text-[#64748b]">별칭</dt>
-                    <dd className="font-medium text-[#0f172a]">
-                      {selectedAccountDetail.account_alias ?? "—"}
-                    </dd>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <dt className="text-[#64748b]">계좌번호</dt>
-                    <dd className="font-mono text-[#0f172a]">
-                      {selectedAccountDetail.account_masked ?? "—"}
-                    </dd>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <dt className="text-[#64748b]">브로커 코드</dt>
-                    <dd className="font-mono text-[#0f172a]">
-                      {selectedAccountDetail.broker_account_code ?? "—"}
-                    </dd>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <dt className="text-[#64748b]">환경</dt>
-                    <dd>
-                      <StatusBadge
-                        variant={
-                          selectedAccountDetail.environment === "live"
-                            ? "warning"
-                            : "info"
-                        }
-                      >
-                        {selectedAccountDetail.environment.toUpperCase()}
-                      </StatusBadge>
-                    </dd>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <dt className="text-[#64748b]">상태</dt>
-                    <dd>
-                      <StatusBadge
-                        variant={
-                          selectedAccountDetail.status === "active"
-                            ? "success"
-                            : "warning"
-                        }
-                      >
-                        {selectedAccountDetail.status.toUpperCase()}
-                      </StatusBadge>
-                    </dd>
-                  </div>
-                </dl>
-              </div>
-
-              {/* Broker Snapshot section label */}
-              <div className="flex items-center gap-2">
-                <div className="h-px flex-1 bg-[#e2e8f0]" />
-                <span className="text-xs font-medium text-[#94a3b8] uppercase tracking-wider">
-                  브로커 스냅샷
-                </span>
-                <div className="h-px flex-1 bg-[#e2e8f0]" />
-              </div>
 
               {/* ── Snapshot alignment status badge (alignment_detail 기반) ── */}
               {snapshotAlignment && alignmentDetail ? (
@@ -721,57 +670,53 @@ export default function AccountsView() {
                 <LoadingSpinner text="계좌 상세 로딩 중..." />
               ) : (
                 <>
-                  {/* Summary cards */}
+                  {/* Summary cards — 40px 높이로 압축한 한 줄 레이아웃.
+                      TODO: 맨 오른쪽 "총 손익률" 카드 추가는 라벨(%)과 계산식(금액)이
+                      맞지 않아 사용자 확인 대기 중(그리드는 아직 3열). */}
                   <div className="grid grid-cols-3 gap-4">
-                    <div className="bg-white rounded-xl border border-[#e2e8f0] p-4">
-                      <div className="flex items-center gap-2 mb-2">
-                        <div className="p-1.5 rounded-lg bg-[#eef2ff] text-[#6366f1]">
-                          <Wallet className="h-4 w-4" />
-                        </div>
+                    <div className="h-10 bg-white rounded-xl border border-[#e2e8f0] px-3 flex items-center gap-2">
+                      <div className="p-1 rounded-md bg-[#eef2ff] text-[#6366f1] shrink-0">
+                        <Wallet className="h-3.5 w-3.5" />
                       </div>
-                      <p className="text-2xl font-semibold text-[#0f172a]">
+                      <span className="text-xs text-[#64748b] shrink-0">총 자산</span>
+                      <span className="text-sm font-semibold text-[#0f172a] truncate">
                         {formatKrw(totalValue)}
-                      </p>
-                      <p className="text-xs text-[#64748b] mt-1">총 자산</p>
+                      </span>
                     </div>
-                    <div className="bg-white rounded-xl border border-[#e2e8f0] p-4">
-                      <div className="flex items-center gap-2 mb-2">
-                        <div className="p-1.5 rounded-lg bg-[#ecfdf5] text-[#10b981]">
-                          <Wallet className="h-4 w-4" />
-                        </div>
+                    <div className="h-10 bg-white rounded-xl border border-[#e2e8f0] px-3 flex items-center gap-2">
+                      <div className="p-1 rounded-md bg-[#ecfdf5] text-[#10b981] shrink-0">
+                        <Wallet className="h-3.5 w-3.5" />
                       </div>
-                      <p className="text-2xl font-semibold text-[#0f172a]">
+                      <span className="text-xs text-[#64748b] shrink-0">현금 잔고</span>
+                      <span className="text-sm font-semibold text-[#0f172a] truncate">
                         {cashBalance
                           ? formatKrw(cashBalance.settlement_amount ?? cashBalance.settled_cash)
                           : "—"}
-                      </p>
-                      <p className="text-xs text-[#64748b] mt-1">현금 잔고</p>
+                      </span>
                     </div>
-                    <div className="bg-white rounded-xl border border-[#e2e8f0] p-4">
-                      <div className="flex items-center gap-2 mb-2">
-                        <div
-                          className={`p-1.5 rounded-lg ${
-                            totalPnl >= 0
-                              ? "bg-[#ecfdf5] text-[#10b981]"
-                              : "bg-[#fef2f2] text-[#ef4444]"
-                          }`}
-                        >
-                          {totalPnl >= 0 ? (
-                            <TrendingUp className="h-4 w-4" />
-                          ) : (
-                            <TrendingDown className="h-4 w-4" />
-                          )}
-                        </div>
+                    <div className="h-10 bg-white rounded-xl border border-[#e2e8f0] px-3 flex items-center gap-2">
+                      <div
+                        className={`p-1 rounded-md shrink-0 ${
+                          totalPnl >= 0
+                            ? "bg-[#ecfdf5] text-[#10b981]"
+                            : "bg-[#fef2f2] text-[#ef4444]"
+                        }`}
+                      >
+                        {totalPnl >= 0 ? (
+                          <TrendingUp className="h-3.5 w-3.5" />
+                        ) : (
+                          <TrendingDown className="h-3.5 w-3.5" />
+                        )}
                       </div>
-                      <p
-                        className={`text-2xl font-semibold ${
+                      <span className="text-xs text-[#64748b] shrink-0">미실현 손익</span>
+                      <span
+                        className={`text-sm font-semibold truncate ${
                           totalPnl >= 0 ? "text-[#16a34a]" : "text-[#dc2626]"
                         }`}
                       >
                         {totalPnl >= 0 ? "+" : ""}
                         {formatKrw(totalPnl)}
-                      </p>
-                      <p className="text-xs text-[#64748b] mt-1">미실현 손익</p>
+                      </span>
                     </div>
                   </div>
 

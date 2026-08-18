@@ -254,17 +254,16 @@ describe("AccountsView detail panel", () => {
 
     // Wait for detail panel + positions/cash balance data to load
     await waitFor(() => {
-      expect(screen.getByText("계좌 메타데이터")).toBeInTheDocument();
+      expect(screen.getByText("계좌 상세")).toBeInTheDocument();
       expect(screen.getByText("브로커 스냅샷 — 포지션")).toBeInTheDocument();
       expect(screen.getByText("브로커 스냅샷 — 현금 잔고")).toBeInTheDocument();
     });
 
-    // Detail fields — broker_account_code appears in table + detail panel
-    expect(screen.getAllByText("KIS-PAPER-****5678").length).toBeGreaterThanOrEqual(2);
-    // account_alias appears in detail panel Alias field (table shows account_code)
-    expect(screen.getByText("My Paper Account")).toBeInTheDocument();
-    // Environment appears in table + detail panel
-    expect(screen.getAllByText("PAPER").length).toBeGreaterThanOrEqual(2);
+    // 계좌 메타데이터 카드가 제거되어 브로커 코드/환경은 계좌 리스트 테이블에서만 렌더된다.
+    expect(screen.getByText("KIS-PAPER-****5678")).toBeInTheDocument();
+    expect(screen.getByText("PAPER")).toBeInTheDocument();
+    // 실제 계좌번호(KIS 8자리) 컬럼
+    expect(screen.getByText("50045678")).toBeInTheDocument();
 
     // Summary cards — "미실현 손익" also appears as a column header
     // in the positions table, so use getAllByText
@@ -301,7 +300,7 @@ describe("AccountsView detail panel", () => {
     screen.getByText("CLIENT1-PAPER-PAPER").click();
 
     await waitFor(() => {
-      expect(screen.getByText("계좌 메타데이터")).toBeInTheDocument();
+      expect(screen.getByText("계좌 상세")).toBeInTheDocument();
     });
 
     // Cash balance section should not render
