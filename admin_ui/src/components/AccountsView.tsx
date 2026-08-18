@@ -25,7 +25,7 @@ import { ErrorBanner } from "./common/ErrorBanner";
 import { LoadingSpinner } from "./common/LoadingSpinner";
 import type { Column } from "./common/DataTable";
 import { AlertCircle, Lock, Wallet, TrendingUp, TrendingDown, X, Users } from "lucide-react";
-import { formatKrw, formatKstElapsed, getKstTodayString } from "@/lib/utils";
+import { formatKrw, formatKstElapsed, getKstTodayString, toNumeric } from "@/lib/utils";
 
 /* ───────────────────────────────────────────
  * Helpers
@@ -243,7 +243,11 @@ export default function AccountsView() {
       startDate: REALIZED_PNL_CUMULATIVE_START_DATE,
       endDate: getKstTodayString(),
     })
-      .then((summary) => setRealizedPnlSum(summary.realized_pnl_net_sum))
+      // 백엔드 Decimal 필드(realized_pnl_net_sum)는 JSON에서 문자열로 직렬화된다
+      // (예: "-209763.00000000"). number 타입으로 그냥 받으면 이후 totalPnl과
+      // "+"로 더할 때 숫자 덧셈이 아니라 문자열 접합이 되어 총손익이 잘못
+      // 계산되므로(toNumeric() 주석 참고), 여기서 즉시 정규화한다.
+      .then((summary) => setRealizedPnlSum(toNumeric(summary.realized_pnl_net_sum)))
       .catch(() => setRealizedPnlError(true));
   }, [selectedAccount]);
 

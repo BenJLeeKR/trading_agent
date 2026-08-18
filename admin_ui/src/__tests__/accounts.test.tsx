@@ -674,6 +674,10 @@ describe("AccountsView snapshot dedup", () => {
     vi.spyOn(apiClient, "getClients").mockResolvedValue(mockClients);
     vi.spyOn(apiClient, "getAccounts").mockResolvedValue(mockAccounts);
     vi.spyOn(apiClient, "getAccountSnapshots").mockResolvedValue(makeSnapshotResponse());
+    // 백엔드 Decimal 필드는 JSON에서 문자열로 직렬화된다(예: "300.00000000") —
+    // 여기서도 실제 응답처럼 문자열로 mock해야 toNumeric() 정규화 누락(문자열
+    // 접합 버그)을 테스트가 잡아낼 수 있다. 순수 number로 mock하면 이 버그가
+    // 통과해버린다.
     const getRealizedPnlSummarySpy = vi
       .spyOn(apiClient, "getRealizedPnlSummary")
       .mockResolvedValue({
@@ -681,7 +685,7 @@ describe("AccountsView snapshot dedup", () => {
         instrument_id: null,
         start_date: "2026-08-01",
         end_date: "2026-08-18",
-        realized_pnl_net_sum: 300,
+        realized_pnl_net_sum: "300.00000000" as unknown as number,
         sell_event_count: 1,
         buy_amount_sum: 0,
         sell_amount_sum: 0,
@@ -698,7 +702,7 @@ describe("AccountsView snapshot dedup", () => {
     });
     screen.getByText("CLIENT1-PAPER-PAPER").click();
 
-    // mockCashBalance.total_unrealized_pnl = 500(미실현) + realized_pnl_net_sum 300(실현) = 800
+    // mockCashBalance.total_unrealized_pnl = 500(미실현) + realized_pnl_net_sum "300.00000000"(실현) = 800
     await waitFor(() => {
       expect(screen.getByText("총손익")).toBeInTheDocument();
       expect(screen.getByText("+800원", { exact: false })).toBeInTheDocument();
@@ -709,6 +713,47 @@ describe("AccountsView snapshot dedup", () => {
       "ac-22222222-2222-2222-2222-222222222222",
       expect.objectContaining({ startDate: "2026-08-01" }),
     );
+  });
+
+  it("실현손익이 문자열 음수(Decimal 직렬화)로 와도 미실현 손익과 정확히 합산된다", async () => {
+    // 회귀 재현: totalPnl(number) + realizedPnlSum(string)을 toNumeric() 없이
+    // "+"로 더하면 숫자 덧셈이 아니라 문자열 접합이 되어, formatKrw의
+    // parseFloat()이 "-" 앞부분만 읽어 총손익이 미실현 손익과 같아 보이는
+    // 버그가 있었다. 이 케이스는 그 버그가 재발하면 실패한다.
+    vi.spyOn(apiClient, "getClients").mockResolvedValue(mockClients);
+    vi.spyOn(apiClient, "getAccounts").mockResolvedValue(mockAccounts);
+    vi.spyOn(apiClient, "getAccountSnapshots").mockResolvedValue(makeSnapshotResponse());
+    vi.spyOn(apiClient, "getRealizedPnlSummary").mockResolvedValue({
+      account_id: "ac-22222222-2222-2222-2222-222222222222",
+      instrument_id: null,
+      start_date: "2026-08-01",
+      end_date: "2026-08-18",
+      realized_pnl_net_sum: "-209763.00000000" as unknown as number,
+      sell_event_count: 3,
+      buy_amount_sum: 0,
+      sell_amount_sum: 0,
+      fee_tax_sum: 0,
+      allocated_buy_fee_sum: 0,
+      recompute_pending_count: 0,
+      by_instrument: [],
+    });
+
+    render(<AccountsView />, { wrapper: RouterWrapper });
+
+    await waitFor(() => {
+      expect(screen.getByText("CLIENT1-PAPER-PAPER")).toBeInTheDocument();
+    });
+    screen.getByText("CLIENT1-PAPER-PAPER").click();
+
+    // totalPnl(미실현, 500) + (-209763) = -209263 → 미실현 손익 카드(+500원)와 달라야 한다.
+    await waitFor(() => {
+      expect(screen.getByText("총손익")).toBeInTheDocument();
+      const totalPnlAllCard = screen.getByText("총손익").closest("div");
+      expect(totalPnlAllCard).not.toBeNull();
+      // 버그 재발 시 문자열 접합으로 인해 "+500원"(미실현 손익과 동일)이 표시된다.
+      expect(within(totalPnlAllCard!).getByText("-209,263원", { exact: false })).toBeInTheDocument();
+      expect(within(totalPnlAllCard!).queryByText("+500원", { exact: false })).not.toBeInTheDocument();
+    });
   });
 
   it("실현손익 조회가 실패하면 총손익을 0으로 대체하지 않고 '—'로 표시한다", async () => {
