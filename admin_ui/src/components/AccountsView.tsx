@@ -760,7 +760,7 @@ export default function AccountsView() {
                       title={
                         realizedPnlError
                           ? "실현손익 조회에 실패해 총손익을 계산할 수 없습니다"
-                          : `총손익 = 미실현 손익 + 실현 손익 합계(${REALIZED_PNL_CUMULATIVE_START_DATE} ~ 오늘, KST 누적)`
+                          : undefined
                       }
                     >
                       <div
