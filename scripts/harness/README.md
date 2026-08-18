@@ -37,6 +37,9 @@ GitHub Actions도 사람과 AI가 쓰는 동일한 하네스를 사용한다. CI
 - `market_hours_guard` job은 `Asia/Seoul` 기준 평일 `09:00-15:30 KST`를 장중으로 계산한다.
 - 장중에는 자동 배포를 막고 `deploy_skipped_by_market_hours_count=1`을 출력한다.
 - 장중이라도 `activate_required=0`, `sync_only_allowlist_count>0`, `sync_only_blocked_count=0`이면 `sync_source`만 실행하고 `deploy_sync_only_run_count=1`, `deploy_activate_skipped_by_market_hours_count=1`을 출력한다.
+- `sync_source`의 `git reset --hard`는 이번 push의 변경분이 아니라 `origin/main` 트리 전체를 내려받는다. 따라서 sync-only 모드(`allow_deploy!=1`)에서는 서버 `HEAD`와 배포 대상 SHA 사이에 runtime 영향 파일이 남아 있는지 먼저 판정하고, 1건이라도 있으면 동기화하지 않고 실패로 끝낸다. `src/`와 `scripts/`는 `ops-scheduler`에 bind mount돼 있고 decision loop는 매 사이클 subprocess로 새로 spawn되므로, 이 검사가 없으면 장중에 차단해 둔 매매 코드가 재기동 없이 적용될 수 있다.
+- 관련 지표: `deploy_sync_pending_runtime_file_count`, `deploy_sync_blocked_by_pending_runtime_count`. 차단 시 `DETAIL pending_runtime_files:`로 대상 파일을 나열한다.
+- runtime 영향 경로 규칙은 `changes` job에 한 번만 정의하고 `runtime_affecting_pattern` output으로 `sync_source`에 전달한다. 같은 규칙을 두 곳에 중복 정의하지 않는다.
 - 장중 수동 재배포는 `allow_market_hours_deploy=true`일 때만 허용하고 `deploy_market_hours_override_count=1`을 출력한다.
 - 장중 source sync와 activate 분리 설계 초안은 `docs/80_harness_engineering/deploy_sync_activation_contract.md`를 따른다.
 - 남은 실검증은 장 외 시간 `push main`에서 `activate_runtime=success`가 나오는 자연 경로 `1`건이며, 기대 조합은 `deploy_market_hours_override_count=0`, `Sync source after safe harness=success`, `Activate runtime after source sync=success`다.

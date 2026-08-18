@@ -472,6 +472,24 @@ if full_deploy_commands:
         migrate_index >= 0 and up_index >= 0 and migrate_index < up_index
     )
 
+sync_source_section = section_between(workflow_text, "  sync_source:", "  activate_runtime:")
+sync_source_commands = command_lines_only(sync_source_section)
+sync_source_pending_guard_count = int(
+    'if [ "${{ needs.market_hours_guard.outputs.allow_deploy }}" != "1" ]; then' in sync_source_commands
+    and "deploy_sync_pending_runtime_file_count" in sync_source_commands
+    and "deploy_sync_blocked_by_pending_runtime_count=1" in sync_source_commands
+    and "exit 1" in sync_source_commands
+)
+# 대기 변경 판정은 git reset --hard보다 먼저 나와야 한다. 순서가 뒤집히면
+# 이미 동기화된 뒤에 실패하는 것이라 가드가 아무 의미가 없다.
+sync_source_guard_before_reset_count = 0
+if sync_source_commands:
+    guard_index = sync_source_commands.find("deploy_sync_blocked_by_pending_runtime_count=1")
+    reset_index = sync_source_commands.find("git reset --hard")
+    sync_source_guard_before_reset_count = int(
+        guard_index >= 0 and reset_index >= 0 and guard_index < reset_index
+    )
+
 safe_section = section_between(workflow_text, "  safe:", "  heavy:")
 check_quick_section = section_between(
     (root / "scripts" / "harness" / "run.sh").read_text(),
@@ -672,6 +690,14 @@ contract_checks = [
     ("workflow_deploy_change_detector_defines_runtime_affecting_rules", deploy_runtime_affecting_path_rule_count == 1),
     ("workflow_deploy_emits_sync_activate_metrics", deploy_sync_only_run_metric_count == 1 and deploy_activate_run_metric_count == 1 and deploy_activate_skipped_by_market_hours_metric_count == 1),
     ("workflow_deploy_runs_migration_before_restart", full_deploy_migration_order_count == 1),
+    ("workflow_sync_source_blocks_pending_runtime", (
+        sync_source_pending_guard_count == 1 and sync_source_guard_before_reset_count == 1
+    )),
+    ("workflow_change_detector_shares_runtime_pattern", contains(
+        workflow,
+        "runtime_affecting_pattern: ${{ steps.detect.outputs.runtime_affecting_pattern }}",
+        "needs.changes.outputs.runtime_affecting_pattern",
+    )),
     ("workflow_deploy_frontend_only_branch_scoped", (
         frontend_only_branch_present_count == 1 and frontend_only_branch_scoped_count == 1
     )),
