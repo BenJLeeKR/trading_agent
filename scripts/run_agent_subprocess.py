@@ -106,10 +106,24 @@ logging.basicConfig(
 
 # File-based diagnostic logging (bypasses pipe — survives timeout).
 # ★ 반드시 /workspace/agent_trading/logs 경로 사용 (운영 정책)
+# 2026-08-18 KST: 디렉터리 생성을 모듈 import 시점(top-level)에서 실제
+# 로그 기록 직전으로 늦췄다 — import-time에 파일시스템 write가 일어나면
+# read-only 마운트 환경(예: harness accept-backend-file 검증 컨테이너)
+# 에서 이 모듈을 import하는 것만으로 collection 자체가 실패했다. 경로/
+# 파일명 규칙과 로그 내용 계약, "best-effort로 실패를 무시한다"는 기존
+# 의미론은 그대로 유지한다.
 import os as _os
 _DIAG_LOG_DIR = "/workspace/agent_trading/logs"
-_os.makedirs(_DIAG_LOG_DIR, exist_ok=True)
 _DIAG_LOG = f"{_DIAG_LOG_DIR}/subprocess_diag_{os.getpid()}.log"
+
+
+def _ensure_diag_log_dir() -> None:
+    """Diag 로그 디렉터리가 존재하도록 보장한다(최초 기록 시점에만 호출).
+
+    실패해도(예: read-only 파일시스템) 호출자(``_diag()``)가 통째로
+    best-effort로 무시하므로 여기서는 예외를 그대로 전파한다.
+    """
+    _os.makedirs(_DIAG_LOG_DIR, exist_ok=True)
 
 
 def _diag(msg: str) -> None:
@@ -119,6 +133,7 @@ def _diag(msg: str) -> None:
     visibility into what the subprocess was doing before it hung.
     """
     try:
+        _ensure_diag_log_dir()
         with open(_DIAG_LOG, "a") as f:
             f.write(f"[{datetime.now().isoformat()}] PID={os.getpid()} {msg}\n")
     except Exception:
