@@ -310,19 +310,11 @@ DEFAULT_EVENT_LOOKBACK_HOURS: int = 24
 P2.1+에서 trading calendar 기반 lookback으로 개선 필요."""
 DEFAULT_TRADING_UNIVERSE_CORE_CAP = 12
 DEFAULT_TRADING_UNIVERSE_MAX_CAP = 30
-# 2026-08-18: 종목 동시 처리 상한 — 각 종목이 독립 subprocess로 FDC(provider)를
-# 호출하므로, 이 값이 곧 동시 provider 요청 수의 상한이다. 기존 고정값 5는
-# 실측(Gemini RPM limit=15인데 관측 RPM 19)에서 429 대량 발생과 상관관계가
-# 있었다 — 보수적으로 3으로 낮춘다. 프로세스 간 진짜 공유 rate limiter가
-# 아니라, 한 사이클 내 동시 부하 자체를 줄이는 근사적 완화책이다(§work log
-# 참고). 값 자체는 ``DECISION_LOOP_MAX_CONCURRENCY``로 조정 가능.
-DEFAULT_DECISION_LOOP_MAX_CONCURRENCY = 3
 ENV_INTERVAL = "PAPER_DECISION_LOOP_INTERVAL_SECONDS"
 ENV_TRADING_UNIVERSE = "TRADING_UNIVERSE_SYMBOLS"
 ENV_MANUAL_WATCHLIST = "TRADING_UNIVERSE_MANUAL_SYMBOLS"
 ENV_TRADING_UNIVERSE_CORE_CAP = "TRADING_UNIVERSE_CORE_CAP"
 ENV_TRADING_UNIVERSE_MAX_CAP = "TRADING_UNIVERSE_MAX_CAP"
-ENV_DECISION_LOOP_MAX_CONCURRENCY = "DECISION_LOOP_MAX_CONCURRENCY"
 DEFAULT_DECISION_LOOP_INTRADAY_FREEZE_PURPOSE = "decision_loop_intraday"
 
 # D안(core signal-score 정렬)에서 snapshot을 FRESH로 볼 최대 경과 일수(KST
@@ -502,38 +494,6 @@ def _read_interval() -> int:
             DEFAULT_INTERVAL_SECONDS,
         )
         return DEFAULT_INTERVAL_SECONDS
-
-
-def _read_max_concurrency() -> int:
-    """종목 동시 처리 상한(=동시 FDC provider 요청 상한)을 환경에서 읽는다.
-
-    2026-08-18: 각 종목이 독립 subprocess로 FDC를 호출하므로 이 값이 곧
-    동시 provider 요청 수다. 프로세스 간 진짜 공유 rate limiter는 아니며,
-    한 사이클 내 동시 부하 자체를 낮추는 근사적 완화책이다 — 값을 낮출수록
-    429 발생 가능성은 줄지만 사이클 전체 소요 시간(latency)은 늘어난다.
-    """
-    raw = os.environ.get(ENV_DECISION_LOOP_MAX_CONCURRENCY)
-    if raw is None:
-        return DEFAULT_DECISION_LOOP_MAX_CONCURRENCY
-    try:
-        val = int(raw)
-        if val < 1:
-            logger.warning(
-                "%s=%d is invalid (< 1), using default %d.",
-                ENV_DECISION_LOOP_MAX_CONCURRENCY,
-                val,
-                DEFAULT_DECISION_LOOP_MAX_CONCURRENCY,
-            )
-            return DEFAULT_DECISION_LOOP_MAX_CONCURRENCY
-        return val
-    except (ValueError, TypeError):
-        logger.warning(
-            "Invalid %s=%r, using default %d.",
-            ENV_DECISION_LOOP_MAX_CONCURRENCY,
-            raw,
-            DEFAULT_DECISION_LOOP_MAX_CONCURRENCY,
-        )
-        return DEFAULT_DECISION_LOOP_MAX_CONCURRENCY
 
 
 def _parse_universe_symbols(raw: str | None) -> tuple[UniverseSymbol, ...]:
@@ -3126,14 +3086,16 @@ async def _run_loop(
                 )
 
             # Semaphore-based parallel symbol processing.
-            # 종목별로 독립 subprocess가 FDC(provider)를 호출하므로, 이 상한이
-            # 곧 동시 provider 요청 수의 상한이다. 2026-08-18: 기존 고정값
-            # 5(broker/LLM 부하 방지 목적)를 환경변수로 조정 가능하게 하고
-            # 기본값을 3으로 낮췄다 — 실측(Gemini RPM limit=15, 관측 RPM 19)
-            # 에서 429 대량 발생과의 상관관계 때문(DECISION_LOOP_MAX_CONCURRENCY
-            # 로 조정 가능, .env.example 참고). 프로세스 간 진짜 공유
-            # rate limiter는 아니며 사이클 내 동시 부하만 낮추는 근사책이다.
-            _SEMAPHORE_MAX = _read_max_concurrency()
+            # Max 5 concurrent symbols to avoid overwhelming broker/LLM resources
+            # while reducing total wall-clock time from ~190s to ~40s for 35 symbols.
+            #
+            # 2026-08-18 rollback: 이 값을 3으로 낮췄던 완화책(PR #286)은
+            # 429 감소 효과가 실측으로 입증되지 않았고 cycle latency만
+            # 거의 2배로 늘려, 원래 값 5로 되돌렸다. FDC provider 호출
+            # 자체의 rate limit 대응은 이제
+            # ``agent_trading.services.ai_agents.fdc_rate_limiter``의
+            # 프로세스 간 공유 rate limiter가 담당한다(§work log 참고).
+            _SEMAPHORE_MAX = 5
             sem = asyncio.Semaphore(_SEMAPHORE_MAX)
             cycle_deterministic_trigger_overrides: dict[str, dict[str, object]] = {}
             try:
