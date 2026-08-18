@@ -11840,3 +11840,27 @@ execution_attempts/사후분석 SQL) 보존을 동시에 만족하는지** 코�
   `architecture` PASS.
 - **이후 우선순위**: 장중 실측(daily cap 소진 이후 AI 호출 실제
   감소 확인) — `SPPV-3`와는 독립 트랙, 우선순위 변경 없음.
+
+## `held_position` FDC decision_type 선택지 축소 구현 완료(2026-08-18 KST, 코드 구현 턴)
+
+상세: `docs/20_system_analysis/buy_path_variable_gate_matrix.md`
+"32. `held_position` — FDC decision_type 선택지 축소".
+
+- **factual**: `deterministic_trigger_engine.py`는 이미 `held_
+  position`에 `buy_candidate`를 부여하지 않지만, FDC 프롬프트는
+  source_type 무관하게 7종 `decision_type`을 전부 허용하고 있었고,
+  실측(오늘 `009240` FDC summary 직접 조회)상 FDC가 매 cycle
+  APPROVE/BUY를 검토했다가 기각하는 문장을 실제로 생성하고 있었다.
+- `source_policy.py`에 `allowed_fdc_decision_types()` 헬퍼 추가
+  (held_position → REDUCE/EXIT/HOLD/WATCH만), `final_decision_
+  composer.py`의 프롬프트를 source_type별로 분기하고, FDC 출력
+  정규화 계층(`_guard_held_position_decision_type()`)을 추가 —
+  기존 orchestrator 레벨 `source_policy_guard`/`translation.py`
+  최종 차단은 그대로 유지(별개 계층으로 병존).
+- 신규 테스트 19건(전부 PASS) + 기존 `held_position` sell-override
+  테스트 20건 무영향 확인. `accept style`/`no-bypass`/`architecture`
+  PASS.
+- **다음 주력 작업(미확정)**: 장중 실측으로 (1) FDC summary 토큰
+  사용량 실제 감소분, (2) `fdc_held_position_decision_type_guard`
+  발동 빈도, (3) REDUCE/EXIT/HOLD/WATCH 판단 품질 무변화를 확인
+  — 별도 read-only 실측 턴에서 진행.

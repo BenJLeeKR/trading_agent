@@ -42,10 +42,12 @@ from scripts.run_agent_subprocess import (
     _build_fdc_timeout_fallback,
 )
 from agent_trading.services.ai_agents.event_interpretation import (
-    EventInterpretationAgent,
-    StubEventInterpretationAgent,
+    DeterministicEventInterpretationAgent,
 )
-from agent_trading.services.ai_agents.ai_risk import AIRiskAgent, StubAIRiskAgent
+from agent_trading.services.ai_agents.ai_risk import DeterministicAIRiskAgent
+from agent_trading.services.ai_agents.ai_compliance import (
+    DeterministicAIComplianceAgent,
+)
 from agent_trading.services.ai_agents.final_decision_composer import (
     FinalDecisionComposerAgent,
     StubFinalDecisionComposerAgent,
@@ -245,13 +247,18 @@ def _make_request(
 
 
 def test_build_agent_triplet_uses_stub_agents_when_provider_missing() -> None:
-    ei_agent, ar_agent, fdc_agent = _build_agent_triplet(
+    """PR #277(2026-08-16) 이후 EI/AR/AC는 provider 유무와 무관하게 항상
+    deterministic bot을 반환한다 — provider_client=None일 때 Stub으로
+    내려가는 것은 FDC뿐이다(``_build_agent_triplet()`` docstring 참고).
+    또한 이 함수는 이제 4-tuple(EI/AR/AC/FDC)을 반환한다(AC 추가)."""
+    ei_agent, ar_agent, ac_agent, fdc_agent = _build_agent_triplet(
         provider_client=None,
         model_id="gemini-3.5-flash",
     )
 
-    assert isinstance(ei_agent, StubEventInterpretationAgent)
-    assert isinstance(ar_agent, StubAIRiskAgent)
+    assert isinstance(ei_agent, DeterministicEventInterpretationAgent)
+    assert isinstance(ar_agent, DeterministicAIRiskAgent)
+    assert isinstance(ac_agent, DeterministicAIComplianceAgent)
     assert isinstance(fdc_agent, StubFinalDecisionComposerAgent)
 
 
@@ -270,13 +277,17 @@ class _DummyProviderClient:
 
 
 def test_build_agent_triplet_uses_real_agents_when_provider_exists() -> None:
-    ei_agent, ar_agent, fdc_agent = _build_agent_triplet(
+    """provider_client가 있어도 EI/AR/AC는 여전히 deterministic bot이다
+    (2026-08-16/17 전환 이후 고정 동작) — provider에 반응해 Real로
+    바뀌는 것은 FDC뿐이다."""
+    ei_agent, ar_agent, ac_agent, fdc_agent = _build_agent_triplet(
         provider_client=_DummyProviderClient(),
         model_id="gemini-3.5-flash",
     )
 
-    assert isinstance(ei_agent, EventInterpretationAgent)
-    assert isinstance(ar_agent, AIRiskAgent)
+    assert isinstance(ei_agent, DeterministicEventInterpretationAgent)
+    assert isinstance(ar_agent, DeterministicAIRiskAgent)
+    assert isinstance(ac_agent, DeterministicAIComplianceAgent)
     assert isinstance(fdc_agent, FinalDecisionComposerAgent)
 
 
@@ -809,3 +820,46 @@ class TestFdcSkipDegraded:
         )
         assert skip is False
         assert reason == ""
+
+
+class TestDiagLogLazyDirCreation:
+    """diag 로그 디렉터리 생성이 import-time이 아니라 실제 기록 시점
+    (``_diag()`` 호출 시)에만 일어나는지 검증(2026-08-18 KST).
+
+    이 모듈(``scripts.run_agent_subprocess``)이 top-level에서
+    ``os.makedirs()``를 호출하던 시절에는, read-only 파일시스템
+    마운트 환경(harness ``accept-backend-file`` 검증 컨테이너)에서
+    이 파일을 단순히 import하는 것만으로 collection 자체가
+    실패했다 — 바로 이 파일(이 테스트 파일)이 그 실패의 재현
+    지점이었다. 이 테스트가 여기서 정상 수집/실행된다는 사실 자체가
+    import-time side effect가 사라졌다는 1차 증거이며, 아래 테스트는
+    그 동작을 명시적으로 검증한다.
+    """
+
+    def test_diag_defers_dir_creation_to_ensure_helper(self, monkeypatch) -> None:
+        """``_diag()``는 파일을 열기 전에 ``_ensure_diag_log_dir()``를
+        호출해 디렉터리 생성을 그 시점까지 늦춰야 한다."""
+        import scripts.run_agent_subprocess as run_agent_subprocess_module
+
+        calls: list[str] = []
+        monkeypatch.setattr(
+            run_agent_subprocess_module,
+            "_ensure_diag_log_dir",
+            lambda: calls.append("called"),
+        )
+        run_agent_subprocess_module._diag("test message")
+        assert calls == ["called"]
+
+    def test_diag_is_best_effort_when_dir_creation_fails(self, monkeypatch) -> None:
+        """``_ensure_diag_log_dir()``가 실패해도(예: read-only fs)
+        ``_diag()``는 예외를 밖으로 전파하지 않아야 한다(기존
+        best-effort 계약 유지)."""
+        import scripts.run_agent_subprocess as run_agent_subprocess_module
+
+        def _raise() -> None:
+            raise OSError("Read-only file system")
+
+        monkeypatch.setattr(
+            run_agent_subprocess_module, "_ensure_diag_log_dir", _raise,
+        )
+        run_agent_subprocess_module._diag("test message")  # must not raise

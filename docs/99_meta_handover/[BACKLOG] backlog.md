@@ -7110,3 +7110,25 @@ gate) 구현 완료", `[PRIORITY_MAP]` 동일 날짜 항목.
   bypass 비율이 실제로 어떻게 바뀌는지, `provider_rate_limit`
   fallback 비율이 추가로 낮아지는지, cycle wall-clock이 어느 정도
   늘어나는지 실측한다.
+
+## `held_position` FDC decision_type 선택지 축소 구현 완료(2026-08-18 KST)
+
+상세: `docs/20_system_analysis/buy_path_variable_gate_matrix.md`
+"32", `[PRIORITY_MAP]` 동일 날짜 항목.
+
+- `source_policy.allowed_fdc_decision_types()` + FDC 프롬프트
+  source_type 분기 + `_guard_held_position_decision_type()` 정규화
+  계층 구현. `deterministic_trigger_engine.py`/`source_policy.
+  evaluate_action_envelope()`/`translation.py`의 기존 방어는
+  무수정.
+- **신규 backlog(운영 실측 필요, 미확정)**: 배포 후 (1) held_
+  position 심볼의 FDC summary 토큰 사용량이 실제로 줄어드는지,
+  (2) `fdc_held_position_decision_type_guard` reason_code 발동
+  빈도(모델이 프롬프트 제약을 어기는 빈도), (3) REDUCE/EXIT/
+  HOLD/WATCH 판단 정확도/품질에 변화가 없는지 — 별도 read-only
+  실측 턴에서 확인 필요.
+- **참고(해석)**: `source_policy_guard`(orchestrator 사후 강등)는
+  2026-06-24 도입 이후 실측상 0건 발동이었으므로, 이번 변경으로
+  그 발동 빈도가 유의미하게 달라질지는 확인 대상이 아니다(애초에
+  "결과가 잘못 나가는 문제"를 고치는 변경이 아니었음) — 확인
+  대상은 어디까지나 "FDC가 불필요한 검토에 쓰는 토큰"이다.

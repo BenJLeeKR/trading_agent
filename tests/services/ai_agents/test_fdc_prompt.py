@@ -19,12 +19,16 @@ See Also
 
 from __future__ import annotations
 
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 from uuid import uuid4
 
 import pytest
 
-from agent_trading.services.ai_agents.base import AgentExecutionRequest
+from agent_trading.services.ai_agents.base import (
+    AgentExecutionRequest,
+    AIProviderClient,
+    RawProviderResponse,
+)
 from agent_trading.services.ai_agents.final_decision_composer import (
     FinalDecisionComposerAgent,
 )
@@ -74,7 +78,26 @@ def _make_intent(
         price=Decimal("50000"),
         time_in_force=TimeInForce.DAY,
     )
-    ai = AIDecisionInputs(decision_type=decision_type)
+    # 2026-08-18 KST 수정: translation._has_required_expected_value_anchor()는
+    # APPROVE/BUY/SELL/EXIT/REDUCE(actionable_types)에 대해 8개 EV anchor
+    # 필드가 전부 채워져 있을 것을 요구하고, SELL/EXIT/REDUCE는 추가로
+    # expected_value_gate_passed(또는 ev_gate_near_miss_override_applied)도
+    # 요구한다 — 이 fixture가 decision_type만 채우고 나머지를 비워둬서
+    # build_submit_order_request_from_decision()가 항상 None을 반환하는
+    # 계약 불일치가 있었다(WATCH/HOLD는 애초에 이 검사 이전에 걸러져
+    # 영향받지 않았음). 아래 필드들로 실제 production contract를 충족한다.
+    ai = AIDecisionInputs(
+        decision_type=decision_type,
+        expected_return_bps=Decimal("50"),
+        expected_downside_bps=Decimal("20"),
+        net_expected_value_bps=Decimal("30"),
+        final_trade_score=Decimal("0.70"),
+        minimum_required_edge_bps=Decimal("10"),
+        edge_after_cost_bps=Decimal("15"),
+        estimated_round_trip_cost_bps=Decimal("8"),
+        slippage_buffer_bps=Decimal("5"),
+        expected_value_gate_passed=True,
+    )
     dc_id = decision_context_id if decision_context_id is not None else uuid4()
     return OrderIntent(
         decision_context_id=dc_id,
@@ -385,6 +408,260 @@ class TestNoRegression:
         prompt = agent._build_system_prompt()
         for st in ("core", "held_position", "event_overlay", "market_overlay"):
             assert st in prompt, f"Source type {st!r} missing from system prompt"
+
+
+# ===========================================================================
+# Test 9: held_position — FDC decision_type scope restriction (2026-08-18 KST)
+# ===========================================================================
+
+
+class TestFDCHeldPositionDecisionTypeScope:
+    """FDC가 held_position에서 APPROVE/BUY를 선택지로 두지 않아야 한다."""
+
+    def test_held_position_prompt_excludes_approve_and_buy_from_allowed_list(
+        self,
+    ) -> None:
+        """held_position 프롬프트의 canonical enum 목록에는 APPROVE/BUY가
+        없어야 하고, REDUCE/EXIT/HOLD/WATCH만 나열돼야 한다."""
+        agent = FinalDecisionComposerAgent(provider_client=MagicMock())
+        prompt = agent._build_system_prompt(source_type="held_position")
+        assert "decision_type: one of REDUCE, EXIT, HOLD, WATCH" in prompt
+
+    def test_held_position_prompt_has_explicit_invalid_statement(self) -> None:
+        """held_position 프롬프트는 APPROVE/BUY가 invalid임을 명시해야 한다."""
+        agent = FinalDecisionComposerAgent(provider_client=MagicMock())
+        prompt = agent._build_system_prompt(source_type="held_position")
+        assert "Held Position Decision Scope" in prompt
+        assert "APPROVE and BUY are INVALID" in prompt
+        assert "ALREADY HELD" in prompt
+
+    def test_non_held_position_prompt_unaffected(self) -> None:
+        """core/event_overlay/market_overlay/None은 기존 7종 전체 허용
+        문구가 그대로 유지돼야 한다(무영향 확인)."""
+        agent = FinalDecisionComposerAgent(provider_client=MagicMock())
+        for source_type in ("core", "event_overlay", "market_overlay", None):
+            prompt = agent._build_system_prompt(source_type=source_type)
+            assert (
+                "decision_type: one of APPROVE, BUY, SELL, HOLD, WATCH, EXIT, REDUCE"
+                in prompt
+            )
+            # 조건부 섹션(## Held Position Decision Scope ...) 자체가
+            # 삽입되지 않아야 한다 — "Source Type Consideration"의
+            # held_position 일반 설명 문구(모든 source_type 호출에 공통으로
+            # 존재)는 별개이므로 이건 걸러내지 않는다.
+            assert "ALREADY HELD" not in prompt
+            assert "## Held Position Decision Scope" not in prompt
+
+    def test_default_call_without_source_type_unaffected(self) -> None:
+        """인자 없이 호출하는 기존 호출부(하위 호환)는 전체 7종을 그대로
+        유지해야 한다."""
+        agent = FinalDecisionComposerAgent(provider_client=MagicMock())
+        prompt = agent._build_system_prompt()
+        assert (
+            "decision_type: one of APPROVE, BUY, SELL, HOLD, WATCH, EXIT, REDUCE"
+            in prompt
+        )
+
+
+class TestFDCHeldPositionDecisionTypeGuard:
+    """``_guard_held_position_decision_type()`` — 출력 정규화 검증."""
+
+    def _make_output(self, decision_type: str) -> FinalDecisionComposerOutput:
+        return FinalDecisionComposerOutput(
+            decision_type=decision_type,
+            side="BUY" if decision_type in {"APPROVE", "BUY"} else "",
+            reason_codes=("some_reason",),
+            summary="원본 요약",
+        )
+
+    def test_approve_is_normalized_to_hold_for_held_position(self) -> None:
+        agent = FinalDecisionComposerAgent(provider_client=MagicMock())
+        result = agent._guard_held_position_decision_type(
+            self._make_output("APPROVE"), source_type="held_position",
+        )
+        assert result.decision_type == "HOLD"
+        assert result.side == ""
+        assert "fdc_held_position_decision_type_guard" in result.reason_codes
+        assert "fdc_held_position_decision_type_guard" in result.summary
+
+    def test_buy_is_normalized_to_hold_for_held_position(self) -> None:
+        agent = FinalDecisionComposerAgent(provider_client=MagicMock())
+        result = agent._guard_held_position_decision_type(
+            self._make_output("BUY"), source_type="held_position",
+        )
+        assert result.decision_type == "HOLD"
+
+    def test_sell_is_normalized_to_hold_for_held_position(self) -> None:
+        """SELL도 canonical held_position sell path(REDUCE/EXIT)가 아니므로
+        정규화 대상이다."""
+        agent = FinalDecisionComposerAgent(provider_client=MagicMock())
+        result = agent._guard_held_position_decision_type(
+            self._make_output("SELL"), source_type="held_position",
+        )
+        assert result.decision_type == "HOLD"
+
+    def test_reduce_passes_through_unchanged_for_held_position(self) -> None:
+        agent = FinalDecisionComposerAgent(provider_client=MagicMock())
+        original = self._make_output("REDUCE")
+        result = agent._guard_held_position_decision_type(
+            original, source_type="held_position",
+        )
+        assert result is original
+        assert result.decision_type == "REDUCE"
+        assert "fdc_held_position_decision_type_guard" not in result.reason_codes
+
+    def test_exit_passes_through_unchanged_for_held_position(self) -> None:
+        agent = FinalDecisionComposerAgent(provider_client=MagicMock())
+        original = self._make_output("EXIT")
+        result = agent._guard_held_position_decision_type(
+            original, source_type="held_position",
+        )
+        assert result is original
+
+    def test_watch_passes_through_unchanged_for_held_position(self) -> None:
+        agent = FinalDecisionComposerAgent(provider_client=MagicMock())
+        original = self._make_output("WATCH")
+        result = agent._guard_held_position_decision_type(
+            original, source_type="held_position",
+        )
+        assert result is original
+
+    def test_hold_passes_through_unchanged_for_held_position(self) -> None:
+        agent = FinalDecisionComposerAgent(provider_client=MagicMock())
+        original = self._make_output("HOLD")
+        result = agent._guard_held_position_decision_type(
+            original, source_type="held_position",
+        )
+        assert result is original
+
+    def test_approve_unaffected_for_core(self) -> None:
+        """non-held_position(core 등)에서는 APPROVE/BUY가 여전히 그대로
+        통과해야 한다 — 무영향 확인."""
+        agent = FinalDecisionComposerAgent(provider_client=MagicMock())
+        original = self._make_output("APPROVE")
+        result = agent._guard_held_position_decision_type(
+            original, source_type="core",
+        )
+        assert result is original
+        assert result.decision_type == "APPROVE"
+
+    def test_buy_unaffected_for_event_overlay(self) -> None:
+        agent = FinalDecisionComposerAgent(provider_client=MagicMock())
+        original = self._make_output("BUY")
+        result = agent._guard_held_position_decision_type(
+            original, source_type="event_overlay",
+        )
+        assert result is original
+
+
+class TestFDCRunEndToEndHeldPositionScope:
+    """``run()`` 전체 경로 — provider가 규칙을 어겨도 held_position에서는
+    최종적으로 REDUCE/EXIT/HOLD/WATCH만 반환됨을 증명(end-to-end)."""
+
+    @pytest.mark.asyncio
+    async def test_run_normalizes_approve_to_hold_for_held_position(self) -> None:
+        provider = AsyncMock(spec=AIProviderClient)
+        captured_kwargs: dict[str, object] = {}
+
+        async def _generate(**kwargs: object) -> RawProviderResponse:
+            captured_kwargs.update(kwargs)
+            # provider가 규칙을 어기고 APPROVE를 반환하는 상황을 시뮬레이션.
+            return RawProviderResponse(
+                parsed=FinalDecisionComposerOutput(
+                    decision_type="APPROVE",
+                    side="BUY",
+                    summary="추가 매수 근거 요약",
+                ),
+                raw_content="{}",
+            )
+
+        provider.generate_structured = _generate  # type: ignore[method-assign]
+
+        request = AgentExecutionRequest(
+            decision_context_id=uuid4(),
+            correlation_id="held-position-guard",
+            context=AssembledContext(source_type="held_position"),
+            symbol="009240",
+            market="KRX",
+            source_type="held_position",
+        )
+
+        agent = FinalDecisionComposerAgent(provider_client=provider)
+        result = await agent.run(request)
+
+        # 프롬프트 단계에서 이미 held_position 제한 문구가 나갔는지 확인.
+        system_prompt = str(captured_kwargs.get("system_prompt", ""))
+        assert "decision_type: one of REDUCE, EXIT, HOLD, WATCH" in system_prompt
+
+        # provider가 규칙을 어겼어도 최종 출력은 HOLD로 정규화됨을 확인.
+        assert result.decision_type == "HOLD"
+        assert result.side == ""
+        assert "fdc_held_position_decision_type_guard" in result.reason_codes
+
+    @pytest.mark.asyncio
+    async def test_run_preserves_reduce_for_held_position(self) -> None:
+        """held_position에서 REDUCE(위험 축소 판단)는 그대로 통과해야 한다."""
+        provider = AsyncMock(spec=AIProviderClient)
+
+        async def _generate(**kwargs: object) -> RawProviderResponse:
+            return RawProviderResponse(
+                parsed=FinalDecisionComposerOutput(
+                    decision_type="REDUCE",
+                    side="SELL",
+                    summary="위험회피로 축소",
+                ),
+                raw_content="{}",
+            )
+
+        provider.generate_structured = _generate  # type: ignore[method-assign]
+
+        request = AgentExecutionRequest(
+            decision_context_id=uuid4(),
+            correlation_id="held-position-reduce",
+            context=AssembledContext(source_type="held_position"),
+            symbol="009240",
+            market="KRX",
+            source_type="held_position",
+        )
+
+        agent = FinalDecisionComposerAgent(provider_client=provider)
+        result = await agent.run(request)
+
+        assert result.decision_type == "REDUCE"
+        assert result.side == "SELL"
+        assert "fdc_held_position_decision_type_guard" not in result.reason_codes
+
+    @pytest.mark.asyncio
+    async def test_run_leaves_core_approve_unaffected(self) -> None:
+        """core에서는 APPROVE가 여전히 그대로 유지돼야 한다(무영향 확인)."""
+        provider = AsyncMock(spec=AIProviderClient)
+
+        async def _generate(**kwargs: object) -> RawProviderResponse:
+            return RawProviderResponse(
+                parsed=FinalDecisionComposerOutput(
+                    decision_type="APPROVE",
+                    side="BUY",
+                    summary="신규 진입 근거",
+                ),
+                raw_content="{}",
+            )
+
+        provider.generate_structured = _generate  # type: ignore[method-assign]
+
+        request = AgentExecutionRequest(
+            decision_context_id=uuid4(),
+            correlation_id="core-approve",
+            context=AssembledContext(source_type="core"),
+            symbol="005930",
+            market="KRX",
+            source_type="core",
+        )
+
+        agent = FinalDecisionComposerAgent(provider_client=provider)
+        result = await agent.run(request)
+
+        assert result.decision_type == "APPROVE"
+        assert result.side == "BUY"
 
 
 # ===========================================================================
