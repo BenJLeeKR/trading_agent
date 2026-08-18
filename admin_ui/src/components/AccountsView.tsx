@@ -41,6 +41,13 @@ function truncateUuid(uuid: string): string {
   return uuid.length > 8 ? uuid.slice(0, 8) + "…" : uuid;
 }
 
+/** KIS 실제 계좌번호(숫자 8자리)의 앞 4자리를 마스킹한다. 8자리가 아니면 원본을 그대로 반환. */
+function maskAccountNumber(ref: string | null | undefined): string {
+  if (!ref) return "—";
+  if (ref.length !== 8) return ref;
+  return `****${ref.slice(4)}`;
+}
+
 /**
  * "총손익" 카드의 실현손익 누적 시작일(KST). 계좌 생성일 등 다른 기준이 아니라
  * 사용자 지정 고정 시작일이다 — 그 이전 실현손익은 이 카드에 반영되지 않는다.
@@ -48,17 +55,21 @@ function truncateUuid(uuid: string): string {
 const REALIZED_PNL_CUMULATIVE_START_DATE = "2026-08-01";
 
 /**
- * 미실현 손익율(%) = 미실현 손익 / 매입원가 × 100.
+ * 미실현 손익율(%) = (미실현 손익 − 매수 수수료) / 매입원가 × 100.
  * 매입원가는 백엔드 `purchase_amount`(매입금액)를 우선 사용하고, 없으면
  * `average_price * quantity`로 대체 계산한다. 백엔드에 손익율 필드 자체가
  * 없어(KIS `evlu_pfls_rt` 미수집) 프론트에서 파생 계산한 값이다.
+ * 매수 수수료(`remaining_buy_fee_pool`)는 아직 SELL에 배분되지 않은
+ * 현재 보유분 매수 수수료다 — cost-basis state가 없어 `null`이면(0과
+ * 구분됨) 수수료를 모르는 것이므로 차감하지 않는다(0으로 간주).
  * 원가가 0 이하이거나 손익 값이 없으면 판단 불가로 "—"를 반환한다.
  */
 function formatUnrealizedPnlRate(pos: PositionSnapshotView): string {
   if (pos.unrealized_pnl == null) return "—";
   const costBasis = pos.purchase_amount ?? pos.average_price * pos.quantity;
   if (!costBasis || costBasis <= 0) return "—";
-  const rate = (pos.unrealized_pnl / costBasis) * 100;
+  const netPnl = pos.unrealized_pnl - (pos.remaining_buy_fee_pool ?? 0);
+  const rate = (netPnl / costBasis) * 100;
   if (!Number.isFinite(rate)) return "—";
   return `${rate >= 0 ? "+" : ""}${rate.toFixed(2)}%`;
 }
@@ -311,13 +322,21 @@ export default function AccountsView() {
     return latestPositions.reduce((sum, p) => sum + (p.unrealized_pnl ?? 0), 0);
   }, [latestPositions, cashBalance]);
 
-  // ── 총손익 = 미실현 손익(totalPnl) + 실현 손익 합계(realizedPnlSum) ──────
+  // ── 현재 포지션들의 매수 수수료 합계(remaining_buy_fee_pool) ─────────────
+  // null(cost-basis state 없음)인 종목은 0으로 간주 — 매입원가 계산과 동일한
+  // 처리 방침(formatUnrealizedPnlRate 참고).
+  const totalRemainingBuyFeePool = useMemo(() => {
+    return latestPositions.reduce((sum, p) => sum + (p.remaining_buy_fee_pool ?? 0), 0);
+  }, [latestPositions]);
+
+  // ── 총손익 = 미실현 손익(totalPnl) + 실현 손익 합계(realizedPnlSum)
+  //          − 현재 포지션 매수 수수료 합계(totalRemainingBuyFeePool) ──────
   // realizedPnlSum이 아직 없거나(로딩 중) 조회에 실패했으면, 0으로 대체해
   // 미실현 손익만을 총손익인 것처럼 보여주지 않고 "—"로 명시적으로 표시한다.
   const totalPnlAll = useMemo(() => {
     if (realizedPnlSum == null) return null;
-    return totalPnl + realizedPnlSum;
-  }, [totalPnl, realizedPnlSum]);
+    return totalPnl + realizedPnlSum - totalRemainingBuyFeePool;
+  }, [totalPnl, realizedPnlSum, totalRemainingBuyFeePool]);
 
   // ── Column definitions ──────────────────────────────────────────
   const accountColumns: Column<AccountSummary>[] = [
@@ -342,7 +361,7 @@ export default function AccountsView() {
       header: "계좌번호",
       render: (r) => (
         <span className="text-xs font-mono text-[#64748b]">
-          {r.broker_account_ref || "—"}
+          {maskAccountNumber(r.broker_account_ref)}
         </span>
       ),
     },
@@ -391,6 +410,7 @@ export default function AccountsView() {
     {
       key: "symbol",
       header: "종목",
+      width: "80px",
       render: (r) =>
         r.symbol ? (
           <button
@@ -413,6 +433,7 @@ export default function AccountsView() {
     {
       key: "instrument_name",
       header: "종목명",
+      width: "200px",
       render: (r) => (
         <span className="text-sm text-[#334155]">
           {r.instrument_name || "—"}
@@ -459,6 +480,19 @@ export default function AccountsView() {
           </span>
         );
       },
+    },
+    {
+      key: "remaining_buy_fee_pool",
+      header: "수수료",
+      align: "right",
+      render: (r) => (
+        <span
+          className="text-xs text-[#64748b]"
+          title="현재 보유 수량에 대응하는, 아직 매도에 배분되지 않은 누적 매수 수수료"
+        >
+          {r.remaining_buy_fee_pool != null ? formatKrw(r.remaining_buy_fee_pool) : "—"}
+        </span>
+      ),
     },
     {
       key: "unrealized_pnl_rate",

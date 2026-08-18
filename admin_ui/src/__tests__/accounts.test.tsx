@@ -262,8 +262,9 @@ describe("AccountsView detail panel", () => {
     // 계좌 메타데이터 카드가 제거되어 브로커 코드/환경은 계좌 리스트 테이블에서만 렌더된다.
     expect(screen.getByText("KIS-PAPER-****5678")).toBeInTheDocument();
     expect(screen.getByText("PAPER")).toBeInTheDocument();
-    // 실제 계좌번호(KIS 8자리) 컬럼
-    expect(screen.getByText("50045678")).toBeInTheDocument();
+    // 실제 계좌번호(KIS 8자리) 컬럼 — 앞 4자리는 마스킹되어 표시된다.
+    expect(screen.getByText("****5678")).toBeInTheDocument();
+    expect(screen.queryByText("50045678")).not.toBeInTheDocument();
 
     // Summary cards — "미실현 손익" also appears as a column header
     // in the positions table, so use getAllByText
@@ -777,6 +778,117 @@ describe("AccountsView snapshot dedup", () => {
       const totalPnlCard = screen.getByText("총손익").closest("div");
       expect(totalPnlCard).not.toBeNull();
       expect(within(totalPnlCard!).getByText("—")).toBeInTheDocument();
+    });
+  });
+
+  it("포지션 테이블 수수료 컬럼은 remaining_buy_fee_pool을 표시하고, 미실현 손익율은 이를 차감해 계산한다", async () => {
+    vi.spyOn(apiClient, "getClients").mockResolvedValue(mockClients);
+    vi.spyOn(apiClient, "getAccounts").mockResolvedValue(mockAccounts);
+    vi.spyOn(apiClient, "getAccountSnapshots").mockResolvedValue(
+      makeSnapshotResponse({
+        positions: [{ ...mockPositions[0], remaining_buy_fee_pool: 300 }],
+      }),
+    );
+    vi.spyOn(apiClient, "getRealizedPnlSummary").mockResolvedValue({
+      account_id: "ac-22222222-2222-2222-2222-222222222222",
+      instrument_id: null,
+      start_date: "2026-08-01",
+      end_date: "2026-08-18",
+      realized_pnl_net_sum: 0,
+      sell_event_count: 0,
+      buy_amount_sum: 0,
+      sell_amount_sum: 0,
+      fee_tax_sum: 0,
+      allocated_buy_fee_sum: 0,
+      recompute_pending_count: 0,
+      by_instrument: [],
+    });
+
+    render(<AccountsView />, { wrapper: RouterWrapper });
+
+    await waitFor(() => {
+      expect(screen.getByText("CLIENT1-PAPER-PAPER")).toBeInTheDocument();
+    });
+    screen.getByText("CLIENT1-PAPER-PAPER").click();
+
+    await waitFor(() => {
+      expect(screen.getByText("브로커 스냅샷 — 포지션")).toBeInTheDocument();
+    });
+
+    // mockPositions[0]: unrealized_pnl=500, purchase_amount=15000, remaining_buy_fee_pool=300.
+    // 수수료 컬럼: formatKrw(300) → "300원"
+    expect(screen.getByText("300원")).toBeInTheDocument();
+    // 미실현 손익율 = (500 - 300) / 15000 * 100 = 1.33% (수수료 차감 전이면 3.33%가 나온다)
+    expect(screen.getByText("+1.33%")).toBeInTheDocument();
+    expect(screen.queryByText("+3.33%")).not.toBeInTheDocument();
+  });
+
+  it("cost-basis state가 없어 remaining_buy_fee_pool이 없는 포지션은 수수료 컬럼에 '—'를 표시하고 손익율 계산에는 영향 없다", async () => {
+    vi.spyOn(apiClient, "getClients").mockResolvedValue(mockClients);
+    vi.spyOn(apiClient, "getAccounts").mockResolvedValue(mockAccounts);
+    vi.spyOn(apiClient, "getAccountSnapshots").mockResolvedValue(makeSnapshotResponse());
+    vi.spyOn(apiClient, "getRealizedPnlSummary").mockRejectedValue(new Error("network error"));
+
+    render(<AccountsView />, { wrapper: RouterWrapper });
+
+    await waitFor(() => {
+      expect(screen.getByText("CLIENT1-PAPER-PAPER")).toBeInTheDocument();
+    });
+    screen.getByText("CLIENT1-PAPER-PAPER").click();
+
+    await waitFor(() => {
+      expect(screen.getByText("브로커 스냅샷 — 포지션")).toBeInTheDocument();
+    });
+
+    // mockPositions[0]에는 remaining_buy_fee_pool 필드가 없음(undefined) → "—" 표시.
+    // 미실현 손익율은 기존과 동일하게 500/15000*100 = 3.33%.
+    expect(screen.getByText("+3.33%")).toBeInTheDocument();
+  });
+
+  it("총손익 카드는 현재 포지션들의 매수 수수료 합계(remaining_buy_fee_pool)도 차감한다", async () => {
+    vi.spyOn(apiClient, "getClients").mockResolvedValue(mockClients);
+    vi.spyOn(apiClient, "getAccounts").mockResolvedValue(mockAccounts);
+    vi.spyOn(apiClient, "getAccountSnapshots").mockResolvedValue(
+      makeSnapshotResponse({
+        positions: [
+          { ...mockPositions[0], remaining_buy_fee_pool: 100 },
+          {
+            ...mockPositions[0],
+            position_snapshot_id: "ps-77777777-7777-7777-7777-777777777777",
+            instrument_id: "in-88888888-8888-8888-8888-888888888888",
+            symbol: "MSFT",
+            remaining_buy_fee_pool: 50,
+          },
+        ],
+      }),
+    );
+    vi.spyOn(apiClient, "getRealizedPnlSummary").mockResolvedValue({
+      account_id: "ac-22222222-2222-2222-2222-222222222222",
+      instrument_id: null,
+      start_date: "2026-08-01",
+      end_date: "2026-08-18",
+      realized_pnl_net_sum: 300,
+      sell_event_count: 1,
+      buy_amount_sum: 0,
+      sell_amount_sum: 0,
+      fee_tax_sum: 0,
+      allocated_buy_fee_sum: 0,
+      recompute_pending_count: 0,
+      by_instrument: [],
+    });
+
+    render(<AccountsView />, { wrapper: RouterWrapper });
+
+    await waitFor(() => {
+      expect(screen.getByText("CLIENT1-PAPER-PAPER")).toBeInTheDocument();
+    });
+    screen.getByText("CLIENT1-PAPER-PAPER").click();
+
+    // mockCashBalance.total_unrealized_pnl = 500(미실현) + 300(실현) - (100+50)(매수 수수료 합계) = 650
+    await waitFor(() => {
+      const totalPnlAllCard = screen.getByText("총손익").closest("div");
+      expect(totalPnlAllCard).not.toBeNull();
+      expect(within(totalPnlAllCard!).getByText("+650원", { exact: false })).toBeInTheDocument();
     });
   });
 
