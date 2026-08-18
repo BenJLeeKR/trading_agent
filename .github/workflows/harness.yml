@@ -51,6 +51,7 @@ jobs:
       deploy_manual_dispatch_requested_count: ${{ steps.detect.outputs.deploy_manual_dispatch_requested_count }}
       frontend_only_activate: ${{ steps.detect.outputs.frontend_only_activate }}
       non_frontend_runtime_file_count: ${{ steps.detect.outputs.non_frontend_runtime_file_count }}
+      runtime_affecting_pattern: ${{ steps.detect.outputs.runtime_affecting_pattern }}
     steps:
       - name: Checkout
         uses: actions/checkout@v5
@@ -62,6 +63,10 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+
+          # runtime 영향 경로 규칙의 단일 정의. sync_source가 서버의 대기 변경을
+          # 판정할 때도 이 값을 output으로 받아 쓰므로 양쪽 분기 이전에 정의한다.
+          runtime_affecting_pattern='^(\.github/workflows/|\.python-version|\.postgres-version|Dockerfile|docker-compose\.yml|pyproject\.toml|requirements(\.lock|\.txt)?|db/|src/|admin_ui/(Dockerfile|nginx\.frontend\.conf|package(-lock)?\.json|tsconfig[^/]*\.json|vite\.config\.[^/]+|src/|public/))'
 
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
             deploy_manual_dispatch_requested_count="0"
@@ -80,6 +85,7 @@ jobs:
               echo "deploy_manual_dispatch_requested_count=$deploy_manual_dispatch_requested_count"
               echo "frontend_only_activate=0"
               echo "non_frontend_runtime_file_count=0"
+              echo "runtime_affecting_pattern=$runtime_affecting_pattern"
             } >> "$GITHUB_OUTPUT"
 
             echo "changed_file_count=0"
@@ -105,7 +111,6 @@ jobs:
           changed_files="$(git diff --name-only "$base_ref" HEAD || true)"
           changed_file_count="$(printf '%s\n' "$changed_files" | sed '/^$/d' | wc -l | tr -d ' ')"
           sync_only_allowlist_pattern='^(docs/.+|scripts/(analyze_trigger_proxy_attribution\.py|check_index_membership_staleness\.py|check_t3_db_status\.py|diagnose_activity_filter_half_period_divergence\.py|diagnose_blocked_reason_distribution\.py|diagnose_market_overlay_shadow\.py|observe_seeded_news_comparison\.py))$'
-          runtime_affecting_pattern='^(\.github/workflows/|\.python-version|\.postgres-version|Dockerfile|docker-compose\.yml|pyproject\.toml|requirements(\.lock|\.txt)?|db/|src/|admin_ui/(Dockerfile|nginx\.frontend\.conf|package(-lock)?\.json|tsconfig[^/]*\.json|vite\.config\.[^/]+|src/|public/))'
           sync_only_candidates="$(
             printf '%s\n' "$changed_files" |
               sed '/^$/d' |
@@ -172,6 +177,7 @@ jobs:
             echo "deploy_manual_dispatch_requested_count=0"
             echo "frontend_only_activate=$frontend_only_activate"
             echo "non_frontend_runtime_file_count=$non_frontend_runtime_file_count"
+            echo "runtime_affecting_pattern=$runtime_affecting_pattern"
           } >> "$GITHUB_OUTPUT"
 
           echo "changed_file_count=$changed_file_count"
@@ -376,6 +382,37 @@ jobs:
 
             git fetch origin main
             deploy_target_sha="$(git rev-parse origin/main)"
+            server_head_sha="$(git rev-parse HEAD)"
+
+            # sync-only 모드(장중 등 allow_deploy!=1)에서는 activate_runtime이 실행되지
+            # 않는다. 그런데 git reset --hard는 이번 push의 변경분이 아니라 origin/main
+            # 트리 전체를 내려받으므로, 앞서 장중에 차단된 runtime 변경이 함께 묻어
+            # 들어올 수 있다. src/와 scripts/는 ops-scheduler에 bind mount돼 있고
+            # decision loop는 매 사이클 subprocess로 새로 spawn되므로, 그렇게 들어온
+            # 코드는 컨테이너 재기동 없이 장중에 그대로 적용된다.
+            # 이 경우 동기화를 진행하지 않고 실패로 남긴다.
+            deploy_sync_pending_runtime_file_count=0
+            pending_runtime_files=""
+            if [ "${{ needs.market_hours_guard.outputs.allow_deploy }}" != "1" ]; then
+              pending_runtime_files="$(
+                git diff --name-only "$server_head_sha" "$deploy_target_sha" |
+                  sed '/^$/d' |
+                  grep -E '${{ needs.changes.outputs.runtime_affecting_pattern }}' || true
+              )"
+              deploy_sync_pending_runtime_file_count="$(printf '%s\n' "$pending_runtime_files" | sed '/^$/d' | wc -l | tr -d ' ')"
+            fi
+            echo "deploy_sync_pending_runtime_file_count=$deploy_sync_pending_runtime_file_count"
+
+            if [ "$deploy_sync_pending_runtime_file_count" -gt 0 ]; then
+              echo "deploy_sync_blocked_by_pending_runtime_count=1"
+              echo "server_head_sha=$server_head_sha"
+              echo "deploy_target_sha=$deploy_target_sha"
+              echo "DETAIL pending_runtime_files:"
+              printf '%s\n' "$pending_runtime_files" | sed '/^$/d' | sed 's/^/- /'
+              exit 1
+            fi
+            echo "deploy_sync_blocked_by_pending_runtime_count=0"
+
             git reset --hard "$deploy_target_sha"
 
             if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ "${{ inputs.deploy_main }}" = "true" ]; then
