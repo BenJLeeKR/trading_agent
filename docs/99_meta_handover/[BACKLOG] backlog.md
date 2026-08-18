@@ -7015,3 +7015,31 @@ gate) 구현 완료", `[PRIORITY_MAP]` 동일 날짜 항목.
   `decision_json.ai_call_path.fdc_skipped` 분포가 실제 FDC 생략
   발생과 일치하는지 실측한다(과거 데이터는 자동 보정되지 않음 — 재배포
   이후 신규 기록부터만 정확해진다).
+
+## FDC 429 조용한 fallback 관측성 개선 + 동시성 완화(2026-08-18 KST)
+
+상세: `docs/30_work_log/2026-08-18_fdc_429_fallback_observability_and_concurrency.md`.
+
+- 오늘(2026-08-18) 실측: 08:00 KST 이후 `trade_decisions` 144건 중
+  **51건(35.4%)**이 FDC provider(Gemini) 429 재시도 소진 등으로
+  `decision_type=HOLD`/`confidence=0.0`/`reason_codes=()`인 "조용한
+  fallback"이었다 — `agent_runs.status='completed'`로 남아 저장값만으론
+  정상 HOLD와 구분 불가했다.
+- **수정 A(관측성)**: `FinalDecisionComposerAgent.run()`의 예외 fallback에
+  `_classify_provider_exception()`을 추가해 `reason_codes`에
+  `provider_rate_limit`(429)/`provider_parse_error`(JSON 파싱 실패)/
+  `provider_timeout`/`provider_error`(기타) 마커를 남기고, `summary`에도
+  짧은 사유를 남긴다. `decision_type="HOLD"` fallback 정책 자체는
+  변경하지 않았다.
+- **수정 B(동시성 완화)**: `run_decision_loop.py`의 종목 동시 처리 상한
+  (`_SEMAPHORE_MAX`, 곧 동시 FDC provider 요청 수)을 하드코딩 5에서
+  `DECISION_LOOP_MAX_CONCURRENCY` 환경변수로 조정 가능하게 하고 기본값을
+  3으로 낮췄다(Gemini RPM limit=15인데 관측 RPM 19였던 실측 근거).
+  **프로세스 간 진짜 공유 rate limiter가 아니라, 사이클 내 동시 부하
+  자체를 낮추는 근사적 완화책**임을 명시(문서/코드 주석 모두).
+- 주문 gate/EV gate/sizing/FDC 판단 정책 변경 없음 — 순수 관측성 +
+  동시성 파라미터 조정.
+- **남은 backlog 7**: 재배포 후 429 건수/FDC fallback 비율/
+  `provider_rate_limit` reason_codes 건수/HOLD fallback 비율/
+  BUY·APPROVE 전환율/latency 변화를 실측해 동시성 값(3)이 적절한지
+  재평가한다.

@@ -80,6 +80,8 @@ from scripts.run_decision_loop import (
     DEFAULT_TRADING_UNIVERSE_CORE_CAP,
     DEFAULT_TRADING_UNIVERSE_MAX_CAP,
     DEFAULT_DECISION_LOOP_INTRADAY_FREEZE_PURPOSE,
+    DEFAULT_DECISION_LOOP_MAX_CONCURRENCY,
+    ENV_DECISION_LOOP_MAX_CONCURRENCY,
     ENV_TRADING_UNIVERSE_CORE_CAP,
     ENV_TRADING_UNIVERSE_MAX_CAP,
     ENV_TRADING_UNIVERSE,
@@ -93,6 +95,7 @@ from scripts.run_decision_loop import (
     _is_t3_fresh_for_symbol,
     _parse_args,
     _parse_universe_symbols,
+    _read_max_concurrency,
     _read_trading_universe,
     _resolve_symbol_price,
     _general_lane_priority_key,
@@ -4187,6 +4190,61 @@ class TestTradingUniverse:
         ):
             result = await _read_trading_universe()
             assert result == (UniverseSymbol("005930", "KRX"),)
+
+
+# ---------------------------------------------------------------------------
+# _read_max_concurrency tests (2026-08-18)
+# ---------------------------------------------------------------------------
+#
+# 배경: 종목별 독립 subprocess가 FDC(provider) 호출을 수행하므로, 이 값이
+# 곧 동시 provider 요청 수의 상한이다. 오늘 실측(Gemini RPM limit=15인데
+# 관측 RPM 19)에서 429 대량 발생과 상관관계가 있어, 기존 하드코딩값 5를
+# DECISION_LOOP_MAX_CONCURRENCY 환경변수로 조정 가능하게 하고 기본값을
+# 3으로 낮췄다. 아래는 그 설정 해석 로직만 검증한다(정책/게이트 변경 없음).
+
+
+class TestReadMaxConcurrency:
+    """``_read_max_concurrency()`` — 종목 동시 처리 상한 환경변수 해석."""
+
+    def test_default_when_env_unset(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.delenv(ENV_DECISION_LOOP_MAX_CONCURRENCY, raising=False)
+        assert _read_max_concurrency() == DEFAULT_DECISION_LOOP_MAX_CONCURRENCY
+
+    def test_default_is_lowered_from_legacy_five(self) -> None:
+        """2026-08-18 429 실측 대응 — 기본값이 기존 5보다 낮아야 한다."""
+        assert DEFAULT_DECISION_LOOP_MAX_CONCURRENCY < 5
+
+    def test_env_override_valid_value(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv(ENV_DECISION_LOOP_MAX_CONCURRENCY, "2")
+        assert _read_max_concurrency() == 2
+
+    def test_env_override_larger_value(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv(ENV_DECISION_LOOP_MAX_CONCURRENCY, "8")
+        assert _read_max_concurrency() == 8
+
+    def test_env_zero_falls_back_to_default(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv(ENV_DECISION_LOOP_MAX_CONCURRENCY, "0")
+        assert _read_max_concurrency() == DEFAULT_DECISION_LOOP_MAX_CONCURRENCY
+
+    def test_env_negative_falls_back_to_default(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv(ENV_DECISION_LOOP_MAX_CONCURRENCY, "-1")
+        assert _read_max_concurrency() == DEFAULT_DECISION_LOOP_MAX_CONCURRENCY
+
+    def test_env_invalid_string_falls_back_to_default(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv(ENV_DECISION_LOOP_MAX_CONCURRENCY, "not-a-number")
+        assert _read_max_concurrency() == DEFAULT_DECISION_LOOP_MAX_CONCURRENCY
 
 
 # ---------------------------------------------------------------------------
