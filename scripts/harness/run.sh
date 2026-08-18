@@ -436,9 +436,12 @@ deploy_without_change_detector_count = (
 # 배포 분기 블록을 잘라 분기별로 계약을 검증한다. 파일 전체 문자열 존재
 # 검사만으로는 "프런트 전용 분기가 migrate를 건너뛰는 것"과 "전체 배포 경로가
 # migrate를 잃는 것"을 구분하지 못한다.
+# 앵커에 줄바꿈과 들여쓰기를 포함해 activate_runtime의 분기만 잡는다.
+# sync_source에도 같은 조건문이 있어(들여쓰기가 다름) 앵커가 느슨하면
+# 엉뚱한 블록을 추출한다.
 frontend_only_branch = section_between(
     workflow_text,
-    'if [ "${{ needs.changes.outputs.frontend_only_activate }}" = "1" ]; then',
+    '\n            if [ "${{ needs.changes.outputs.frontend_only_activate }}" = "1" ]; then',
     "            else",
 )
 full_deploy_branch = section_between(
@@ -474,8 +477,12 @@ if full_deploy_commands:
 
 sync_source_section = section_between(workflow_text, "  sync_source:", "  activate_runtime:")
 sync_source_commands = command_lines_only(sync_source_section)
+# 가드는 sync-only 모드뿐 아니라 프런트 전용 모드에서도 발동해야 한다.
+# 프런트 전용은 allow_deploy=1이지만 frontend만 재빌드하므로, 조건을
+# allow_deploy 하나로만 두면 백엔드 대기 변경이 그대로 서버에 내려앉는다.
 sync_source_pending_guard_count = int(
-    'if [ "${{ needs.market_hours_guard.outputs.allow_deploy }}" != "1" ]; then' in sync_source_commands
+    '[ "${{ needs.market_hours_guard.outputs.allow_deploy }}" != "1" ]' in sync_source_commands
+    and '|| [ "${{ needs.changes.outputs.frontend_only_activate }}" = "1" ]; then' in sync_source_commands
     and "deploy_sync_pending_runtime_file_count" in sync_source_commands
     and "deploy_sync_blocked_by_pending_runtime_count=1" in sync_source_commands
     and "exit 1" in sync_source_commands
@@ -690,6 +697,12 @@ contract_checks = [
     ("workflow_deploy_change_detector_defines_runtime_affecting_rules", deploy_runtime_affecting_path_rule_count == 1),
     ("workflow_deploy_emits_sync_activate_metrics", deploy_sync_only_run_metric_count == 1 and deploy_activate_run_metric_count == 1 and deploy_activate_skipped_by_market_hours_metric_count == 1),
     ("workflow_deploy_runs_migration_before_restart", full_deploy_migration_order_count == 1),
+    ("workflow_market_hours_frontend_only_exception_scoped", contains(
+        workflow,
+        'elif [ "${{ needs.changes.outputs.frontend_only_activate }}" = "1" ]; then',
+        'deploy_market_hours_frontend_only_pass_count="1"',
+        "deploy_market_hours_frontend_only_pass_count: ${{ steps.guard.outputs.deploy_market_hours_frontend_only_pass_count }}",
+    )),
     ("workflow_sync_source_blocks_pending_runtime", (
         sync_source_pending_guard_count == 1 and sync_source_guard_before_reset_count == 1
     )),

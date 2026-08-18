@@ -305,6 +305,7 @@ jobs:
       allow_deploy: ${{ steps.guard.outputs.allow_deploy }}
       deploy_skipped_by_market_hours_count: ${{ steps.guard.outputs.deploy_skipped_by_market_hours_count }}
       deploy_market_hours_override_count: ${{ steps.guard.outputs.deploy_market_hours_override_count }}
+      deploy_market_hours_frontend_only_pass_count: ${{ steps.guard.outputs.deploy_market_hours_frontend_only_pass_count }}
     steps:
       - name: Evaluate KST market-hours guard
         id: guard
@@ -325,9 +326,17 @@ jobs:
           deploy_skipped_by_market_hours_count="0"
           deploy_market_hours_override_count="0"
 
+          deploy_market_hours_frontend_only_pass_count="0"
+
           if [ "$in_market_hours" = "1" ]; then
             if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ "${{ inputs.allow_market_hours_deploy }}" = "true" ]; then
               deploy_market_hours_override_count="1"
+            elif [ "${{ needs.changes.outputs.frontend_only_activate }}" = "1" ]; then
+              # 프런트 전용 변경은 ops-scheduler, reconciliation-worker, api를 건드리지
+              # 않는다. admin_ui/는 어떤 컨테이너에도 bind mount되지 않고 build context로만
+              # 쓰이며, Admin UI는 read/inspect 전용이라 매매 개입 수단을 노출하지 않는다.
+              # 장중 차단을 유지하면 override 사용이 습관이 되어 가드 자체가 무력해진다.
+              deploy_market_hours_frontend_only_pass_count="1"
             else
               allow_deploy="0"
               deploy_skipped_by_market_hours_count="1"
@@ -338,6 +347,7 @@ jobs:
             echo "allow_deploy=$allow_deploy"
             echo "deploy_skipped_by_market_hours_count=$deploy_skipped_by_market_hours_count"
             echo "deploy_market_hours_override_count=$deploy_market_hours_override_count"
+            echo "deploy_market_hours_frontend_only_pass_count=$deploy_market_hours_frontend_only_pass_count"
           } >> "$GITHUB_OUTPUT"
 
           echo "market_guard_kst_timestamp=$timestamp_kst"
@@ -346,6 +356,7 @@ jobs:
           echo "market_guard_in_market_hours=$in_market_hours"
           echo "deploy_skipped_by_market_hours_count=$deploy_skipped_by_market_hours_count"
           echo "deploy_market_hours_override_count=$deploy_market_hours_override_count"
+          echo "deploy_market_hours_frontend_only_pass_count=$deploy_market_hours_frontend_only_pass_count"
 
   sync_source:
     name: Sync source after safe harness
@@ -391,14 +402,24 @@ jobs:
             # decision loop는 매 사이클 subprocess로 새로 spawn되므로, 그렇게 들어온
             # 코드는 컨테이너 재기동 없이 장중에 그대로 적용된다.
             # 이 경우 동기화를 진행하지 않고 실패로 남긴다.
+            # 판정 기준은 "allow_deploy가 0인가"가 아니라 "activate_runtime이 전체
+            # 재기동을 하는가"다. 프런트 전용 배포는 allow_deploy=1이지만 frontend만
+            # 재빌드하므로, 함께 내려온 백엔드 변경이 bind mount된 src/·scripts/에
+            # 남아 다음 decision loop subprocess에서 재기동 없이 적용된다.
             deploy_sync_pending_runtime_file_count=0
             pending_runtime_files=""
-            if [ "${{ needs.market_hours_guard.outputs.allow_deploy }}" != "1" ]; then
+            if [ "${{ needs.market_hours_guard.outputs.allow_deploy }}" != "1" ] \
+              || [ "${{ needs.changes.outputs.frontend_only_activate }}" = "1" ]; then
               pending_runtime_files="$(
                 git diff --name-only "$server_head_sha" "$deploy_target_sha" |
                   sed '/^$/d' |
                   grep -E '${{ needs.changes.outputs.runtime_affecting_pattern }}' || true
               )"
+              if [ "${{ needs.changes.outputs.frontend_only_activate }}" = "1" ]; then
+                # 프런트 전용 경로에서는 admin_ui/ 변경이 frontend 재빌드로 실제 반영되므로
+                # 대기 변경으로 보지 않는다. 그 밖의 runtime 파일만 위험 대상이다.
+                pending_runtime_files="$(printf '%s\n' "$pending_runtime_files" | sed '/^$/d' | grep -vE '^admin_ui/' || true)"
+              fi
               deploy_sync_pending_runtime_file_count="$(printf '%s\n' "$pending_runtime_files" | sed '/^$/d' | wc -l | tr -d ' ')"
             fi
             echo "deploy_sync_pending_runtime_file_count=$deploy_sync_pending_runtime_file_count"
