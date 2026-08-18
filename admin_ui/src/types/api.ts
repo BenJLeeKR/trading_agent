@@ -179,6 +179,12 @@ export interface PositionSnapshotView {
   // ── Resolved instrument display fields (enriched at query time) ──
   symbol: string | null;
   instrument_name: string | null;
+  // 현재 보유 수량에 대응하는, 아직 SELL에 배분되지 않은 누적 매수 수수료
+  // (position_cost_basis_state.remaining_buy_fee_pool 조인). 이미 실현손익에
+  // 반영된 allocated_buy_fee와는 별개 값 — 계정×종목 cost-basis state가
+  // 없으면 null(0과 구분). 이 필드를 아직 채우지 않는 fixture/응답과의
+  // 호환을 위해 optional로 선언한다(값이 없으면 null과 동일하게 처리).
+  remaining_buy_fee_pool?: number | null;
 }
 
 // ── Realized PnL ledger (design/realized_pnl_screen_spec.md) ──
