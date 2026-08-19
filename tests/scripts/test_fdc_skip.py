@@ -9,7 +9,11 @@ Test coverage
 * 조건 2: no_material_events + 미보유 → HOLD
 * 조건 3: 최근 이벤트 0건 + 미보유 → HOLD
 * 조건 4: orderable_amount <= 0 + 미보유 → WATCH
-* 생략 불가: has_position이면 조건 2/3/4에서도 skip=False
+* 조건 5(2026-08-19, C2): buy_candidate=False + eligibility_passed=False +
+  미보유 → downstream `_check_ai_buy_override_gate()`와 동일하게 강제
+  WATCH/HOLD (단, eligibility_passed=True에 의존하는 EV gate/hysteresis
+  분기와 signal_feature_snapshot_id 없음 예외는 명시적으로 스코프 밖)
+* 생략 불가: has_position이면 조건 2/3/4/5에서도 skip=False
 * 생략 불가: 모든 조건 통과 → skip=False
 """
 
@@ -23,8 +27,12 @@ import pytest
 
 from agent_trading.domain.entities import (
     CashBalanceSnapshotEntity,
+    DecisionContextEntity,
     ExternalEventEntity,
     PositionSnapshotEntity,
+)
+from agent_trading.services.deterministic_trigger_engine import (
+    DeterministicTriggerAssessment,
 )
 from agent_trading.services.ai_agents.base import AgentExecutionRequest
 from agent_trading.services.ai_agents.schemas import (
@@ -820,6 +828,357 @@ class TestFdcSkipDegraded:
         )
         assert skip is False
         assert reason == ""
+
+
+# =========================================================================
+# Test: Condition 5 — buy_candidate=False + eligibility_passed=False
+# (2026-08-19, C2: FDC 호출량 절감)
+# =========================================================================
+
+
+def _make_deterministic_trigger(
+    *,
+    buy_candidate: bool = False,
+    watch_candidate: bool = False,
+    eligibility_passed: bool = False,
+    eligibility_reasons: tuple = (),
+) -> DeterministicTriggerAssessment:
+    return DeterministicTriggerAssessment(
+        trigger_version="v1",
+        primary_candidate="none",
+        candidate_set=(),
+        watch_candidate=watch_candidate,
+        buy_candidate=buy_candidate,
+        sell_candidate=False,
+        reduce_candidate=False,
+        candidate_confidence=0.0,
+        entry_score=None,
+        exit_score=None,
+        watch_score=None,
+        eligibility_passed=eligibility_passed,
+        eligibility_reasons=eligibility_reasons,
+    )
+
+
+def _make_decision_context(
+    *, signal_feature_snapshot_id: UUID | None = None,
+) -> DecisionContextEntity:
+    return DecisionContextEntity(
+        decision_context_id=uuid4(),
+        account_id=uuid4(),
+        strategy_id=uuid4(),
+        config_version_id=uuid4(),
+        market_timestamp=datetime.now(timezone.utc),
+        correlation_id="test",
+        signal_feature_snapshot_id=signal_feature_snapshot_id,
+    )
+
+
+def _make_eligibility_blocked_context(
+    *,
+    watch_candidate: bool = False,
+    eligibility_reasons: tuple = ("eligibility_low_momentum",),
+    has_position: bool = False,
+    decision_context: DecisionContextEntity | None = None,
+) -> AssembledContext:
+    position_snapshot = None
+    if has_position:
+        position_snapshot = PositionSnapshotEntity(
+            position_snapshot_id=uuid4(),
+            account_id=uuid4(),
+            instrument_id=uuid4(),
+            quantity=Decimal("10"),
+            average_price=Decimal("50000"),
+            market_price=Decimal("50000"),
+            unrealized_pnl=Decimal("0"),
+            source_of_truth="KIS",
+            snapshot_at=datetime.now(timezone.utc),
+        )
+    return AssembledContext(
+        source_type="core",
+        decision_context=(
+            decision_context
+            if decision_context is not None
+            else _make_decision_context(signal_feature_snapshot_id=uuid4())
+        ),
+        recent_events=(
+            ExternalEventEntity(
+                event_id=uuid4(),
+                event_type="test_event",
+                source_name="test",
+                published_at=datetime.now(timezone.utc),
+            ),
+        ),
+        position_snapshot=position_snapshot,
+        cash_balance_snapshot=CashBalanceSnapshotEntity(
+            cash_balance_snapshot_id=uuid4(),
+            account_id=uuid4(),
+            currency="KRW",
+            available_cash=Decimal("10000000"),
+            settled_cash=Decimal("10000000"),
+            unsettled_cash=Decimal("0"),
+            source_of_truth="KIS",
+            snapshot_at=datetime.now(timezone.utc),
+            total_asset=Decimal("10000000"),
+            orderable_amount=Decimal("5000000"),
+        ),
+        deterministic_trigger=_make_deterministic_trigger(
+            buy_candidate=False,
+            watch_candidate=watch_candidate,
+            eligibility_passed=False,
+            eligibility_reasons=eligibility_reasons,
+        ),
+    )
+
+
+class TestFdcSkipBuyCandidateEligibilityBlocked:
+    """C2(2026-08-19): buy_candidate=False + eligibility_passed=False →
+    downstream `_check_ai_buy_override_gate()`가 어차피 WATCH/HOLD로
+    강등할 구간을 FDC 호출 전에 결정론적으로 확정한다.
+
+    동치성 근거는 scripts/run_agent_subprocess.py의 Condition 4 주석과
+    docs/30_work_log/2026-08-19_c2_fdc_skip_buy_candidate_false.md 참고.
+    """
+
+    def test_skips_and_forces_hold_when_watch_candidate_false(
+        self,
+        sample_subprocess_input: AgentSubprocessInput,
+        default_event_output: EventInterpretationOutput,
+        risk_allow_output: AIRiskOutput,
+    ) -> None:
+        context = _make_eligibility_blocked_context(watch_candidate=False)
+        request = AgentExecutionRequest(
+            decision_context_id=None, correlation_id="test", context=context,
+        )
+        skip, reason, output = _check_fdc_skip(
+            sample_subprocess_input, request,
+            default_event_output, risk_allow_output,
+        )
+        assert skip is True
+        assert reason == "buy_candidate_eligibility_blocked"
+        assert output.decision_type == "HOLD"
+        assert "buy_candidate_eligibility_blocked" in output.reason_codes
+        assert "ai_override_eligibility_blocked" in output.reason_codes
+        assert "forced_hold" in output.reason_codes
+
+    def test_skips_and_forces_watch_when_watch_candidate_true(
+        self,
+        sample_subprocess_input: AgentSubprocessInput,
+        default_event_output: EventInterpretationOutput,
+        risk_allow_output: AIRiskOutput,
+    ) -> None:
+        context = _make_eligibility_blocked_context(watch_candidate=True)
+        request = AgentExecutionRequest(
+            decision_context_id=None, correlation_id="test", context=context,
+        )
+        skip, reason, output = _check_fdc_skip(
+            sample_subprocess_input, request,
+            default_event_output, risk_allow_output,
+        )
+        assert skip is True
+        assert reason == "buy_candidate_eligibility_blocked"
+        assert output.decision_type == "WATCH"
+        assert "forced_watch_candidate" in output.reason_codes
+
+    def test_summary_discloses_deterministic_skip(
+        self,
+        sample_subprocess_input: AgentSubprocessInput,
+        default_event_output: EventInterpretationOutput,
+        risk_allow_output: AIRiskOutput,
+    ) -> None:
+        """summary 첫 문장이 규칙 기반 생략임을 명확히 밝히고, 강제된 최종
+        결과(WATCH/HOLD)를 포함해야 한다(설명 가능성 요구사항). 2026-08-19
+        축약 이후로는 source_type/buy_candidate/eligibility_reasons 같은
+        코드성 항목은 summary에 노출하지 않는다(UI '근거' 컬럼 가독성)."""
+        context = _make_eligibility_blocked_context(
+            watch_candidate=True,
+            eligibility_reasons=("eligibility_low_momentum", "eligibility_low_score"),
+        )
+        request = AgentExecutionRequest(
+            decision_context_id=None, correlation_id="test", context=context,
+        )
+        _, _, output = _check_fdc_skip(
+            sample_subprocess_input, request,
+            default_event_output, risk_allow_output,
+        )
+        assert output.summary.startswith("[규칙 기반 생략]")
+        assert "FDC" in output.summary
+        assert "WATCH" in output.summary
+        assert len(output.summary) <= 160
+
+    def test_does_not_trigger_when_position_held(
+        self,
+        sample_subprocess_input: AgentSubprocessInput,
+        default_event_output: EventInterpretationOutput,
+        risk_allow_output: AIRiskOutput,
+    ) -> None:
+        """보유 포지션이 있으면(has_position=True) 새 조건이 절대 발동하지
+        않아야 한다 — held_position 경로 오적용 방지 요구사항."""
+        context = _make_eligibility_blocked_context(has_position=True)
+        request = AgentExecutionRequest(
+            decision_context_id=None, correlation_id="test", context=context,
+        )
+        skip, reason, output = _check_fdc_skip(
+            sample_subprocess_input, request,
+            default_event_output, risk_allow_output,
+        )
+        assert skip is False
+        assert reason == ""
+
+    def test_does_not_trigger_when_buy_candidate_true(
+        self,
+        sample_subprocess_input: AgentSubprocessInput,
+        default_event_output: EventInterpretationOutput,
+        risk_allow_output: AIRiskOutput,
+    ) -> None:
+        """buy_candidate=True면 (구조상 eligibility_passed=True를 내포)
+        새 조건이 발동하지 않아야 한다."""
+        context = AssembledContext(
+            source_type="core",
+            decision_context=_make_decision_context(signal_feature_snapshot_id=uuid4()),
+            recent_events=(
+                ExternalEventEntity(
+                    event_id=uuid4(), event_type="test_event", source_name="test",
+                    published_at=datetime.now(timezone.utc),
+                ),
+            ),
+            position_snapshot=None,
+            cash_balance_snapshot=CashBalanceSnapshotEntity(
+                cash_balance_snapshot_id=uuid4(), account_id=uuid4(), currency="KRW",
+                available_cash=Decimal("10000000"), settled_cash=Decimal("10000000"),
+                unsettled_cash=Decimal("0"), source_of_truth="KIS",
+                snapshot_at=datetime.now(timezone.utc), total_asset=Decimal("10000000"),
+                orderable_amount=Decimal("5000000"),
+            ),
+            deterministic_trigger=_make_deterministic_trigger(
+                buy_candidate=True, watch_candidate=True, eligibility_passed=True,
+            ),
+        )
+        request = AgentExecutionRequest(
+            decision_context_id=None, correlation_id="test", context=context,
+        )
+        skip, reason, output = _check_fdc_skip(
+            sample_subprocess_input, request,
+            default_event_output, risk_allow_output,
+        )
+        assert skip is False
+        assert reason == ""
+
+    def test_does_not_trigger_when_eligibility_passed_true_and_buy_candidate_false(
+        self,
+        sample_subprocess_input: AgentSubprocessInput,
+        default_event_output: EventInterpretationOutput,
+        risk_allow_output: AIRiskOutput,
+    ) -> None:
+        """eligibility_passed=True인데 entry_score 부족으로 buy_candidate=False인
+        경우는 downstream에서 EV gate/hysteresis에 의존하는 분기라 동치성이
+        없으므로, 새 조건이 절대 발동하지 않아야 한다(스코프 밖 명시적 배제)."""
+        context = AssembledContext(
+            source_type="core",
+            decision_context=_make_decision_context(signal_feature_snapshot_id=uuid4()),
+            recent_events=(
+                ExternalEventEntity(
+                    event_id=uuid4(), event_type="test_event", source_name="test",
+                    published_at=datetime.now(timezone.utc),
+                ),
+            ),
+            position_snapshot=None,
+            cash_balance_snapshot=CashBalanceSnapshotEntity(
+                cash_balance_snapshot_id=uuid4(), account_id=uuid4(), currency="KRW",
+                available_cash=Decimal("10000000"), settled_cash=Decimal("10000000"),
+                unsettled_cash=Decimal("0"), source_of_truth="KIS",
+                snapshot_at=datetime.now(timezone.utc), total_asset=Decimal("10000000"),
+                orderable_amount=Decimal("5000000"),
+            ),
+            deterministic_trigger=_make_deterministic_trigger(
+                buy_candidate=False, watch_candidate=True, eligibility_passed=True,
+                eligibility_reasons=(),
+            ),
+        )
+        request = AgentExecutionRequest(
+            decision_context_id=None, correlation_id="test", context=context,
+        )
+        skip, reason, output = _check_fdc_skip(
+            sample_subprocess_input, request,
+            default_event_output, risk_allow_output,
+        )
+        assert skip is False
+        assert reason == ""
+
+    def test_does_not_trigger_for_low_feature_coverage_exception(
+        self,
+        sample_subprocess_input: AgentSubprocessInput,
+        default_event_output: EventInterpretationOutput,
+        risk_allow_output: AIRiskOutput,
+    ) -> None:
+        """downstream의 좁은 예외(signal_feature_snapshot_id=None +
+        eligibility_reasons가 {source_type_allowed, low_feature_coverage}의
+        부분집합)와 동일하게, 이 케이스에서는 새 조건이 발동하지 않아야
+        한다 — 이 경우 downstream 게이트도 강등하지 않고 FDC의 원래
+        결정을 그대로 두기 때문이다."""
+        decision_context = _make_decision_context(signal_feature_snapshot_id=None)
+        context = _make_eligibility_blocked_context(
+            watch_candidate=True,
+            eligibility_reasons=("eligibility_low_feature_coverage",),
+            decision_context=decision_context,
+        )
+        request = AgentExecutionRequest(
+            decision_context_id=None, correlation_id="test", context=context,
+        )
+        skip, reason, output = _check_fdc_skip(
+            sample_subprocess_input, request,
+            default_event_output, risk_allow_output,
+        )
+        assert skip is False
+        assert reason == ""
+
+    def test_triggers_when_signal_feature_snapshot_present_even_with_low_feature_coverage_reason(
+        self,
+        sample_subprocess_input: AgentSubprocessInput,
+        default_event_output: EventInterpretationOutput,
+        risk_allow_output: AIRiskOutput,
+    ) -> None:
+        """예외 조건은 signal_feature_snapshot_id가 None일 때만 적용된다 —
+        snapshot_id가 있으면(정상 케이스) eligibility_reasons가 같아도
+        예외가 아니므로 skip이 발동해야 한다."""
+        decision_context = _make_decision_context(signal_feature_snapshot_id=uuid4())
+        context = _make_eligibility_blocked_context(
+            watch_candidate=False,
+            eligibility_reasons=("eligibility_low_feature_coverage",),
+            decision_context=decision_context,
+        )
+        request = AgentExecutionRequest(
+            decision_context_id=None, correlation_id="test", context=context,
+        )
+        skip, reason, output = _check_fdc_skip(
+            sample_subprocess_input, request,
+            default_event_output, risk_allow_output,
+        )
+        assert skip is True
+        assert reason == "buy_candidate_eligibility_blocked"
+        assert output.decision_type == "HOLD"
+
+    def test_existing_conditions_unaffected_when_no_deterministic_trigger(
+        self,
+        sample_subprocess_input: AgentSubprocessInput,
+        default_event_output: EventInterpretationOutput,
+        risk_allow_output: AIRiskOutput,
+    ) -> None:
+        """deterministic_trigger가 없으면(None) 새 조건은 절대 발동하지
+        않고, 기존 조건들의 판정만 그대로 유지되어야 한다(회귀 없음)."""
+        context = _make_empty_context()
+        request = AgentExecutionRequest(
+            decision_context_id=None, correlation_id="test", context=context,
+        )
+        skip, reason, output = _check_fdc_skip(
+            sample_subprocess_input, request,
+            default_event_output, risk_allow_output,
+        )
+        # deterministic_trigger=None인 빈 컨텍스트는 기존 조건 3
+        # (no_events_no_position)이 먼저 발동해야 한다 — 새 조건 때문에
+        # 다른 결과로 바뀌면 안 된다.
+        assert skip is True
+        assert reason == "no_events_no_position"
 
 
 class TestDiagLogLazyDirCreation:
