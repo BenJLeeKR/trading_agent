@@ -616,6 +616,22 @@ def _resolve_ei_shadow_bot_enabled() -> bool:
     return raw.strip().lower() == "true"
 
 
+def _resolve_held_position_fdc_skip_shadow_enabled() -> bool:
+    """``held_position`` FDC 호출 **shadow-skip 관측**(관측 전용) on/off
+    스위치를 ``HELD_POSITION_FDC_SKIP_SHADOW_ENABLED`` env에서 읽는다.
+
+    ``ar_shadow_bot_enabled``/``ei_shadow_bot_enabled``와 동일한 패턴 —
+    기본값 ``False``, ``True``여도 FDC 호출 여부/`decision_type`/`side`/
+    주문 제출에는 전혀 개입하지 않는다. ``deterministic_trigger.
+    primary_candidate``가 ``NO_ACTION``/``WATCH``인 held_position 결정에
+    한해, "FDC를 생략했다면(shadow) 실제 최종 결과와 같았을까"를
+    `trade_decisions.decision_json.shadow_held_position_fdc_skip`에만
+    기록한다.
+    """
+    raw = os.getenv("HELD_POSITION_FDC_SKIP_SHADOW_ENABLED", "false")
+    return raw.strip().lower() == "true"
+
+
 def _resolve_kis_fill_incremental_append_enabled() -> bool:
     """KIS 누적 체결량(``TOT_CCLD_QTY``)을 증분으로 해석해 실제
     ``fill_events``에 append할지 여부를 ``KIS_FILL_INCREMENTAL_APPEND_
@@ -917,6 +933,15 @@ class AppSettings:
     ``False``. ``True``여도 EI 출력/AR·FDC·AC 입력/`decision_type`/주문
     제출에는 전혀 개입하지 않는다 — `trade_decisions.decision_json.
     shadow_event_bot`에 정형 이벤트 기반 가상 판정만 기록한다."""
+
+    held_position_fdc_skip_shadow_enabled: bool = field(
+        default_factory=_resolve_held_position_fdc_skip_shadow_enabled
+    )
+    """`HELD_POSITION_FDC_SKIP_SHADOW_ENABLED` env로 제어하는 관측 전용
+    스위치. 기본값 ``False``. ``True``여도 FDC 호출 여부/`decision_type`/
+    `side`/주문 제출에는 전혀 개입하지 않는다 — `trade_decisions.
+    decision_json.shadow_held_position_fdc_skip`에 "FDC를 생략했다면
+    같은 결과였을까" 가상 비교만 기록한다."""
 
     # ---- KIS 누적 체결량 → 증분 fill 해석 (설계 문서 14번) ---------------
     kis_fill_incremental_append_enabled: bool = field(

@@ -4752,3 +4752,287 @@ class TestEiShadowBotObservation:
             event_output=EventInterpretationOutput(),
         )
         repos.trade_decisions.sync_shadow_event_bot_observation.assert_awaited_once()
+
+
+def _make_held_position_trigger(
+    *, primary_candidate: str, watch_candidate: bool = False,
+    reduce_candidate: bool = False,
+) -> DeterministicTriggerAssessment:
+    return DeterministicTriggerAssessment(
+        trigger_version="v1",
+        primary_candidate=primary_candidate,
+        candidate_set=(primary_candidate,),
+        watch_candidate=watch_candidate,
+        buy_candidate=False,
+        sell_candidate=False,
+        reduce_candidate=reduce_candidate,
+        candidate_confidence=0.5,
+        entry_score=None,
+        exit_score=0.3,
+        watch_score=0.5 if watch_candidate else None,
+    )
+
+
+class TestHeldPositionFdcSkipShadowObservation:
+    """`_record_held_position_fdc_skip_shadow_observation`은 관측 전용이다
+    — 어떤 실행 경로에서도 `decision_type`/`side`를 바꾸지 않는다."""
+
+    def _make_decision(self, *, decision_type=DecisionType.HOLD, side=None):
+        return TradeDecisionEntity(
+            trade_decision_id=uuid4(),
+            decision_context_id=uuid4(),
+            decision_type=decision_type,
+            side=side,
+            strategy_id=uuid4(),
+            symbol="196170",
+            market="KRX",
+            entry_style=EntryStyle.LIMIT,
+            created_at=datetime.now(timezone.utc),
+            decision_json={"existing": True},
+        )
+
+    @pytest.mark.asyncio
+    async def test_disabled_flag_is_a_full_noop(self) -> None:
+        repos = build_in_memory_repositories()
+        service = DecisionOrchestratorService(repos=repos, use_subprocess_isolation=False)
+        decision = self._make_decision()
+        await repos.trade_decisions.add(decision)
+
+        assembled_context = AssembledContext(
+            source_type="held_position",
+            deterministic_trigger=_make_held_position_trigger(primary_candidate="WATCH"),
+        )
+
+        await service._record_held_position_fdc_skip_shadow_observation(
+            trade_decision_id=decision.trade_decision_id,
+            assembled_context=assembled_context,
+            ar_output=AIRiskOutput(risk_opinion="allow", risk_score=0.1),
+            composer_output=FinalDecisionComposerOutput(decision_type="HOLD", side=""),
+            fdc_raw_decision_type="HOLD",
+        )
+
+        updated = await repos.trade_decisions.get(decision.trade_decision_id)
+        assert updated is not None
+        assert updated.decision_type == DecisionType.HOLD
+        assert updated.side is None
+        assert "shadow_held_position_fdc_skip" not in updated.decision_json
+
+    @pytest.mark.asyncio
+    async def test_enabled_records_agreement_for_watch_primary_candidate(self) -> None:
+        repos = build_in_memory_repositories()
+        service = DecisionOrchestratorService(
+            repos=repos, use_subprocess_isolation=False,
+            held_position_fdc_skip_shadow_enabled=True,
+        )
+        decision = self._make_decision(decision_type=DecisionType.WATCH, side=None)
+        await repos.trade_decisions.add(decision)
+
+        assembled_context = AssembledContext(
+            source_type="held_position",
+            deterministic_trigger=_make_held_position_trigger(
+                primary_candidate="WATCH", watch_candidate=True,
+            ),
+        )
+        ar_output = AIRiskOutput(risk_opinion="allow", risk_score=0.1)
+        composer_output = FinalDecisionComposerOutput(decision_type="WATCH", side="")
+
+        await service._record_held_position_fdc_skip_shadow_observation(
+            trade_decision_id=decision.trade_decision_id,
+            assembled_context=assembled_context,
+            ar_output=ar_output,
+            composer_output=composer_output,
+            fdc_raw_decision_type="WATCH",
+        )
+
+        updated = await repos.trade_decisions.get(decision.trade_decision_id)
+        assert updated is not None
+        # 실제 결정 필드는 shadow 관측 전과 완전히 동일해야 한다.
+        assert updated.decision_type == DecisionType.WATCH
+        assert updated.side is None
+        assert updated.decision_json["existing"] is True
+
+        shadow = updated.decision_json["shadow_held_position_fdc_skip"]
+        assert shadow["rule_set_version"] == "held_position_fdc_skip_shadow_v1"
+        assert shadow["primary_candidate"] == "WATCH"
+        assert shadow["shadow_skip_candidate"] is True
+        assert shadow["shadow_decision_type"] == "WATCH"
+        assert shadow["shadow_final_decision_type"] == "WATCH"
+        assert shadow["actual_fdc_raw_decision_type"] == "WATCH"
+        assert shadow["actual_final_decision_type"] == "WATCH"
+        assert shadow["held_position_override_applied"] is False
+        assert shadow["agreement"] is True
+        assert shadow["provider_rate_limit_observed"] is False
+
+    @pytest.mark.asyncio
+    async def test_no_action_primary_candidate_uses_hold_shadow(self) -> None:
+        repos = build_in_memory_repositories()
+        service = DecisionOrchestratorService(
+            repos=repos, use_subprocess_isolation=False,
+            held_position_fdc_skip_shadow_enabled=True,
+        )
+        decision = self._make_decision(decision_type=DecisionType.HOLD, side=None)
+        await repos.trade_decisions.add(decision)
+
+        assembled_context = AssembledContext(
+            source_type="held_position",
+            deterministic_trigger=_make_held_position_trigger(primary_candidate="NO_ACTION"),
+        )
+        composer_output = FinalDecisionComposerOutput(decision_type="HOLD", side="")
+
+        await service._record_held_position_fdc_skip_shadow_observation(
+            trade_decision_id=decision.trade_decision_id,
+            assembled_context=assembled_context,
+            ar_output=AIRiskOutput(risk_opinion="allow", risk_score=0.1),
+            composer_output=composer_output,
+            fdc_raw_decision_type="HOLD",
+        )
+
+        updated = await repos.trade_decisions.get(decision.trade_decision_id)
+        shadow = updated.decision_json["shadow_held_position_fdc_skip"]
+        assert shadow["primary_candidate"] == "NO_ACTION"
+        assert shadow["shadow_decision_type"] == "HOLD"
+        assert shadow["agreement"] is True
+
+    @pytest.mark.asyncio
+    async def test_reduce_candidate_is_not_a_shadow_target(self) -> None:
+        """`REDUCE_CANDIDATE`/`SELL_CANDIDATE`는 실측상 FDC가 HOLD로
+        되돌리는 비율이 낮지 않아 shadow 관측 대상에서 제외된다."""
+        repos = build_in_memory_repositories()
+        service = DecisionOrchestratorService(
+            repos=repos, use_subprocess_isolation=False,
+            held_position_fdc_skip_shadow_enabled=True,
+        )
+        decision = self._make_decision(decision_type=DecisionType.REDUCE, side=OrderSide.SELL)
+        await repos.trade_decisions.add(decision)
+
+        assembled_context = AssembledContext(
+            source_type="held_position",
+            deterministic_trigger=_make_held_position_trigger(
+                primary_candidate="REDUCE_CANDIDATE", reduce_candidate=True,
+            ),
+        )
+        composer_output = FinalDecisionComposerOutput(decision_type="REDUCE", side="sell")
+
+        await service._record_held_position_fdc_skip_shadow_observation(
+            trade_decision_id=decision.trade_decision_id,
+            assembled_context=assembled_context,
+            ar_output=AIRiskOutput(risk_opinion="allow", risk_score=0.1),
+            composer_output=composer_output,
+            fdc_raw_decision_type="REDUCE",
+        )
+
+        updated = await repos.trade_decisions.get(decision.trade_decision_id)
+        assert "shadow_held_position_fdc_skip" not in updated.decision_json
+
+    @pytest.mark.asyncio
+    async def test_core_source_type_is_not_a_shadow_target(self) -> None:
+        repos = build_in_memory_repositories()
+        service = DecisionOrchestratorService(
+            repos=repos, use_subprocess_isolation=False,
+            held_position_fdc_skip_shadow_enabled=True,
+        )
+        decision = self._make_decision(decision_type=DecisionType.WATCH, side=None)
+        await repos.trade_decisions.add(decision)
+
+        assembled_context = AssembledContext(
+            source_type="core",
+            deterministic_trigger=_make_held_position_trigger(
+                primary_candidate="WATCH", watch_candidate=True,
+            ),
+        )
+        composer_output = FinalDecisionComposerOutput(decision_type="WATCH", side="")
+
+        await service._record_held_position_fdc_skip_shadow_observation(
+            trade_decision_id=decision.trade_decision_id,
+            assembled_context=assembled_context,
+            ar_output=AIRiskOutput(risk_opinion="allow", risk_score=0.1),
+            composer_output=composer_output,
+            fdc_raw_decision_type="WATCH",
+        )
+
+        updated = await repos.trade_decisions.get(decision.trade_decision_id)
+        assert "shadow_held_position_fdc_skip" not in updated.decision_json
+
+    @pytest.mark.asyncio
+    async def test_strong_ar_risk_reflects_override_in_shadow_final(self) -> None:
+        """실제로 override가 개입해 최종 EXIT가 된 경우, shadow도 같은
+        override 함수를 재사용해 EXIT로 일치해야 한다(코드 재사용 검증)."""
+        repos = build_in_memory_repositories()
+        service = DecisionOrchestratorService(
+            repos=repos, use_subprocess_isolation=False,
+            held_position_fdc_skip_shadow_enabled=True,
+        )
+        decision = self._make_decision(decision_type=DecisionType.EXIT, side=OrderSide.SELL)
+        await repos.trade_decisions.add(decision)
+
+        assembled_context = AssembledContext(
+            source_type="held_position",
+            deterministic_trigger=_make_held_position_trigger(primary_candidate="WATCH"),
+        )
+        ar_output = AIRiskOutput(
+            risk_opinion="reduce", risk_score=0.8,
+            risk_flags=("concentration_over_limit",),
+        )
+        # 실제로는 override가 HOLD/WATCH를 EXIT로 override한 뒤의 최종값.
+        composer_output = FinalDecisionComposerOutput(decision_type="EXIT", side="SELL")
+
+        await service._record_held_position_fdc_skip_shadow_observation(
+            trade_decision_id=decision.trade_decision_id,
+            assembled_context=assembled_context,
+            ar_output=ar_output,
+            composer_output=composer_output,
+            fdc_raw_decision_type="HOLD",
+        )
+
+        updated = await repos.trade_decisions.get(decision.trade_decision_id)
+        shadow = updated.decision_json["shadow_held_position_fdc_skip"]
+        assert shadow["shadow_decision_type"] == "WATCH"
+        # override를 shadow에도 그대로 재적용하면 EXIT가 나와야 한다.
+        assert shadow["shadow_final_decision_type"] == "EXIT"
+        assert shadow["held_position_override_applied"] is True
+        assert shadow["actual_final_decision_type"] == "EXIT"
+        assert shadow["agreement"] is True
+
+    @pytest.mark.asyncio
+    async def test_enabled_but_trade_decision_id_none_is_noop(self) -> None:
+        repos = build_in_memory_repositories()
+        service = DecisionOrchestratorService(
+            repos=repos, use_subprocess_isolation=False,
+            held_position_fdc_skip_shadow_enabled=True,
+        )
+        assembled_context = AssembledContext(
+            source_type="held_position",
+            deterministic_trigger=_make_held_position_trigger(primary_candidate="WATCH"),
+        )
+
+        await service._record_held_position_fdc_skip_shadow_observation(
+            trade_decision_id=None,
+            assembled_context=assembled_context,
+            ar_output=AIRiskOutput(risk_opinion="allow", risk_score=0.1),
+            composer_output=FinalDecisionComposerOutput(decision_type="WATCH", side=""),
+            fdc_raw_decision_type="WATCH",
+        )
+
+    @pytest.mark.asyncio
+    async def test_repository_write_failure_is_logged_not_raised(self) -> None:
+        repos = build_in_memory_repositories()
+        service = DecisionOrchestratorService(
+            repos=repos, use_subprocess_isolation=False,
+            held_position_fdc_skip_shadow_enabled=True,
+        )
+        assembled_context = AssembledContext(
+            source_type="held_position",
+            deterministic_trigger=_make_held_position_trigger(primary_candidate="WATCH"),
+        )
+        repos.trade_decisions.sync_shadow_held_position_fdc_skip_observation = AsyncMock(
+            side_effect=RuntimeError("boom")
+        )
+
+        await service._record_held_position_fdc_skip_shadow_observation(
+            trade_decision_id=uuid4(),
+            assembled_context=assembled_context,
+            ar_output=AIRiskOutput(risk_opinion="allow", risk_score=0.1),
+            composer_output=FinalDecisionComposerOutput(decision_type="WATCH", side=""),
+            fdc_raw_decision_type="WATCH",
+        )
+        repos.trade_decisions.sync_shadow_held_position_fdc_skip_observation.assert_awaited_once()

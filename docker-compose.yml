@@ -375,6 +375,13 @@ services:
       # 보강하며 값을 true로 켜지 않는다).
       AR_SHADOW_BOT_ENABLED: "${AR_SHADOW_BOT_ENABLED:-false}"
       EI_SHADOW_BOT_ENABLED: "${EI_SHADOW_BOT_ENABLED:-false}"
+      # held_position FDC 호출 shadow-skip 관측 전용 스위치(2026-08-19) —
+      # 위 AR/EI shadow bot과 동일한 이유로 이 화이트리스트에 선언해 둔다.
+      # decision_type/side/FDC 호출 여부에는 전혀 개입하지 않고
+      # trade_decisions.decision_json.shadow_held_position_fdc_skip에
+      # 관측값만 남기는 스위치다. 기본값 false는 기존 운영 동작을 그대로
+      # 유지한다.
+      HELD_POSITION_FDC_SKIP_SHADOW_ENABLED: "${HELD_POSITION_FDC_SKIP_SHADOW_ENABLED:-false}"
       # KIS 누적 체결량(TOT_CCLD_QTY) → 증분 fill 해석 shadow 스위치(설계
       # 문서 14번 6.1절) — 위 loss-cut shadow와 같은 이유로 이 화이트리스트에
       # 미리 선언해 둔다. run_post_submit_sync_loop.py는 ops-scheduler의

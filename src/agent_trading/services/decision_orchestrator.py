@@ -142,6 +142,12 @@ _AI_OVERRIDE_EXECUTION_INFEASIBLE_REASONS = frozenset(
         "eligibility_participation_rate_blocked",
     }
 )
+# held_position FDC skip shadow 관측 대상 — deterministic_trigger가 이미
+# "행동 불필요"(NO_ACTION) 또는 "지켜보기"(WATCH)로 판정한 구간만 본다.
+# REDUCE_CANDIDATE/SELL_CANDIDATE는 실측상 FDC가 실제로 HOLD로 되돌리는
+# 비율이 낮지 않아(2026-08-19 실측 9.1%) 대상에서 제외한다.
+_HELD_POSITION_FDC_SKIP_SHADOW_PRIMARY_CANDIDATES = frozenset({"NO_ACTION", "WATCH"})
+HELD_POSITION_FDC_SKIP_SHADOW_RULE_SET_VERSION = "held_position_fdc_skip_shadow_v1"
 
 # Per-agent timeout: each LLM call is capped at 30s so that a single
 # hanging agent cannot stall the entire decision cycle beyond 90s.
@@ -295,6 +301,8 @@ class DecisionOrchestratorService:
         # --- AR(ai_risk)/EI(event_interpretation) shadow bot 관측 (관측 전용, 결정 미개입) ---
         ar_shadow_bot_enabled: bool = False,
         ei_shadow_bot_enabled: bool = False,
+        # --- held_position FDC 호출 shadow-skip 관측 (관측 전용, 결정 미개입) ---
+        held_position_fdc_skip_shadow_enabled: bool = False,
     ) -> None:
         self._repos = repos
         self._decision_context_service = DecisionContextService(repos)
@@ -360,6 +368,13 @@ class DecisionOrchestratorService:
         # 바꾸지 않는다.
         self._ar_shadow_bot_enabled = ar_shadow_bot_enabled
         self._ei_shadow_bot_enabled = ei_shadow_bot_enabled
+        # held_position FDC skip shadow 관측도 동일한 원칙을 따른다: 결정
+        # mutating guard 목록에 속하지 않고, assemble() 최말단에서 관측
+        # 전용으로만 호출되며 FDC 호출 여부/decision_type/side/주문
+        # 제출을 절대 바꾸지 않는다.
+        self._held_position_fdc_skip_shadow_enabled = (
+            held_position_fdc_skip_shadow_enabled
+        )
         # --- Execution Service (execution pipeline state: sell guard, quote CB, fresh check) ---
         self._execution_service = ExecutionService(
             repos=repos,
@@ -1189,6 +1204,114 @@ class DecisionOrchestratorService:
         except Exception:
             logger.warning(
                 "shadow_event_bot observation sync failed: trade_decision_id=%s",
+                trade_decision_id,
+                exc_info=True,
+            )
+
+    async def _record_held_position_fdc_skip_shadow_observation(
+        self,
+        *,
+        trade_decision_id: UUID | None,
+        assembled_context: AssembledContext,
+        ar_output: AIRiskOutput | None,
+        composer_output: FinalDecisionComposerOutput | None,
+        fdc_raw_decision_type: str | None,
+    ) -> None:
+        """``held_position`` FDC 호출 shadow-skip 관측을 기록한다(관측
+        전용, 결정 미개입).
+
+        ``deterministic_trigger.primary_candidate``가 ``NO_ACTION``/
+        ``WATCH``인 held_position 결정에 한해 "FDC를 실제로 호출하지
+        않고 결정론적으로 HOLD/WATCH를 골랐다면, 실제 최종 결과와
+        같았을까"를 비교해 기록한다. ``_check_held_position_sell_
+        override()``를 그대로 재사용해(가상 FDC 출력만 바꿔치기) shadow
+        최종값을 계산한다 — ``_record_ar_shadow_bot_observation()``과
+        동일한 "실제 판정 함수 재사용" 원칙이다.
+
+        ``_apply_held_position_sell_override()``가 이미 적용된 이후
+        시점에서 호출되므로, ``composer_output.decision_type``은
+        override가 개입했다면 그 결과(post-override)를 담고 있다.
+        ``fdc_raw_decision_type``은 override 적용 *이전*(FDC 원본 출력)
+        값을 호출자가 별도로 캡처해 전달해야 한다.
+        """
+        if not self._held_position_fdc_skip_shadow_enabled:
+            return
+        if trade_decision_id is None or composer_output is None:
+            return
+
+        source_type = (assembled_context.source_type or "core").strip().lower()
+        if source_type != "held_position":
+            return
+
+        deterministic_trigger = assembled_context.deterministic_trigger
+        if deterministic_trigger is None:
+            return
+
+        primary_candidate = (
+            getattr(deterministic_trigger, "primary_candidate", "") or ""
+        ).strip().upper()
+        if primary_candidate not in _HELD_POSITION_FDC_SKIP_SHADOW_PRIMARY_CANDIDATES:
+            return
+
+        try:
+            shadow_decision_type = "WATCH" if primary_candidate == "WATCH" else "HOLD"
+            shadow_fdc_output = FinalDecisionComposerOutput(
+                decision_type=shadow_decision_type, side="", confidence=0.0,
+            )
+            shadow_override = self._check_held_position_sell_override(
+                source_type=source_type,
+                ar_output=ar_output,
+                fdc_output=shadow_fdc_output,
+            )
+            shadow_final_decision_type = (
+                shadow_override[0] if shadow_override is not None
+                else shadow_decision_type
+            )
+            actual_final_decision_type = (
+                composer_output.decision_type or ""
+            ).strip().upper()
+
+            payload: dict[str, object] = {
+                "rule_set_version": HELD_POSITION_FDC_SKIP_SHADOW_RULE_SET_VERSION,
+                "primary_candidate": primary_candidate,
+                "shadow_skip_candidate": True,
+                "shadow_decision_type": shadow_decision_type,
+                "shadow_final_decision_type": shadow_final_decision_type,
+                "actual_fdc_raw_decision_type": (
+                    (fdc_raw_decision_type or "").strip().upper() or None
+                ),
+                "actual_final_decision_type": actual_final_decision_type,
+                "held_position_override_applied": shadow_override is not None,
+                "agreement": shadow_final_decision_type == actual_final_decision_type,
+                "provider_rate_limit_observed": (
+                    "provider_rate_limit" in (composer_output.reason_codes or ())
+                ),
+                "shadow_only": True,
+                "decision_unaffected_by_shadow": True,
+            }
+        except Exception as exc:
+            logger.warning(
+                "shadow_held_position_fdc_skip computation failed: "
+                "trade_decision_id=%s",
+                trade_decision_id,
+                exc_info=True,
+            )
+            payload = {
+                "rule_set_version": HELD_POSITION_FDC_SKIP_SHADOW_RULE_SET_VERSION,
+                "shadow_error": str(exc),
+                "shadow_only": True,
+                "decision_unaffected_by_shadow": True,
+            }
+
+        try:
+            await self._repos.trade_decisions.sync_shadow_held_position_fdc_skip_observation(
+                trade_decision_id,
+                shadow_held_position_fdc_skip_payload=payload,
+            )
+        except Exception:
+            logger.warning(
+                "shadow_held_position_fdc_skip observation sync failed: "
+                "trade_decision_id=%s",
                 trade_decision_id,
                 exc_info=True,
             )
@@ -2556,6 +2679,14 @@ class DecisionOrchestratorService:
         # FDC의 HOLD/APPROVE/BUY 결정을 REDUCE/EXIT sell로 override한다.
         # recording 이후, _ensure_trade_decision() 이전에 수행하여
         # override된 값이 DB에 저장되도록 한다.
+        # held_position_fdc_skip_shadow 관측(assemble() 최말단)이 override
+        # 적용 *이전* FDC 원본 출력과 비교할 수 있도록, override로
+        # composer_output이 mutate되기 직전 값을 미리 캡처해 둔다.
+        _fdc_raw_decision_type = (
+            agent_bundle.composer_output.decision_type
+            if agent_bundle.composer_output is not None
+            else None
+        )
         self._apply_held_position_sell_override(
             agent_bundle=agent_bundle,
             assembled_context=assembled_context,
@@ -2930,6 +3061,13 @@ class DecisionOrchestratorService:
             trade_decision_id=trade_decision_id,
             assembled_context=assembled_context,
             event_output=agent_bundle.event_output,
+        )
+        await self._record_held_position_fdc_skip_shadow_observation(
+            trade_decision_id=trade_decision_id,
+            assembled_context=assembled_context,
+            ar_output=agent_bundle.risk_output,
+            composer_output=agent_bundle.composer_output,
+            fdc_raw_decision_type=_fdc_raw_decision_type,
         )
 
         # --- Generate decision_id if not provided ---
