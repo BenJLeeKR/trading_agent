@@ -250,7 +250,21 @@ Makefile에서는 승인 필요 명령을 `heavy-*` target으로 노출한다. �
 - `runtime_external_env_loaded_file_count`: 외부 env에서 실제로 읽은 파일 수.
 - `runtime_external_env_required_key_missing_count`: 외부 env에서 필수 런타임 키(`DATABASE_*`, `INSPECTION_API_TOKEN`)가 빠진 수.
 - `runtime_external_env_dir_status`: `ci-skip`, `missing`, `ready`, `unreadable` 중 하나로 외부 env 디렉터리 상태를 출력한다.
+- `runtime_env_wiring_required_count`: 배선 계약에서 `required_in_compose=true`로 등록된 키 수.
+- `runtime_env_wiring_checked_service_count`: 그 키들이 요구하는 compose 서비스 수.
+- `runtime_env_wiring_missing_count`: 계약이 요구하는 서비스의 `environment` 블록에 키가 없는 건수. 1건 이상이면 실패다.
+- `runtime_env_wiring_contract_parse_failed_count`: 계약 파일이 없거나 형식이 어긋난 건수. 1건 이상이면 실패다.
 - `env_values`: 항상 `redacted`로 출력돼야 한다.
+
+#### 런타임 env 배선 계약
+
+외부 env 파일에 값이 있다고 해서 컨테이너가 그 값을 받는 것은 아니다. `docker-compose.yml`의 해당 서비스 `environment:`에 키가 배선돼 있어야 실제로 주입된다. `accept env`는 [`scripts/harness/contracts/runtime_env_wiring.json`](./contracts/runtime_env_wiring.json)에 등록된 키만 이 배선을 강제한다.
+
+`.env.example`의 모든 키를 강제하지 않는 이유는 그 파일에 배포 도구용, 로컬 개발용, 문서용 키가 섞여 있어 전수 검사의 오탐이 크기 때문이다. 계약 파일에는 **런타임에 compose-managed 서비스로 주입돼야 하는 키만** 올린다.
+
+검사는 전역 문자열 검색이 아니라 `services:` → 서비스 블록 → `environment:` 순으로 범위를 좁혀 수행한다. 다른 서비스에 같은 키가 있거나 주석으로만 남아 있으면 통과하지 않는다.
+
+**새 런타임 env 키를 추가할 때는 계약 파일과 `docker-compose.yml` 배선을 함께 갱신한다.** 외부 env 파일에 값을 넣는 것만으로는 끝나지 않는다. 아직 배선 전이거나 관측용으로만 등록하려면 `required_in_compose=false`로 두며, 이 경우 실패시키지 않는다.
 
 ### `accept backend-file`
 

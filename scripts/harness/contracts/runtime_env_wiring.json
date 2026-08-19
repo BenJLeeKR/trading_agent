@@ -1,0 +1,36 @@
+{
+  "description": "런타임에 compose-managed 서비스로 주입돼야 하는 환경변수 배선 계약. accept env가 이 목록만 하드 실패 대상으로 검사한다. .env.example의 모든 키를 강제하지 않는 이유는 그 파일이 배포 도구·로컬 개발·문서용 키까지 함께 담고 있어 오탐이 커지기 때문이다.",
+  "maintenance": "새 런타임 env 키를 추가할 때, 그 키가 compose-managed 서비스에서 실제로 읽혀야 한다면 여기에 항목을 추가하고 docker-compose.yml의 해당 서비스 environment에도 함께 배선한다. required_in_compose=false는 아직 배선 전이거나 관측용으로만 등록한 항목이며 실패시키지 않는다.",
+  "entries": [
+    {
+      "key": "DATABASE_HOST",
+      "services": ["app", "api", "migrate", "ops-scheduler", "reconciliation-worker", "realized-pnl-recompute-worker"],
+      "required_in_compose": true,
+      "note": "DB에 접속하는 모든 서비스에 필요하다. 누락되면 해당 컨테이너만 조용히 기본값으로 붙거나 기동에 실패한다."
+    },
+    {
+      "key": "DATABASE_PASSWORD",
+      "services": ["app", "api", "migrate", "ops-scheduler", "reconciliation-worker", "realized-pnl-recompute-worker"],
+      "required_in_compose": true,
+      "note": "값 자체는 외부 env 파일에서 오지만, 서비스에 전달되지 않으면 해당 컨테이너만 인증에 실패한다."
+    },
+    {
+      "key": "INSPECTION_API_TOKEN",
+      "services": ["api"],
+      "required_in_compose": true,
+      "note": "Inspection API 인증 토큰. api 서비스에만 필요하다."
+    },
+    {
+      "key": "API_RUNTIME_MODE",
+      "services": ["api"],
+      "required_in_compose": true,
+      "note": "in_memory와 postgres를 가르는 키다. 누락되면 운영 API가 의도와 다른 모드로 뜰 수 있다."
+    },
+    {
+      "key": "KIS_ENV",
+      "services": ["app", "api", "ops-scheduler", "reconciliation-worker"],
+      "required_in_compose": true,
+      "note": "paper와 live를 가르는 브로커 환경 키다. 매매 안전에 직결되므로 누락을 실패로 다룬다."
+    }
+  ]
+}

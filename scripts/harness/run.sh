@@ -2008,6 +2008,104 @@ if env_file_status == "missing" and external_env_loaded_files:
     env_file_status = "external-only"
 advisory_missing_env_example_keys = sorted(env_example_keys - env_reference_keys)
 
+# ── 런타임 env 배선 계약 ────────────────────────────────────────────────
+# .env.example의 모든 키를 강제하지 않는다. 그 파일에는 배포 도구용, 로컬 개발용,
+# 문서용 키가 섞여 있어 전수 검사는 오탐이 커진다. 대신 "compose-managed 서비스에
+# 실제로 주입돼야 하는 키"만 계약 파일에 등록해 하드 실패 대상으로 둔다.
+runtime_env_wiring_contract = root / "scripts" / "harness" / "contracts" / "runtime_env_wiring.json"
+runtime_env_wiring_parse_errors: list[str] = []
+runtime_env_wiring_entries: list[dict] = []
+contract_payload = None
+
+if not runtime_env_wiring_contract.exists():
+    runtime_env_wiring_parse_errors.append("missing_contract_file=scripts/harness/contracts/runtime_env_wiring.json")
+else:
+    try:
+        contract_payload = json.loads(runtime_env_wiring_contract.read_text())
+    except json.JSONDecodeError as exc:
+        runtime_env_wiring_parse_errors.append(f"json_decode_error=line{exc.lineno}_column{exc.colno}")
+
+if isinstance(contract_payload, dict):
+    raw_entries = contract_payload.get("entries")
+    if not isinstance(raw_entries, list):
+        runtime_env_wiring_parse_errors.append("entries_not_a_list")
+    else:
+        for index, entry in enumerate(raw_entries):
+            if not isinstance(entry, dict):
+                runtime_env_wiring_parse_errors.append(f"entry_not_an_object_index={index}")
+                continue
+            key = entry.get("key")
+            services = entry.get("services")
+            if not isinstance(key, str) or not key:
+                runtime_env_wiring_parse_errors.append(f"entry_missing_key_index={index}")
+                continue
+            if not isinstance(services, list) or not all(isinstance(name, str) and name for name in services):
+                runtime_env_wiring_parse_errors.append(f"entry_invalid_services_key={key}")
+                continue
+            runtime_env_wiring_entries.append(
+                {"key": key, "services": services, "required": entry.get("required_in_compose") is True}
+            )
+elif contract_payload is not None:
+    runtime_env_wiring_parse_errors.append("contract_root_not_an_object")
+
+def parse_compose_service_env_keys(text: str) -> dict[str, set[str]]:
+    """docker-compose.yml에서 서비스별 environment 키를 수집한다.
+
+    전역 문자열 검색은 다른 서비스나 주석에 있는 같은 이름을 통과시키므로,
+    `services:` -> 서비스 블록 -> `environment:` 순으로 범위를 좁혀서만 수집한다.
+    dict 형식(`KEY: "..."`)과 list 형식(`- KEY=...`)을 모두 인식한다.
+    """
+    collected: dict[str, set[str]] = {}
+    in_services = False
+    current_service = None
+    in_environment = False
+    for raw_line in text.splitlines():
+        line = raw_line.rstrip()
+        if not line.strip() or line.lstrip().startswith("#"):
+            continue
+        if not line.startswith(" "):
+            in_services = line.split("#", 1)[0].strip() == "services:"
+            current_service = None
+            in_environment = False
+            continue
+        if not in_services:
+            continue
+        indent = len(line) - len(line.lstrip())
+        stripped = line.strip()
+        if indent == 2:
+            current_service = stripped[:-1].strip() if stripped.endswith(":") else None
+            if current_service is not None:
+                collected.setdefault(current_service, set())
+            in_environment = False
+            continue
+        if current_service is None:
+            continue
+        if indent == 4:
+            in_environment = stripped == "environment:"
+            continue
+        if indent >= 6 and in_environment:
+            if stripped.startswith("- "):
+                candidate = stripped[2:].split("=", 1)[0].strip().strip('"').strip("'")
+            else:
+                candidate = stripped.split(":", 1)[0].strip()
+            if re.match(r"^[A-Za-z_][A-Za-z0-9_]*$", candidate):
+                collected[current_service].add(candidate)
+    return collected
+
+compose_file = root / "docker-compose.yml"
+compose_service_env_keys = parse_compose_service_env_keys(compose_file.read_text()) if compose_file.exists() else {}
+runtime_env_wiring_required_entries = [entry for entry in runtime_env_wiring_entries if entry["required"]]
+runtime_env_wiring_checked_services = {
+    service for entry in runtime_env_wiring_required_entries for service in entry["services"]
+}
+runtime_env_wiring_missing: list[str] = []
+for entry in runtime_env_wiring_required_entries:
+    for service in entry["services"]:
+        if service not in compose_service_env_keys:
+            runtime_env_wiring_missing.append(f"{entry['key']} -> {service} (compose에서 서비스를 찾지 못함)")
+        elif entry["key"] not in compose_service_env_keys[service]:
+            runtime_env_wiring_missing.append(f"{entry['key']} -> {service} (environment 블록에 없음)")
+
 metrics = {
     "required_file_missing_count": len(missing_files),
     "runtime_version_mismatch_count": len(runtime_mismatches),
@@ -2021,6 +2119,10 @@ metrics = {
     "runtime_external_env_unreadable_count": len(external_env_unreadable),
     "runtime_external_env_loaded_file_count": len(external_env_loaded_files),
     "runtime_external_env_required_key_missing_count": len(external_env_required_key_missing),
+    "runtime_env_wiring_required_count": len(runtime_env_wiring_required_entries),
+    "runtime_env_wiring_checked_service_count": len(runtime_env_wiring_checked_services),
+    "runtime_env_wiring_missing_count": len(runtime_env_wiring_missing),
+    "runtime_env_wiring_contract_parse_failed_count": len(runtime_env_wiring_parse_errors),
 }
 
 passed = (
@@ -2032,6 +2134,8 @@ passed = (
     and metrics["runtime_external_env_required_missing_count"] == 0
     and metrics["runtime_external_env_unreadable_count"] == 0
     and metrics["runtime_external_env_required_key_missing_count"] == 0
+    and metrics["runtime_env_wiring_missing_count"] == 0
+    and metrics["runtime_env_wiring_contract_parse_failed_count"] == 0
 )
 
 print(f"ACCEPT env: {'PASS' if passed else 'FAIL'}")
@@ -2049,6 +2153,16 @@ elif external_env_dir_readable:
 else:
     print(f"- runtime_external_env_dir_status=unreadable path={external_env_dir}")
 print("- env_values=redacted")
+
+if runtime_env_wiring_parse_errors:
+    print("DETAIL runtime_env_wiring_contract_parse_errors:")
+    for detail in runtime_env_wiring_parse_errors:
+        print(f"- {detail}")
+
+if runtime_env_wiring_missing:
+    print("DETAIL runtime_env_wiring_missing:")
+    for detail in runtime_env_wiring_missing:
+        print(f"- {detail}")
 
 if missing_files:
     print("DETAIL missing_files:")
