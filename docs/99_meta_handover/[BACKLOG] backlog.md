@@ -7194,3 +7194,53 @@ gate) 구현 완료", `[PRIORITY_MAP]` 동일 날짜 항목.
   함께 추가로 낮아지는지, (4) 새 스킵이 강등해야 할 후보를 잘못
   누락(구현 버그로 인한 오적용)하지 않는지 `decision_type` 분포
   변화를 downstream 게이트 발동 이력과 대조 확인.
+
+## `held_position` override 후 EV gate 재계산 구현 완료(2026-08-19 KST)
+
+상세: `docs/30_work_log/2026-08-19_held_position_override_ev_recompute.md`.
+
+- 배경: `provider_rate_limit`(429) held_position 실측 턴에서, AR risk가
+  강해 `_check_held_position_sell_override()`가 `HOLD→EXIT/REDUCE`로
+  성공적으로 전환시킨 결정도 `order_request`가 0건이었음을 확인했다.
+  원인은 `evaluate_expected_value_gate()`가 override *이전*(FDC 원본
+  `decision_type`, 대개 HOLD) 시점에 딱 한 번만 계산되고, HOLD는
+  non-actionable이라 EV 8개 필드가 전부 `None`으로 고정된 채
+  `reason_codes=("expected_value_not_required_non_actionable",)`로
+  트리비얼 통과한다는 점이었다. override가 나중에 decision_type을
+  EXIT/REDUCE로 바꿔도 이 값은 갱신되지 않아,
+  `translation.py::_has_required_expected_value_anchor()`가 8개 필드
+  전부 non-None을 요구하는 SELL/EXIT/REDUCE 경로에서 항상 `False`를
+  반환해 주문이 생성되지 못했다. 코드 추적으로 이 문제가 `provider_
+  rate_limit`과 무관하게(FDC가 정상 성공해 진짜 HOLD를 냈어도) 구조적
+  으로 재현됨을 확인했다(단, 오늘 데이터로는 429 없는 override 사례가
+  0건이라 실측 재현은 못함).
+- **구현**: `decision_orchestrator.py`의 override 적용 블록을
+  `_apply_held_position_sell_override()` 메서드로 추출하고, override
+  적용 직후 override된 `decision_type`으로 **기존** `evaluate_expected_
+  value_gate()`를 재호출해 EV 8개 필드와 `expected_value_gate_passed`/
+  `expected_value_gate_reason_codes`를 갱신한다. 새 계산식은 만들지
+  않았고, threshold(SELL/EXIT/REDUCE 5bps 등)도 건드리지 않았다 — 기존
+  REDUCE/EXIT 결정들과 완전히 동일한 잣대가 override 케이스에도
+  적용될 뿐이다. SELL/EXIT/REDUCE는 `_resolve_score_anchor()`가
+  `deterministic_trigger.exit_score`를 우선 쓰므로, FDC 429 fallback
+  (confidence=0/conviction=0)이어도 유효하게 재계산된다.
+- **정책 영향 없음(핵심 주장)**: EV gate의 통과 기준·threshold·계산
+  로직은 무변경. 재계산 후에도 edge가 낮으면 여전히 차단된다(회귀
+  테스트로 확인) — "차단을 완화"하는 방향이 아니라 "평가 시점을
+  override 이후로 맞추는" 정합성 복구다. `translation.py`/
+  `expected_value_gate.py`의 threshold/로직은 전혀 수정하지 않았다.
+- **테스트**: `tests/services/test_held_position_sell_override.py`에
+  `TestApplyHeldPositionSellOverrideEvRecompute` 6개 케이스 추가 —
+  override 후 EV 8개 필드가 더 이상 None이 아님, FDC fallback
+  형태(confidence=0/conviction=0)에서도 재계산 유효, override
+  미발동 시 EV 필드 무변화, 재계산 후에도 edge 낮으면 여전히 차단,
+  `translation.py::build_submit_order_request_from_decision()`이
+  실제로 주문을 생성/차단하는 두 대조 케이스. 관련 기존 테스트
+  (`test_decision_orchestrator.py` 81개, `test_submit_order_from_
+  decision.py` 12개) 전부 회귀 없이 통과.
+- **남은 backlog 11**: 배포 후 (1) held_position override 발동
+  사례에서 재계산된 `edge_after_cost_bps`가 실제로 threshold를
+  넘어 `order_request`가 생성되는 비율, (2) 여전히 threshold
+  미달로 차단되는 비율과 그 분포, (3) 이 수정이 실제 매도 실행에
+  미치는 영향(과다/과소 매도 여부는 사후 성과로 판단, 차단 빈도만
+  으로 판단하지 않음).

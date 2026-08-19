@@ -445,6 +445,136 @@ class DecisionOrchestratorService:
 
         return ("REDUCE", "SELL", rationale)
 
+    def _apply_held_position_sell_override(
+        self,
+        *,
+        agent_bundle: AgentExecutionBundle,
+        assembled_context: AssembledContext,
+        derivation: Any,
+        symbol: str,
+    ) -> None:
+        """``_check_held_position_sell_override()`` 판정을 실제로 적용한다.
+
+        ``decision_type``/``side``/``composer_output.summary``를 override하는
+        기존 동작에 더해, override로 바뀐 ``decision_type`` 기준으로
+        ``evaluate_expected_value_gate()``를 재호출해 EV 게이트 8개 필드를
+        다시 채운다(2026-08-19).
+
+        배경: ``decision_agent_runner.py``에서 EV 게이트는 override *이전*
+        (FDC 원본 ``decision_type``, 대개 ``HOLD``) 시점에 딱 한 번만
+        계산된다. ``evaluate_expected_value_gate()``는 ``decision_type``이
+        non-actionable(HOLD/WATCH)이면 8개 bps 필드를 전부 ``None``으로
+        두고 ``reason_codes=("expected_value_not_required_non_actionable",)``
+        로 트리비얼 통과시킨다(``expected_value_gate.py`` 참고). override가
+        ``decision_type``을 EXIT/REDUCE(actionable)로 바꿔도 이 값은 그대로
+        남아있어, ``translation.py::_has_required_expected_value_anchor()``가
+        8개 필드 전부 non-None을 요구하는 SELL/EXIT/REDUCE 경로에서 항상
+        ``False``를 반환하고 ``build_submit_order_request_from_decision()``이
+        주문을 만들지 못한다 — EV 게이트가 SELL을 막으려는 정책적 판단이
+        아니라, 평가가 override *이전* 시점에 멈춰 있는 정합성 문제다.
+
+        이 메서드는 새 계산식을 만들지 않고 기존 ``evaluate_expected_value_
+        gate()``를 override된 ``decision_type``으로 다시 호출할 뿐이다 —
+        threshold(SELL/EXIT/REDUCE 5bps 등)와 계산 로직은 전혀 건드리지
+        않으며, 기존에 FDC가 직접 REDUCE/EXIT를 판단했을 때와 완전히
+        동일한 잣대가 적용된다. SELL/EXIT/REDUCE(``is_entry=False``)는
+        ``_resolve_score_anchor()``가 ``deterministic_trigger.exit_score``를
+        우선 사용하므로, FDC가 429 fallback으로 confidence=0/conviction=0인
+        상태여도 유효하게 재계산된다.
+        """
+        override = self._check_held_position_sell_override(
+            source_type=derivation.source_type,
+            ar_output=agent_bundle.risk_output,
+            fdc_output=agent_bundle.composer_output,
+        )
+        if override is None:
+            return
+
+        override_dt, override_side, override_rationale = override
+        # frozen dataclass 수정을 위해 object.__setattr__ 사용
+        object.__setattr__(agent_bundle.ai_inputs, "decision_type", override_dt)
+        object.__setattr__(agent_bundle.ai_inputs, "side", override_side)
+
+        recomputed_ev = evaluate_expected_value_gate(
+            decision_type=override_dt,
+            confidence=agent_bundle.ai_inputs.confidence,
+            conviction=agent_bundle.ai_inputs.conviction,
+            risk_score=agent_bundle.ai_inputs.risk_score,
+            context=assembled_context,
+        )
+        object.__setattr__(
+            agent_bundle.ai_inputs,
+            "expected_return_bps", recomputed_ev.expected_return_bps,
+        )
+        object.__setattr__(
+            agent_bundle.ai_inputs,
+            "expected_downside_bps", recomputed_ev.expected_downside_bps,
+        )
+        object.__setattr__(
+            agent_bundle.ai_inputs,
+            "net_expected_value_bps", recomputed_ev.net_expected_value_bps,
+        )
+        object.__setattr__(
+            agent_bundle.ai_inputs,
+            "final_trade_score", recomputed_ev.final_trade_score,
+        )
+        object.__setattr__(
+            agent_bundle.ai_inputs,
+            "minimum_required_edge_bps", recomputed_ev.minimum_required_edge_bps,
+        )
+        object.__setattr__(
+            agent_bundle.ai_inputs,
+            "edge_after_cost_bps", recomputed_ev.edge_after_cost_bps,
+        )
+        object.__setattr__(
+            agent_bundle.ai_inputs,
+            "estimated_round_trip_cost_bps",
+            recomputed_ev.estimated_round_trip_cost_bps,
+        )
+        object.__setattr__(
+            agent_bundle.ai_inputs,
+            "slippage_buffer_bps", recomputed_ev.slippage_buffer_bps,
+        )
+        object.__setattr__(
+            agent_bundle.ai_inputs,
+            "expected_value_gate_passed", recomputed_ev.expected_value_gate_passed,
+        )
+        object.__setattr__(
+            agent_bundle.ai_inputs,
+            "expected_value_gate_reason_codes", recomputed_ev.reason_codes,
+        )
+        logger.info(
+            "Held position sell override EV gate 재계산: symbol=%s "
+            "decision_type=%s edge_after_cost_bps=%s "
+            "expected_value_gate_passed=%s reason_codes=%s",
+            symbol, override_dt,
+            recomputed_ev.edge_after_cost_bps,
+            recomputed_ev.expected_value_gate_passed,
+            recomputed_ev.reason_codes,
+        )
+
+        # ★ composer_output도 함께 override
+        # _ensure_trade_decision()에서 composer_output.decision_type/side를
+        # trade_decisions에 저장하므로, override 값을 반영해야 함
+        if agent_bundle.composer_output is not None:
+            object.__setattr__(
+                agent_bundle.composer_output, "decision_type", override_dt,
+            )
+            object.__setattr__(
+                agent_bundle.composer_output, "side", override_side,
+            )
+            fdc_summary = agent_bundle.composer_output.summary
+            object.__setattr__(
+                agent_bundle.composer_output, "summary",
+                (fdc_summary + f" | {override_rationale}") if fdc_summary else override_rationale,
+            )
+        logger.info(
+            "Held position sell override: symbol=%s source_type=%s "
+            "decision_type=%s side=%s rationale=%s",
+            symbol, derivation.source_type, override_dt, override_side,
+            override_rationale,
+        )
+
     def _check_watch_candidate_upgrade_guard(
         self,
         *,
@@ -2426,37 +2556,12 @@ class DecisionOrchestratorService:
         # FDC의 HOLD/APPROVE/BUY 결정을 REDUCE/EXIT sell로 override한다.
         # recording 이후, _ensure_trade_decision() 이전에 수행하여
         # override된 값이 DB에 저장되도록 한다.
-        override = self._check_held_position_sell_override(
-            source_type=derivation.source_type,
-            ar_output=agent_bundle.risk_output,
-            fdc_output=agent_bundle.composer_output,
+        self._apply_held_position_sell_override(
+            agent_bundle=agent_bundle,
+            assembled_context=assembled_context,
+            derivation=derivation,
+            symbol=request.symbol,
         )
-        if override is not None:
-            override_dt, override_side, override_rationale = override
-            # frozen dataclass 수정을 위해 object.__setattr__ 사용
-            object.__setattr__(agent_bundle.ai_inputs, "decision_type", override_dt)
-            object.__setattr__(agent_bundle.ai_inputs, "side", override_side)
-            # ★ composer_output도 함께 override
-            # _ensure_trade_decision()에서 composer_output.decision_type/side를
-            # trade_decisions에 저장하므로, override 값을 반영해야 함
-            if agent_bundle.composer_output is not None:
-                object.__setattr__(
-                    agent_bundle.composer_output, "decision_type", override_dt,
-                )
-                object.__setattr__(
-                    agent_bundle.composer_output, "side", override_side,
-                )
-                fdc_summary = agent_bundle.composer_output.summary
-                object.__setattr__(
-                    agent_bundle.composer_output, "summary",
-                    (fdc_summary + f" | {override_rationale}") if fdc_summary else override_rationale,
-                )
-            logger.info(
-                "Held position sell override: symbol=%s source_type=%s "
-                "decision_type=%s side=%s rationale=%s",
-                request.symbol, derivation.source_type, override_dt, override_side,
-                override_rationale,
-            )
 
         source_policy_guard = self._check_source_policy_upgrade_guard(
             source_type=derivation.source_type,
