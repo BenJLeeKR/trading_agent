@@ -49,6 +49,7 @@
 - 문서 정합성: `bash scripts/harness/run.sh accept docs` 또는 `make accept-docs`.
 - CI 정합성: `bash scripts/harness/run.sh accept ci` 또는 `make accept-ci`.
 - 운영 환경 재현성: `bash scripts/harness/run.sh accept env` 또는 `make accept-env`. `env-check`는 호환 alias다.
+- 새 런타임 환경변수를 추가할 때는 `/etc/agent_trading/*.env`에 값을 넣는 것으로 끝내지 않는다. compose-managed 서비스에 전달돼야 하는 키라면 `scripts/harness/contracts/runtime_env_wiring.json` 계약과 `docker-compose.yml`의 해당 서비스 `environment:` 배선을 함께 갱신한다. 이 검사는 `accept env`가 강제한다.
 - DB 저장소 구조: `bash scripts/harness/run.sh accept db-structure` 또는 `make accept-db-structure`.
 - 아키텍처 계층 구조: `bash scripts/harness/run.sh accept architecture` 또는 `make accept-architecture`.
 - 코드 스타일 baseline: `bash scripts/harness/run.sh accept style` 또는 `make accept-style`.

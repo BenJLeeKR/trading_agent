@@ -31,7 +31,10 @@ GitHub Actions도 사람과 AI가 쓰는 동일한 하네스를 사용한다. CI
 - runtime 영향 변경이 전부 `admin_ui/` 아래면 `frontend_only_activate=1`로 판정하고, `activate_runtime`은 `docker compose up -d --build frontend`만 실행한다. 프런트 전용 변경에는 DB 스키마 변경이 있을 수 없으므로 `migrate`를 실행하지 않고(`deploy_migration_run=0`), 단일 서비스 지정에 `--remove-orphans`를 함께 쓰지 않는다.
 - `nginx-proxy`의 `proxy_pass`는 리터럴 호스트명을 쓰고 `resolver`가 없어 기동 시 1회만 DNS를 해석한다. `frontend`를 recreate하면 IP가 바뀌므로 `docker exec nginx-proxy nginx -s reload`는 프런트 전용 분기와 전체 배포 분기 **양쪽 모두**에서 실행한다.
 - 관련 지표: `frontend_only_activate_count`, `non_frontend_runtime_file_count`(`changes` job), `deploy_frontend_only_activate_count`, `deploy_migration_run`(`activate_runtime` job).
-- `market_hours_guard`의 장중(평일 09:00-15:30 KST) 배포 차단은 이번 분기 도입으로 바뀌지 않는다. 프런트 전용 변경도 장중에는 그대로 차단되며, 예외는 여전히 `workflow_dispatch`의 `allow_market_hours_deploy` 뿐이다.
+- 배포 판정 경로는 세 갈래다. `deploy_relevant`이면서 `runtime_affecting`이면 전체 배포(재기동), `deploy_relevant`지만 runtime 영향이 없으면 장외 sync만, sync-only 허용 목록에 들면 장중에도 sync만 수행한다.
+- `scripts/` 최상위 실행 스크립트는 `ops-scheduler`에 bind mount되고 decision loop가 매 사이클 subprocess로 새로 읽으므로 runtime 영향 대상이다. 재기동 없이 코드만 바뀌는 상태를 만들지 않는다.
+- `scripts/harness/`와 `.github/workflows/`는 서버 런타임이 읽지 않으므로 재기동 대상이 아니며, 서버 사본이 낡지 않도록 sync-only 허용 목록에 둔다. `docs/`와 같은 취급이다.
+- sync-only 허용 목록은 배포 게이트(`deploy_relevant`)와 재기동 판정(`runtime_affecting`) 양쪽에서 제외한다. 한쪽에만 빼면 `market_hours_guard`가 실행돼 장중 sync 경로가 성립하지 않는다.
 - 수동 재배포는 `workflow_dispatch`의 `deploy_main=true` 입력으로만 연다.
 - 수동 재배포는 과거 workflow run을 재개하지 않고, 실행 시점의 최신 `origin/main` SHA를 다시 fetch한 뒤 그 SHA를 배포한다.
 - `market_hours_guard` job은 `Asia/Seoul` 기준 평일 `09:00-15:30 KST`를 장중으로 계산한다.
@@ -250,7 +253,21 @@ Makefile에서는 승인 필요 명령을 `heavy-*` target으로 노출한다. �
 - `runtime_external_env_loaded_file_count`: 외부 env에서 실제로 읽은 파일 수.
 - `runtime_external_env_required_key_missing_count`: 외부 env에서 필수 런타임 키(`DATABASE_*`, `INSPECTION_API_TOKEN`)가 빠진 수.
 - `runtime_external_env_dir_status`: `ci-skip`, `missing`, `ready`, `unreadable` 중 하나로 외부 env 디렉터리 상태를 출력한다.
+- `runtime_env_wiring_required_count`: 배선 계약에서 `required_in_compose=true`로 등록된 키 수.
+- `runtime_env_wiring_checked_service_count`: 그 키들이 요구하는 compose 서비스 수.
+- `runtime_env_wiring_missing_count`: 계약이 요구하는 서비스의 `environment` 블록에 키가 없는 건수. 1건 이상이면 실패다.
+- `runtime_env_wiring_contract_parse_failed_count`: 계약 파일이 없거나 형식이 어긋난 건수. 1건 이상이면 실패다.
 - `env_values`: 항상 `redacted`로 출력돼야 한다.
+
+#### 런타임 env 배선 계약
+
+외부 env 파일에 값이 있다고 해서 컨테이너가 그 값을 받는 것은 아니다. `docker-compose.yml`의 해당 서비스 `environment:`에 키가 배선돼 있어야 실제로 주입된다. `accept env`는 [`scripts/harness/contracts/runtime_env_wiring.json`](./contracts/runtime_env_wiring.json)에 등록된 키만 이 배선을 강제한다.
+
+`.env.example`의 모든 키를 강제하지 않는 이유는 그 파일에 배포 도구용, 로컬 개발용, 문서용 키가 섞여 있어 전수 검사의 오탐이 크기 때문이다. 계약 파일에는 **런타임에 compose-managed 서비스로 주입돼야 하는 키만** 올린다.
+
+검사는 전역 문자열 검색이 아니라 `services:` → 서비스 블록 → `environment:` 순으로 범위를 좁혀 수행한다. 다른 서비스에 같은 키가 있거나 주석으로만 남아 있으면 통과하지 않는다.
+
+**새 런타임 env 키를 추가할 때는 계약 파일과 `docker-compose.yml` 배선을 함께 갱신한다.** 외부 env 파일에 값을 넣는 것만으로는 끝나지 않는다. 아직 배선 전이거나 관측용으로만 등록하려면 `required_in_compose=false`로 두며, 이 경우 실패시키지 않는다.
 
 ### `accept backend-file`
 
