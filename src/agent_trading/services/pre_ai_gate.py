@@ -20,6 +20,21 @@ logger = logging.getLogger(__name__)
 KST = ZoneInfo("Asia/Seoul")
 DEFAULT_PRE_AI_BUY_MIN_ORDERABLE_AMOUNT = Decimal("500000")
 HELD_POSITION_SKIP_HOLD_TTL = timedelta(minutes=20)
+# 2026-08-19: HELD_POSITION_RECENT_HOLD_NO_CHANGE 스킵 전용 lookback.
+# `HELD_POSITION_SKIP_HOLD_TTL`(20분)을 그대로 썼을 때, 실측(오늘 4개
+# held_position 종목 전부)상 decision loop 사이클 간격이 항상 31~35분
+# (운영 설정 OPS_SCHEDULER_DECISION_INTERVAL_SECONDS=1800 + 실행
+# 오버헤드)이라, "직전 사이클의 판단"이 20분 lookback에 단 한 번도
+# 걸리지 않아 `latest_decision_type`이 항상 None으로만 나왔다 —
+# 이 스킵이 최근 구조적으로 0건만 기록된 근본 원인이었다(guardrail_
+# evaluations 실측으로 확인). 이 상수는 그 하나의 조회(`_get_latest_
+# recent_held_decision(side="buy")`, HELD_POSITION_RECENT_HOLD_NO_CHANGE
+# 판정 전용)에만 쓰이고, buy/sell reverse-trade 쿨다운 조회(같은 함수의
+# 다른 두 호출)는 여전히 `HELD_POSITION_SKIP_HOLD_TTL`을 그대로 쓴다 —
+# 이 스킵 하나의 발동 조건만 넓히고 다른 정책은 건드리지 않기 위함이다.
+# 값(40분)은 실측된 최대 간격(34분43초)에 여유를 둔 것이며, 운영
+# 설정(decision interval)이 크게 달라지면 재검토가 필요하다.
+HELD_POSITION_SKIP_HOLD_NO_CHANGE_LOOKBACK = timedelta(minutes=40)
 HELD_POSITION_SKIP_EVENT_LOOKBACK = timedelta(minutes=30)
 HELD_POSITION_SKIP_ORDER_COOLDOWN = timedelta(minutes=20)
 SAME_SYMBOL_REENTRY_COOLDOWN = timedelta(minutes=20)
@@ -538,11 +553,15 @@ async def evaluate_held_position_skip_reason(
         details["latest_sell_order_at"] = None
 
     cutoff = current_utc - HELD_POSITION_SKIP_HOLD_TTL
+    # HELD_POSITION_RECENT_HOLD_NO_CHANGE 판정 전용으로 더 넓은 lookback을
+    # 쓴다(HELD_POSITION_SKIP_HOLD_NO_CHANGE_LOOKBACK 주석 참고) — 아래
+    # buy/sell reverse-trade 쿨다운 조회는 그대로 `cutoff`(20분)를 쓴다.
+    hold_no_change_cutoff = current_utc - HELD_POSITION_SKIP_HOLD_NO_CHANGE_LOOKBACK
     latest_decision_type, latest_decision_created_at, _, _, _ = (
         await _get_latest_recent_held_decision(
             repos,
             symbol=symbol,
-            cutoff=cutoff,
+            cutoff=hold_no_change_cutoff,
             db_conn=db_conn,
             side="buy",
         )
