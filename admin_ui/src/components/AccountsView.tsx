@@ -420,12 +420,12 @@ export default function AccountsView() {
               navigate(`/operations/realtime-quotes?symbol=${encodeURIComponent(r.symbol as string)}`);
             }}
             title="실시간 현재가 보기"
-            className="text-sm font-medium text-[#3b82f6] hover:text-[#2563eb] hover:underline transition-colors"
+            className="text-xs font-medium text-[#3b82f6] hover:text-[#2563eb] hover:underline transition-colors"
           >
             {r.symbol}
           </button>
         ) : (
-          <span className="text-sm font-medium text-[#0f172a]">
+          <span className="text-xs font-medium text-[#0f172a]">
             {truncateUuid(r.instrument_id)}
           </span>
         ),
@@ -435,35 +435,48 @@ export default function AccountsView() {
       header: "종목명",
       width: "200px",
       render: (r) => (
-        <span className="text-sm text-[#334155]">
+        <span className="text-xs text-[#334155]">
           {r.instrument_name || "—"}
         </span>
       ),
     },
-    { key: "quantity", header: "수량", align: "right", render: (r) => formatQty(r.quantity) },
+    {
+      key: "quantity",
+      header: "수량",
+      align: "right",
+      render: (r) => <span className="text-xs text-[#0f172a]">{formatQty(r.quantity)}</span>,
+    },
     {
       key: "average_price",
       header: "평균단가",
       align: "right",
-      render: (r) => formatKrw(r.average_price),
+      render: (r) => <span className="text-xs text-[#0f172a]">{formatKrw(r.average_price)}</span>,
     },
     {
       key: "purchase_amount",
       header: "매입금액",
       align: "right",
-      render: (r) => (r.purchase_amount != null ? formatKrw(r.purchase_amount) : "—"),
+      render: (r) => (
+        <span className="text-xs text-[#0f172a]">
+          {r.purchase_amount != null ? formatKrw(r.purchase_amount) : "—"}
+        </span>
+      ),
     },
     {
       key: "market_price",
       header: "현재가",
       align: "right",
-      render: (r) => formatKrw(r.market_price),
+      render: (r) => <span className="text-xs text-[#0f172a]">{formatKrw(r.market_price)}</span>,
     },
     {
       key: "evaluation_amount",
       header: "평가금액",
       align: "right",
-      render: (r) => (r.evaluation_amount != null ? formatKrw(r.evaluation_amount) : "—"),
+      render: (r) => (
+        <span className="text-xs text-[#0f172a]">
+          {r.evaluation_amount != null ? formatKrw(r.evaluation_amount) : "—"}
+        </span>
+      ),
     },
     {
       key: "unrealized_pnl",
@@ -487,7 +500,7 @@ export default function AccountsView() {
       align: "right",
       render: (r) => (
         <span
-          className="text-xs text-[#64748b]"
+          className="text-xs text-[#0f172a]"
           title="현재 보유 수량에 대응하는, 아직 매도에 배분되지 않은 누적 매수 수수료"
         >
           {r.remaining_buy_fee_pool != null ? formatKrw(r.remaining_buy_fee_pool) : "—"}
