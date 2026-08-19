@@ -7244,3 +7244,53 @@ gate) 구현 완료", `[PRIORITY_MAP]` 동일 날짜 항목.
   미달로 차단되는 비율과 그 분포, (3) 이 수정이 실제 매도 실행에
   미치는 영향(과다/과소 매도 여부는 사후 성과로 판단, 차단 빈도만
   으로 판단하지 않음).
+
+## `held_position` pre-AI 스킵(HOLD_NO_CHANGE) lookback 불일치 수정(2026-08-19 KST)
+
+상세: `docs/30_work_log/2026-08-19_held_position_hold_no_change_lookback.md`.
+
+- 배경: `provider_rate_limit`(429)를 실질적으로 줄이는 방법을 검토하는
+  턴에서, C2(#298) 이후 core-lane FDC 호출은 크게 줄었지만
+  held_position lane은 오늘(2026-08-19) 실제 FDC 호출의 74.5%(228/306),
+  `provider_rate_limit`의 72.4%(21/29)를 차지함을 확인했다. held_position
+  전용 pre-AI 스킵(`HELD_POSITION_RECENT_HOLD_NO_CHANGE`)이 이미
+  존재하는데도 `guardrail_evaluations`에 오늘 0건, 어제도 7건뿐이라
+  사실상 작동을 멈춘 상태였다.
+- **최초 가설(반증됨)**: seeded news(`include_seeded_news=True`)가
+  "최근 이벤트 없음" 판정을 매 사이클 막고 있을 것이라 추정했으나,
+  후속 턴에서 오늘 held_position 4개 종목의 실제 사이클 시각 12곳
+  전부를 직접 재현 조회한 결과 `recent_events`(30분 lookback)는
+  **12/12 전부 0건**이었다 — 이 가설은 코드/DB 근거로 반증됐다.
+- **확정된 실제 원인**: `evaluate_held_position_skip_reason()`이
+  "직전 판단이 hold였는가"를 조회할 때 `HELD_POSITION_SKIP_HOLD_TTL`
+  (20분)을 그대로 재사용했는데, 오늘 held_position 4개 종목(196170,
+  181710, 280360, 192820) 전부에서 실제 decision loop 사이클 간격이
+  **예외 없이 31~35분**(운영 설정 `OPS_SCHEDULER_DECISION_INTERVAL_
+  SECONDS=1800` + 실행 오버헤드)이었다 — 20분 TTL로는 직전 사이클의
+  판단을 원천적으로 절대 찾을 수 없어 `latest_decision_type`이 항상
+  `None`이었고, 그래서 `if latest_decision_type == "hold"` 조건이
+  단 한 번도 성립하지 못했다.
+- **변경 내용**: `pre_ai_gate.py`에 `HELD_POSITION_RECENT_HOLD_NO_CHANGE`
+  판정 전용 새 상수 `HELD_POSITION_SKIP_HOLD_NO_CHANGE_LOOKBACK`(40분)을
+  도입하고, 이 판정에 쓰이는 `_get_latest_recent_held_decision(side=
+  "buy")` 호출 1곳만 이 새 lookback을 쓰도록 좁혔다. 같은 함수 안의
+  buy/sell reverse-trade 쿨다운 조회 2곳은 기존 `HELD_POSITION_SKIP_
+  HOLD_TTL`(20분)을 그대로 유지 — 이벤트 판정 로직, TTL 정책, reverse-
+  trade 쿨다운 정책은 전혀 건드리지 않았다.
+- **정책 영향 없음(핵심 주장)**: "최근 이벤트/주문이 전혀 없고 직전
+  판단도 hold였다"는 기존 스킵 조건 자체는 무변화 — 오직 "직전
+  판단"을 찾는 시간 창만 실제 운영 사이클 간격에 맞게 넓혔다. decision_
+  type이 hold가 아니면(reduce/exit/watch) 이 판정과 무관함을 테스트로
+  재확인했다.
+- **테스트**: `tests/services/test_pre_ai_gate.py` 신규 5개 케이스 —
+  32분 전 hold 판단이 새 lookback에서 스킵을 발동시킴, 같은 시나리오를
+  옛 20분 TTL로 되돌리면 발동하지 않음(버그 재현 대조군), 45분 전
+  판단은 여전히 스킵 안 됨(무한정 확대 아님), 최근 이벤트가 있으면
+  lookback 확대와 무관하게 여전히 스킵 안 됨, decision_type이 reduce면
+  무관함. 기존 `test_run_decision_loop.py` 130개 테스트 전부 회귀 없이
+  통과.
+- **남은 backlog 12**: 배포 후 (1) `guardrail_evaluations`에
+  `held_position_recent_hold_no_change`가 실제로 기록되기 시작하는지,
+  (2) held_position lane의 실제 FDC 호출 수/`provider_rate_limit`
+  건수가 감소하는지, (3) `OPS_SCHEDULER_DECISION_INTERVAL_SECONDS`가
+  향후 변경되면 이 40분 lookback도 함께 재검토가 필요함을 기록해 둔다.
