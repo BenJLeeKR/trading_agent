@@ -7294,3 +7294,62 @@ gate) 구현 완료", `[PRIORITY_MAP]` 동일 날짜 항목.
   (2) held_position lane의 실제 FDC 호출 수/`provider_rate_limit`
   건수가 감소하는지, (3) `OPS_SCHEDULER_DECISION_INTERVAL_SECONDS`가
   향후 변경되면 이 40분 lookback도 함께 재검토가 필요함을 기록해 둔다.
+
+## `held_position` FDC 호출 shadow-skip 관측 구조 추가(2026-08-19 KST)
+
+상세: `docs/30_work_log/2026-08-19_held_position_fdc_skip_shadow.md`.
+
+- 배경: held_position lane의 남은 FDC 호출 중 `deterministic_trigger.
+  primary_candidate in {"NO_ACTION","WATCH"}`인 구간(오늘 42.1%, 5일
+  누적 45.2%)에서 FDC가 REDUCE/EXIT로 뒤집은 사례가 5일 누적 0/242건
+  이었다. 이 패턴은 강하지만 **코드로 보장된 동치성이 아니라 경험적
+  패턴**이라, 곧바로 skip을 넣으면 "정말 계속 안전했는지" 검증할
+  창구가 사라진다는 문제를 이전 턴에서 지적했다. 이번 턴은 실제 skip
+  적용 대신, **FDC 호출은 그대로 유지하면서 skip 가정이 맞았을지
+  계속 관측하는 구조**를 추가했다.
+- **구현**: 기존 AR/EI shadow bot 관측(PR #278)과 동일한 패턴 —
+  `AppSettings.held_position_fdc_skip_shadow_enabled`(env
+  `HELD_POSITION_FDC_SKIP_SHADOW_ENABLED`, 기본값 False)로 제어하는
+  새 관측 메서드 `DecisionOrchestratorService._record_held_position_
+  fdc_skip_shadow_observation()`을 `assemble()` 최말단(다른 shadow
+  관측들과 같은 위치, decision_type/side를 mutate하는 코드가 전혀
+  없는 지점)에 추가했다. `trade_decisions.decision_json.shadow_held_
+  position_fdc_skip`에만 기록하며, 다른 컬럼은 전혀 건드리지 않는다.
+- **shadow 최종값 계산에 기존 override 함수를 그대로 재사용**: shadow
+  가정(HOLD 또는 WATCH)에 대해 `_check_held_position_sell_override()`를
+  실제 AR 출력으로 다시 호출해, override가 shadow 세계에서도 개입했을지
+  함께 시뮬레이션한다 — AR shadow bot의 "실제 판정 함수 재사용" 원칙을
+  그대로 따른다.
+- **정책 영향 없음(핵심 주장)**: FDC 호출 여부, `decision_type`/`side`,
+  주문 제출 경로 중 어느 것도 이 관측이 바꾸지 않는다 — 순수하게
+  `decision_json`에 관측 필드만 append한다. 기본값 False로 기존 운영
+  동작과 100% 동일.
+- **저장 스키마**: `rule_set_version`, `primary_candidate`,
+  `shadow_skip_candidate`, `shadow_decision_type`,
+  `shadow_final_decision_type`(override 시뮬레이션 반영),
+  `actual_fdc_raw_decision_type`(override 이전 FDC 원본),
+  `actual_final_decision_type`(override 이후 실제 저장값),
+  `held_position_override_applied`, `agreement`,
+  `provider_rate_limit_observed`, `shadow_only`,
+  `decision_unaffected_by_shadow`.
+- **테스트**: `tests/services/test_decision_orchestrator.py`에
+  `TestHeldPositionFdcSkipShadowObservation` 9개 케이스 추가(비활성
+  시 완전 no-op, WATCH/NO_ACTION 각각 기록, REDUCE_CANDIDATE·core
+  lane은 관측 대상 아님, AR risk가 강해 override가 개입하는 경우
+  shadow도 같은 함수로 EXIT를 재현, trade_decision_id 없음/repo 쓰기
+  실패 시 예외 미전파). 관련 기존 테스트(`test_decision_orchestrator.py`
+  89개 전체, `test_held_position_sell_override.py` 20개, `test_settings.py`
+  65개) 전부 회귀 없이 통과.
+- **환경변수 배선**: `docker-compose.yml`의 `ops-scheduler` 서비스
+  `environment:`에 `HELD_POSITION_FDC_SKIP_SHADOW_ENABLED` 추가,
+  `.env.example`에도 문서화(기본값 false) — `AR_SHADOW_BOT_ENABLED`
+  선례와 동일한 배선 패턴.
+- **주문 생성 여부는 별도 저장하지 않음(의도적)**: HOLD/WATCH는
+  애초에 `translation.py`에서 주문을 만들지 않고, `assemble()` 시점
+  에는 아직 `order_requests`가 생성되기 전이라 이 관측 시점에는 알
+  수 없다. 필요하면 `decision_context_id` 기준 `order_requests` 조인
+  으로 사후 분석 가능 — 중복 저장을 피했다.
+- **남은 backlog 13**: `HELD_POSITION_FDC_SKIP_SHADOW_ENABLED=true`로
+  운영에서 켠 뒤, 몇 주간 `shadow_held_position_fdc_skip.agreement`가
+  계속 100%에 가깝게 유지되는지 실측 축적. 그 결과를 근거로 실제 skip
+  전환(안 E) 여부를 별도 턴에서 재검토한다.

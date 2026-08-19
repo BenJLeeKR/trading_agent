@@ -704,6 +704,23 @@ class InMemoryTradeDecisionRepository:
         self._items[trade_decision_id] = updated
         return updated
 
+    async def sync_shadow_held_position_fdc_skip_observation(
+        self,
+        trade_decision_id: UUID,
+        *,
+        shadow_held_position_fdc_skip_payload: dict[str, object],
+    ) -> TradeDecisionEntity | None:
+        existing = self._items.get(trade_decision_id)
+        if existing is None:
+            return None
+        merged_decision_json = dict(existing.decision_json or {})
+        merged_decision_json["shadow_held_position_fdc_skip"] = dict(
+            shadow_held_position_fdc_skip_payload
+        )
+        updated = replace(existing, decision_json=merged_decision_json)
+        self._items[trade_decision_id] = updated
+        return updated
+
     async def list_loss_cut_shadow_observations(
         self,
         account_id: UUID,
