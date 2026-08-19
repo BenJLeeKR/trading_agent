@@ -816,6 +816,87 @@ def _check_fdc_skip(
             reason_codes=("insufficient_cash",),
         ))
 
+    # Condition 4: 미보유 신규 진입 + deterministic eligibility 탈락
+    # → downstream `_check_ai_buy_override_gate()`(decision_orchestrator.py)가
+    #   FDC의 실제 decision_type과 무관하게 반드시 WATCH/HOLD로 강등하는 구간을
+    #   미리 결정론적으로 확정한다.
+    #
+    # 동치성 근거(2026-08-19, 코드 직접 대조로 검증):
+    #   `_check_ai_buy_override_gate()`는 has_position=False +
+    #   deterministic_trigger.buy_candidate=False일 때만 개입하며, 그중
+    #   eligibility_passed=False인 경우 — 단, decision_context.
+    #   signal_feature_snapshot_id가 None이고 eligibility_reasons가 오직
+    #   {"eligibility_source_type_allowed", "eligibility_low_feature_coverage"}
+    #   의 부분집합인 좁은 예외 케이스는 제외 — 는 FDC의 confidence/conviction과
+    #   무관하게 항상 downgrade_decision(watch_candidate 여부로 WATCH/HOLD)으로
+    #   강제 전환된다. 이 분기는 FDC 출력에 의존하지 않으므로 upstream에서
+    #   안전하게 재현 가능하다.
+    #
+    #   반대로 eligibility_passed=True 상태에서의 강등(EV gate 미통과,
+    #   symbol_state 기반 hysteresis)은 FDC 자신의 confidence/conviction 출력이나
+    #   DB(symbol_trade_states, 24시간 이벤트) 조회에 의존하고, hysteresis가
+    #   "차단 안 함"으로 판정되면 FDC의 원래 결정이 그대로 유지되는 경로도 있어
+    #   — 이 두 분기는 절대 upstream에서 미리 확정할 수 없다(동치성 없음).
+    #   `_AI_OVERRIDE_EXECUTION_INFEASIBLE_REASONS` 분기 역시 eligibility_passed=
+    #   True인 상태에서만 도달 가능해 이 조건의 범위 밖이다.
+    #   그래서 이 스킵 조건은 eligibility_passed=False 분기 하나로만 좁게
+    #   한정한다 — 의도적으로 좁은 범위이며, 넓히지 않는다.
+    deterministic_trigger = context.deterministic_trigger
+    if (
+        not has_position
+        and deterministic_trigger is not None
+        and not bool(getattr(deterministic_trigger, "buy_candidate", False))
+        and not bool(getattr(deterministic_trigger, "eligibility_passed", False))
+    ):
+        eligibility_reasons = tuple(
+            getattr(deterministic_trigger, "eligibility_reasons", ()) or ()
+        )
+        decision_context = context.decision_context
+        is_low_feature_coverage_exception = (
+            decision_context is not None
+            and getattr(decision_context, "signal_feature_snapshot_id", None) is None
+            and bool(eligibility_reasons)
+            and set(eligibility_reasons).issubset(
+                {
+                    "eligibility_source_type_allowed",
+                    "eligibility_low_feature_coverage",
+                }
+            )
+        )
+        if not is_low_feature_coverage_exception:
+            watch_candidate = bool(
+                getattr(deterministic_trigger, "watch_candidate", False)
+            )
+            forced_decision_type = "WATCH" if watch_candidate else "HOLD"
+            eligibility_reasons_text = (
+                ", ".join(eligibility_reasons) if eligibility_reasons else "(없음)"
+            )
+            source_type = getattr(context, "source_type", "core") or "core"
+            summary = (
+                f"[규칙 기반 생략] {symbol} — FDC 미호출(결정론적 판정). "
+                f"source_type={source_type}, buy_candidate=False, "
+                f"watch_candidate={watch_candidate}, eligibility_passed=False, "
+                f"eligibility_reasons=[{eligibility_reasons_text}]. "
+                f"이 종목은 deterministic_trigger 판정상 신규 매수 자격(eligibility)을 "
+                f"충족하지 못해, FDC(AI)가 실제로 어떤 판단(APPROVE/BUY 포함)을 "
+                f"내놓든 downstream의 매수 오버라이드 게이트가 이를 무조건 "
+                f"{forced_decision_type}로 강등시키는 구간이다. 최종 결정은 이미 "
+                f"규칙으로 확정돼 있어, AI 호출을 생략해도 실제 매매 판단은 "
+                f"전혀 달라지지 않는다 — FDC의 실제 출력을 대체하는 것이 아니라, "
+                f"어차피 강등될 결과를 미리 계산해 API 호출만 절약한다."
+            )
+            return (True, "buy_candidate_eligibility_blocked", FinalDecisionComposerOutput(
+                symbol=symbol,
+                decision_type=forced_decision_type,
+                confidence=0.0,
+                summary=summary,
+                reason_codes=(
+                    "buy_candidate_eligibility_blocked",
+                    "ai_override_eligibility_blocked",
+                    "forced_watch_candidate" if watch_candidate else "forced_hold",
+                ),
+            ))
+
     # --- 생략 불가 → 정상 FDC 호출 ---
     return (False, "", FinalDecisionComposerOutput())
 

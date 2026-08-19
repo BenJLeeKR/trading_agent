@@ -7132,3 +7132,65 @@ gate) 구현 완료", `[PRIORITY_MAP]` 동일 날짜 항목.
   그 발동 빈도가 유의미하게 달라질지는 확인 대상이 아니다(애초에
   "결과가 잘못 나가는 문제"를 고치는 변경이 아니었음) — 확인
   대상은 어디까지나 "FDC가 불필요한 검토에 쓰는 토큰"이다.
+
+## FDC 호출량 절감 C2 구현 완료: buy_candidate=False + eligibility_passed=False 결정론적 skip(2026-08-19 KST)
+
+상세: `docs/30_work_log/2026-08-19_c2_fdc_skip_buy_candidate_false.md`.
+
+- 배경: 429 fallback 대응으로 shared rate limiter(PR #287/#288)를
+  도입했으나, strict-queue 전환만으로는 429를 완전히 없애기 어렵고
+  (90초 subprocess timeout 예산 안에서 사이클당 종목 수 대비 60초당
+  10회 상한이 부족) 호출량 자체를 줄이는 "안 C"와 병행이 필요하다고
+  이전 설계 검토 턴에서 결론지었다. 그중 즉시 구현 가능한 것으로
+  판단된 **C2**(buy_candidate=False인 신규 진입 후보 중, downstream
+  `_check_ai_buy_override_gate()`가 FDC 출력과 무관하게 어차피
+  WATCH/HOLD로 강등하는 구간을 미리 스킵)를 이번 턴에서 구현했다.
+- **중요한 스코프 축소**: 구현 착수 전 동치성 검증 과정에서, 이전
+  설계 검토 턴의 "buy_candidate=False면 항상 강등된다"는 전제가
+  DB 샘플(13/29건)이 우연히 전부 안전한 분기에 속한 데서 온 불완전한
+  결론이었음을 코드 직접 대조로 확인했다. `_check_ai_buy_override_gate()`는
+  실제로 최소 두 개의 추가 분기(EV gate 미통과 여부는 FDC 자신의
+  confidence/conviction에 의존, symbol_state 기반 hysteresis는 새
+  DB 조회에 의존하고 "차단 안 함"이면 FDC의 원래 결정이 그대로
+  유지될 수도 있음)를 갖고 있어, 이 두 분기는 FDC를 부르기 전에
+  안전하게 재현할 수 없다. 그래서 이번 구현은 **`eligibility_passed=False`
+  분기 하나로만 좁게 한정**했다(단, downstream의 좁은 예외 —
+  `signal_feature_snapshot_id`가 없고 eligibility_reasons가
+  `{eligibility_source_type_allowed, eligibility_low_feature_coverage}`의
+  부분집합인 경우 — 는 그대로 재현해 제외). `_AI_OVERRIDE_EXECUTION_
+  INFEASIBLE_REASONS` 분기(execution_infeasible)는 eligibility_passed=True
+  상태에서만 도달 가능해 이번 스코프 밖으로 명시적으로 배제했다.
+- **변경 내용**: `scripts/run_agent_subprocess.py::_check_fdc_skip()`에
+  Condition 4(코드 주석 번호 기준)를 추가 — has_position=False +
+  deterministic_trigger.buy_candidate=False + eligibility_passed=False
+  (좁은 예외 제외)이면 FDC 호출 없이 결정론적으로 WATCH/HOLD를
+  확정한다. 최종 decision_type은 downstream의 `downgrade_decision`
+  계산과 동일하게 `watch_candidate` 여부로 결정(WATCH/HOLD). 신규
+  reason_codes: `buy_candidate_eligibility_blocked`(skip_reason_codes),
+  `ai_override_eligibility_blocked`, `forced_watch_candidate`/
+  `forced_hold`(FinalDecisionComposerOutput.reason_codes) — 기존
+  `risk_rejected`/`no_events`/`no_position`/`insufficient_cash`와
+  충돌 없음. summary는 첫 문장에 `[규칙 기반 생략]`으로 결정론적
+  스킵임을 명시하고, source_type/buy_candidate/watch_candidate/
+  eligibility_passed/eligibility_reasons/강제된 최종 결과를 모두
+  담아 AI가 실제 판단한 것처럼 보이지 않도록 했다.
+- **정책 영향 없음(핵심 주장)**: 최종 decision_type은 이 스킵이 없어도
+  downstream 게이트가 만들어냈을 값과 동일하다 — call-volume 최적화일
+  뿐, decision 정책 변경이 아니다. EV gate/sizing/execution/translation/
+  held_position 매도 정책은 전혀 건드리지 않았다.
+- **테스트**: `tests/scripts/test_fdc_skip.py`에 `TestFdcSkipBuyCandidateEligibilityBlocked`
+  10개 케이스 추가(WATCH/HOLD 분기, summary 설명 가능성 검증, 보유
+  포지션/buy_candidate=True/eligibility_passed=True/저 feature coverage
+  예외에서 미발동 확인, 기존 조건 회귀 없음). 파일 전체 32개 테스트
+  전부 통과(dev-validation 컨테이너, `test-file` 명령).
+- **기대 효과(미확정, 실측 필요)**: 이전 설계 검토 턴에서 관측한
+  1개 사이클(29종목) DB 샘플 기준 core-lane buy_candidate=false 비중
+  약 44.8% 중, 이번 스코프(eligibility_passed=False 하위집합)로
+  좁혀진 실제 비중은 별도 실측 전까지 미확정 — 44.8%보다는 작을
+  것으로 예상되나 정확한 수치는 배포 후 실측이 필요하다.
+- **남은 backlog 10**: 배포 후 (1) 새 `buy_candidate_eligibility_blocked`
+  skip_reason_codes 발동 빈도/비중, (2) 사이클당 실제 FDC 호출 수
+  감소폭, (3) `provider_rate_limit` fallback 비율이 호출량 감소와
+  함께 추가로 낮아지는지, (4) 새 스킵이 강등해야 할 후보를 잘못
+  누락(구현 버그로 인한 오적용)하지 않는지 `decision_type` 분포
+  변화를 downstream 게이트 발동 이력과 대조 확인.
