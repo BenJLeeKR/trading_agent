@@ -868,22 +868,11 @@ def _check_fdc_skip(
                 getattr(deterministic_trigger, "watch_candidate", False)
             )
             forced_decision_type = "WATCH" if watch_candidate else "HOLD"
-            eligibility_reasons_text = (
-                ", ".join(eligibility_reasons) if eligibility_reasons else "(없음)"
-            )
-            source_type = getattr(context, "source_type", "core") or "core"
             summary = (
-                f"[규칙 기반 생략] {symbol} — FDC 미호출(결정론적 판정). "
-                f"source_type={source_type}, buy_candidate=False, "
-                f"watch_candidate={watch_candidate}, eligibility_passed=False, "
-                f"eligibility_reasons=[{eligibility_reasons_text}]. "
-                f"이 종목은 deterministic_trigger 판정상 신규 매수 자격(eligibility)을 "
-                f"충족하지 못해, FDC(AI)가 실제로 어떤 판단(APPROVE/BUY 포함)을 "
-                f"내놓든 downstream의 매수 오버라이드 게이트가 이를 무조건 "
-                f"{forced_decision_type}로 강등시키는 구간이다. 최종 결정은 이미 "
-                f"규칙으로 확정돼 있어, AI 호출을 생략해도 실제 매매 판단은 "
-                f"전혀 달라지지 않는다 — FDC의 실제 출력을 대체하는 것이 아니라, "
-                f"어차피 강등될 결과를 미리 계산해 API 호출만 절약한다."
+                f"[규칙 기반 생략] {symbol} — 신규 진입 자격을 충족하지 못한 "
+                f"종목으로, AI가 실제로 매수 판단을 내려도 규칙에 의해 최종 "
+                f"결과가 {forced_decision_type}로 강제 확정되므로 FDC 호출 "
+                f"자체를 생략했습니다."
             )
             return (True, "buy_candidate_eligibility_blocked", FinalDecisionComposerOutput(
                 symbol=symbol,

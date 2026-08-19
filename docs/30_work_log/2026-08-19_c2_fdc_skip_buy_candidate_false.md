@@ -105,18 +105,20 @@ EV gate/sizing/execution/translation/held_position 매도 정책 관련 파일�
 
 ## 5. 결정론적 summary/reason_codes 설계 원칙
 
-- **첫 문장에서 결정론적 스킵임을 명시**: `"[규칙 기반 생략] {symbol} — FDC
-  미호출(결정론적 판정)."` — AI가 실제로 판단한 것처럼 보이지 않도록,
-  다른 두 조건(risk_reject/cash_shortage)의 요약 문구보다 더 명시적으로
-  표기했다(사용자 요구사항인 "AI가 판단한 것처럼 보이면 안 된다"에 대응).
-- **판단 근거를 전부 노출**: source_type, buy_candidate=False,
-  watch_candidate 값, eligibility_passed=False, eligibility_reasons 목록,
-  강제된 최종 decision_type(WATCH/HOLD)을 모두 문장에 포함해 운영 화면에서
-  "왜 이렇게 결정됐는지"를 그대로 읽을 수 있게 했다.
-- **FDC를 대체하는 것이 아님을 명시**: "FDC의 실제 출력을 대체하는 것이
-  아니라, 어차피 강등될 결과를 미리 계산해 API 호출만 절약한다"는 문장을
-  포함해, 이 스킵이 정책 변경이 아니라 최적화임을 요약문 자체에서도
-  드러냈다.
+- **첫 문장에서 결정론적 스킵임을 명시**: `"[규칙 기반 생략] {symbol} — ..."`
+  — AI가 실제로 판단한 것처럼 보이지 않도록 명시적으로 표기했다(사용자
+  요구사항인 "AI가 판단한 것처럼 보이면 안 된다"에 대응).
+- **2026-08-19 축약**: `summary`가 실제로 의사결정 화면의 "근거" 컬럼에
+  그대로 노출된다는 점을 확인한 뒤(운영 UI 가독성 요구), source_type/
+  buy_candidate=False/watch_candidate=.../eligibility_passed=False/
+  eligibility_reasons=[...] 같은 코드성 항목을 전부 제거하고, 강제된
+  최종 결과(WATCH/HOLD)만 자연어 문장에 남기도록 축약했다. 최종 문구:
+  `"[규칙 기반 생략] {symbol} — 신규 진입 자격을 충족하지 못한 종목으로,
+  AI가 실제로 매수 판단을 내려도 규칙에 의해 최종 결과가 {WATCH|HOLD}로
+  강제 확정되므로 FDC 호출 자체를 생략했습니다."` — 접두사 이후 설명
+  부분이 한국어 기준 약 100자로, 다른 조건들의 요약 문구와 길이 균형이
+  맞다. 상세 판단 근거(eligibility_reasons 등)는 `skip_reason_codes`/
+  `reason_codes`로만 노출하고, 사람이 읽는 문장에서는 뺐다.
 - **reason_codes 명명**: `skip_reason_codes`(subprocess → 부모 프로세스
   전달용, 단일 문자열)는 `buy_candidate_eligibility_blocked`. 기존 값
   (`risk_reject`, `no_events_no_position`, `cash_shortage`)과 동일한

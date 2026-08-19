@@ -986,9 +986,10 @@ class TestFdcSkipBuyCandidateEligibilityBlocked:
         default_event_output: EventInterpretationOutput,
         risk_allow_output: AIRiskOutput,
     ) -> None:
-        """summary 첫 문장이 규칙 기반 생략임을 명확히 밝히고, source_type/
-        buy_candidate/watch_candidate/eligibility_passed/eligibility_reasons/
-        강제된 최종 결과를 모두 포함해야 한다(설명 가능성 요구사항)."""
+        """summary 첫 문장이 규칙 기반 생략임을 명확히 밝히고, 강제된 최종
+        결과(WATCH/HOLD)를 포함해야 한다(설명 가능성 요구사항). 2026-08-19
+        축약 이후로는 source_type/buy_candidate/eligibility_reasons 같은
+        코드성 항목은 summary에 노출하지 않는다(UI '근거' 컬럼 가독성)."""
         context = _make_eligibility_blocked_context(
             watch_candidate=True,
             eligibility_reasons=("eligibility_low_momentum", "eligibility_low_score"),
@@ -1001,14 +1002,9 @@ class TestFdcSkipBuyCandidateEligibilityBlocked:
             default_event_output, risk_allow_output,
         )
         assert output.summary.startswith("[규칙 기반 생략]")
-        assert "FDC 미호출" in output.summary
-        assert "source_type=core" in output.summary
-        assert "buy_candidate=False" in output.summary
-        assert "watch_candidate=True" in output.summary
-        assert "eligibility_passed=False" in output.summary
-        assert "eligibility_low_momentum" in output.summary
-        assert "eligibility_low_score" in output.summary
+        assert "FDC" in output.summary
         assert "WATCH" in output.summary
+        assert len(output.summary) <= 160
 
     def test_does_not_trigger_when_position_held(
         self,
