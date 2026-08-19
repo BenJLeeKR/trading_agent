@@ -31,7 +31,10 @@ GitHub Actions도 사람과 AI가 쓰는 동일한 하네스를 사용한다. CI
 - runtime 영향 변경이 전부 `admin_ui/` 아래면 `frontend_only_activate=1`로 판정하고, `activate_runtime`은 `docker compose up -d --build frontend`만 실행한다. 프런트 전용 변경에는 DB 스키마 변경이 있을 수 없으므로 `migrate`를 실행하지 않고(`deploy_migration_run=0`), 단일 서비스 지정에 `--remove-orphans`를 함께 쓰지 않는다.
 - `nginx-proxy`의 `proxy_pass`는 리터럴 호스트명을 쓰고 `resolver`가 없어 기동 시 1회만 DNS를 해석한다. `frontend`를 recreate하면 IP가 바뀌므로 `docker exec nginx-proxy nginx -s reload`는 프런트 전용 분기와 전체 배포 분기 **양쪽 모두**에서 실행한다.
 - 관련 지표: `frontend_only_activate_count`, `non_frontend_runtime_file_count`(`changes` job), `deploy_frontend_only_activate_count`, `deploy_migration_run`(`activate_runtime` job).
-- `market_hours_guard`의 장중(평일 09:00-15:30 KST) 배포 차단은 이번 분기 도입으로 바뀌지 않는다. 프런트 전용 변경도 장중에는 그대로 차단되며, 예외는 여전히 `workflow_dispatch`의 `allow_market_hours_deploy` 뿐이다.
+- 배포 판정 경로는 세 갈래다. `deploy_relevant`이면서 `runtime_affecting`이면 전체 배포(재기동), `deploy_relevant`지만 runtime 영향이 없으면 장외 sync만, sync-only 허용 목록에 들면 장중에도 sync만 수행한다.
+- `scripts/` 최상위 실행 스크립트는 `ops-scheduler`에 bind mount되고 decision loop가 매 사이클 subprocess로 새로 읽으므로 runtime 영향 대상이다. 재기동 없이 코드만 바뀌는 상태를 만들지 않는다.
+- `scripts/harness/`와 `.github/workflows/`는 서버 런타임이 읽지 않으므로 재기동 대상이 아니며, 서버 사본이 낡지 않도록 sync-only 허용 목록에 둔다. `docs/`와 같은 취급이다.
+- sync-only 허용 목록은 배포 게이트(`deploy_relevant`)와 재기동 판정(`runtime_affecting`) 양쪽에서 제외한다. 한쪽에만 빼면 `market_hours_guard`가 실행돼 장중 sync 경로가 성립하지 않는다.
 - 수동 재배포는 `workflow_dispatch`의 `deploy_main=true` 입력으로만 연다.
 - 수동 재배포는 과거 workflow run을 재개하지 않고, 실행 시점의 최신 `origin/main` SHA를 다시 fetch한 뒤 그 SHA를 배포한다.
 - `market_hours_guard` job은 `Asia/Seoul` 기준 평일 `09:00-15:30 KST`를 장중으로 계산한다.

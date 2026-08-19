@@ -66,7 +66,7 @@ jobs:
 
           # runtime 영향 경로 규칙의 단일 정의. sync_source가 서버의 대기 변경을
           # 판정할 때도 이 값을 output으로 받아 쓰므로 양쪽 분기 이전에 정의한다.
-          runtime_affecting_pattern='^(\.github/workflows/|\.python-version|\.postgres-version|Dockerfile|docker-compose\.yml|pyproject\.toml|requirements(\.lock|\.txt)?|db/|src/|admin_ui/(Dockerfile|nginx\.frontend\.conf|package(-lock)?\.json|tsconfig[^/]*\.json|vite\.config\.[^/]+|src/|public/))'
+          runtime_affecting_pattern='^(\.python-version|\.postgres-version|Dockerfile|docker-compose\.yml|pyproject\.toml|requirements(\.lock|\.txt)?|db/|src/|scripts/[^/]+\.(py|sh)|admin_ui/(Dockerfile|nginx\.frontend\.conf|package(-lock)?\.json|tsconfig[^/]*\.json|vite\.config\.[^/]+|src/|public/))'
 
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
             deploy_manual_dispatch_requested_count="0"
@@ -110,25 +110,33 @@ jobs:
 
           changed_files="$(git diff --name-only "$base_ref" HEAD || true)"
           changed_file_count="$(printf '%s\n' "$changed_files" | sed '/^$/d' | wc -l | tr -d ' ')"
-          sync_only_allowlist_pattern='^(docs/.+|scripts/(analyze_trigger_proxy_attribution\.py|check_index_membership_staleness\.py|check_t3_db_status\.py|diagnose_activity_filter_half_period_divergence\.py|diagnose_blocked_reason_distribution\.py|diagnose_market_overlay_shadow\.py|observe_seeded_news_comparison\.py))$'
+          sync_only_allowlist_pattern='^(docs/.+|scripts/harness/.+|\.github/workflows/.+|scripts/(analyze_trigger_proxy_attribution\.py|check_index_membership_staleness\.py|check_t3_db_status\.py|diagnose_activity_filter_half_period_divergence\.py|diagnose_blocked_reason_distribution\.py|diagnose_market_overlay_shadow\.py|observe_seeded_news_comparison\.py))$'
           sync_only_candidates="$(
             printf '%s\n' "$changed_files" |
               sed '/^$/d' |
-              grep -E '^(docs/.+|scripts/[^/]+\.(py|sh))$' || true
+              grep -E '^(docs/.+|scripts/harness/.+|\.github/workflows/.+|scripts/[^/]+\.(py|sh))$' || true
           )"
           sync_only_allowlist_files="$(
             printf '%s\n' "$sync_only_candidates" |
               sed '/^$/d' |
               grep -E "$sync_only_allowlist_pattern" || true
           )"
+          # sync-only 허용 목록(문서, 하네스, 워크플로, 지정 분석 스크립트)은 서버
+          # 런타임이 읽지 않으므로 재기동 대상에서 뺀다. 이 제외가 없으면
+          # scripts/ 규칙이 sync-only 경로를 통째로 없앤다.
           runtime_affecting_files="$(
             printf '%s\n' "$changed_files" |
               sed '/^$/d' |
-              grep -E "$runtime_affecting_pattern" || true
+              grep -E "$runtime_affecting_pattern" |
+              grep -vE "$sync_only_allowlist_pattern" || true
           )"
+          # sync-only 허용 목록은 배포 게이트에서도 제외한다. 여기에 남아 있으면
+          # deploy_required=1이 되어 market_hours_guard가 실행되고, 그 결과
+          # sync_source의 sync-only 분기(guard skipped 전제)가 장중에 성립하지 않는다.
           deploy_relevant_files="$(
             printf '%s\n' "$changed_files" |
               sed '/^$/d' |
+              grep -vE "$sync_only_allowlist_pattern" |
               grep -E '^(\.python-version|\.postgres-version|Dockerfile|docker-compose\.yml|pyproject\.toml|requirements(\.lock|\.txt)?|db/|src/|scripts/[^/]+\.(py|sh)|admin_ui/(Dockerfile|nginx\.frontend\.conf|package(-lock)?\.json|tsconfig[^/]*\.json|vite\.config\.[^/]+|src/|public/))' || true
           )"
           sync_only_candidate_count="$(printf '%s\n' "$sync_only_candidates" | sed '/^$/d' | wc -l | tr -d ' ')"
