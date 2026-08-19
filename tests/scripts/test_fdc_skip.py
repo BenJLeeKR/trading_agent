@@ -492,6 +492,26 @@ class TestFdcSkipNoEvents:
         assert reason == "no_events_no_position"
         assert output.decision_type == "HOLD"
 
+    def test_no_events_summary_discloses_deterministic_skip(
+        self,
+        sample_subprocess_input: AgentSubprocessInput,
+        default_event_output: EventInterpretationOutput,
+        risk_allow_output: AIRiskOutput,
+    ) -> None:
+        """2026-08-19: summary 첫 문장이 [결정론적 판단 근거]로 시작하고
+        상세 설명(이벤트 없음/미보유/HOLD 확정)을 포함해야 한다."""
+        context = _make_empty_context()
+        request = AgentExecutionRequest(
+            decision_context_id=None, correlation_id="test", context=context,
+        )
+        _, _, output = _check_fdc_skip(
+            sample_subprocess_input, request,
+            default_event_output, risk_allow_output,
+        )
+        assert output.summary.startswith("[결정론적 판단 근거]")
+        assert "FDC" in output.summary
+        assert "HOLD" in output.summary
+
     def test_no_events_with_position(
         self,
         sample_subprocess_input: AgentSubprocessInput,

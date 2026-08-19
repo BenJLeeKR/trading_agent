@@ -796,7 +796,11 @@ def _check_fdc_skip(
             symbol=symbol,
             decision_type="HOLD",
             confidence=0.0,
-            summary=f"{symbol} — 최근 이벤트 없음. FDC 생략.",
+            summary=(
+                f"[결정론적 판단 근거] {symbol} — 최근 72시간 내 특별한 이벤트가 "
+                f"없고 보유 중인 포지션도 없어, 신규 진입 신호가 없다고 판단해 "
+                f"FDC 호출을 생략하고 HOLD로 확정했습니다."
+            ),
             reason_codes=("no_events", "no_position"),
         ))
 

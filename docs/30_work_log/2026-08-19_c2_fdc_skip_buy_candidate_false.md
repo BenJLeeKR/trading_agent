@@ -178,3 +178,27 @@ EV gate/sizing/execution/translation/held_position 매도 정책 관련 파일�
 4. 이 스킵이 강등 대상 후보를 놓치지 않는지 — `decision_type` 분포를
    downstream `ai_override_eligibility_blocked` 발동 이력과 대조해
    교차 확인(오적용 여부 재확인).
+
+## 9. 후속 수정 — Condition 2(`no_events_no_position`) summary 자세화(2026-08-19 KST)
+
+배포 후 첫 실측 턴에서 `no_events_no_position` 조건의 기존 summary
+(`"{symbol} — 최근 이벤트 없음. FDC 생략."`)가 다른 결정론적 조건 대비
+너무 짧다는 사용자 피드백에 따라, C2와 별개로 이 조건만 다음과 같이
+자세화했다.
+
+- 새 문구: `"[결정론적 판단 근거] {symbol} — 최근 72시간 내 특별한
+  이벤트가 없고 보유 중인 포지션도 없어, 신규 진입 신호가 없다고
+  판단해 FDC 호출을 생략하고 HOLD로 확정했습니다."`
+- `[결정론적 판단 근거]` 접두사는 C2가 쓰는 `[규칙 기반 생략]`과는
+  의도적으로 다르게 유지했다(사용자가 이번 조건에만 적용을 명시적으로
+  선택, 다른 3개 결정론적 조건은 기존 문구 그대로 둠 — 접두사 통일은
+  하지 않음).
+- "최근 72시간"은 `decision_orchestrator.py`의 `assemble()`이
+  `external_events.list_by_symbol(..., since=now-72h)`로 `recent_events`를
+  조회하는 실제 조회 창을 그대로 반영한 것이다(코드 확인 후 명시,
+  추측 아님).
+- `tests/scripts/test_fdc_skip.py::TestFdcSkipNoEvents::test_no_events_summary_discloses_deterministic_skip`
+  신규 추가 — summary가 `[결정론적 판단 근거]`로 시작하고 FDC/HOLD를
+  포함하는지 검증. 파일 전체 33/33 통과.
+- reason_codes(`no_events`, `no_position`)와 skip 판정 로직 자체는
+  무변경 — summary 문구만 변경.
