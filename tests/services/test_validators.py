@@ -183,3 +183,74 @@ async def test_legacy_blocking_guardrail_api_uses_validation_contract() -> None:
     assert rows[0].rule_set_version == "stale_snapshot_guard_v1"
     assert rows[0].blocking_rule_codes == ["stale_snapshot_account"]
     assert rows[0].rule_results["snapshot_age_seconds"] == 1900
+
+
+@pytest.mark.asyncio
+async def test_persist_validation_result_stamps_policy_git_sha(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Stage A(2026-08-20): persist_validation_result()이 단일 진입점에서
+    policy_git_sha를 주입해야 한다 — 모든 guardrail 기록 호출부(pre-AI
+    gate/scheduler gate/Pass 2 drop 등)에 자동으로 반영됨을 증명."""
+    import agent_trading.services.guardrail_audit as guardrail_audit_module
+
+    monkeypatch.setattr(
+        guardrail_audit_module, "resolve_policy_git_sha", lambda: "deadbeef123"
+    )
+    repos = build_in_memory_repositories()
+    decision_context_id = uuid4()
+
+    await persist_validation_result(
+        repos,
+        validation_context=ValidationContext(
+            decision_context_id=decision_context_id,
+            symbol="005930",
+            market="KRX",
+            source_type="core",
+        ),
+        validation_result=ValidationResult.blocked(
+            rule_set_version="pre_ai_gate_v1",
+            blocking_rule_codes=["general_buy_budget_exhausted"],
+        ),
+    )
+
+    rows = await repos.guardrail_evaluations.get_by_decision_context(
+        decision_context_id
+    )
+    assert len(rows) == 1
+    assert rows[0].policy_git_sha == "deadbeef123"
+
+
+@pytest.mark.asyncio
+async def test_persist_validation_result_policy_git_sha_none_when_unset(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """policy_git_sha가 없으면(env 미설정) None으로 저장돼 기존 동작과
+    동일해야 한다(하위 호환)."""
+    import agent_trading.services.guardrail_audit as guardrail_audit_module
+
+    monkeypatch.setattr(
+        guardrail_audit_module, "resolve_policy_git_sha", lambda: None
+    )
+    repos = build_in_memory_repositories()
+    decision_context_id = uuid4()
+
+    await persist_validation_result(
+        repos,
+        validation_context=ValidationContext(
+            decision_context_id=decision_context_id,
+            symbol="005930",
+            market="KRX",
+            source_type="core",
+        ),
+        validation_result=ValidationResult.blocked(
+            rule_set_version="pre_ai_gate_v1",
+            blocking_rule_codes=["general_buy_budget_exhausted"],
+        ),
+    )
+
+    rows = await repos.guardrail_evaluations.get_by_decision_context(
+        decision_context_id
+    )
+    assert len(rows) == 1
+    assert rows[0].policy_git_sha is None

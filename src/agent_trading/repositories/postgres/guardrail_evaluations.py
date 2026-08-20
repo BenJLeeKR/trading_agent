@@ -29,8 +29,9 @@ class PostgresGuardrailEvaluationRepository:
                 (guardrail_evaluation_id,
                  decision_context_id, trade_decision_id, order_request_id,
                  rule_set_version, overall_passed, evaluated_at,
-                 rule_results, blocking_rule_codes, warning_rule_codes)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9, $10)
+                 rule_results, blocking_rule_codes, warning_rule_codes,
+                 policy_git_sha)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9, $10, $11)
             RETURNING *
             """,
             evaluation.guardrail_evaluation_id,
@@ -43,6 +44,7 @@ class PostgresGuardrailEvaluationRepository:
             json.dumps(evaluation.rule_results),
             evaluation.blocking_rule_codes,
             evaluation.warning_rule_codes,
+            evaluation.policy_git_sha,
         )
         return row_to_entity(row, GuardrailEvaluationEntity)
 

@@ -115,6 +115,19 @@ def _resolve_provider_timeout() -> int:
     return int(os.getenv(env_var, "30"))
 
 
+def resolve_policy_git_sha() -> str | None:
+    """Resolve the policy fingerprint(git commit SHA) for Stage A logging.
+
+    Stage A(정책평가 인프라 로깅 계약 보강, 2026-08-20) 1차 구현 단위
+    A-2 — 배포 시 ``AGENT_TRADING_GIT_SHA``로 주입된 값을 그대로
+    반환한다. 이 값은 관측성 전용(정책 fingerprint)이며 어떤 판정
+    로직에도 쓰이지 않는다. 값이 없으면 ``None``을 반환해 하위 호환을
+    유지한다 — 호출자는 이 값이 없어도 정상 동작해야 한다.
+    """
+    value = os.getenv("AGENT_TRADING_GIT_SHA", "").strip()
+    return value or None
+
+
 def resolve_provider_runtime_config() -> dict[str, str | int]:
     """현재 ``LLM_PROVIDER`` 기준 provider 런타임 설정을 반환한다."""
     return {

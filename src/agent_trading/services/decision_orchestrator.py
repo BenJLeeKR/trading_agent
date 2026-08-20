@@ -12,6 +12,7 @@ from typing import Any
 from uuid import UUID, uuid4
 
 from agent_trading.brokers.base import BrokerAdapter
+from agent_trading.config.settings import resolve_policy_git_sha
 from agent_trading.domain.entities import (
     AccountEntity,
     CashBalanceSnapshotEntity,
@@ -1590,6 +1591,7 @@ class DecisionOrchestratorService:
                 else None
             ),
             fdc_run_id=fdc_run_id,
+            policy_git_sha=resolve_policy_git_sha(),
         )
         if td_entity is not None:
             td_entity = await self._repos.trade_decisions.add(td_entity)

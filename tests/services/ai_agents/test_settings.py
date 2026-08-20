@@ -25,6 +25,7 @@ from agent_trading.config.settings import (
     _resolve_provider_base_url,
     _resolve_provider_model_id,
     _resolve_provider_timeout,
+    resolve_policy_git_sha,
 )
 from agent_trading.services.ai_agents.event_interpretation import (
     StubEventInterpretationAgent,
@@ -657,3 +658,23 @@ class TestEventInterpretationOutputPostInit:
         settings = AppSettings()
         assert settings.kis_real_rest_rps == 1
         assert settings.kis_paper_rest_rps == 1
+
+
+class TestResolvePolicyGitSha:
+    """``resolve_policy_git_sha()`` — Stage A(2026-08-20) policy fingerprint."""
+
+    def test_returns_none_when_unset(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.delenv("AGENT_TRADING_GIT_SHA", raising=False)
+        assert resolve_policy_git_sha() is None
+
+    def test_returns_none_when_blank(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("AGENT_TRADING_GIT_SHA", "   ")
+        assert resolve_policy_git_sha() is None
+
+    def test_returns_value_when_set(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("AGENT_TRADING_GIT_SHA", "abc123def456")
+        assert resolve_policy_git_sha() == "abc123def456"
+
+    def test_strips_whitespace(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("AGENT_TRADING_GIT_SHA", "  abc123  ")
+        assert resolve_policy_git_sha() == "abc123"

@@ -31,6 +31,12 @@
       "services": ["app", "api", "ops-scheduler", "reconciliation-worker"],
       "required_in_compose": true,
       "note": "paper와 live를 가르는 브로커 환경 키다. 매매 안전에 직결되므로 누락을 실패로 다룬다."
+    },
+    {
+      "key": "AGENT_TRADING_GIT_SHA",
+      "services": ["ops-scheduler"],
+      "required_in_compose": false,
+      "note": "Stage A(정책평가 인프라, 2026-08-20) policy fingerprint. 관측성 전용(trade_decisions/guardrail_evaluations.policy_git_sha) — 판정 로직과 무관하며 값이 없어도 정상 동작하므로 하드 실패 대상이 아니다."
     }
   ]
 }
