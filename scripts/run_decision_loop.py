@@ -1329,6 +1329,9 @@ async def _build_core_risk_off_apply_overrides_for_cycle(
             held_position_fdc_skip_shadow_enabled=(
                 settings.held_position_fdc_skip_shadow_enabled
             ),
+            held_position_reduce_skip_shadow_enabled=(
+                settings.held_position_reduce_skip_shadow_enabled
+            ),
         )
         for item in universe:
             if item.source_type != "core":
@@ -1802,6 +1805,9 @@ async def _run_one_cycle(
                 ei_shadow_bot_enabled=settings.ei_shadow_bot_enabled,
                 held_position_fdc_skip_shadow_enabled=(
                     settings.held_position_fdc_skip_shadow_enabled
+                ),
+                held_position_reduce_skip_shadow_enabled=(
+                    settings.held_position_reduce_skip_shadow_enabled
                 ),
             )
             reconciliation_service = ReconciliationService(repos=repos)

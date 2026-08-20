@@ -632,6 +632,23 @@ def _resolve_held_position_fdc_skip_shadow_enabled() -> bool:
     return raw.strip().lower() == "true"
 
 
+def _resolve_held_position_reduce_skip_shadow_enabled() -> bool:
+    """``held_position`` REDUCE/SELL_CANDIDATE **shadow-skip 관측**(관측
+    전용) on/off 스위치를 ``HELD_POSITION_REDUCE_SKIP_SHADOW_ENABLED``
+    env에서 읽는다.
+
+    ``held_position_fdc_skip_shadow_enabled``와 동일한 패턴 — 기본값
+    ``False``, ``True``여도 FDC 호출 여부/`decision_type`/`side`/주문
+    제출에는 전혀 개입하지 않는다. ``deterministic_trigger.primary_
+    candidate``가 ``REDUCE_CANDIDATE``/``SELL_CANDIDATE``이면서
+    ``ar_output.risk_opinion``이 ``reject``/``reduce``인 held_position
+    결정에 한해, `trade_decisions.decision_json.shadow_held_position_
+    reduce_skip`에만 기록한다(별도 key, NO_ACTION/WATCH shadow와 분리).
+    """
+    raw = os.getenv("HELD_POSITION_REDUCE_SKIP_SHADOW_ENABLED", "false")
+    return raw.strip().lower() == "true"
+
+
 def _resolve_kis_fill_incremental_append_enabled() -> bool:
     """KIS 누적 체결량(``TOT_CCLD_QTY``)을 증분으로 해석해 실제
     ``fill_events``에 append할지 여부를 ``KIS_FILL_INCREMENTAL_APPEND_
@@ -942,6 +959,16 @@ class AppSettings:
     `side`/주문 제출에는 전혀 개입하지 않는다 — `trade_decisions.
     decision_json.shadow_held_position_fdc_skip`에 "FDC를 생략했다면
     같은 결과였을까" 가상 비교만 기록한다."""
+
+    held_position_reduce_skip_shadow_enabled: bool = field(
+        default_factory=_resolve_held_position_reduce_skip_shadow_enabled
+    )
+    """`HELD_POSITION_REDUCE_SKIP_SHADOW_ENABLED` env로 제어하는 관측
+    전용 스위치. 기본값 ``False``. ``True``여도 FDC 호출 여부/
+    `decision_type`/`side`/주문 제출에는 전혀 개입하지 않는다 —
+    `trade_decisions.decision_json.shadow_held_position_reduce_skip`
+    (NO_ACTION/WATCH shadow와 별도 key)에 REDUCE_CANDIDATE/SELL_CANDIDATE
+    + risk_opinion=reject/reduce 하위 구간의 가상 비교만 기록한다."""
 
     # ---- KIS 누적 체결량 → 증분 fill 해석 (설계 문서 14번) ---------------
     kis_fill_incremental_append_enabled: bool = field(
