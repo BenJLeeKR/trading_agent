@@ -460,6 +460,15 @@ A-2는 `policy_git_sha` 필드를 관측성 목적의 nullable 컬럼으로만
   import-graph로 선택된 2개 무관 파일(`test_kis_realtime_quote_
   source.py`, `test_broker_capacity.py`)에서 기존 실패가 재현되나
   마찬가지로 `git stash` 대조로 무관함을 확인.
+  **[2026-08-20 후속 보강]** `tests/repositories/test_postgres_
+  guardrail_evaluations_policy_git_sha.py`/`test_postgres_trade_
+  decisions_policy_git_sha.py` 신규 추가(DB-free, fake connection으로
+  INSERT SQL/파라미터 직접 검증) — 기존 `seeded_postgres_data`(실제
+  Postgres 연결) 기반 파일과는 별도 파일로 분리했다(같은 파일에
+  합치면 import-graph가 그 파일 전체를 선택해 기존 DB-integration
+  테스트까지 함께 실행하려다 접속 실패로 깨짐을 실제로 재현/확인 후
+  분리 결정). 이제 `accept backend-file`이 두 대상 파일 모두 **직접
+  PASS**한다(더 이상 `no_safe_test_candidate_found`가 아님).
 
 ### 12.5 미확정
 
