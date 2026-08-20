@@ -7485,3 +7485,33 @@ gate) 구현 완료", `[PRIORITY_MAP]` 동일 날짜 항목.
   계속 높게 유지되는지, (2) 라벨 불일치(EXIT vs REDUCE)가 실제로
   얼마나 자주 나는지, (3) 그 결과를 근거로 이 하위 구간의 실제 skip
   전환 여부를 별도 턴에서 재검토한다.
+
+## `Stage A-1a` + `A-2`(정책평가 인프라 로깅 계약 1차 구현 단위) 구현 완료(2026-08-20 KST)
+
+상세: `docs/40_action_plans/post_sppv3_policy_evaluation_design_
+2026-08-20.md` "12", `[PRIORITY_MAP]` 동일 날짜 항목. 직전 설계
+turn의 "Stage A-1a/A-2" backlog 항목을 해소한다.
+
+- A-1a: `scripts/run_decision_loop.py`의 `_run_general_lane_pass2()`
+  3개 드롭 지점(dedupe 2 + budget 1)에서 `guardrail_evaluations`
+  기록 신설(`gate_phase=pass2_general_lane_drop`), 판정 로직 무변화.
+- A-2: `db/migrations/0065_add_policy_git_sha_columns.sql`(nullable
+  컬럼 2개), `resolve_policy_git_sha()`(`AGENT_TRADING_GIT_SHA` 환경
+  변수), `guardrail_audit.persist_validation_result()`/`decision_
+  orchestrator._ensure_trade_decision()`에 주입, `docker-compose.yml`/
+  `runtime_env_wiring.json`/`.env.example` 배선 완료.
+- 신규 테스트 10건 PASS, 기존 회귀 없음. `accept db-structure`/
+  `accept env`/`accept style`/`accept no-bypass`/`accept architecture`
+  전부 PASS.
+- **신규 backlog(운영 실측 필요, 미확정)**: (1) Postgres 실접속
+  상태에서 두 테이블의 신규 컬럼 INSERT가 정상 동작하는지 dev 환경
+  DB로 확인(이번 턴은 DB write 금지라 미실측). (2) 배포 스크립트에
+  실제로 `export AGENT_TRADING_GIT_SHA=$(git rev-parse HEAD)`를
+  추가하는 작업(코드/배선은 준비됐으나 값 주입 자체는 범위 밖).
+  (3) 배포 후 `guardrail_evaluations.gate_phase='pass2_general_lane_
+  drop'` 행이 실제로 쌓이는지, `policy_git_sha`가 정상적으로 채워
+  지는지 장중 실측.
+- **다음 착수 가능 최소 단위**: Stage A-1b(`guardrail_evaluations`
+  cycle 식별자 컬럼) / A-3(hard gate margin 저장, `deterministic_
+  trigger_engine.py`/`expected_value_gate.py`/`strategy_selection.py`)
+  — `SPPV-3` 결론과 무관하게 계속 병행 착수 가능.

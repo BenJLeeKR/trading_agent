@@ -1592,6 +1592,86 @@ async def _record_scheduler_guardrail_evaluation(
     )
 
 
+async def _record_pass2_general_lane_drop_guardrail_evaluation(
+    candidate: dict[str, object],
+    *,
+    cycle_count: int,
+    reason: str,
+) -> None:
+    """Pass 2(Pass 1.5 dedupe 포함)에서 탈락한 general lane 후보를
+    ``guardrail_evaluations``에 기록한다(Stage A-1a, 2026-08-20).
+
+    ``_record_pre_ai_guardrail_evaluation()``(gate_phase=``pre_ai_gate``)
+    과 population 계약(symbol/market/source_type/stop_reason/rule_results)
+    은 최대한 맞추되, ``gate_phase=pass2_general_lane_drop``으로 명시적
+    으로 구분한다 — 이 스킵은 이미 ``assemble()``(=AI 판단)이 끝난 뒤
+    Pass 2에서 예산 소진/같은 cycle 내 symbol 중복 사유로 제출을
+    포기한 것이라, AI 호출 **전**에 걸러지는 pre_ai_gate 스킵과는
+    의미가 다르다 — 같은 경로인 척 섞지 않는다.
+
+    판정 로직에는 전혀 관여하지 않는다(순수 기록 추가) — 이 함수 호출이
+    실패해도 Pass 2 진행에는 영향을 주지 않는다(best-effort).
+    """
+    from agent_trading.db.transaction import transaction as _db_transaction
+    from agent_trading.repositories.postgres.bootstrap import (
+        build_postgres_repositories,
+    )
+
+    symbol = str(candidate.get("symbol", ""))
+    market = str(candidate.get("market", ""))
+    source_type = str(candidate.get("source_type", ""))
+    final_trade_score = candidate.get("final_trade_score")
+    try:
+        async with _db_transaction() as tx:
+            repos: RepositoryContainer = build_postgres_repositories(tx)
+            account_id = None
+            try:
+                account = await repos.accounts.find_one(
+                    AccountLookup(account_alias=ACCOUNT_ALIAS)
+                )
+                account_id = account.account_id if account is not None else None
+            except Exception:
+                account_id = None
+
+            await persist_validation_result(
+                repos,
+                validation_context=build_validation_context(
+                    decision_context_id=candidate.get("decision_context_id"),
+                    trade_decision_id=candidate.get("trade_decision_id"),
+                    account_id=account_id,
+                    symbol=symbol,
+                    market=market,
+                    source_type=source_type,
+                    metadata={
+                        "account_alias": ACCOUNT_ALIAS,
+                        "gate_phase": "pass2_general_lane_drop",
+                        "cycle": cycle_count,
+                    },
+                ),
+                validation_result=ValidationResult.blocked(
+                    rule_set_version="pass2_general_lane_drop_v1",
+                    blocking_rule_codes=[reason],
+                    rule_results={
+                        "gate_phase": "pass2_general_lane_drop",
+                        "cycle": cycle_count,
+                        "final_trade_score": (
+                            str(final_trade_score)
+                            if final_trade_score is not None
+                            else None
+                        ),
+                    },
+                    stop_reason=reason,
+                ),
+            )
+            await tx.commit()
+    except Exception:
+        logger.warning(
+            "Failed to record Pass2 general lane drop guardrail evaluation: "
+            "symbol=%s reason=%s",
+            symbol, reason, exc_info=True,
+        )
+
+
 def _build_aggregate_summary(
     results: list[dict[str, object]],
     total_duration: float,
@@ -2881,6 +2961,10 @@ async def _run_general_lane_pass2(
                     cycle_count, existing, "symbol_duplicate_in_cycle",
                 )
                 cycle_results[existing["cycle_index"]] = dropped
+                await _record_pass2_general_lane_drop_guardrail_evaluation(
+                    existing, cycle_count=cycle_count,
+                    reason="symbol_duplicate_in_cycle",
+                )
                 _emit_general_lane_pass2_output(
                     dropped, cycle_count=cycle_count, output=output,
                 )
@@ -2895,6 +2979,10 @@ async def _run_general_lane_pass2(
                 cycle_count, candidate, "symbol_duplicate_in_cycle",
             )
             cycle_results[candidate["cycle_index"]] = dropped
+            await _record_pass2_general_lane_drop_guardrail_evaluation(
+                candidate, cycle_count=cycle_count,
+                reason="symbol_duplicate_in_cycle",
+            )
             _emit_general_lane_pass2_output(
                 dropped, cycle_count=cycle_count, output=output,
             )
@@ -2938,6 +3026,10 @@ async def _run_general_lane_pass2(
                 cycle_count, candidate, "submit_budget_consumed_core",
             )
             cycle_results[candidate["cycle_index"]] = dropped
+            await _record_pass2_general_lane_drop_guardrail_evaluation(
+                candidate, cycle_count=cycle_count,
+                reason="submit_budget_consumed_core",
+            )
             _emit_general_lane_pass2_output(
                 dropped, cycle_count=cycle_count, output=output,
             )

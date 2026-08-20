@@ -3387,6 +3387,127 @@ class TestRunGeneralLanePass2BudgetConsumption:
         assert cycle_results[2]["status"] == "RECONCILE_REQUIRED"
 
 
+class TestPass2DropGuardrailEvaluationRecording:
+    """Pass 2(budget exhausted/symbol dedupe) drop이 ``guardrail_
+    evaluations``에 기록되도록 배선됐는지 검증(Stage A-1a, 2026-08-20).
+
+    판정 로직(누가 드롭되는지)은 기존과 동일해야 하며, 이 테스트는
+    오직 "기록 호출이 일어나는지"만 검증한다 — 실제 DB 기록 자체는
+    ``test_validators.py``/``_record_pass2_general_lane_drop_guardrail_
+    evaluation()`` 자체 단위 테스트가 별도로 커버한다.
+    """
+
+    @staticmethod
+    def _candidate(idx: int, symbol: str, score: str | None = None) -> dict[str, object]:
+        return {
+            "cycle_index": idx, "symbol": symbol, "market": "KRX",
+            "source_type": "core", "intent": None,
+            "trade_decision_id": None, "decision_context_id": None,
+            "request": None, "final_trade_score": score,
+            "analysis_completed_at": datetime.now(timezone.utc),
+        }
+
+    @pytest.mark.asyncio
+    async def test_budget_exhausted_drop_records_guardrail_evaluation(self) -> None:
+        """budget이 부족해 드롭된 candidate는 reason=submit_budget_
+        consumed_core로 기록 호출이 발생해야 한다."""
+        candidates = [self._candidate(0, "AAA"), self._candidate(1, "BBB")]
+        cycle_results: list[dict[str, object]] = [
+            {"status": "PENDING_PASS2", "symbol": "AAA", "cycle_index": 0},
+            {"status": "PENDING_PASS2", "symbol": "BBB", "cycle_index": 1},
+        ]
+        recorded: list[tuple[str, str]] = []
+
+        async def _mock_submit(
+            candidate: dict[str, object], *, cycle_count: int, runtime: dict[str, object],
+        ) -> dict[str, object]:
+            return {
+                "status": "SUBMITTED", "symbol": str(candidate["symbol"]),
+                "market": "KRX", "duration_seconds": 0.01,
+            }
+
+        async def _mock_record(
+            candidate: dict[str, object], *, cycle_count: int, reason: str,
+        ) -> None:
+            recorded.append((str(candidate["symbol"]), reason))
+
+        with (
+            patch(
+                "scripts.run_decision_loop._submit_general_lane_candidate",
+                side_effect=_mock_submit,
+            ),
+            patch(
+                "scripts.run_decision_loop._record_pass2_general_lane_drop_guardrail_evaluation",
+                side_effect=_mock_record,
+            ),
+        ):
+            await _run_general_lane_pass2(
+                candidates,
+                cycle_results=cycle_results,
+                cycle_count=1,
+                max_general_submits_this_cycle=1,
+                submit_budget_consumed_count=0,
+                runtime={},
+                output="text",
+            )
+
+        # budget=1이라 AAA만 제출되고 BBB는 예산 소진으로 드롭 → 기록 호출.
+        assert recorded == [("BBB", "submit_budget_consumed_core")]
+        assert cycle_results[1]["stop_reason"] == "submit_budget_consumed_core"
+
+    @pytest.mark.asyncio
+    async def test_symbol_duplicate_drop_records_guardrail_evaluation(self) -> None:
+        """같은 symbol이 두 source_type으로 동시에 들어와 dedupe로 드롭된
+        candidate는 reason=symbol_duplicate_in_cycle로 기록 호출이
+        발생해야 한다."""
+        low_priority = self._candidate(0, "AAA", score="0.50")
+        low_priority["source_type"] = "market_overlay"
+        high_priority = self._candidate(1, "AAA", score="0.90")
+        high_priority["source_type"] = "core"
+        candidates = [low_priority, high_priority]
+        cycle_results: list[dict[str, object]] = [
+            {"status": "PENDING_PASS2", "symbol": "AAA", "cycle_index": 0},
+            {"status": "PENDING_PASS2", "symbol": "AAA", "cycle_index": 1},
+        ]
+        recorded: list[tuple[str, str]] = []
+
+        async def _mock_submit(
+            candidate: dict[str, object], *, cycle_count: int, runtime: dict[str, object],
+        ) -> dict[str, object]:
+            return {
+                "status": "SUBMITTED", "symbol": str(candidate["symbol"]),
+                "market": "KRX", "duration_seconds": 0.01,
+            }
+
+        async def _mock_record(
+            candidate: dict[str, object], *, cycle_count: int, reason: str,
+        ) -> None:
+            recorded.append((str(candidate["source_type"]), reason))
+
+        with (
+            patch(
+                "scripts.run_decision_loop._submit_general_lane_candidate",
+                side_effect=_mock_submit,
+            ),
+            patch(
+                "scripts.run_decision_loop._record_pass2_general_lane_drop_guardrail_evaluation",
+                side_effect=_mock_record,
+            ),
+        ):
+            await _run_general_lane_pass2(
+                candidates,
+                cycle_results=cycle_results,
+                cycle_count=1,
+                max_general_submits_this_cycle=5,
+                submit_budget_consumed_count=0,
+                runtime={},
+                output="text",
+            )
+
+        # core(우선순위 높음)가 남고 market_overlay가 dedupe로 드롭 → 기록 호출.
+        assert recorded == [("market_overlay", "symbol_duplicate_in_cycle")]
+
+
 class TestHeldPositionLaneUnaffectedByPass2:
     """held_position lane이 D안 Pass 1(defer_actionable_for_pass2)을 절대
     타지 않는지 검증(item D)."""

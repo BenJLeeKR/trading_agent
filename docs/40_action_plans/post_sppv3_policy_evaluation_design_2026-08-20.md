@@ -387,3 +387,98 @@ A-1a/A-1b/A-2/A-3 전부 **정책 로직을 바꾸지 않는 순수 관측성 �
 오히려 A-3(gate margin)은 `SPPV-3` 축 2(정리된 gate 통과 후 성과)가
 "threshold 근처 표본"을 분석할 때 그대로 재사용 가능한 데이터라
 **공유 착수가 더 효율적**이다.
+
+## 12. Stage A-1a + A-2 구현 완료(2026-08-20 KST 3차 확장, 코드 구현)
+
+### 12.1 A-1a — Pass 2 general lane drop을 `guardrail_evaluations`에 기록
+
+- `scripts/run_decision_loop.py`에 신규 `_record_pass2_general_lane_
+  drop_guardrail_evaluation()` 추가 — `_run_general_lane_pass2()`의
+  3개 드롭 지점(symbol dedupe 2곳 + budget exhausted 1곳) 전부에서
+  호출한다.
+- `gate_phase=pass2_general_lane_drop`으로 pre-AI gate 경로
+  (`gate_phase=pre_ai_gate`)와 명시적으로 구분했다 — population
+  contract(symbol/market/source_type/stop_reason/rule_results)는
+  기존 `_record_pre_ai_guardrail_evaluation()`과 최대한 맞췄다.
+- 판정 로직(누가 드롭되는지, 어떤 candidate가 남는지)은 **전혀 바꾸지
+  않았다** — `_general_lane_dropped_result()` 호출부 뒤에 기록 호출을
+  추가했을 뿐이다. 기록 실패(DB 예외 등)는 best-effort로 로그만 남기고
+  Pass 2 진행에 영향을 주지 않는다.
+
+### 12.2 A-2 — policy git commit SHA를 `trade_decisions`/
+`guardrail_evaluations`에 저장
+
+- 신규 마이그레이션 `db/migrations/0065_add_policy_git_sha_columns.sql`
+  — 두 테이블에 `policy_git_sha VARCHAR(64)` nullable 컬럼 추가
+  (additive only, 기존 행에 영향 없음).
+- `src/agent_trading/config/settings.py`에 `resolve_policy_git_sha()`
+  추가 — `AGENT_TRADING_GIT_SHA` 환경변수를 읽어 반환, 미설정 시
+  `None`.
+- `guardrail_audit.persist_validation_result()`(모든 guardrail
+  evaluation 기록의 단일 진입점)에서 `policy_git_sha`를 한 번만
+  주입 — pre_ai_gate/scheduler_gate/pass2_general_lane_drop 등
+  **모든 guardrail 기록 경로에 자동으로 반영**된다(개별 호출부를
+  일일이 고칠 필요 없음).
+- `decision_factory.build_trade_decision_entity()`에 `policy_git_sha`
+  파라미터 추가, `decision_orchestrator._ensure_trade_decision()`에서
+  `resolve_policy_git_sha()` 값을 전달 — 정상 생성된 결정에도 동일한
+  필드명으로 남는다.
+- `docker-compose.yml`의 `ops-scheduler` 서비스에 `AGENT_TRADING_
+  GIT_SHA: "${AGENT_TRADING_GIT_SHA:-}"` 배선 추가, `scripts/harness/
+  contracts/runtime_env_wiring.json`에 항목 등록(`required_in_
+  compose: false` — 관측성 전용이라 값이 없어도 실패 대상 아님),
+  `.env.example`에 문서화. 실제 값은 배포 스크립트가 `export
+  AGENT_TRADING_GIT_SHA=$(git rev-parse HEAD)` 형태로 주입해야
+  채워진다(이번 턴은 배선까지만 — 실제 배포 스크립트 변경은 범위
+  밖).
+
+### 12.3 왜 판정 로직 무변화인가
+
+A-1a는 이미 결정된 드롭 결과(`_general_lane_dropped_result()`가
+반환하는 값)를 그대로 기록만 하고, 무엇을 드롭할지 결정하는 로직
+(`_general_lane_priority_key()`, budget 비교식)은 건드리지 않았다.
+A-2는 `policy_git_sha` 필드를 관측성 목적의 nullable 컬럼으로만
+추가했고, 이 값이 어떤 gate/threshold 판정에도 입력으로 쓰이지
+않는다 — 순수 기록용이다. 두 변경 모두 기존 pytest 스위트(신규 테스트
+포함 총 220여 건)가 회귀 없이 통과함을 확인했다.
+
+### 12.4 검증 결과(factual)
+
+- `tests/services/ai_agents/test_settings.py`(+4),
+  `tests/services/test_validators.py`(+2),
+  `tests/services/test_decision_factory.py`(+2),
+  `tests/scripts/test_run_decision_loop.py`(+2) 신규 테스트 전부 PASS.
+- `tests/scripts/test_run_decision_loop.py`(132건),
+  `tests/services/test_decision_orchestrator.py`(98건) 전체 회귀 없음.
+- `accept db-structure`/`accept env`/`accept style`/`accept no-bypass`
+  (hard_bypass_count=0)/`accept architecture` 전부 PASS.
+- `accept backend-file`/`accept script-file`: 정상 대상 파일은 전부
+  PASS. `guardrail_evaluations.py`/`trade_decisions.py`는 `no_safe_
+  test_candidate_found`로 FAIL 표시되나(전담 DB-free 단위 테스트가
+  구조적으로 없음), `git stash`로 이번 변경 이전 코드에서도 동일하게
+  FAIL함을 확인 — 이번 변경과 무관한 기존 한계. `settings.py`도
+  import-graph로 선택된 2개 무관 파일(`test_kis_realtime_quote_
+  source.py`, `test_broker_capacity.py`)에서 기존 실패가 재현되나
+  마찬가지로 `git stash` 대조로 무관함을 확인.
+  **[2026-08-20 후속 보강]** `tests/repositories/test_postgres_
+  guardrail_evaluations_policy_git_sha.py`/`test_postgres_trade_
+  decisions_policy_git_sha.py` 신규 추가(DB-free, fake connection으로
+  INSERT SQL/파라미터 직접 검증) — 기존 `seeded_postgres_data`(실제
+  Postgres 연결) 기반 파일과는 별도 파일로 분리했다(같은 파일에
+  합치면 import-graph가 그 파일 전체를 선택해 기존 DB-integration
+  테스트까지 함께 실행하려다 접속 실패로 깨짐을 실제로 재현/확인 후
+  분리 결정). 이제 `accept backend-file`이 두 대상 파일 모두 **직접
+  PASS**한다(더 이상 `no_safe_test_candidate_found`가 아님).
+
+### 12.5 미확정
+
+- Postgres 실접속 상태에서 `trade_decisions`/`guardrail_evaluations`
+  `add()`의 실제 INSERT(신규 컬럼 포함)가 정상 동작하는지는 이번
+  턴(DB write 금지)에서 실측하지 못했다 — 다음 턴에서 dev 환경 DB로
+  확인 필요.
+- 배포 스크립트가 실제로 `AGENT_TRADING_GIT_SHA`를 채워 넣도록
+  만드는 작업은 이번 범위 밖이다 — 코드/배선은 값을 받을 준비가
+  됐으나, 실제 운영에서 이 값이 채워지려면 별도 배포 스크립트 수정이
+  필요하다.
+- Stage A-1b(cycle 식별자 컬럼)/A-3(gate margin)/A-4(mtm as-of 규칙)는
+  §11.7 계획 그대로 다음 구현 턴 대상으로 남는다.

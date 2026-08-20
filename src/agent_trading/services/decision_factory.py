@@ -64,6 +64,7 @@ def build_trade_decision_entity(
     agent_bundle: AgentExecutionBundle,
     instrument_id: UUID | None = None,
     fdc_run_id: UUID | None = None,
+    policy_git_sha: str | None = None,
 ) -> TradeDecisionEntity | None:
     """순수 factory: TradeDecisionEntity 생성만 담당.
 
@@ -453,6 +454,7 @@ def build_trade_decision_entity(
             ),
             "sizing_hint": dataclass_to_dict(composer_output.sizing_hint),
         },
+        policy_git_sha=policy_git_sha,
     )
     return decision
 

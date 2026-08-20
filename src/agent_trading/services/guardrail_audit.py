@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import dataclasses
 import logging
 from uuid import UUID
 
+from agent_trading.config.settings import resolve_policy_git_sha
 from agent_trading.repositories.container import RepositoryContainer
 from agent_trading.services.validators import (
     ValidationContext,
@@ -19,13 +21,22 @@ async def persist_validation_result(
     validation_context: ValidationContext,
     validation_result: ValidationResult,
 ) -> None:
-    """공통 validation result를 guardrail evaluation으로 저장한다."""
+    """공통 validation result를 guardrail evaluation으로 저장한다.
+
+    Stage A(2026-08-20) A-2: 모든 guardrail evaluation 기록 지점을
+    거치는 단일 진입점이라, 여기서 ``policy_git_sha``(정책 fingerprint,
+    관측성 전용)를 한 번만 주입하면 pre-AI gate/scheduler gate/Pass 2
+    drop 등 모든 호출부에 자동으로 반영된다 — 값이 없으면 ``None``
+    그대로 저장되어 기존 동작과 동일하다.
+    """
     try:
-        await repos.guardrail_evaluations.add(
-            validation_result.to_guardrail_evaluation(
-                context=validation_context,
-            )
+        entity = validation_result.to_guardrail_evaluation(
+            context=validation_context,
         )
+        entity = dataclasses.replace(
+            entity, policy_git_sha=resolve_policy_git_sha()
+        )
+        await repos.guardrail_evaluations.add(entity)
     except Exception:
         logger.warning(
             "Failed to record validation result rule_set=%s blocking=%s",

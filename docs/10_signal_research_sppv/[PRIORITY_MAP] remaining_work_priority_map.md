@@ -11930,3 +11930,27 @@ execution_attempts/사후분석 SQL) 보존을 동시에 만족하는지** 코�
   필드 추가) — 둘 다 판정 로직 무변화, 낮은 리스크로 즉시 착수 추천.
 - **다음 착수 가능 최소 단위**: A-1a/A-2(코드 구현 턴, 별도 승인
   필요).
+
+## `Stage A-1a` + `A-2` 구현 완료(2026-08-20 KST, 코드 구현 턴)
+
+상세: `docs/40_action_plans/post_sppv3_policy_evaluation_design_
+2026-08-20.md` "12. Stage A-1a + A-2 구현 완료".
+
+- **A-1a**: Pass 2 general lane drop(symbol dedupe 2곳 + budget
+  exhausted 1곳) 전부 `guardrail_evaluations`에
+  `gate_phase=pass2_general_lane_drop`으로 기록하도록 배선 완료 —
+  pre_ai_gate 경로와 명시적으로 구분, 판정 로직 무변화.
+- **A-2**: `trade_decisions`/`guardrail_evaluations`에 `policy_git_sha`
+  nullable 컬럼 추가(마이그레이션 0065), `AGENT_TRADING_GIT_SHA`
+  환경변수를 `resolve_policy_git_sha()`로 해석해 `guardrail_audit.
+  persist_validation_result()`(모든 guardrail 기록의 단일 진입점) +
+  `decision_orchestrator._ensure_trade_decision()` 양쪽에서 주입 —
+  `docker-compose.yml`/`runtime_env_wiring.json`/`.env.example`
+  배선까지 완료(실제 값 주입은 배포 스크립트 몫, 범위 밖).
+- 신규 테스트 10건 전부 PASS, 기존 회귀(`test_run_decision_loop.py`
+  132건, `test_decision_orchestrator.py` 98건) 무변화 확인. `accept
+  db-structure`/`accept env`/`accept style`/`accept no-bypass`/
+  `accept architecture` 전부 PASS.
+- **다음 착수 가능 최소 단위**: Stage A-1b(cycle 식별자 컬럼)/A-3
+  (hard gate margin 저장) — `SPPV-3` 결론과 무관하게 계속 병행
+  착수 가능.

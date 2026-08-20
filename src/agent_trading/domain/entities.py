@@ -324,6 +324,12 @@ class TradeDecisionEntity:
     rationale_summary: str | None = None
     decision_json: dict[str, object] = field(default_factory=dict)
 
+    # -- Stage A (정책평가 인프라, 2026-08-20 추가): policy fingerprint --
+    policy_git_sha: str | None = None
+    """이 결정을 만든 코드의 git commit SHA(관측성 전용, 판정 로직과 무관).
+    ``config_versions``는 설정값(threshold 등) 버전 관리용이라 코드 로직
+    변경(gate/threshold 리팩터링 등) 추적에는 부적합해 별도로 둔다."""
+
 
 @dataclass(slots=True, frozen=True)
 class OrderRequestEntity:
@@ -800,6 +806,12 @@ class GuardrailEvaluationEntity:
     blocking_rule_codes: list[str] | None = None
     warning_rule_codes: list[str] | None = None
     created_at: datetime | None = None
+
+    # -- Stage A (정책평가 인프라, 2026-08-20 추가): policy fingerprint --
+    policy_git_sha: str | None = None
+    """이 guardrail 평가를 만든 코드의 git commit SHA(관측성 전용).
+    ``TradeDecisionEntity.policy_git_sha``와 동일한 목적 — 정상 결정과
+    스킵된 결정을 같은 정책 버전 기준으로 함께 조회할 수 있게 한다."""
 
 
 @dataclass(slots=True, frozen=True)

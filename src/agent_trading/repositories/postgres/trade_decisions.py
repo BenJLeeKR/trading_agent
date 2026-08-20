@@ -60,7 +60,9 @@ class PostgresTradeDecisionRepository:
                  -- Axis 2: Source type
                  source_type,
                  -- Metadata
-                 created_at)
+                 created_at,
+                 -- Stage A: policy fingerprint
+                 policy_git_sha)
            VALUES ($1, $2,
                    $3, $4,
                    $5, $6, $7,
@@ -80,7 +82,8 @@ class PostgresTradeDecisionRepository:
                    $34, $35, $36,
                    $37, $38, $39::jsonb,
                    $40,
-                   $41)
+                   $41,
+                   $42)
             RETURNING *
             """,
             # PK
@@ -130,6 +133,8 @@ class PostgresTradeDecisionRepository:
             decision.source_type,
             # Metadata
             decision.created_at,
+            # Stage A: policy fingerprint
+            decision.policy_git_sha,
         )
         return row_to_entity(row, TradeDecisionEntity)
 

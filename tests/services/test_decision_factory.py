@@ -551,3 +551,70 @@ def test_build_trade_decision_entity_stores_expected_value_anchor_metadata() -> 
         entity.decision_json["expected_value_anchor"]["edge_vs_last_exit_delta_bps"]
         == "6.00"
     )
+
+
+def test_build_trade_decision_entity_stores_policy_git_sha_when_provided() -> None:
+    """Stage A(2026-08-20): policy_git_sha가 그대로 entity에 저장돼야
+    한다(관측성 전용, 판정 로직 무관)."""
+    trigger = DeterministicTriggerAssessment(
+        trigger_version="deterministic_trigger_v1",
+        primary_candidate="BUY_CANDIDATE",
+        candidate_set=("BUY_CANDIDATE",),
+        watch_candidate=False,
+        buy_candidate=True,
+        sell_candidate=False,
+        reduce_candidate=False,
+        candidate_confidence=0.82,
+        entry_score=0.82,
+        exit_score=0.14,
+        watch_score=0.2,
+    )
+    entity = build_trade_decision_entity(
+        decision_context_id=uuid4(),
+        request=_make_request(),
+        assembled_context=_make_context(trigger),
+        agent_bundle=AgentExecutionBundle(
+            composer_output=FinalDecisionComposerOutput(
+                decision_type="BUY",
+                side="BUY",
+                confidence=0.9,
+            ),
+        ),
+        policy_git_sha="abc1234def5678",
+    )
+
+    assert entity is not None
+    assert entity.policy_git_sha == "abc1234def5678"
+
+
+def test_build_trade_decision_entity_policy_git_sha_defaults_to_none() -> None:
+    """policy_git_sha를 넘기지 않으면 기존과 동일하게 None이어야 한다
+    (하위 호환)."""
+    trigger = DeterministicTriggerAssessment(
+        trigger_version="deterministic_trigger_v1",
+        primary_candidate="BUY_CANDIDATE",
+        candidate_set=("BUY_CANDIDATE",),
+        watch_candidate=False,
+        buy_candidate=True,
+        sell_candidate=False,
+        reduce_candidate=False,
+        candidate_confidence=0.82,
+        entry_score=0.82,
+        exit_score=0.14,
+        watch_score=0.2,
+    )
+    entity = build_trade_decision_entity(
+        decision_context_id=uuid4(),
+        request=_make_request(),
+        assembled_context=_make_context(trigger),
+        agent_bundle=AgentExecutionBundle(
+            composer_output=FinalDecisionComposerOutput(
+                decision_type="BUY",
+                side="BUY",
+                confidence=0.9,
+            ),
+        ),
+    )
+
+    assert entity is not None
+    assert entity.policy_git_sha is None

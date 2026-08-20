@@ -283,6 +283,13 @@ services:
     environment:
       TZ: "Asia/Seoul"
       PYTHONPATH: "/app/src:/app/scripts"
+      # Stage A(정책평가 인프라, 2026-08-20): policy fingerprint. 배포
+      # 시 실행 중인 코드의 git commit SHA를 주입하면 trade_decisions/
+      # guardrail_evaluations에 관측성 전용으로 저장된다(판정 로직
+      # 무관, 값 없으면 NULL로 하위 호환). 배포 스크립트가
+      # `export AGENT_TRADING_GIT_SHA=$(git rev-parse HEAD)` 형태로
+      # 호스트 env에 설정해야 이 값이 채워진다 — 미설정 시 빈 문자열.
+      AGENT_TRADING_GIT_SHA: "${AGENT_TRADING_GIT_SHA:-}"
       # DB — DATABASE_URL is used by scheduler for asyncpg direct connections
       DATABASE_URL: "postgresql://${DATABASE_USER:-trading}:${DATABASE_PASSWORD:-trading}@trading_db:5432/${DATABASE_NAME:-trading}"
       DB_POOL_MIN: "${DB_POOL_MIN:-2}"
