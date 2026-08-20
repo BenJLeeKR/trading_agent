@@ -11900,3 +11900,33 @@ execution_attempts/사후분석 SQL) 보존을 동시에 만족하는지** 코�
   population 추적, mark-to-market 스냅샷)는 `SPPV-3` 결론과 무관하게
   지금 시작해도 안전하며, `SPPV-3` 축 2/4의 데이터 요구사항과도
   겹쳐 공유 설계가 가능하다.
+
+## `Stage A`(logging/data contract 보강) 구현 설계 완료(2026-08-20 KST, read-only)
+
+상세: `docs/40_action_plans/post_sppv3_policy_evaluation_design_
+2026-08-20.md` "11. Stage A 구현 설계".
+
+- **위치 정정(중요)**: `Stage A`는 `SPPV-3` 완료를 기다리는 후속
+  트랙이 아니라 **`SPPV-3`와 병행 가능한 인프라 선행 작업**이다 —
+  정책 로직을 바꾸지 않는 순수 관측성 보강이라 `SPPV-3` 축 1
+  Go/Hold 판정과 무관하게 지금 착수 가능하다. `Stage B`(정책 후보
+  replay 비교) 이후만 여전히 `SPPV-3` 축 1 Go 판정을 전제로 한다.
+- **재조사로 뒤집힌 사실 2건**: (1) `guardrail_evaluations`
+  (`rule_set_version=pre_ai_gate_v1`)가 이미 스킵 population을 상당
+  부분 담고 있음을 확인(symbol/market/account_id/source_type/
+  stop_reason/`current_signal_feature_snapshot_id`까지 포함) — 완전
+  신규 저장소가 아니라 **기존 경로를 모든 스킵 지점으로 넓히는 것**만
+  필요. (2) `position_snapshots`가 이미 계좌×종목×시각별 mark-to-
+  market 시계열(market_price/unrealized_pnl)을 저장 중 — mtm
+  스냅샷을 새로 만들 필요 없이 **as-of 조회 규칙**만 정하면 된다.
+- **신규 발견**: `trading.replay_bundles`는 "0행"이 아니라 **이 테이블을
+  참조하는 애플리케이션 코드가 아예 0건**(`grep -rn replay_bundle
+  src/` 결과 0건) — 최초 커밋(`db/migrations/0001_initial_schema.sql`)
+  이후 스키마만 존재. 설계 의도(`bundle_uri`+`checksum`, 외부 blob
+  포인터)를 그대로 쓰려면 blob 저장소 인프라까지 새로 지어야 해
+  Stage A 범위를 벗어난다고 판정 — Stage C 이후로 미룸.
+- 1차 구현 단위(스키마 변경 없거나 최소): **A-1a**(Pass 2 budget-drop
+  스킵도 `guardrail_evaluations`에 기록) + **A-2**(policy git SHA
+  필드 추가) — 둘 다 판정 로직 무변화, 낮은 리스크로 즉시 착수 추천.
+- **다음 착수 가능 최소 단위**: A-1a/A-2(코드 구현 턴, 별도 승인
+  필요).
