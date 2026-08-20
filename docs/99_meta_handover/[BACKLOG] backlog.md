@@ -7391,3 +7391,45 @@ gate) 구현 완료", `[PRIORITY_MAP]` 동일 날짜 항목.
   성립하지 않음(과장 없이 "구조적으로 어려움"으로 판정). online
   limited rollout(Stage D)은 Stage A~C 결과 축적 후 사용자 승인
   하에 별도 턴에서 재검토.
+
+## `Stage A`(logging/data contract 보강) 구현 설계 완료 — 작업 단위 분해(2026-08-20 KST, read-only)
+
+상세: `docs/40_action_plans/post_sppv3_policy_evaluation_design_
+2026-08-20.md` "11. Stage A 구현 설계", `[PRIORITY_MAP]` 동일 날짜
+항목. 위 "구현 전제 조건"/"Stage A" 항목을 아래로 구체화한다(직전
+항목의 "guardrail_evaluations 확장 또는 신규 테이블 중 택1"은 이번
+조사로 **guardrail_evaluations 확장**으로 확정).
+
+- **Stage A-1a(코드 구현, 낮은 리스크, 즉시 착수 가능)**: Pass 2
+  budget-drop 스킵 경로(`scripts/run_decision_loop.py`의 `_general_
+  lane_dropped_result()` 주변)도 `guardrail_evaluations`에 기록하도록
+  통일 — pre_ai_gate 경로는 이미 기록 중이나 이 경로만 빠져 있어
+  스킵 population이 경로별로 불균일하다. 판정 로직 무변화, 로깅
+  추가뿐.
+- **Stage A-1b(코드 구현, 스키마 변경 최소)**: `guardrail_evaluations`
+  에 cycle 식별자 nullable 컬럼 추가 — 현재 `decision_context_id`/
+  `trade_decision_id`가 이 경로에서 항상 NULL이라(최근 3일 실측
+  48건 전부 NULL) 스킵 population을 같은 cycle의 통과 population과
+  조인할 방법이 없다.
+- **Stage A-2(코드 구현, 낮은 리스크, 즉시 착수 가능, A-1과 독립)**:
+  `trade_decisions`/`guardrail_evaluations` 양쪽에 policy git commit
+  SHA nullable 컬럼 추가 — `config_versions`(3행, 2026-08-14 이후
+  갱신 없음)는 코드 로직 변경(B축 안A, R1~R5 등)을 추적하는 용도가
+  아니라는 점을 확인했고, git SHA 하나가 최소 비용으로 가장 효과적인
+  policy fingerprint라고 판정했다.
+- **Stage A-3(코드 구현, 여러 파일 소규모 변경)**: `deterministic_
+  trigger_engine.py`/`expected_value_gate.py`/`strategy_selection.py`
+  의 hard gate 판정 지점에 "실제 값 vs threshold 값" margin을
+  `decision_json` 하위 필드로 추가(JSONB라 스키마 마이그레이션
+  불필요).
+- **Stage A-4(문서 또는 read-only 조회 헬퍼, Stage B 직전 착수)**:
+  `position_snapshots`(이미 존재하는 mtm 시계열) 기준 "정책 비교
+  시점 as-of 조회 규칙" 문서화 — 신규 스냅샷 메커니즘은 불필요하다고
+  판정.
+- **신규 backlog(범위 정정)**: 직전 항목이 "mark-to-market 스냅샷
+  메커니즘"을 신규 필요 항목으로 분류했었으나, 이번 조사에서
+  `position_snapshots`가 이미 이를 제공함을 확인해 **필요 항목에서
+  제외**하고 "as-of 조회 규칙 문서화"로 축소했다.
+- **권장 착수 순서**: A-1a → A-2 → A-1b → A-3 → (Stage B 직전) A-4.
+  A-1a/A-2를 1차 구현 단위로 추천(별도 코드 구현 턴 승인 필요,
+  이번 턴은 설계만).

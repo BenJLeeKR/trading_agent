@@ -267,3 +267,123 @@ feature/gate 판정 스냅샷을 다시 읽어 **다른 임계값으로 재판�
   "감으로" 판단하지 않고, 이 체계를 통해 **"제약 위반 없이 objective가
   개선되는가"**를 최소한 오프라인 replay 수준에서라도 먼저 확인한 뒤
   구현에 들어가는 관행이 자리 잡으면 성공.
+
+---
+
+## 11. Stage A 구현 설계 (2026-08-20 KST 2차 확장, read-only 조사)
+
+§7이 나열한 Stage A 요구사항을 **실제 구현 가능한 최소 contract**로
+좁힌다. 이번 조사에서 코드/DB를 직접 대조해 "이미 있는 것"과 "정말
+새로 필요한 것"을 분리했다 — 새 테이블을 늘리기 전에 기존 저장 경로
+재사용 가능성을 먼저 확인했다.
+
+### 11.1 Stage A 목적 재정의
+
+Stage A의 목적은 "완벽한 replay 엔진을 만드는 것"이 아니라, **"이
+cycle에 무엇이 있었고, 무엇이 왜 스킵/차단됐고, 통과한 것의 margin이
+얼마였는지를 DB 쿼리만으로 100% 재구성 가능하게 만드는 최소 계약"**
+을 확정하는 것이다(§10과 동일 기준). Stage B(정책 후보 비교)가 실제로
+착수 가능한 상태가 되기 위한 **전제 인프라**이며, 그 자체로 정책
+판단을 내리지 않는다.
+
+### 11.2 authoritative source 표 (Q2)
+
+| 항목 | authoritative source | factual 근거 |
+|---|---|---|
+| candidate population | `scripts/run_decision_loop.py`의 `universe`(`_load_trading_universe_with_anchor`) + `decision_json.universe_anchor` | 매 cycle의 유니버스 스냅샷은 이미 `universe_anchor`로 각 trade_decision에 남는다(intraday freeze 재사용 여부까지 포함) — **이미 충분**. |
+| pre-AI skip population | **`guardrail_evaluations`(rule_set_version=`pre_ai_gate_v1`)** — 단, `decision_context_id`/`trade_decision_id`가 항상 NULL(실측: 최근 3일 48건 전부 NULL) | 이미 이 population을 어느 정도 담고 있으나(symbol/market/account_id/source_type/stop_reason/`rule_results` 안에 `current_signal_feature_snapshot_id`까지 포함), **Pass 2 budget-drop 스킵은 이 테이블에 아예 안 씀**(이전 세션에서 이미 확인된 gap) — population이 경로별로 불균일. |
+| deterministic trigger decomposition | `trade_decisions.decision_json.deterministic_trigger`(trade_decision 생성된 경우만) | trade_decision이 없는 스킵 건은 이 decomposition 자체가 유실됨(guardrail_evaluations.rule_results에 일부만 남을 수 있음, 스킵 사유에 따라 다름). |
+| gate별 차단 사유 | `decision_json.reason_codes` + `guardrail_evaluations.blocking_rule_codes` | 두 곳에 나뉘어 있고 서로 다른 gate 계층(AI 선택지 제한 vs 최종 안전판, 이전 PR #289에서 확인한 구분)을 반영 — **하나로 합치면 안 되고, "어느 계층의 사유인지" 구분 필드가 필요**. |
+| 최종 decision | `trade_decisions`(decision_type/side/reason_codes) | 이미 authoritative. |
+| actual order/fill | `order_requests` + `broker_fill_snapshots`/`fill_events` | 이미 authoritative, 이번 조사에서 스키마 변경 불필요로 판단. |
+| realized pnl | `realized_pnl_events.realized_pnl_net`(fee/tax 반영) | 이미 authoritative(§4에서 이미 확인). |
+| 미청산 mtm | **`position_snapshots`(market_price/unrealized_pnl, snapshot_at 시계열)** | **직전 설계(§4)에서 "mtm 비교 기준 불완전"이라 판단했으나, 재조사 결과 `position_snapshots`가 이미 계좌×종목×시각별 mark-to-market 시계열을 저장 중임을 확인했다 — 완전히 새로 만들 필요는 없다.** 부족한 것은 "정책 비교 시점을 고정해 어느 snapshot을 기준으로 삼을지"를 정하는 **as-of 쿼리 계약**뿐이다(§11.6). |
+| policy version | **없음(신뢰 가능한 authoritative source 부재)** | `config_versions`는 3행뿐, 마지막 갱신 2026-08-14 — 이 세션에서 실제 있었던 다수의 gate 변경(B축 안A, R1~R5, submit budget D안, held_position FDC 제한 등)은 전부 git commit으로만 존재하고 `config_versions`에는 반영 안 됨. **이번 조사에서 신규로 확인**: `trade_decisions`/`guardrail_evaluations` 어디에도 "이 결정을 만든 코드의 버전"을 가리키는 필드가 전혀 없다 — §11.5에서 최소 필드 제안. |
+| replay input bundle | **없음(스키마만 존재, 코드 0건)** | `trading.replay_bundles`는 `db/migrations/0001_initial_schema.sql`(최초 커밋)에 정의된 뒤 **`src/agent_trading/` 전체에서 이 테이블을 참조하는 코드가 0건**(repository도 없음, `grep -rn replay_bundle src/` 결과 0건) — "실사용 0행"이 아니라 "쓰는 코드 자체가 없다"가 더 정확한 factual 서술이다. 설계 의도(컬럼: `bundle_uri`+`checksum`)는 **외부 blob 저장소 경로를 가리키는 포인터**였지, JSON을 직접 담는 구조가 아니었다 — 이 방향을 그대로 따르면 blob 저장소 인프라까지 새로 구축해야 해서 Stage A 범위를 벗어난다(§11.4에서 대안 제시). |
+
+### 11.3 Q1 — Stage A 최소 범위
+
+| 분류 | 항목 |
+|---|---|
+| **반드시 지금(Stage A) 추가** | (1) 모든 스킵 경로(pre-AI gate뿐 아니라 Pass 2 budget-drop 포함)가 **동일한 방식으로** population을 남기도록 통일 — 지금처럼 경로별로 있다 없다 하면 population 자체가 편향된다. (2) 매 결정(및 스킵)에 **policy fingerprint(최소 git commit SHA)** 1개 필드 저장 — 가장 저비용·고효용. (3) hard gate 판정에 "실제 값 vs threshold" margin 쌍 저장(현재 pass/fail만 남는 gate 다수). |
+| **있으면 좋지만 Stage B 전엔 없어도 됨** | (4) mtm as-of 쿼리 계약 문서화(테이블 자체는 이미 있음 — 조회 규칙만 정하면 됨, §11.6). (5) `entry_score`/`ranking_score` 등 최종 합성 점수의 항목별 기여도 명시적 필드(현재도 `component_scores_json`/`decision_json`에 일부 있어 완전 신규는 아님). |
+| **Stage C 이후로 미뤄도 됨** | (6) `replay_bundles`(외부 blob) 실사용 전환 — Stage A/B는 DB 쿼리만으로 충분히 재구성 가능하므로, 외부 bundle 아카이브는 "정책 후보가 여러 개로 늘어나 DB 쿼리 비용이 부담되는 시점"(Stage C 이후)에 재검토. (7) 완전한 원본 bar/OHLCV 재현성 확인(§9 미확정 유지). |
+
+### 11.4 Q3 — pre-AI skip population 보존 설계안 비교
+
+| 안 | population 보존력 | 구현 범위 | replay 친화성 | 운영 리스크 | 중복/정합성 |
+|---|---|---|---|---|---|
+| ① `guardrail_evaluations` 확장(모든 스킵 경로가 여기 쓰도록 통일) | **높음** — 이미 pre_ai_gate 경로가 검증된 스키마(symbol/market/account_id/source_type/stop_reason/rule_results)로 쓰고 있어, 그 계약을 Pass 2 drop 등 나머지 경로로 넓히기만 하면 됨 | **낮음** — 신규 테이블 없이 기존 `add()` 호출 지점만 늘리면 됨(Pass 2 drop 경로에 호출 추가) | 높음 — 이미 `current_signal_feature_snapshot_id`까지 남기고 있어 replay 입력으로 바로 쓸 수 있음 | 낮음 | `decision_context_id`/`trade_decision_id`가 계속 NULL이라 다른 population과 조인이 약함 — 이 필드에 **"이 스킵이 속한 cycle 식별자"**(예: cycle_index+run 식별자)를 새 컬럼으로 추가하면 해소 가능(마이그레이션 1건) |
+| ② 별도 `policy_evaluation_events`류 신규 테이블 | 높음(설계 자유도 최대) | **높음** — 신규 테이블+마이그레이션+repository+모든 스킵/통과 지점에서 이중 기록 | 높음(전용 스키마) | 중간 — 기존 `guardrail_evaluations`와 목적이 겹쳐 "어디를 봐야 하는지" 헷갈리는 이원화 위험 | 기존 테이블과 데이터 중복(같은 스킵 사유가 두 곳에 남음) — "무턱대고 새 테이블을 늘리지 말라"는 이번 턴 원칙에 정면으로 위배 |
+| ③ `replay_bundles` 실사용 전환 | 중간(포인터 방식이라 실제 내용은 외부 저장소에 의존) | **가장 높음** — 외부 blob 저장 인프라(S3/파일시스템 경로 규약)까지 새로 구축해야 함 | 초기엔 낮음(구축 전까지 아무 데이터 없음) | 중간(외부 저장소 장애/권한 관리 추가) | 없음(기존 스키마 그대로 채우는 것뿐이나, 채우는 코드 자체가 처음부터 필요) |
+| ④ 로그만 유지, DB 미적재 | 낮음 — 이 세션에서 반복 확인된 문제: 컨테이너 재기동 시 로그 보존기간이 짧고(`docker logs --since` 조회가 컨테이너 시작 시점 이후로 제한되는 사례를 이전 턴에서 실제로 겪음), grep 기반 집계는 Stage B의 재현 가능한 replay 입력이 될 수 없음 | 없음(현행 유지) | **낮음** — Stage B가 요구하는 "DB 쿼리만으로 재구성"이라는 성공 기준(§10)을 원천적으로 만족 못 함 | 없음(현행 유지이므로) | 없음 |
+
+**판정(해석)**: **①(`guardrail_evaluations` 확장)을 채택한다.** 이미
+검증된 스키마와 이미 정확히 이 목적으로 쓰이고 있는 pre_ai_gate 경로가
+있어 재사용 비용이 가장 낮고, "새 테이블을 늘리지 말라"는 이번 턴
+원칙과도 부합한다. 유일한 보강 포인트는 **cycle 식별자 컬럼 1개
+추가**(§11.7 작업 단위로 분해)뿐이다. ②는 기존 자산과 목적이 겹쳐
+과설계, ③은 Stage A 범위를 벗어나는 인프라 비용, ④는 Stage B 성공
+기준을 만족 못 해 배제한다.
+
+### 11.5 Q4 — policy version / fingerprint 설계
+
+| 안 | 최소 구현 비용 | 효과 |
+|---|---|---|
+| git commit SHA만 남기기 | **가장 낮음** — 배포 시점에 이미 알 수 있는 값(예: `git rev-parse HEAD`)을 컨테이너 환경변수로 주입하고, 이를 매 결정에 문자열 하나로 저장 | 코드가 그 시점에 정확히 어떤 상태였는지 100% 재현 가능(git이 이미 진짜 authoritative 버전 관리 시스템이므로) |
+| `config_version_id`+git SHA 병행 | 중간 — `config_versions` row도 함께 갱신해야 함 | `config_versions`는 원래 "설정값"(threshold 숫자 등 데이터)을 위한 것이지 "코드 로직 자체의 버전"을 위한 것이 아니다 — 이번 세션의 변경 대부분(B축 안A, R1~R5)은 데이터가 아니라 **코드 로직**이 바뀐 것이라 `config_versions`만으로는 못 잡는다. |
+| policy fingerprint(JSON hash) 별도 저장 | 높음 — "정책을 구성하는 요소들"을 JSON으로 직렬화해 해시해야 함, 무엇을 포함할지 정의 자체가 추가 설계 필요 | git SHA보다 더 세밀할 수 있으나, 코드 로직 변경까지 포함하려면 결국 "코드 전체"를 해시 대상에 넣어야 해 git commit SHA와 실질적으로 같은 정보를 더 비싸게 얻는 셈 |
+| replay bundle 안에 캡슐화 | §11.4에서 이미 Stage A 범위 밖으로 판정 | 해당 없음 |
+
+**판정(해석)**: **git commit SHA 하나만 매 결정에 남기는 것이 최소
+구현으로 가장 효과적**이다. 어느 계층에 남길지는 — `trade_decisions`
+(정상 결정)과 `guardrail_evaluations`(스킵 결정) **양쪽 모두에 동일한
+필드명**으로 남겨야 두 population을 정책 버전 기준으로 합쳐 볼 수
+있다. 신규 컬럼 1개(`policy_git_sha` 또는 유사명)를 두 테이블에
+추가하는 것이 최소 구현이다(마이그레이션 2건 분량이나 성격은 동일).
+
+### 11.6 Q5/Q6 — replay-ready bundle 최소 contract, mtm 연결 범위
+
+- **`decision_json` 재사용만으로 충분한가**: **거의 충분하다(해석)** —
+  `deterministic_trigger`/`strategy_selection`/`portfolio_allocation`/
+  `expected_value_gate` 하위 dict가 이미 저장되고 있어, "정상적으로
+  trade_decision이 생성된 population"에 한해서는 **별도 bundle 없이
+  `decision_json` 자체가 사실상의 bundle**이다. 부족한 것은 (a) 스킵
+  population(§11.4에서 guardrail_evaluations 확장으로 해소), (b)
+  policy fingerprint(§11.5), (c) gate margin(§11.3의 (3))뿐이다.
+  **별도의 새 "bundle" 스키마를 새로 설계하지 않고, 기존 `decision_
+  json`/`guardrail_evaluations.rule_results`의 계약을 다듬는 것으로
+  충분하다는 것이 이번 조사의 핵심 결론이다.**
+- **realized pnl + mtm — Stage A에서 어디까지**: **Stage A는 realized_
+  pnl_net(authoritative, 이미 충분) 경로 정리만 하고, mtm은 "as-of
+  조회 규칙 문서화" 수준으로 가볍게 포함한다.** `position_snapshots`
+  테이블 자체는 이미 존재하고 이미 시계열로 쌓이고 있어(§11.2), Stage A
+  에서 새 스냅샷 메커니즘을 만들 필요가 없다 — 단, "정책 A와 B를
+  비교할 때 어느 시각의 `position_snapshots` 행을 mtm 기준으로 쓸지"
+  (예: 비교 시각 직전 최신 snapshot, 또는 비교 시각과 가장 가까운
+  snapshot)에 대한 **명시적 규칙이 없다는 점**만 문서로 못박는다.
+  이 규칙 자체를 코드로 구현하는 것은 Stage B 착수 직전으로 미룬다
+  (지금 구현해도 Stage A 성공 기준에 필수는 아님).
+
+### 11.7 Q7 — 구현 작업 단위 분해
+
+| 단위 | 목적 | 변경 파일 후보 | 저장/계약 변화 | 테스트 범위 | 운영 리스크 | 선행 조건 |
+|---|---|---|---|---|---|---|
+| **A-1a**: Pass 2 budget-drop 스킵도 `guardrail_evaluations`에 기록 | pre-AI gate 경로와 population 계약 통일 | `scripts/run_decision_loop.py`(`_general_lane_dropped_result()` 주변) | 신규 컬럼 없음 — 기존 `add()` 호출을 이 경로에도 추가 | 신규 단위 테스트(해당 경로에서 guardrail row 1건 생성 확인) | 낮음(로깅 추가뿐, 판정 로직 무변화) | 없음 — 독립 착수 가능 |
+| **A-1b**: `guardrail_evaluations`에 cycle 식별자 컬럼 추가 | 스킵 population을 같은 cycle의 통과 population과 조인 가능하게 | 마이그레이션 1건, `guardrail_evaluations.py`(add 시그니처), 호출부 전체 | **스키마 변경(신규 컬럼, nullable)** | repository 단위 테스트 + 호출부 회귀 테스트 | 낮음(nullable 추가라 하위 호환) | A-1a와 병행 가능 |
+| **A-2**: policy git SHA 필드 추가 | 정책 버전 fingerprint 확보 | 마이그레이션 1건(두 테이블), `trade_decisions.py`/`guardrail_evaluations.py`(add 시그니처), 값 주입 지점(배포 환경변수 → 결정 생성 코드) | **스키마 변경(신규 컬럼, nullable)** | repository 테스트 + 값 주입 지점 단위 테스트 | 낮음(nullable, 값 없으면 NULL로 기록) | 없음 — 독립 착수 가능, A-1과 순서 무관 |
+| **A-3**: hard gate margin(실제값 vs threshold) 저장 | replay 시 "threshold를 얼마나 바꾸면 결과가 달라지는지" 계산 가능하게 | `deterministic_trigger_engine.py`, `expected_value_gate.py`, `strategy_selection.py`(각 hard gate 판정 지점) | `decision_json` 하위 dict에 필드 추가(스키마 변경 아님, JSONB라 마이그레이션 불필요) | 각 gate별 단위 테스트(margin 값 검증) | 낮음~중간(판정 로직 자체는 안 바뀌지만 여러 파일에 걸친 필드 추가라 회귀 검증 범위가 넓음) | 없음, 단 A-1/A-2보다 변경 파일 수가 많아 더 큰 작업 |
+| **A-4**: mtm as-of 조회 규칙 문서화(+ 필요시 조회 헬퍼 함수) | 정책 비교 시 미청산 성과를 공정하게 비교 | 신규 read-only 헬퍼(예: `services/policy_evaluation_mtm.py`) 또는 문서만 | 코드 변경 없음(문서) 또는 read-only 조회 함수 신규 추가만(쓰기 없음) | 조회 함수를 만든다면 그 함수 단위 테스트만 | 낮음(read-only) | A-1~A-3 완료 후 착수(Stage B 직전이 자연스러움) |
+
+**권장 착수 순서**: A-1a → A-2 → A-1b → A-3 → (Stage B 직전) A-4.
+A-1a/A-2는 스키마 변경이 없거나 최소(nullable 컬럼 1개)라 리스크가
+가장 낮고 즉시 착수 가능 — **이 둘을 Stage A의 "1차 구현 단위"로
+추천한다.**
+
+### 11.8 `SPPV-3`와 병행 가능성 재확인
+
+A-1a/A-1b/A-2/A-3 전부 **정책 로직을 바꾸지 않는 순수 관측성 보강**
+이라 `SPPV-3`의 결론(축 1 Go/Hold)과 무관하게 지금 병행 가능하다 —
+오히려 A-3(gate margin)은 `SPPV-3` 축 2(정리된 gate 통과 후 성과)가
+"threshold 근처 표본"을 분석할 때 그대로 재사용 가능한 데이터라
+**공유 착수가 더 효율적**이다.
