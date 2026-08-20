@@ -482,3 +482,115 @@ A-2는 `policy_git_sha` 필드를 관측성 목적의 nullable 컬럼으로만
   필요하다.
 - Stage A-1b(cycle 식별자 컬럼)/A-3(gate margin)/A-4(mtm as-of 규칙)는
   §11.7 계획 그대로 다음 구현 턴 대상으로 남는다.
+
+## 13. Stage A-1b 구현 완료 — decision cycle 식별자(2026-08-20 KST, 코드 구현)
+
+### 13.1 무엇을 구현했는가
+
+`guardrail_evaluations`에 `decision_cycle_id VARCHAR(128)` nullable
+컬럼을 추가했다(마이그레이션 0066). `trade_decisions`는 이번 범위에
+포함하지 않았다 — 정상 생성된 결정은 `decision_context_id`가 이미
+NULL이 아니라서 cycle 단위 조인에 그 자체로 충분하고, cycle 식별자가
+꼭 필요한 population(pre-AI 스킵/Pass 2 drop)은 애초에
+`decision_context_id`가 없는 경로이기 때문이다.
+
+### 13.2 식별자 형식
+
+`decision_cycle_id = f"decision_submit_gate:{now.isoformat()}#{cycle_
+count}"` — 예: `decision_submit_gate:2026-08-20T09:05:12+09:00#1`.
+
+- `now`(=due_at)는 `run_ops_scheduler.py`가 cycle 시작 시 이미
+  `CADENCE_TRACE decision_submit_gate action=start`에 쓰던 바로 그
+  타임스탬프다 — 새로 계산하지 않고 재사용했다.
+- `#{cycle_count}`는 `run_decision_loop.py` subprocess 내부에서
+  여러 cycle이 도는 수동/단독 실행 상황에서만 의미가 생긴다 — 운영
+  경로(scheduler `--count 1`)에서는 항상 `#1`로 고정돼 사실상
+  무영향이다.
+- symbol별 동적 상태나 in-flight 카운터는 전혀 쓰지 않는다 — scheduler
+  가 cycle 시작 전에 이미 확정한 값 하나만 그대로 흘려보낸다.
+
+### 13.3 생성 → 전달 경로
+
+```
+run_ops_scheduler.py (cycle 시작, now 확정)
+  └─ decision_cycle_id = f"decision_submit_gate:{now.isoformat()}"
+  └─ _decision_command(decision_cycle_id=...) → argv에 --decision-cycle-id 추가
+       └─ subprocess: scripts/run_decision_loop.py --decision-cycle-id "..."
+            └─ _parse_args() → args.decision_cycle_id
+            └─ _run_loop(decision_cycle_id=...)
+                 └─ while 루프 매 cycle마다:
+                      cycle_decision_cycle_id = f"{decision_cycle_id}#{cycle_count}"
+                      ├─ _execute_symbol_cycle(...) → _run_one_cycle(decision_cycle_id=...)
+                      │     └─ pre-AI gate 스킵 시 _record_pre_ai_guardrail_evaluation(decision_cycle_id=...)
+                      └─ _run_general_lane_pass2(decision_cycle_id=...)
+                            └─ dedupe/budget 드롭 시 _record_pass2_general_lane_drop_guardrail_evaluation(decision_cycle_id=...)
+```
+
+공통 저장 계약은 `validators.ValidationContext.decision_cycle_id` →
+`build_validation_context(decision_cycle_id=...)` →
+`ValidationResult.to_guardrail_evaluation()` → `GuardrailEvaluationEntity.
+decision_cycle_id` → `PostgresGuardrailEvaluationRepository.add()`
+INSERT 파라미터, 단 하나의 경로로 통일했다 — pre-AI gate와 Pass 2
+drop이 서로 다른 필드명/스키마를 쓰지 않는다.
+
+### 13.4 pre-AI gate / Pass 2 drop이 같은 contract로 묶이는 방식
+
+두 경로 모두 최종적으로 **같은 함수**(`persist_validation_result()`)
+를 거쳐 **같은 컬럼**(`decision_cycle_id`)에 값을 남긴다. 차이는
+`gate_phase` 메타데이터(`pre_ai_gate` vs `pass2_general_lane_drop`)
+뿐이다 — 이번 턴 이전부터 유지해 온 "같은 경로인 척 섞지 않는다"는
+원칙(Stage A-1a)을 그대로 지키면서, cycle 단위 조인만 새로 가능해진
+것이다. 예를 들어 다음 SQL로 "같은 cycle에서 어떤 종목이 pre-AI에서
+스킵됐고 어떤 종목이 Pass2에서 drop됐는지"를 한 번에 볼 수 있다:
+
+```sql
+SELECT decision_cycle_id,
+       rule_results->>'gate_phase' AS gate_phase,
+       rule_results->>'symbol' AS symbol,
+       blocking_rule_codes
+FROM trading.guardrail_evaluations
+WHERE decision_cycle_id = 'decision_submit_gate:2026-08-20T09:05:12+09:00#1'
+ORDER BY evaluated_at;
+```
+
+### 13.5 왜 판정 로직 무변화인가
+
+`decision_cycle_id`는 어떤 gate/threshold/submit 판정 함수의 입력으로도
+쓰이지 않는다 — 오직 기록(guardrail_evaluations INSERT)에만 실린다.
+`_run_general_lane_pass2()`/`_run_one_cycle()`의 기존 파라미터(budget,
+priority, source_type 등)는 전혀 바뀌지 않았고, 새 파라미터는 전부
+`= None` 기본값이라 호출부를 안 고친 기존 테스트/경로는 그대로
+동작한다.
+
+### 13.6 검증 결과(factual)
+
+- 신규 테스트 13건 전부 PASS: `test_run_decision_loop.py`(+4: pre-AI
+  기록/Pass2 드롭 전달/cycle 전체 동일값/미제공시 None),
+  `test_run_ops_scheduler.py`(+2: argv에 플래그 포함/미제공시 생략),
+  `test_validators.py`(+4: context 전달/entity 매핑/end-to-end 저장/
+  미제공시 None), `test_postgres_guardrail_evaluations_policy_git_
+  sha.py`(+3: INSERT 파라미터 포함/None 허용/policy_git_sha와 동시
+  저장).
+- 기존 회귀 없음: `test_run_decision_loop.py`(136건),
+  `test_run_ops_scheduler.py`/`test_validators.py`/두 repository
+  DB-free 파일(171건, 통합 실행).
+- `accept backend-file guardrail_evaluations.py` → PASS,
+  `accept script-file run_decision_loop.py` → PASS, `accept
+  script-file run_ops_scheduler.py` → PASS, `accept style`/`accept
+  no-bypass`(hard_bypass_count=0)/`accept architecture`/`accept
+  db-structure` 전부 PASS.
+
+### 13.7 미확정
+
+- Postgres 실접속 상태에서 `decision_cycle_id` 컬럼 INSERT가 실제로
+  동작하는지는 이번 턴(DB write 금지)에서 미실측 — §12.5와 동일한
+  성격의 미확정.
+- `_record_scheduler_guardrail_evaluation()`(구 단일-pass 경로,
+  `gate_phase=scheduler_gate`)는 이번 턴 범위에 포함하지 않았다 —
+  pre-AI gate/Pass 2 drop 두 경로만 필수로 요구됐고, 세 번째 경로까지
+  넓히면 범위가 커진다고 판단했다. 다음 턴에서 필요성을 재검토할 수
+  있다.
+- `trade_decisions`에 동일 개념의 cycle 식별자가 필요해질지(예:
+  Stage B에서 "정상 결정과 스킵을 완전히 대칭적으로 조인해야 하는"
+  요구가 생기는 경우)는 아직 열려 있다 — 지금은 불필요하다고 판단
+  했다.

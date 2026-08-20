@@ -7515,3 +7515,36 @@ turn의 "Stage A-1a/A-2" backlog 항목을 해소한다.
   cycle 식별자 컬럼) / A-3(hard gate margin 저장, `deterministic_
   trigger_engine.py`/`expected_value_gate.py`/`strategy_selection.py`)
   — `SPPV-3` 결론과 무관하게 계속 병행 착수 가능.
+
+## `Stage A-1b`(decision cycle 식별자) 구현 완료 — 위 backlog 항목 해소(2026-08-20 KST)
+
+상세: `docs/40_action_plans/post_sppv3_policy_evaluation_design_
+2026-08-20.md` "13", `[PRIORITY_MAP]` 동일 날짜 항목.
+
+- `db/migrations/0066_add_guardrail_evaluations_decision_cycle_id.sql`
+  (nullable 컬럼 1개, `guardrail_evaluations`만 — `trade_decisions`는
+  불필요 판단으로 제외), `validators.ValidationContext.decision_
+  cycle_id` → `build_validation_context()` → `to_guardrail_
+  evaluation()` → repository INSERT까지 단일 경로로 배선.
+  `run_ops_scheduler.py`가 cycle 시작 시 확정한 `due_at` 기반 값을
+  `--decision-cycle-id`로 `run_decision_loop.py` subprocess에 전달,
+  `_run_one_cycle()`(pre-AI gate 스킵)과 `_run_general_lane_pass2()`
+  (dedupe/budget 드롭) 양쪽 모두 같은 값을 같은 컬럼에 기록.
+- 신규 테스트 13건 PASS, 기존 회귀 없음. `accept backend-file`/
+  `accept script-file`(run_decision_loop.py, run_ops_scheduler.py)/
+  `accept style`/`accept no-bypass`/`accept architecture`/`accept
+  db-structure` 전부 PASS.
+- **신규 backlog(운영 실측 필요, 미확정)**: (1) Postgres 실접속
+  상태에서 `decision_cycle_id` INSERT 정상 동작 확인(DB write 금지로
+  미실측). (2) 배포 후 실제로 "같은 cycle의 pre-AI 스킵 + Pass 2
+  drop"을 `decision_cycle_id` 기준 SQL로 함께 조회했을 때 기대한
+  대로 묶이는지 실측.
+- **신규 backlog(범위 판단 보류)**: `_record_scheduler_guardrail_
+  evaluation()`(구 단일-pass held_position/legacy 경로,
+  `gate_phase=scheduler_gate`)에도 `decision_cycle_id`를 배선할지는
+  이번 턴에서 의도적으로 보류했다 — 필수 요구 범위(pre-AI gate/
+  Pass 2 drop)를 벗어나는 확장이라 다음 턴에서 필요성 재검토.
+- **다음 착수 가능 최소 단위**: Stage A-3(hard gate margin 저장,
+  `deterministic_trigger_engine.py`/`expected_value_gate.py`/
+  `strategy_selection.py`) — `SPPV-3` 결론과 무관하게 계속 병행
+  착수 가능.

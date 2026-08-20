@@ -254,3 +254,98 @@ async def test_persist_validation_result_policy_git_sha_none_when_unset(
     )
     assert len(rows) == 1
     assert rows[0].policy_git_sha is None
+
+
+def test_build_validation_context_carries_decision_cycle_id() -> None:
+    """Stage A-1b(2026-08-20): ``build_validation_context()``가
+    ``decision_cycle_id``를 ``ValidationContext``에 그대로 담아야
+    한다."""
+    context = build_validation_context(
+        symbol="005930",
+        market="KRX",
+        source_type="core",
+        decision_cycle_id="decision_submit_gate:2026-08-20T09:05:12+09:00#1",
+    )
+    assert context.decision_cycle_id == (
+        "decision_submit_gate:2026-08-20T09:05:12+09:00#1"
+    )
+
+
+def test_to_guardrail_evaluation_carries_decision_cycle_id() -> None:
+    """``ValidationResult.to_guardrail_evaluation()``이 context의
+    ``decision_cycle_id``를 entity에 그대로 옮겨야 한다."""
+    result = ValidationResult.blocked(
+        rule_set_version="pass2_general_lane_drop_v1",
+        blocking_rule_codes=["submit_budget_consumed_core"],
+    )
+    evaluation = result.to_guardrail_evaluation(
+        context=ValidationContext(
+            symbol="005930",
+            market="KRX",
+            source_type="core",
+            decision_cycle_id="decision_submit_gate:2026-08-20T09:05:12+09:00#1",
+        )
+    )
+    assert evaluation.decision_cycle_id == (
+        "decision_submit_gate:2026-08-20T09:05:12+09:00#1"
+    )
+
+
+@pytest.mark.asyncio
+async def test_persist_validation_result_stamps_decision_cycle_id() -> None:
+    """``persist_validation_result()``를 거친 실제 저장 row에도
+    ``decision_cycle_id``가 남는지 end-to-end로 검증한다(in-memory
+    repos)."""
+    repos = build_in_memory_repositories()
+    decision_context_id = uuid4()
+
+    await persist_validation_result(
+        repos,
+        validation_context=build_validation_context(
+            decision_context_id=decision_context_id,
+            symbol="005930",
+            market="KRX",
+            source_type="core",
+            decision_cycle_id="decision_submit_gate:2026-08-20T09:05:12+09:00#1",
+        ),
+        validation_result=ValidationResult.blocked(
+            rule_set_version="pre_ai_gate_v1",
+            blocking_rule_codes=["general_buy_budget_exhausted"],
+        ),
+    )
+
+    rows = await repos.guardrail_evaluations.get_by_decision_context(
+        decision_context_id
+    )
+    assert len(rows) == 1
+    assert rows[0].decision_cycle_id == (
+        "decision_submit_gate:2026-08-20T09:05:12+09:00#1"
+    )
+
+
+@pytest.mark.asyncio
+async def test_persist_validation_result_decision_cycle_id_none_by_default() -> None:
+    """``decision_cycle_id``를 안 넘기면 기존과 동일하게 None으로
+    저장돼야 한다(하위 호환)."""
+    repos = build_in_memory_repositories()
+    decision_context_id = uuid4()
+
+    await persist_validation_result(
+        repos,
+        validation_context=build_validation_context(
+            decision_context_id=decision_context_id,
+            symbol="005930",
+            market="KRX",
+            source_type="core",
+        ),
+        validation_result=ValidationResult.blocked(
+            rule_set_version="pre_ai_gate_v1",
+            blocking_rule_codes=["general_buy_budget_exhausted"],
+        ),
+    )
+
+    rows = await repos.guardrail_evaluations.get_by_decision_context(
+        decision_context_id
+    )
+    assert len(rows) == 1
+    assert rows[0].decision_cycle_id is None

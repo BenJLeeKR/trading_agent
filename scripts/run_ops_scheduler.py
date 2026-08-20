@@ -1956,6 +1956,7 @@ def _decision_command(
     dry_run: bool,
     allow_general_submit: bool = True,
     max_general_submits_this_cycle: int = 1,
+    decision_cycle_id: str | None = None,
 ) -> list[str]:
     argv = [
         PYTHON_BIN,
@@ -1974,6 +1975,8 @@ def _decision_command(
         argv.append("--submit")
     if not allow_general_submit:
         argv.append("--no-allow-general-submit")
+    if decision_cycle_id is not None:
+        argv.extend(["--decision-cycle-id", decision_cycle_id])
     return argv
 
 
@@ -2986,6 +2989,11 @@ async def _run_intraday_due_tasks(
         )
 
         allow_general_submit = general_budget_ok
+        # Stage A-1b(2026-08-20): 관측성 전용 cycle 식별자. scheduler가
+        # cycle 시작 시 이미 확정한 값(run_date + due_at)을 그대로
+        # decision loop subprocess에 넘긴다 — symbol별 동적 상태나
+        # in-flight 카운터로 만들지 않는다(판정 로직과 무관).
+        decision_cycle_id = f"decision_submit_gate:{now.isoformat()}"
         result = await _run_and_record(
             state,
             "decision_dry_run" if dry_run else "decision_submit_gate",
@@ -2993,6 +3001,7 @@ async def _run_intraday_due_tasks(
                 dry_run=dry_run,
                 allow_general_submit=allow_general_submit,
                 max_general_submits_this_cycle=remaining_general_submit_budget,
+                decision_cycle_id=decision_cycle_id,
             ),
             timeout_seconds=min(timeout_seconds, _DECISION_TIMEOUT),
             env=env,

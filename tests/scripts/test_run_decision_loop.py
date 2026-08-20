@@ -2350,6 +2350,47 @@ class TestRunOneCycle:
         assert evaluations[0].blocking_rule_codes == ["general_buy_budget_exhausted"]
 
     @pytest.mark.asyncio
+    async def test_pre_ai_skip_records_decision_cycle_id_when_provided(self) -> None:
+        """Stage A-1b(2026-08-20): ``_run_one_cycle(decision_cycle_id=...)``
+        로 넘긴 값이 pre-AI gate 스킵 기록의 ``guardrail_evaluations``
+        row에 그대로 저장돼야 한다(관측성 전용, 판정 로직 무변화)."""
+        async with _mock_runtime_for_one_cycle() as runtime:
+            repos = runtime["repositories"]
+            snapshots = await repos.position_snapshots.list_latest_by_account(ACCOUNT_ID)
+            assert snapshots
+            latest_position = snapshots[0]
+            repos.position_snapshots._items[latest_position.position_snapshot_id] = (  # type: ignore[attr-defined]
+                PositionSnapshotEntity(
+                    position_snapshot_id=latest_position.position_snapshot_id,
+                    account_id=latest_position.account_id,
+                    instrument_id=latest_position.instrument_id,
+                    quantity=Decimal("0"),
+                    average_price=latest_position.average_price,
+                    market_price=latest_position.market_price,
+                    unrealized_pnl=latest_position.unrealized_pnl,
+                    source_of_truth=latest_position.source_of_truth,
+                    snapshot_at=latest_position.snapshot_at,
+                    created_at=latest_position.created_at,
+                )
+            )
+            await _run_one_cycle(
+                cycle=1,
+                submit=True,
+                dry_run=False,
+                output="text",
+                source_type="core",
+                remaining_general_buy_budget=0,
+                runtime=runtime,
+                decision_cycle_id="decision_submit_gate:2026-08-20T09:05:12+09:00#1",
+            )
+
+        evaluations = list(repos.guardrail_evaluations._items.values())  # type: ignore[attr-defined]
+        assert len(evaluations) == 1
+        assert evaluations[0].decision_cycle_id == (
+            "decision_submit_gate:2026-08-20T09:05:12+09:00#1"
+        )
+
+    @pytest.mark.asyncio
     async def test_pre_ai_skip_reason_not_triggered_when_position_exists_even_if_buy_budget_zero(self) -> None:
         """보유수량이 있으면 일반 BUY 예산 0이어도 SELL 후보 가능성을 위해 즉시 skip하지 않음."""
         async with _mock_runtime_for_one_cycle() as runtime:
@@ -3230,6 +3271,110 @@ class TestPreAiGeneralBuyBudgetExhaustedDispatch:
         assert by_symbol["005930"]["defer_actionable_for_pass2"] is False
 
 
+class TestDecisionCycleIdDispatch:
+    """``_run_loop(decision_cycle_id=...)`` — scheduler가 넘긴 cycle
+    식별자가 같은 cycle 안의 모든 symbol에 동일하게 전달되는지 검증
+    (Stage A-1b, 2026-08-20). 판정 로직에는 관여하지 않는 순수 배선
+    검증이다."""
+
+    @staticmethod
+    async def _run_and_capture(
+        *, decision_cycle_id: str | None,
+    ) -> dict[str, dict[str, object]]:
+        import scripts.run_decision_loop as module
+
+        universe = (
+            UniverseSymbol(symbol="000030", market="KRX", source_type="core"),
+            UniverseSymbol(symbol="005930", market="KRX", source_type="held_position"),
+        )
+
+        captured_kwargs: dict[str, dict[str, object]] = {}
+
+        async def _mock_run_one_cycle(**kwargs: object) -> dict[str, object]:
+            symbol = str(kwargs["symbol"])
+            captured_kwargs[symbol] = kwargs
+            return {
+                "status": "WATCH",
+                "symbol": symbol,
+                "market": str(kwargs["market"]),
+                "source_type": str(kwargs["source_type"]),
+                "duration_seconds": 0.01,
+            }
+
+        @asynccontextmanager
+        async def _mock_runtime(run_migrations: bool = False) -> AsyncIterator[dict[str, Any]]:
+            yield {"repositories": MagicMock()}
+
+        class _DummyTx:
+            async def commit(self) -> None:
+                return None
+
+        @asynccontextmanager
+        async def _mock_tx() -> AsyncIterator[_DummyTx]:
+            yield _DummyTx()
+
+        original_shutdown_event = module._shutdown_event
+        module._shutdown_event = asyncio.Event()
+        try:
+            with (
+                patch("scripts.run_decision_loop._install_signal_handlers", return_value=None),
+                patch(
+                    "scripts.run_decision_loop._load_trading_universe_with_anchor",
+                    AsyncMock(
+                        return_value=(universe, UniverseAnchorMetadata(source="test"))
+                    ),
+                ),
+                patch("scripts.run_decision_loop.postgres_runtime", new=_mock_runtime),
+                patch("scripts.run_decision_loop._seed_if_empty", AsyncMock(return_value=False)),
+                patch("scripts.run_decision_loop._run_precheck", AsyncMock(return_value=None)),
+                patch("scripts.run_decision_loop._run_one_cycle", side_effect=_mock_run_one_cycle),
+                patch("agent_trading.db.transaction.transaction", new=_mock_tx),
+                patch(
+                    "agent_trading.repositories.postgres.bootstrap.build_postgres_repositories",
+                    return_value=MagicMock(),
+                ),
+            ):
+                await _run_loop(
+                    interval=0,
+                    max_cycles=1,
+                    submit=True,
+                    dry_run=False,
+                    allow_general_submit=True,
+                    max_general_submits_this_cycle=3,
+                    output="text",
+                    decision_cycle_id=decision_cycle_id,
+                )
+        finally:
+            module._shutdown_event = original_shutdown_event
+
+        return captured_kwargs
+
+    @pytest.mark.asyncio
+    async def test_same_cycle_id_reaches_every_symbol_in_the_cycle(self) -> None:
+        """scheduler가 넘긴 값(``#{cycle_count}`` suffix 포함)이 같은
+        cycle의 general lane/held_position lane 심볼 모두에 동일하게
+        전달돼야 한다."""
+        by_symbol = await self._run_and_capture(
+            decision_cycle_id="decision_submit_gate:2026-08-20T09:05:12+09:00"
+        )
+
+        assert by_symbol["000030"]["decision_cycle_id"] == (
+            "decision_submit_gate:2026-08-20T09:05:12+09:00#1"
+        )
+        assert by_symbol["005930"]["decision_cycle_id"] == (
+            "decision_submit_gate:2026-08-20T09:05:12+09:00#1"
+        )
+
+    @pytest.mark.asyncio
+    async def test_decision_cycle_id_none_when_not_provided(self) -> None:
+        """cycle 식별자를 안 넘기면(수동/단독 실행) 모든 symbol에 대해
+        여전히 ``None``으로 남아야 한다(하위 호환)."""
+        by_symbol = await self._run_and_capture(decision_cycle_id=None)
+
+        assert by_symbol["000030"]["decision_cycle_id"] is None
+        assert by_symbol["005930"]["decision_cycle_id"] is None
+
+
 class TestGeneralLanePriorityKeyAndDedupe:
     """``_general_lane_priority_key()`` 정렬 + Pass 1.5 dedupe 검증(item B)."""
 
@@ -3428,6 +3573,7 @@ class TestPass2DropGuardrailEvaluationRecording:
 
         async def _mock_record(
             candidate: dict[str, object], *, cycle_count: int, reason: str,
+            decision_cycle_id: str | None = None,
         ) -> None:
             recorded.append((str(candidate["symbol"]), reason))
 
@@ -3481,6 +3627,7 @@ class TestPass2DropGuardrailEvaluationRecording:
 
         async def _mock_record(
             candidate: dict[str, object], *, cycle_count: int, reason: str,
+            decision_cycle_id: str | None = None,
         ) -> None:
             recorded.append((str(candidate["source_type"]), reason))
 
@@ -3506,6 +3653,67 @@ class TestPass2DropGuardrailEvaluationRecording:
 
         # core(우선순위 높음)가 남고 market_overlay가 dedupe로 드롭 → 기록 호출.
         assert recorded == [("market_overlay", "symbol_duplicate_in_cycle")]
+
+    @pytest.mark.asyncio
+    async def test_pass2_drop_forwards_decision_cycle_id(self) -> None:
+        """Stage A-1b(2026-08-20): ``_run_general_lane_pass2(decision_
+        cycle_id=...)``로 넘긴 값이 budget exhausted/dedupe 드롭 기록
+        호출 양쪽 모두에 그대로 전달돼야 한다."""
+        low_priority = self._candidate(0, "AAA", score="0.50")
+        low_priority["source_type"] = "market_overlay"
+        high_priority = self._candidate(1, "AAA", score="0.90")
+        high_priority["source_type"] = "core"
+        budget_dropped = self._candidate(2, "CCC", score="0.10")
+        candidates = [low_priority, high_priority, budget_dropped]
+        cycle_results: list[dict[str, object]] = [
+            {"status": "PENDING_PASS2", "symbol": "AAA", "cycle_index": 0},
+            {"status": "PENDING_PASS2", "symbol": "AAA", "cycle_index": 1},
+            {"status": "PENDING_PASS2", "symbol": "CCC", "cycle_index": 2},
+        ]
+        recorded_cycle_ids: list[str | None] = []
+
+        async def _mock_submit(
+            candidate: dict[str, object], *, cycle_count: int, runtime: dict[str, object],
+        ) -> dict[str, object]:
+            return {
+                "status": "SUBMITTED", "symbol": str(candidate["symbol"]),
+                "market": "KRX", "duration_seconds": 0.01,
+            }
+
+        async def _mock_record(
+            candidate: dict[str, object], *, cycle_count: int, reason: str,
+            decision_cycle_id: str | None = None,
+        ) -> None:
+            recorded_cycle_ids.append(decision_cycle_id)
+
+        with (
+            patch(
+                "scripts.run_decision_loop._submit_general_lane_candidate",
+                side_effect=_mock_submit,
+            ),
+            patch(
+                "scripts.run_decision_loop._record_pass2_general_lane_drop_guardrail_evaluation",
+                side_effect=_mock_record,
+            ),
+        ):
+            await _run_general_lane_pass2(
+                candidates,
+                cycle_results=cycle_results,
+                cycle_count=1,
+                max_general_submits_this_cycle=1,
+                submit_budget_consumed_count=0,
+                runtime={},
+                output="text",
+                decision_cycle_id="decision_submit_gate:2026-08-20T09:05:12+09:00#1",
+            )
+
+        # dedupe 드롭(market_overlay) + budget 소진 드롭(CCC) 총 2건,
+        # 둘 다 같은 decision_cycle_id를 받아야 한다.
+        assert len(recorded_cycle_ids) == 2
+        assert all(
+            cid == "decision_submit_gate:2026-08-20T09:05:12+09:00#1"
+            for cid in recorded_cycle_ids
+        )
 
 
 class TestHeldPositionLaneUnaffectedByPass2:

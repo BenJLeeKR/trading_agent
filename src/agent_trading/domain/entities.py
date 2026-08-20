@@ -813,6 +813,14 @@ class GuardrailEvaluationEntity:
     ``TradeDecisionEntity.policy_git_sha``와 동일한 목적 — 정상 결정과
     스킵된 결정을 같은 정책 버전 기준으로 함께 조회할 수 있게 한다."""
 
+    # -- Stage A-1b (정책평가 인프라, 2026-08-20 추가): cycle 식별자 --
+    decision_cycle_id: str | None = None
+    """이 guardrail 평가가 발생한 decision cycle의 관측성 전용 식별자.
+    ``run_ops_scheduler.py``가 cycle 시작 시 이미 확정한 값(run_date+
+    due_at 기반)을 그대로 전달받는다 — 판정 로직과 무관하며, 같은
+    cycle의 pre-AI gate 스킵/Pass 2 general lane drop을 함께 묶어
+    조회하기 위한 것이다."""
+
 
 @dataclass(slots=True, frozen=True)
 class RiskLimitSnapshotEntity:
