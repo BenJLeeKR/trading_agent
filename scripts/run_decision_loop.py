@@ -1509,8 +1509,13 @@ async def _record_pre_ai_guardrail_evaluation(
     market: str,
     source_type: str,
     validation_result: ValidationResult,
+    decision_cycle_id: str | None = None,
 ) -> None:
-    """Persist a deterministic pre-AI gate block as a guardrail evaluation."""
+    """Persist a deterministic pre-AI gate block as a guardrail evaluation.
+
+    ``decision_cycle_id``(Stage A-1b, 2026-08-20)는 관측성 전용 cycle
+    식별자 — 판정 로직에는 관여하지 않는다.
+    """
     account_id = None
     try:
         account = await repos.accounts.find_one(AccountLookup(account_alias=account_alias))
@@ -1531,6 +1536,7 @@ async def _record_pre_ai_guardrail_evaluation(
             symbol=symbol,
             market=market,
             source_type=source_type,
+            decision_cycle_id=decision_cycle_id,
             metadata={"account_alias": account_alias, "gate_phase": "pre_ai_gate"},
         ),
         validation_result=ValidationResult.blocked(
@@ -1597,6 +1603,7 @@ async def _record_pass2_general_lane_drop_guardrail_evaluation(
     *,
     cycle_count: int,
     reason: str,
+    decision_cycle_id: str | None = None,
 ) -> None:
     """Pass 2(Pass 1.5 dedupe 포함)에서 탈락한 general lane 후보를
     ``guardrail_evaluations``에 기록한다(Stage A-1a, 2026-08-20).
@@ -1642,6 +1649,7 @@ async def _record_pass2_general_lane_drop_guardrail_evaluation(
                     symbol=symbol,
                     market=market,
                     source_type=source_type,
+                    decision_cycle_id=decision_cycle_id,
                     metadata={
                         "account_alias": ACCOUNT_ALIAS,
                         "gate_phase": "pass2_general_lane_drop",
@@ -1819,6 +1827,7 @@ async def _run_one_cycle(
     defer_actionable_for_pass2: bool = False,
     pending_candidates_sink: list[dict[str, object]] | None = None,
     cycle_index: int | None = None,
+    decision_cycle_id: str | None = None,
 ) -> dict[str, object]:
     """Execute a single decision cycle with shared runtime.
 
@@ -1918,6 +1927,7 @@ async def _run_one_cycle(
                         symbol=symbol,
                         market=market,
                         source_type=source_type,
+                        decision_cycle_id=decision_cycle_id,
                         validation_result=pre_ai_validation_result
                         if pre_ai_validation_result is not None
                         else ValidationResult.blocked(
@@ -2935,6 +2945,7 @@ async def _run_general_lane_pass2(
     submit_budget_consumed_count: int,
     runtime: dict[str, object],
     output: str = "json",
+    decision_cycle_id: str | None = None,
 ) -> int:
     """Pass 1.5(dedupe+정렬) + Pass 2(순차 제출)를 실행하고, 갱신된
     ``submit_budget_consumed_count``를 반환한다.
@@ -2964,6 +2975,7 @@ async def _run_general_lane_pass2(
                 await _record_pass2_general_lane_drop_guardrail_evaluation(
                     existing, cycle_count=cycle_count,
                     reason="symbol_duplicate_in_cycle",
+                    decision_cycle_id=decision_cycle_id,
                 )
                 _emit_general_lane_pass2_output(
                     dropped, cycle_count=cycle_count, output=output,
@@ -2982,6 +2994,7 @@ async def _run_general_lane_pass2(
             await _record_pass2_general_lane_drop_guardrail_evaluation(
                 candidate, cycle_count=cycle_count,
                 reason="symbol_duplicate_in_cycle",
+                decision_cycle_id=decision_cycle_id,
             )
             _emit_general_lane_pass2_output(
                 dropped, cycle_count=cycle_count, output=output,
@@ -3029,6 +3042,7 @@ async def _run_general_lane_pass2(
             await _record_pass2_general_lane_drop_guardrail_evaluation(
                 candidate, cycle_count=cycle_count,
                 reason="submit_budget_consumed_core",
+                decision_cycle_id=decision_cycle_id,
             )
             _emit_general_lane_pass2_output(
                 dropped, cycle_count=cycle_count, output=output,
@@ -3080,10 +3094,18 @@ async def _run_loop(
     allow_general_submit: bool,
     max_general_submits_this_cycle: int,
     output: str,
+    decision_cycle_id: str | None = None,
 ) -> int:
     """Main loop: run decision cycles until shutdown or count limit.
 
-    Returns an exit code (0 = all cycles successful, 1 = any error).
+    ``decision_cycle_id``(Stage A-1b, 2026-08-20)는 관측성 전용 cycle
+    식별자다 — scheduler(``run_ops_scheduler.py``)가 cycle 시작 시 이미
+    확정한 값을 그대로 전달받는다. 이 프로세스 자체의 내부 ``cycle_count``
+    는 매 subprocess 호출마다 1부터 다시 시작해 하루 전체를 가로지르는
+    식별자로 쓸 수 없다 — 그래서 scheduler가 넘겨준 값을 그대로 쓰고,
+    한 프로세스 안에서 여러 cycle이 도는 수동 실행 상황을 대비해서만
+    ``#{cycle_count}``를 덧붙여 구분한다. 판정 로직에는 전혀 관여하지
+    않는다.
     """
     logger.info(
         "Starting paper decision loop "
@@ -3145,6 +3167,17 @@ async def _run_loop(
 
             cycle_count += 1
             logger.info("=== Decision Cycle %d ===", cycle_count)
+
+            # Stage A-1b(2026-08-20): scheduler가 넘겨준 decision_cycle_id를
+            # 그대로 쓰되, 한 프로세스 안에서 여러 cycle이 도는 경우(수동
+            # 실행)만 대비해 cycle_count를 덧붙여 구분한다. 운영 경로
+            # (scheduler --count 1)에서는 cycle_count가 항상 1이라 사실상
+            # 무영향이다.
+            cycle_decision_cycle_id = (
+                f"{decision_cycle_id}#{cycle_count}"
+                if decision_cycle_id is not None
+                else None
+            )
 
             # ── Cycle당 1회 precheck (snapshot sync health) ─────────────
             # 변경 전: 각 symbol의 _run_one_cycle()에서 _run_precheck() 호출
@@ -3285,6 +3318,7 @@ async def _run_loop(
                                 runtime=runtime,
                                 cycle_precheck=cycle_precheck,
                                 universe_anchor=universe_anchor,
+                                decision_cycle_id=cycle_decision_cycle_id,
                                 deterministic_trigger_override=(
                                     cycle_deterministic_trigger_overrides.get(item.symbol)
                                 ),
@@ -3456,6 +3490,7 @@ async def _run_loop(
                     submit_budget_consumed_count=submit_budget_consumed_count,
                     runtime=runtime,
                     output=output,
+                    decision_cycle_id=cycle_decision_cycle_id,
                 )
 
             try:
@@ -3586,6 +3621,19 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         default=1,
         help="Maximum number of general/core or market_overlay submits to allow in this cycle.",
     )
+    parser.add_argument(
+        "--decision-cycle-id",
+        type=str,
+        default=None,
+        help=(
+            "Stage A-1b(정책평가 인프라, 2026-08-20): 관측성 전용 cycle "
+            "식별자. run_ops_scheduler.py가 cycle 시작 시 이미 알고 있는 "
+            "값(run_date+due_at 기반)을 넘겨준다 — guardrail_evaluations에 "
+            "저장돼 같은 cycle의 pre-AI gate 스킵/Pass 2 drop을 함께 "
+            "묶어 조회할 수 있게 한다. 판정 로직에는 관여하지 않으며, "
+            "생략하면(단독/수동 실행) NULL로 저장된다."
+        ),
+    )
     return parser.parse_args(argv)
 
 
@@ -3657,6 +3705,7 @@ def main(argv: list[str] | None = None) -> int:
                 allow_general_submit=args.allow_general_submit,
                 max_general_submits_this_cycle=max(0, args.max_general_submits_this_cycle),
                 output=args.output,
+                decision_cycle_id=args.decision_cycle_id,
             )
         )
     except KeyboardInterrupt:

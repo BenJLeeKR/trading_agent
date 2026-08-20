@@ -25,6 +25,10 @@ class ValidationContext:
     market: str | None = None
     side: str | None = None
     source_type: str | None = None
+    decision_cycle_id: str | None = None
+    """Stage A-1b(2026-08-20): 관측성 전용 decision cycle 식별자 —
+    같은 cycle에서 발생한 여러 guardrail evaluation을 묶어 조회하기
+    위한 것이며, 어떤 판정 로직에도 쓰이지 않는다."""
     metadata: dict[str, object] = field(default_factory=dict)
 
 
@@ -117,6 +121,7 @@ class ValidationResult:
             rule_results=merged_rule_results,
             blocking_rule_codes=list(self.blocking_rule_codes) or None,
             warning_rule_codes=list(self.warning_rule_codes) or None,
+            decision_cycle_id=context.decision_cycle_id,
         )
 
 
@@ -164,6 +169,7 @@ def build_validation_context(
     market: object | None = None,
     side: object | None = None,
     source_type: object | None = None,
+    decision_cycle_id: str | None = None,
     metadata: dict[str, object] | None = None,
     rule_results: dict[str, object] | None = None,
 ) -> ValidationContext:
@@ -181,6 +187,7 @@ def build_validation_context(
         source_type=_coerce_optional_str(
             source_type or raw_rule_results.get("source_type")
         ),
+        decision_cycle_id=_coerce_optional_str(decision_cycle_id),
         metadata=dict(metadata or {}),
     )
 

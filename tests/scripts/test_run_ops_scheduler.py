@@ -125,6 +125,24 @@ class TestCommandBuilders:
         assert "--submit" in cmd
         assert "--no-allow-general-submit" in cmd
 
+    def test_decision_command_includes_decision_cycle_id_when_provided(self) -> None:
+        """Stage A-1b(2026-08-20): scheduler가 cycle 식별자를 넘기면
+        ``--decision-cycle-id``로 subprocess argv에 그대로 전달돼야
+        한다(관측성 전용, 판정 로직 무변화)."""
+        cmd = _decision_command(
+            dry_run=False,
+            decision_cycle_id="decision_submit_gate:2026-08-20T09:05:12+09:00",
+        )
+        assert "--decision-cycle-id" in cmd
+        idx = cmd.index("--decision-cycle-id")
+        assert cmd[idx + 1] == "decision_submit_gate:2026-08-20T09:05:12+09:00"
+
+    def test_decision_command_omits_decision_cycle_id_when_not_provided(self) -> None:
+        """cycle 식별자를 안 넘기면(기본값 None) 기존과 동일하게
+        플래그 자체가 붙지 않아야 한다(하위 호환)."""
+        cmd = _decision_command(dry_run=False)
+        assert "--decision-cycle-id" not in cmd
+
     def test_post_submit_command_uses_python3(self) -> None:
         assert _post_submit_command() == [
             "python3",

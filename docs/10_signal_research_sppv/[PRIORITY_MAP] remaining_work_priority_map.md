@@ -11954,3 +11954,28 @@ execution_attempts/사후분석 SQL) 보존을 동시에 만족하는지** 코�
 - **다음 착수 가능 최소 단위**: Stage A-1b(cycle 식별자 컬럼)/A-3
   (hard gate margin 저장) — `SPPV-3` 결론과 무관하게 계속 병행
   착수 가능.
+
+## `Stage A-1b`(decision cycle 식별자) 구현 완료(2026-08-20 KST, 코드 구현 턴)
+
+상세: `docs/40_action_plans/post_sppv3_policy_evaluation_design_
+2026-08-20.md` "13. Stage A-1b 구현 완료".
+
+- `guardrail_evaluations`에 `decision_cycle_id` nullable 컬럼 추가
+  (마이그레이션 0066). `trade_decisions`는 이번 범위에서 제외 —
+  이미 `decision_context_id`로 cycle 조인이 충분해 불필요하다고
+  판단.
+- 식별자 형식: `decision_submit_gate:{run_ops_scheduler.py의 due_at
+  isoformat}#{cycle_count}` — scheduler가 cycle 시작 시 이미 확정한
+  값을 그대로 재사용, symbol별 동적 상태 없음.
+- pre-AI gate 스킵과 Pass 2 general lane drop(dedupe/budget
+  exhausted) 양쪽 모두 같은 `persist_validation_result()` 진입점을
+  거쳐 같은 컬럼에 저장되도록 배선 완료 — 같은 cycle의 두 population
+  을 SQL 한 번으로 묶어 조회 가능.
+- 신규 테스트 13건 전부 PASS, 기존 회귀 없음. `accept backend-file`/
+  `accept script-file`(run_decision_loop.py, run_ops_scheduler.py)/
+  `accept style`/`accept no-bypass`/`accept architecture`/`accept
+  db-structure` 전부 PASS.
+- **다음 착수 가능 최소 단위**: Stage A-3(hard gate margin 저장) —
+  `SPPV-3` 결론과 무관하게 계속 병행 착수 가능. `_record_scheduler_
+  guardrail_evaluation()`(구 단일-pass 경로)의 decision_cycle_id
+  배선 여부는 미확정으로 남김.
