@@ -7353,3 +7353,41 @@ gate) 구현 완료", `[PRIORITY_MAP]` 동일 날짜 항목.
   운영에서 켠 뒤, 몇 주간 `shadow_held_position_fdc_skip.agreement`가
   계속 100%에 가깝게 유지되는지 실측 축적. 그 결과를 근거로 실제 skip
   전환(안 E) 여부를 별도 턴에서 재검토한다.
+
+## `SPPV-3` 이후 단계 — 전역 최적성 근사 정책평가 체계 설계(2026-08-20 KST, read-only)
+
+상세: `docs/40_action_plans/post_sppv3_policy_evaluation_design_
+2026-08-20.md`, `[PRIORITY_MAP]` 동일 날짜 항목.
+
+- **구현 전제 조건(순서대로)**:
+  1. `SPPV-3` 축 1(alpha 자체 예측력) Go/Hold 종합 판정 — 이게
+     없으면 정책 후보 비교(Stage B) 자체가 "노이즈 위 threshold
+     다듬기"가 될 위험.
+  2. 원본 bar/OHLCV 데이터의 장기 보존 여부 확인(이번 설계 조사에서
+     미확인) — feature 재정의 실험의 전제.
+- **신규 backlog — Stage A(logging/data contract 보강, `SPPV-3` 결론과
+  무관하게 착수 가능)**:
+  - 모든 hard gate 판정에 "실제 값 vs threshold 값" margin을 쌍으로
+    저장(현재는 pass/fail만 남고 margin이 유실되는 경우 다수).
+  - 매 결정에 적용된 코드의 git commit SHA(정책 fingerprint) 저장 —
+    `config_versions`가 3행뿐이라 현재는 git commit으로만 정책 버전
+    추적 가능.
+  - `entry_score`/`exit_score`/`ranking_score`/`portfolio_allocation`
+    등 최종 합성 점수와 그 구성 항목별 기여도를 명시적 필드로 저장.
+  - Pass2 drop/pre-agent short-circuit 등 `trade_decisions`가 생성
+    안 되는 스킵 경로의 population(symbol/cycle/스킵 사유/feature
+    snapshot id)을 남기는 경량 로그 — `guardrail_evaluations` 확장
+    또는 신규 테이블 중 택1(다음 턴에서 스키마 확정).
+  - 정책 비교 시점 고정용 mark-to-market 스냅샷 메커니즘(미청산
+    포지션 성과 비교 공정성 확보).
+- **신규 backlog — Stage B(1차 replay 평가, `SPPV-3` 축 1 Go 판정
+  이후 착수)**: 현재 운영 정책 vs 최소 1개 대안 threshold 조합을
+  regime-stratified walk-forward로 비교, objective function(제약
+  위반 없는 후보 중 평균 net 기대수익) 산출.
+- **신규 backlog — Stage C(shadow 평가)**: Stage B 유망 후보를
+  `loss_cut_shadow` 패턴 재사용해 실주문 없이 병행 관측.
+- **의도적으로 범위 밖에 둔 것**: off-policy evaluation(IPS/SNIPS)
+  — 이 시스템이 결정론적 hard gate 구조라 propensity 추정 전제가
+  성립하지 않음(과장 없이 "구조적으로 어려움"으로 판정). online
+  limited rollout(Stage D)은 Stage A~C 결과 축적 후 사용자 승인
+  하에 별도 턴에서 재검토.

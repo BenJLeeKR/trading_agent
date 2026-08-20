@@ -11864,3 +11864,39 @@ execution_attempts/사후분석 SQL) 보존을 동시에 만족하는지** 코�
   사용량 실제 감소분, (2) `fdc_held_position_decision_type_guard`
   발동 빈도, (3) REDUCE/EXIT/HOLD/WATCH 판단 품질 무변화를 확인
   — 별도 read-only 실측 턴에서 진행.
+
+## `SPPV-3` 이후 단계 — 전역 최적성 근사 정책평가 체계 설계 완료(2026-08-20 KST, read-only 설계)
+
+상세: `docs/40_action_plans/post_sppv3_policy_evaluation_design_
+2026-08-20.md`.
+
+- **선후 관계(중요)**: `SPPV-3`는 **완료되지 않았다** — 4개 검증 축
+  중 축 1(alpha 자체 예측력)·축 3(downstream 분리 성과)만 2026-08-04
+  ~08-06 부분 착수됐고, 종합 Go/Hold 판정은 아직 없다. 이번 설계
+  문서는 `SPPV-3`를 대체/우회하지 않는다 — **`SPPV-3`를 "정책평가
+  체계의 필수 선행 입력(신호 자체의 알파 검증)을 만드는 하위 단계"로
+  재정의**하고, 이 문서의 실제 정책 후보 비교 단계(Stage B 이후)는
+  `SPPV-3` 축 1의 Go/Hold 판정 전까지 **설계만 하고 착수하지 않는다.**
+- 정책 최적화 단위는 "BUY lane 전체"(entry_score→gate/threshold→
+  downstream override→EV gate→sizing 직전)로 1차 고정, held_position
+  (SELL/REDUCE)은 별도 트랙 유지.
+- objective function 초안: 제약(하드 리스크 한도/컴플라이언스/submit
+  budget/유동성) 위반 없는 정책 후보 중 realized_pnl_net(청산분)+
+  mark-to-market(미청산분) 평균 기대수익이 가장 높은 정책을 상대
+  비교로 우선한다 — **수학적 전역 최적 증명이 아니라 관측 가능한
+  후보 집합 사이의 근사 비교**임을 명시.
+- 방법론 비교 결과: off-policy evaluation(IPS류)은 이 시스템이
+  확률적 정책이 아니라 **결정론적 hard gate 구조**라 propensity
+  추정 전제가 성립하지 않아 1차 도입에서 제외 — regime-stratified
+  walk-forward(이 저장소가 이미 익숙한 방식)를 축으로 채택.
+- 핵심 발견(factual): `trading.replay_bundles`(재현용 인프라)가
+  스키마에 존재하나 **0행**, `trading.config_versions`(정책 버전)도
+  3행뿐(2026-08-14 이후 갱신 없음) — 실제 정책 버전은 DB가 아니라
+  git commit SHA로만 추적되고 있다. `expected_value_gate.py`의
+  `expected_return_bps`는 실현 수익률에 검증된 값이 아니라 기존
+  deterministic 점수를 그대로 스케일링한 휴리스틱이다.
+- **다음 착수 가능 최소 단위**: Stage A(replay-ready logging 계약
+  보강 — threshold margin, policy fingerprint(git SHA), 스킵
+  population 추적, mark-to-market 스냅샷)는 `SPPV-3` 결론과 무관하게
+  지금 시작해도 안전하며, `SPPV-3` 축 2/4의 데이터 요구사항과도
+  겹쳐 공유 설계가 가능하다.
