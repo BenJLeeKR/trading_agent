@@ -714,6 +714,20 @@ class TradeDecisionRepository(Protocol):
         """
         ...
 
+    async def sync_shadow_held_position_reduce_skip_observation(
+        self,
+        trade_decision_id: UUID,
+        *,
+        shadow_held_position_reduce_skip_payload: dict[str, object],
+    ) -> TradeDecisionEntity | None:
+        """``held_position`` REDUCE/SELL_CANDIDATE **shadow-skip 관측**
+        결과를 TD의 ``decision_json['shadow_held_position_reduce_skip']``
+        에 추가한다(관측 전용 — 다른 어떤 컬럼도 건드리지 않는다).
+        ``sync_shadow_held_position_fdc_skip_observation()``과 동일한
+        append-only jsonb 패치 패턴을 따르되 별도 key를 쓴다.
+        """
+        ...
+
     async def list_loss_cut_shadow_observations(
         self,
         account_id: UUID,

@@ -7433,3 +7433,55 @@ gate) 구현 완료", `[PRIORITY_MAP]` 동일 날짜 항목.
 - **권장 착수 순서**: A-1a → A-2 → A-1b → A-3 → (Stage B 직전) A-4.
   A-1a/A-2를 1차 구현 단위로 추천(별도 코드 구현 턴 승인 필요,
   이번 턴은 설계만).
+
+## `held_position` REDUCE/SELL_CANDIDATE shadow-skip 관측 확장(2026-08-20 KST)
+
+상세: `docs/30_work_log/2026-08-20_held_position_reduce_skip_shadow.md`.
+
+- 배경: `provider_rate_limit`가 실제로 주로 발생하는 구간이
+  `NO_ACTION/WATCH`가 아니라 held_position의 `REDUCE_CANDIDATE`/
+  `SELL_CANDIDATE`(매도 후보군)임을 실측했다. 이 구간 전체는 FDC가
+  실제로 HOLD로 되돌리는 비율이 낮지 않아(2026-08-20 실측
+  `REDUCE_CANDIDATE` 12.0%, `SELL_CANDIDATE` 5.9%) 바로 skip 후보로
+  볼 수 없지만, 그 안에서 `ar_output.risk_opinion in ("reject",
+  "reduce")`인 하위 구간(72건)만 따로 보면 FDC가 HOLD로 되돌린 사례가
+  **0건**이었다. 이 조건은 `_check_held_position_sell_override()`의
+  무조건 발동(FDC 출력과 무관) 분기와 정확히 겹친다.
+- **구현**: 기존 `_record_held_position_fdc_skip_shadow_observation()`
+  (NO_ACTION/WATCH 전용)과 동일한 패턴으로, **별도 메서드·별도 저장
+  key**를 추가했다 — `_record_held_position_reduce_skip_shadow_
+  observation()`이 `trade_decisions.decision_json.shadow_held_
+  position_reduce_skip`에만 기록한다. env
+  `HELD_POSITION_REDUCE_SKIP_SHADOW_ENABLED`(기본값 False)로 제어.
+- **왜 별도 key인가**: NO_ACTION/WATCH 구간보다 이 구간은 실제 매도
+  판단과 직결되고, REDUCE vs EXIT처럼 세부 라벨이 갈리면 sizing에도
+  영향을 줄 수 있어(PR #300에서 확인된 문제) 더 보수적으로 다뤄야
+  한다. 기존 key와 섞으면 서로 다른 위험 프로파일의 관측이 뒤섞여
+  해석이 어려워진다.
+- **실행 의미 필드 추가**: 라벨이 완전히 같은지(`agreement`/
+  `agreement_decision_only`)와, REDUCE/EXIT처럼 라벨은 달라도 둘 다
+  "매도를 시도했다"는 실행 의미가 같은지(`agreement_execution_
+  meaning`)를 분리해서 기록한다 — `_held_position_action_class()`
+  헬퍼로 REDUCE/EXIT를 `SELL_ACTIONABLE`, HOLD/WATCH를
+  `NON_ACTIONABLE`로 뭉뚱그려 비교.
+- **정책 영향 없음(핵심 주장)**: FDC 호출 여부, `decision_type`/
+  `side`, 주문 제출 경로 중 어느 것도 이 관측이 바꾸지 않는다. 기본값
+  False로 기존 운영 동작과 100% 동일.
+- **테스트**: `tests/services/test_decision_orchestrator.py`에
+  `TestHeldPositionReduceSkipShadowObservation` 9개 케이스 추가(비활성
+  시 no-op, risk_opinion=reduce에서 라벨·실행의미 모두 일치,
+  라벨은 다르지만(EXIT vs REDUCE) 실행 의미는 일치하는 경우,
+  risk_opinion=review/WATCH primary_candidate/core lane은 관측 대상
+  아님, SELL_CANDIDATE+reject도 관측됨, trade_decision_id 없음/repo
+  쓰기 실패 시 예외 미전파). 관련 기존 테스트(98개 전체 —
+  `TestHeldPositionFdcSkipShadowObservation` 포함, `test_held_position_
+  sell_override.py` 20개, `test_settings.py` 65개) 전부 회귀 없이
+  통과.
+- **환경변수 배선**: `docker-compose.yml`의 `ops-scheduler` 서비스,
+  `.env.example`에 `HELD_POSITION_REDUCE_SKIP_SHADOW_ENABLED` 추가 —
+  `HELD_POSITION_FDC_SKIP_SHADOW_ENABLED` 선례와 동일한 배선 패턴.
+- **남은 backlog 14**: `HELD_POSITION_REDUCE_SKIP_SHADOW_ENABLED=true`로
+  운영에서 켠 뒤, (1) `agreement`/`agreement_execution_meaning`이
+  계속 높게 유지되는지, (2) 라벨 불일치(EXIT vs REDUCE)가 실제로
+  얼마나 자주 나는지, (3) 그 결과를 근거로 이 하위 구간의 실제 skip
+  전환 여부를 별도 턴에서 재검토한다.
