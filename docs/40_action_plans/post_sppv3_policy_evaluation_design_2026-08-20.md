@@ -594,3 +594,100 @@ priority, source_type 등)는 전혀 바뀌지 않았고, 새 파라미터는 �
   Stage B에서 "정상 결정과 스킵을 완전히 대칭적으로 조인해야 하는"
   요구가 생기는 경우)는 아직 열려 있다 — 지금은 불필요하다고 판단
   했다.
+
+## 14. Stage A-3 구현 완료 — expected value gate margin telemetry(2026-08-20 KST, 코드 구현)
+
+### 14.1 어떤 gate margin을 포함했는가
+
+**`expected_value_gate`(EV gate) 하나만 포함했다.** 이 gate는 이미
+코드 안에 threshold(`minimum_required_edge_bps`)와 실제값(`edge_
+after_cost_bps`)이 동시에 존재하고, `evaluate_expected_value_gate()`
+의 판정식(`gate_passed = edge_after_cost_bps >= minimum_required_
+edge_bps`)이 명확해 margin 정의가 애매하지 않다.
+
+**이번 턴에서 보류한 것**:
+- pre-AI gate/Pass 2 drop — threshold 개념이 없는 단순 skip/drop이라
+  Stage A-1a/A-1b의 `decision_cycle_id`/`gate_phase`로 이미 충분,
+  숫자 margin을 억지로 만들지 않았다.
+- `deterministic_trigger_engine.py`의 여러 threshold(`buy_candidate_
+  threshold` 등) — 조건이 여러 개 섞여 단일 margin으로 표현하면
+  오해를 부를 수 있어 다음 턴 이후로 미룸.
+- held_position SELL/REDUCE/EXIT 경로, BUY lane 외 정책 축 — 지시
+  범위 밖으로 명시적으로 제외.
+- **기존에 이미 있던 `ev_gate_near_miss_deficit_bps`**(`decision_
+  orchestrator.resolve_ev_gate_near_miss_override()`가 near-miss
+  override 5개 조건을 모두 만족할 때만 계산하는 좁은 값)와는 **의도
+  적으로 분리**했다 — 그 값은 override 적용 여부 판정에 실제로
+  쓰이는 입력이라 이번 턴의 "판정에 전혀 관여하지 않는 관측성 전용
+  margin"과 성격이 다르다. 새 `gate_margin`은 override 조건 충족
+  여부와 무관하게 EV anchor가 있는 모든 actionable 결정(pass/blocked
+  양쪽)에 대해 항상 계산된다.
+
+### 14.2 margin 정의식과 단위
+
+```
+margin_value = edge_after_cost_bps(실제값) - minimum_required_edge_bps(threshold)
+```
+
+- 양수 → gate를 여유 있게 통과(또는 통과했었을 것), 음수 → threshold
+  부족(차단). `evaluate_expected_value_gate()`의 `gate_passed =
+  edge_after_cost_bps >= minimum_required_edge_bps`와 부호가 정확히
+  대응한다(margin >= 0 ⟺ passed).
+- 단위는 `bps`(basis points) — 두 원본 필드가 이미 bps 단위이므로
+  그대로 물려받았다.
+- 값은 `Decimal`을 `str()`로 직렬화(JSONB 저장 시 부동소수 오차 방지,
+  기존 `expected_value_gate` 하위 필드들과 동일한 직렬화 관례).
+
+### 14.3 저장 위치와 이유
+
+**`trade_decisions.decision_json.expected_value_gate.gate_margin`**
+(신규 nested dict, 기존 `expected_value_gate` 딕셔너리 확장) —
+새 컬럼/새 테이블 없음.
+
+- `guardrail_evaluations` 대신 이 위치를 택한 이유: EV gate는
+  `guardrail_evaluations`에 별도 row를 만들지 않는다 — actionable
+  결정마다 `decision_json.expected_value_gate`에 항상(pass든
+  blocked든) 기록되는 구조이고, 이미 `edge_after_cost_bps`/
+  `minimum_required_edge_bps` 원본값 두 개가 바로 이 위치에 나란히
+  저장되고 있었다. margin은 이 두 값의 순수한 차이일 뿐이라, 같은
+  위치에 붙이는 것이 "gate의 pass/blocked 판단과 가장 가까운
+  authoritative 기록 위치"라는 기준에 가장 부합한다.
+- replay/policy evaluation에서 SQL로 바로 꺼낼 수 있다:
+  `decision_json -> 'expected_value_gate' -> 'gate_margin' ->>
+  'margin_value'`.
+- Stage A-1a/A-1b(`guardrail_evaluations.decision_cycle_id`/
+  `gate_phase`) contract와 충돌하지 않는다 — 완전히 다른 테이블,
+  다른 population(EV gate는 trade_decisions가 생성된 경우에만 존재).
+
+### 14.4 왜 판정 로직 무변화인가
+
+`_build_expected_value_gate_margin()`은 `decision_factory.py`에 새로
+추가한 **순수 함수**로, 이미 `AIDecisionInputs`에 존재하는 두 필드
+(`edge_after_cost_bps`, `minimum_required_edge_bps`)를 그대로 빼기만
+한다 — `expected_value_gate.py`(실제 gate 판정/threshold 로직)와
+`decision_orchestrator.py`(near-miss override 판정)는 **한 글자도
+건드리지 않았다.** `expected_value_gate_passed`/`reason_codes`/
+threshold 상수/override 조건 전부 기존 코드 그대로다.
+
+### 14.5 검증 결과(factual)
+
+- 신규 테스트 20건(기존 14건 + 신규 6건, `test_decision_factory.py`
+  단일 파일) 전부 PASS: 순수 함수 단위(pass margin 양수/blocked
+  margin 음수/입력 결측 시 None 3종), end-to-end(blocked case 저장,
+  non-actionable에서 None, pass/blocked 양쪽에서 margin 부호와
+  `passed` 판정이 정확히 대응함을 직접 비교).
+- 기존 `test_decision_orchestrator.py`(98건) 회귀 없음.
+- `accept backend-file decision_factory.py` PASS, `accept style`/
+  `accept no-bypass`(hard_bypass_count=0)/`accept architecture`/
+  `accept db-structure`(스키마 변경 없음, 그대로 PASS) 전부 PASS.
+
+### 14.6 미확정
+
+- `deterministic_trigger_engine.py`/`strategy_selection.py`의 다른
+  threshold(예: `buy_candidate_threshold`, `single_position_limit`)
+  에도 같은 `gate_margin` contract를 확장할지는 다음 턴 판단 대상
+  — 이번 턴은 EV gate 하나로 좁혔다.
+- `ev_gate_near_miss_deficit_bps`(기존, override 판정용)와 신규
+  `gate_margin.margin_value`가 수학적으로 반대 부호(`deficit =
+  -margin`)라는 사실이 사후 분석에서 혼동을 부를 수 있는지는 실제
+  사용 시 지켜봐야 한다 — 이번 턴은 문서로만 명시.

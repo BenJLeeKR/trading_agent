@@ -438,6 +438,10 @@ def build_trade_decision_entity(
                     if ai_inputs.ev_gate_near_miss_threshold_bps is not None
                     else None
                 ),
+                "gate_margin": _build_expected_value_gate_margin(
+                    edge_after_cost_bps=ai_inputs.edge_after_cost_bps,
+                    minimum_required_edge_bps=ai_inputs.minimum_required_edge_bps,
+                ),
             },
             "expected_value_anchor": (
                 dict(request.metadata.get("expected_value_anchor"))
@@ -457,6 +461,38 @@ def build_trade_decision_entity(
         policy_git_sha=policy_git_sha,
     )
     return decision
+
+
+def _build_expected_value_gate_margin(
+    *,
+    edge_after_cost_bps: Decimal | None,
+    minimum_required_edge_bps: Decimal | None,
+) -> dict[str, object] | None:
+    """Stage A-3(정책평가 인프라 로깅 계약 보강, 2026-08-20): EV gate의
+    margin(관측성 전용)을 계산한다.
+
+    ``margin_value = edge_after_cost_bps(실제값) - minimum_required_
+    edge_bps(threshold)`` — 양수면 gate를 여유 있게 통과, 음수면
+    threshold에 못 미쳐 차단된다는 뜻이다(``evaluate_expected_value_
+    gate()``의 ``gate_passed = edge_after_cost_bps >= minimum_
+    required_edge_bps`` 판정식과 부호가 정확히 대응한다).
+
+    이 함수는 어떤 gate/threshold/submit 판정에도 관여하지 않는다 —
+    이미 계산된 두 값을 그대로 빼기만 하며, 판정 로직(``expected_
+    value_gate.py``)은 전혀 건드리지 않는다. 둘 중 하나라도 없으면
+    계산 불가로 ``None``을 반환한다.
+    """
+    if edge_after_cost_bps is None or minimum_required_edge_bps is None:
+        return None
+    margin_value = edge_after_cost_bps - minimum_required_edge_bps
+    return {
+        "metric_name": "edge_after_cost_bps",
+        "metric_value": str(edge_after_cost_bps),
+        "threshold_name": "minimum_required_edge_bps",
+        "threshold_value": str(minimum_required_edge_bps),
+        "margin_value": str(margin_value),
+        "margin_unit": "bps",
+    }
 
 
 def _build_deterministic_fallback_summary(

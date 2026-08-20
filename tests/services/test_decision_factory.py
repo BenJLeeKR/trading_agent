@@ -13,7 +13,10 @@ from agent_trading.services.common_types import (
     AgentExecutionBundle,
     AssembledContext,
 )
-from agent_trading.services.decision_factory import build_trade_decision_entity
+from agent_trading.services.decision_factory import (
+    _build_expected_value_gate_margin,
+    build_trade_decision_entity,
+)
 from agent_trading.services.deterministic_trigger_engine import (
     DeterministicTriggerAssessment,
 )
@@ -456,6 +459,18 @@ def test_build_trade_decision_entity_stores_expected_value_gate_fields() -> None
         == "11.00"
     )
     assert entity.decision_json["expected_value_gate"]["slippage_buffer_bps"] == "10.00"
+    # Stage A-3(2026-08-20): gate margin(관측성 전용) — 판정(passed=True)
+    # 자체는 margin 추가 전과 동일하게 유지되고, margin_value만 새로
+    # 더해진다(39.00 - 10.00 = 29.00, 양수 = 여유 통과).
+    gate_margin = entity.decision_json["expected_value_gate"]["gate_margin"]
+    assert gate_margin == {
+        "metric_name": "edge_after_cost_bps",
+        "metric_value": "39.00",
+        "threshold_name": "minimum_required_edge_bps",
+        "threshold_value": "10.00",
+        "margin_value": "29.00",
+        "margin_unit": "bps",
+    }
 
 
 def test_build_trade_decision_entity_stores_holding_profile_policy() -> None:
@@ -618,3 +633,178 @@ def test_build_trade_decision_entity_policy_git_sha_defaults_to_none() -> None:
 
     assert entity is not None
     assert entity.policy_git_sha is None
+
+
+# ============================================================================
+# Stage A-3 (2026-08-20 KST) — expected value gate margin telemetry
+# ============================================================================
+
+
+class TestBuildExpectedValueGateMargin:
+    """``_build_expected_value_gate_margin()`` — 순수 함수 단위 검증."""
+
+    def test_pass_case_has_positive_margin(self) -> None:
+        """실제값이 threshold보다 크면(=gate 통과) margin이 양수여야
+        한다."""
+        margin = _build_expected_value_gate_margin(
+            edge_after_cost_bps=Decimal("10.07"),
+            minimum_required_edge_bps=Decimal("10.00"),
+        )
+        assert margin == {
+            "metric_name": "edge_after_cost_bps",
+            "metric_value": "10.07",
+            "threshold_name": "minimum_required_edge_bps",
+            "threshold_value": "10.00",
+            "margin_value": "0.07",
+            "margin_unit": "bps",
+        }
+
+    def test_blocked_case_has_negative_margin(self) -> None:
+        """실제값이 threshold에 못 미치면(=gate 차단) margin이 음수여야
+        한다."""
+        margin = _build_expected_value_gate_margin(
+            edge_after_cost_bps=Decimal("7.50"),
+            minimum_required_edge_bps=Decimal("10.00"),
+        )
+        assert margin is not None
+        assert margin["margin_value"] == "-2.50"
+
+    def test_returns_none_when_edge_after_cost_bps_missing(self) -> None:
+        """non-actionable decision 등 값이 없는 경우 margin을 억지로
+        만들지 않고 None을 반환해야 한다."""
+        assert (
+            _build_expected_value_gate_margin(
+                edge_after_cost_bps=None,
+                minimum_required_edge_bps=Decimal("10.00"),
+            )
+            is None
+        )
+
+    def test_returns_none_when_minimum_required_edge_bps_missing(self) -> None:
+        assert (
+            _build_expected_value_gate_margin(
+                edge_after_cost_bps=Decimal("10.07"),
+                minimum_required_edge_bps=None,
+            )
+            is None
+        )
+
+    def test_returns_none_when_both_missing(self) -> None:
+        assert (
+            _build_expected_value_gate_margin(
+                edge_after_cost_bps=None,
+                minimum_required_edge_bps=None,
+            )
+            is None
+        )
+
+
+class TestBuildTradeDecisionEntityGateMargin:
+    """``build_trade_decision_entity()`` — gate margin 저장/직렬화 및
+    판정 무변화 검증(end-to-end)."""
+
+    @staticmethod
+    def _trigger() -> DeterministicTriggerAssessment:
+        return DeterministicTriggerAssessment(
+            trigger_version="deterministic_trigger_v1",
+            primary_candidate="BUY_CANDIDATE",
+            candidate_set=("BUY_CANDIDATE",),
+            watch_candidate=False,
+            buy_candidate=True,
+            sell_candidate=False,
+            reduce_candidate=False,
+            candidate_confidence=0.82,
+            entry_score=0.82,
+            exit_score=0.14,
+            watch_score=0.2,
+        )
+
+    def test_blocked_case_stores_negative_margin_and_passed_false(self) -> None:
+        """gate가 실제로 차단된 경우(``expected_value_gate_passed=
+        False``)에도 margin이 저장되고, 그 부호(음수)가 차단 방향과
+        일치해야 한다 — 판정(passed=False) 자체는 그대로 유지."""
+        entity = build_trade_decision_entity(
+            decision_context_id=uuid4(),
+            request=_make_request(),
+            assembled_context=_make_context(self._trigger()),
+            agent_bundle=AgentExecutionBundle(
+                ai_inputs=AIDecisionInputs(
+                    decision_type="REDUCE",
+                    minimum_required_edge_bps=Decimal("10.00"),
+                    edge_after_cost_bps=Decimal("7.50"),
+                    expected_value_gate_passed=False,
+                    expected_value_gate_reason_codes=(
+                        "expected_value_edge_below_minimum_required",
+                    ),
+                ),
+                composer_output=FinalDecisionComposerOutput(
+                    decision_type="REDUCE",
+                    side="SELL",
+                    confidence=0.8,
+                ),
+            ),
+        )
+
+        assert entity is not None
+        assert entity.decision_json["expected_value_gate"]["passed"] is False
+        gate_margin = entity.decision_json["expected_value_gate"]["gate_margin"]
+        assert gate_margin["margin_value"] == "-2.50"
+        assert gate_margin["margin_unit"] == "bps"
+
+    def test_non_actionable_decision_has_no_gate_margin(self) -> None:
+        """EV anchor 자체가 없는(비actionable) 결정은 gate_margin도
+        None이어야 한다 — margin을 억지로 만들지 않는다."""
+        entity = build_trade_decision_entity(
+            decision_context_id=uuid4(),
+            request=_make_request(),
+            assembled_context=_make_context(self._trigger()),
+            agent_bundle=AgentExecutionBundle(
+                ai_inputs=AIDecisionInputs(decision_type="HOLD"),
+                composer_output=FinalDecisionComposerOutput(
+                    decision_type="HOLD",
+                    side="",
+                    confidence=0.5,
+                ),
+            ),
+        )
+
+        assert entity is not None
+        assert entity.decision_json["expected_value_gate"]["gate_margin"] is None
+
+    def test_gate_margin_addition_does_not_change_passed_verdict(self) -> None:
+        """"관측성만 바뀌고 판정은 안 바뀌었다"를 직접 증명한다 —
+        동일 입력에 대해 ``passed``가 margin의 부호와 정확히 일치하는
+        기존 계약(``edge_after_cost_bps >= minimum_required_edge_bps``)
+        그대로 유지됨을 pass/blocked 양쪽에서 재확인."""
+        for edge_after_cost_bps, minimum_required_edge_bps, expected_passed in (
+            (Decimal("10.00"), Decimal("10.00"), True),  # 경계값(동일) → 통과
+            (Decimal("9.99"), Decimal("10.00"), False),  # 근소 부족 → 차단
+        ):
+            entity = build_trade_decision_entity(
+                decision_context_id=uuid4(),
+                request=_make_request(),
+                assembled_context=_make_context(self._trigger()),
+                agent_bundle=AgentExecutionBundle(
+                    ai_inputs=AIDecisionInputs(
+                        decision_type="BUY",
+                        minimum_required_edge_bps=minimum_required_edge_bps,
+                        edge_after_cost_bps=edge_after_cost_bps,
+                        expected_value_gate_passed=expected_passed,
+                    ),
+                    composer_output=FinalDecisionComposerOutput(
+                        decision_type="BUY",
+                        side="BUY",
+                        confidence=0.9,
+                    ),
+                ),
+            )
+            assert entity is not None
+            assert (
+                entity.decision_json["expected_value_gate"]["passed"]
+                is expected_passed
+            )
+            gate_margin = entity.decision_json["expected_value_gate"]["gate_margin"]
+            margin_value = Decimal(gate_margin["margin_value"])
+            # margin의 부호가 판정(passed)과 정확히 대응해야 한다 —
+            # margin >= 0 이면 통과, margin < 0 이면 차단.
+            assert (margin_value >= 0) == expected_passed

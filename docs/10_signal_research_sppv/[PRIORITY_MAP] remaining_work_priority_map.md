@@ -11979,3 +11979,29 @@ execution_attempts/사후분석 SQL) 보존을 동시에 만족하는지** 코�
   `SPPV-3` 결론과 무관하게 계속 병행 착수 가능. `_record_scheduler_
   guardrail_evaluation()`(구 단일-pass 경로)의 decision_cycle_id
   배선 여부는 미확정으로 남김.
+
+## `Stage A-3`(expected value gate margin telemetry) 구현 완료(2026-08-20 KST, 코드 구현 턴)
+
+상세: `docs/40_action_plans/post_sppv3_policy_evaluation_design_
+2026-08-20.md` "14. Stage A-3 구현 완료".
+
+- **EV gate(`expected_value_gate`) 하나만 포함** — threshold/실제값이
+  이미 코드 안에 나란히 존재하고 판정식이 명확한 유일한 gate였다.
+  pre-AI/Pass2 drop, deterministic_trigger의 다른 threshold, held_
+  position 경로는 이번 턴 범위에서 명시적으로 제외.
+- `margin_value = edge_after_cost_bps - minimum_required_edge_bps`
+  (bps 단위, 부호가 `gate_passed` 판정과 정확히 대응) — `trade_
+  decisions.decision_json.expected_value_gate.gate_margin`에 저장
+  (새 테이블/새 컬럼 없음, 기존 dict 확장).
+- `decision_factory.py`에 순수 함수 `_build_expected_value_gate_
+  margin()` 추가만으로 구현 — `expected_value_gate.py`/`decision_
+  orchestrator.py`(near-miss override 판정)는 무수정, 기존
+  `ev_gate_near_miss_deficit_bps`(override 판정용, 좁은 조건에서만
+  계산)와는 의도적으로 분리해 병존.
+- 신규 테스트 6건(기존 14건과 합쳐 `test_decision_factory.py` 20건)
+  전부 PASS, `test_decision_orchestrator.py`(98건) 회귀 없음. `accept
+  backend-file`/`accept style`/`accept no-bypass`/`accept
+  architecture`/`accept db-structure` 전부 PASS.
+- **다음 착수 가능 최소 단위**: 다른 gate(`deterministic_trigger_
+  engine.py`의 threshold 등)로 같은 margin contract 확장 여부는
+  다음 턴 판단 대상 — `SPPV-3` 결론과 무관하게 계속 병행 착수 가능.

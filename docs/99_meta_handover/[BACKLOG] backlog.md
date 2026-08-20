@@ -7548,3 +7548,27 @@ turn의 "Stage A-1a/A-2" backlog 항목을 해소한다.
   `deterministic_trigger_engine.py`/`expected_value_gate.py`/
   `strategy_selection.py`) — `SPPV-3` 결론과 무관하게 계속 병행
   착수 가능.
+
+## `Stage A-3`(expected value gate margin telemetry) 구현 완료 — 위 backlog 항목 부분 해소(2026-08-20 KST)
+
+상세: `docs/40_action_plans/post_sppv3_policy_evaluation_design_
+2026-08-20.md` "14", `[PRIORITY_MAP]` 동일 날짜 항목.
+
+- `decision_factory.py`에 순수 함수 `_build_expected_value_gate_
+  margin()` 추가, `trade_decisions.decision_json.expected_value_
+  gate.gate_margin`에 `metric_value`/`threshold_value`/`margin_
+  value`/`margin_unit` 4필드로 저장. `expected_value_gate.py`/
+  `decision_orchestrator.py` 무수정(판정 로직 완전 무변화).
+- `deterministic_trigger_engine.py`/`strategy_selection.py`의 다른
+  threshold는 **이번 턴에서 다루지 않았다** — 조건이 여러 개 섞여
+  단일 margin으로 오해를 부를 위험이 있어 보류.
+- 신규 테스트 6건 PASS(합계 20건), 기존 회귀 없음. `accept
+  backend-file`/`accept style`/`accept no-bypass`/`accept
+  architecture`/`accept db-structure` 전부 PASS.
+- **신규 backlog(다음 턴 판단 대상)**: `deterministic_trigger_
+  engine.py`(`buy_candidate_threshold` 등)/`strategy_selection.py`
+  threshold에도 같은 `gate_margin` contract를 확장할지 — 각 threshold
+  별로 "정의가 명확한 단일 margin"인지 먼저 판별 필요.
+- **신규 backlog(운영 실측 필요)**: 배포 후 실제 EV gate blocked/pass
+  사례에서 `gate_margin.margin_value` 값이 기대한 부호/크기로 쌓이는지
+  실측.
