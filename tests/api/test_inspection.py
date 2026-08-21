@@ -14,7 +14,7 @@ from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 from enum import Enum
 from typing import Any
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, patch
 from uuid import UUID, uuid4
 
 import pytest
@@ -2180,6 +2180,150 @@ class TestPositions:
         by_instrument = {p["instrument_id"]: p for p in data["positions"]}
         assert by_instrument[str(instrument_with_state)]["remaining_buy_fee_pool"] == 999.99
         assert by_instrument[str(instrument_without_state)]["remaining_buy_fee_pool"] is None
+
+    def _seed_positions_for_batching_test(
+        self, repos, account_id, instrument_ids, now,
+    ) -> None:
+        for idx, iid in enumerate(instrument_ids):
+            asyncio.run(
+                repos.instruments.add(
+                    InstrumentEntity(
+                        instrument_id=iid,
+                        symbol=f"SYM{idx}",
+                        market_code="KOSPI",
+                        asset_class="equity",
+                        currency="KRW",
+                        name=f"Company {idx}",
+                    )
+                )
+            )
+            asyncio.run(
+                repos.position_snapshots.add(
+                    PositionSnapshotEntity(
+                        position_snapshot_id=uuid4(),
+                        account_id=account_id,
+                        instrument_id=iid,
+                        quantity=Decimal("10"),
+                        average_price=Decimal("1000"),
+                        market_price=Decimal("1100"),
+                        unrealized_pnl=Decimal("1000"),
+                        source_of_truth="broker",
+                        snapshot_at=now,
+                        created_at=now,
+                    )
+                )
+            )
+        # 종목 하나에만 cost-basis state를 부여 — 나머지는 state가 없는
+        # 경우(remaining_buy_fee_pool=None, 0으로 임의 채우면 안 됨)를
+        # 함께 검증한다.
+        asyncio.run(
+            repos.position_cost_basis_states.upsert(
+                PositionCostBasisStateEntity(
+                    account_id=account_id,
+                    instrument_id=instrument_ids[0],
+                    quantity=Decimal("10"),
+                    average_cost=Decimal("1000"),
+                    remaining_buy_fee_pool=Decimal("12.34"),
+                    updated_at=now,
+                )
+            )
+        )
+
+    def test_build_position_views_batches_lookups_regardless_of_position_count(self) -> None:
+        """``_build_position_views()``는 포지션 개수와 무관하게
+
+        instruments.get_many()/position_cost_basis_states.list_by_account()를
+        각각 정확히 1회만 호출하고, 포지션당 반복되던 instruments.get()/
+        position_cost_basis_states.get()은 전혀 호출하지 않는다(N+1 제거).
+        """
+        from agent_trading.api.routes.account_snapshots import _build_position_views
+
+        repos = build_in_memory_repositories()
+        account_id = uuid4()
+        instrument_ids = [uuid4() for _ in range(5)]
+        now = datetime.now(timezone.utc)
+        self._seed_positions_for_batching_test(repos, account_id, instrument_ids, now)
+        snapshots = asyncio.run(repos.position_snapshots.list_latest_by_account(account_id))
+        assert len(snapshots) == 5
+
+        with (
+            patch.object(
+                repos.instruments, "get_many", wraps=repos.instruments.get_many,
+            ) as get_many_spy,
+            patch.object(
+                repos.instruments, "get", wraps=repos.instruments.get,
+            ) as get_spy,
+            patch.object(
+                repos.position_cost_basis_states,
+                "list_by_account",
+                wraps=repos.position_cost_basis_states.list_by_account,
+            ) as list_by_account_spy,
+            patch.object(
+                repos.position_cost_basis_states, "get", wraps=repos.position_cost_basis_states.get,
+            ) as cbs_get_spy,
+        ):
+            views = asyncio.run(_build_position_views(repos, account_id, snapshots))
+
+        assert len(views) == 5
+        # 배치 조회 1회씩 — 포지션 개수(5)와 무관.
+        assert get_many_spy.call_count == 1
+        assert list_by_account_spy.call_count == 1
+        # 예전 N+1 방식(포지션당 반복 호출)은 전혀 쓰이지 않는다.
+        assert get_spy.call_count == 0
+        assert cbs_get_spy.call_count == 0
+
+        by_symbol = {v.symbol: v for v in views}
+        assert by_symbol["SYM0"].instrument_name == "Company 0"
+        assert by_symbol["SYM0"].remaining_buy_fee_pool == 12.34
+        # cost-basis state가 없는 종목은 0으로 임의 채우지 않고 None이어야 한다.
+        assert by_symbol["SYM1"].remaining_buy_fee_pool is None
+        assert by_symbol["SYM4"].remaining_buy_fee_pool is None
+
+    def test_list_positions_batches_lookups_regardless_of_position_count(self) -> None:
+        """``GET /positions``도 동일하게 배치 조회 1회씩만 쓰고,
+
+        포지션당 반복 조회는 하지 않는다(N+1 제거, positions.py).
+        """
+        repos = build_in_memory_repositories()
+        app = create_app(repos=repos, auth_enabled=False)
+        account_id = uuid4()
+        instrument_ids = [uuid4() for _ in range(5)]
+        now = datetime.now(timezone.utc)
+        self._seed_positions_for_batching_test(repos, account_id, instrument_ids, now)
+
+        with (
+            patch.object(
+                repos.instruments, "get_many", wraps=repos.instruments.get_many,
+            ) as get_many_spy,
+            patch.object(
+                repos.instruments, "get", wraps=repos.instruments.get,
+            ) as get_spy,
+            patch.object(
+                repos.position_cost_basis_states,
+                "list_by_account",
+                wraps=repos.position_cost_basis_states.list_by_account,
+            ) as list_by_account_spy,
+            patch.object(
+                repos.position_cost_basis_states, "get", wraps=repos.position_cost_basis_states.get,
+            ) as cbs_get_spy,
+        ):
+            with TestClient(app) as client:
+                response = client.get(f"/positions?account_id={account_id}")
+
+        assert response.status_code == 200
+        data = response.json()
+        assert len(data) == 5
+
+        assert get_many_spy.call_count == 1
+        assert list_by_account_spy.call_count == 1
+        assert get_spy.call_count == 0
+        assert cbs_get_spy.call_count == 0
+
+        by_symbol = {row["symbol"]: row for row in data}
+        assert by_symbol["SYM0"]["instrument_name"] == "Company 0"
+        assert by_symbol["SYM0"]["remaining_buy_fee_pool"] == 12.34
+        assert by_symbol["SYM1"]["remaining_buy_fee_pool"] is None
+        assert by_symbol["SYM4"]["remaining_buy_fee_pool"] is None
 
 
 class TestRealizedPnl:

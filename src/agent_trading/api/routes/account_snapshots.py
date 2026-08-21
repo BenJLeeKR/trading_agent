@@ -11,6 +11,7 @@ and cash balance come from the **exact same sync run** whenever FK data is
 available. Falls back to timestamp-based alignment for legacy data.
 """
 
+from collections.abc import Sequence
 from datetime import datetime
 from uuid import UUID
 
@@ -23,6 +24,7 @@ from agent_trading.api.schemas import (
     CashBalanceSnapshotView,
     PositionSnapshotView,
 )
+from agent_trading.domain.entities import InstrumentEntity, PositionCostBasisStateEntity
 from agent_trading.repositories.container import RepositoryContainer
 
 router = APIRouter(tags=["account-snapshots"])
@@ -79,29 +81,52 @@ async def _build_cash_balance_view(
     return CashBalanceSnapshotView.model_validate(effective_snapshot)
 
 
-async def _build_position_view(
-    repos: RepositoryContainer,
-    account_id: UUID,
+def _build_position_view(
     snapshot,
+    instruments_by_id: dict[UUID, InstrumentEntity],
+    cost_basis_by_instrument: dict[UUID, PositionCostBasisStateEntity],
 ) -> PositionSnapshotView:
     """스냅샷 엔티티 하나를 symbol/instrument_name/remaining_buy_fee_pool까지
-    채운 ``PositionSnapshotView``로 변환한다.
 
-    이 파일의 4개 코드 경로(same_run / partial_position_only /
-    after_hours_cash_updated / timestamp_proximity fallback)가 동일한
-    enrichment 로직을 반복해 쓰므로 하나로 묶었다.
+    채운 ``PositionSnapshotView``로 변환한다. DB 조회는 하지 않고, 미리
+    배치로 가져온 dict에서만 조회한다(``_build_position_views`` 참고).
     """
     view = PositionSnapshotView.model_validate(snapshot)
-    inst = await repos.instruments.get(snapshot.instrument_id)
+    inst = instruments_by_id.get(snapshot.instrument_id)
     if inst is not None:
         view.symbol = inst.symbol
         view.instrument_name = inst.name
-    cost_basis_state = await repos.position_cost_basis_states.get(
-        account_id, snapshot.instrument_id,
-    )
+    cost_basis_state = cost_basis_by_instrument.get(snapshot.instrument_id)
     if cost_basis_state is not None:
         view.remaining_buy_fee_pool = float(cost_basis_state.remaining_buy_fee_pool)
     return view
+
+
+async def _build_position_views(
+    repos: RepositoryContainer,
+    account_id: UUID,
+    snapshots: Sequence,
+) -> list[PositionSnapshotView]:
+    """포지션 스냅샷 목록을 ``PositionSnapshotView`` 목록으로 일괄 변환한다.
+
+    예전에는 포지션 1건마다 ``instruments.get()`` + ``position_cost_basis_
+    states.get()``을 순차 ``await``해(N+1) 포지션 개수만큼 DB 라운드트립이
+    발생했다. 여기서는 이 파일의 4개 코드 경로(same_run /
+    partial_position_only / after_hours_cash_updated / timestamp_proximity
+    fallback)가 공통으로, instrument 조회 1회(``get_many``)와 계좌의
+    cost-basis state 조회 1회(``list_by_account``)만 수행한 뒤 메모리에서
+    조립한다 — 포지션 개수와 무관하게 항상 2회의 배치 조회다.
+    """
+    if not snapshots:
+        return []
+    instrument_ids = {s.instrument_id for s in snapshots}
+    instruments_by_id = await repos.instruments.get_many(instrument_ids)
+    cost_basis_states = await repos.position_cost_basis_states.list_by_account(account_id)
+    cost_basis_by_instrument = {s.instrument_id: s for s in cost_basis_states}
+    return [
+        _build_position_view(s, instruments_by_id, cost_basis_by_instrument)
+        for s in snapshots
+    ]
 
 
 def _compute_alignment_status(
@@ -187,9 +212,9 @@ async def get_latest_account_snapshots(
             aid, sync_run_id,
         )
 
-        positions: list[PositionSnapshotView] = [
-            await _build_position_view(repos, aid, s) for s in sync_positions
-        ]
+        positions: list[PositionSnapshotView] = await _build_position_views(
+            repos, aid, sync_positions,
+        )
 
         cash_balance = await _build_cash_balance_view(repos, aid, sync_cash)
 
@@ -256,7 +281,7 @@ async def get_latest_account_snapshots(
             aid, sync_run_id,
         )
 
-        positions = [await _build_position_view(repos, aid, s) for s in sync_positions]
+        positions = await _build_position_views(repos, aid, sync_positions)
 
         cash_balance = None
         positions_snapshot_at = (
@@ -292,7 +317,7 @@ async def get_latest_account_snapshots(
             aid, cash_sync_id,
         )
 
-        positions = [await _build_position_view(repos, aid, s) for s in pos_positions]
+        positions = await _build_position_views(repos, aid, pos_positions)
 
         cash_balance = await _build_cash_balance_view(repos, aid, sync_cash)
 
@@ -317,12 +342,10 @@ async def get_latest_account_snapshots(
 
     # ── 3. Fallback: timestamp-based (legacy data without FK) ──────
     snapshots = await repos.position_snapshots.list_latest_by_account(aid)
-    positions = []
-    positions_snapshot_at = None
-    for s in snapshots:
-        positions.append(await _build_position_view(repos, aid, s))
-        if positions_snapshot_at is None or s.snapshot_at > positions_snapshot_at:
-            positions_snapshot_at = s.snapshot_at
+    positions = await _build_position_views(repos, aid, snapshots)
+    positions_snapshot_at = (
+        max(s.snapshot_at for s in snapshots) if snapshots else None
+    )
 
     cash_snapshot = await repos.cash_balance_snapshots.get_latest_by_account(aid)
     cash_balance = await _build_cash_balance_view(repos, aid, cash_snapshot)
