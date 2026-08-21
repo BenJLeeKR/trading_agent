@@ -12,6 +12,7 @@ import {
 } from "./test-utils/fixtures";
 import type {
   AccountSnapshotResponse,
+  ClientDetail,
   ReconciliationSummary,
   SchedulerStatusResponse,
 } from "../types/api";
@@ -193,5 +194,52 @@ describe("OperationsAlertsView 계좌 스냅샷 부분 실패", () => {
     expect(
       await screen.findByText(/GET \/account-snapshots\/latest/),
     ).toBeInTheDocument();
+  });
+});
+
+/* ───────────────────────────────────────────
+ * 필수 테스트 3: systemStatus/snapshotSync가 계좌 조회를 기다리지 않고
+ * 백그라운드로 먼저 시작되는지 (2·3·4단계 순차 대기 제거 검증)
+ * ─────────────────────────────────────────── */
+describe("OperationsAlertsView 로딩 병렬화", () => {
+  it("getClients가 아직 끝나지 않은 시점에도 getHealth/getSnapshotSyncRuns가 이미 호출되어 있다", async () => {
+    vi.spyOn(apiClient, "getHealth").mockResolvedValue(mockHealthOk);
+    vi.spyOn(apiClient, "getOrders").mockResolvedValue(mockOrders);
+    vi.spyOn(apiClient, "getReconciliationSummary").mockResolvedValue(cleanReconSummary);
+    vi.spyOn(apiClient, "getAgentRuns").mockResolvedValue([]);
+    vi.spyOn(apiClient, "getLatestMarketSession").mockResolvedValue(cleanSessionResponse);
+    const getSnapshotSyncRunsSpy = vi
+      .spyOn(apiClient, "getSnapshotSyncRuns")
+      .mockResolvedValue([]);
+
+    // getClients를 의도적으로 미해결 상태로 묶어 둔다 — 이 시점에도
+    // getHealth/getSnapshotSyncRuns가 이미 호출됐다면, 계좌 조회 체인을
+    // 기다리지 않고 백그라운드로 먼저 시작됐다는 뜻이다. 예전 순차 구조라면
+    // getClients가 끝나야만 그 뒤 블록들이 시작되므로 이 시점엔 호출되지
+    // 않았을 것이다.
+    let resolveClients: (clients: ClientDetail[]) => void = () => {};
+    const getClientsSpy = vi.spyOn(apiClient, "getClients").mockReturnValue(
+      new Promise<ClientDetail[]>((resolve) => {
+        resolveClients = resolve;
+      }),
+    );
+    vi.spyOn(apiClient, "getAccounts").mockResolvedValue([accountA]);
+    vi.spyOn(apiClient, "getAccountSnapshots").mockResolvedValue(
+      makeAccountSnapshot({ account_id: accountA.account_id }),
+    );
+
+    render(<OperationsAlertsView />);
+
+    // microtask를 흘려보내 systemStatus/snapshotSync 블록의 fetch 호출이
+    // 실제로 발생하도록 한다 — getClients는 여전히 미해결 상태.
+    await vi.waitFor(() => {
+      expect(getClientsSpy).toHaveBeenCalledTimes(1);
+    });
+    expect(apiClient.getHealth).toHaveBeenCalledTimes(1);
+    expect(getSnapshotSyncRunsSpy).toHaveBeenCalledTimes(1);
+
+    // 계좌 조회 체인을 마무리해 화면 렌더링을 정상 종료시킨다.
+    resolveClients([mockClients[0]]);
+    await screen.findByText("운영 경고");
   });
 });

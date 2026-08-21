@@ -118,39 +118,59 @@ export default function OperationsAlertsView() {
 
     try {
       // ── 시스템 상태 / 주문 / 정합성 요약 / 에이전트 / 세션 (account_id 불필요) ──
-      const [healthResult, ordersResult, reconSummaryResult, agentRunsResult, sessionResult] =
-        await Promise.all([
-          getHealth()
-            .then((h) => ({ data: h, error: false }))
-            .catch((e) => {
-              apiErrors.push({ apiName: "GET /health", message: String(e) });
-              return { data: null as HealthResponse | null, error: true };
-            }),
-          getOrders()
-            .then((o) => ({ data: o, error: false }))
-            .catch((e) => {
-              apiErrors.push({ apiName: "GET /orders", message: String(e) });
-              return { data: [] as OrderSummary[], error: true };
-            }),
-          getReconciliationSummary()
-            .then((r) => ({ data: r, error: false }))
-            .catch((e) => {
-              apiErrors.push({ apiName: "GET /reconciliation/summary", message: String(e) });
-              return { data: null, error: true };
-            }),
-          getAgentRuns()
-            .then((a) => ({ data: a, error: false }))
-            .catch((e) => {
-              apiErrors.push({ apiName: "GET /agent-runs", message: String(e) });
-              return { data: [] as { status?: string }[], error: true };
-            }),
-          getLatestMarketSession()
-            .then((s) => ({ data: s, error: false }))
-            .catch((e) => {
-              apiErrors.push({ apiName: "GET /market-sessions/latest", message: String(e) });
-              return { data: null as SchedulerStatusResponse | null, error: true };
-            }),
-        ]);
+      // 이 블록과 snapshot sync run 조회는 계좌 목록(아래)이나 서로에게
+      // 의존하지 않으므로, await로 묶어 순차 대기시키지 않고 백그라운드로
+      // 먼저 시작해 둔다. 계좌 목록 조회 → 계좌 스냅샷 조회 체인이 끝난
+      // 뒤 이 결과들을 함께 대기함으로써, 원래 4단계 순차 대기를
+      // "systemStatus/snapshotSync 백그라운드 + (accounts→account snapshots)"
+      // 두 갈래의 동시 진행으로 줄인다.
+      const systemStatusPromise = Promise.all([
+        getHealth()
+          .then((h) => ({ data: h, error: false }))
+          .catch((e) => {
+            apiErrors.push({ apiName: "GET /health", message: String(e) });
+            return { data: null as HealthResponse | null, error: true };
+          }),
+        getOrders()
+          .then((o) => ({ data: o, error: false }))
+          .catch((e) => {
+            apiErrors.push({ apiName: "GET /orders", message: String(e) });
+            return { data: [] as OrderSummary[], error: true };
+          }),
+        getReconciliationSummary()
+          .then((r) => ({ data: r, error: false }))
+          .catch((e) => {
+            apiErrors.push({ apiName: "GET /reconciliation/summary", message: String(e) });
+            return { data: null, error: true };
+          }),
+        getAgentRuns()
+          .then((a) => ({ data: a, error: false }))
+          .catch((e) => {
+            apiErrors.push({ apiName: "GET /agent-runs", message: String(e) });
+            return { data: [] as { status?: string }[], error: true };
+          }),
+        getLatestMarketSession()
+          .then((s) => ({ data: s, error: false }))
+          .catch((e) => {
+            apiErrors.push({ apiName: "GET /market-sessions/latest", message: String(e) });
+            return { data: null as SchedulerStatusResponse | null, error: true };
+          }),
+      ]);
+
+      // ── Snapshot sync run (최신 1건) ──
+      const snapshotSyncPromise = (async () => {
+        let syncRun: SnapshotSyncRunSummary | null = null;
+        let syncError = false;
+        try {
+          const runs = await getSnapshotSyncRuns(1);
+          if (runs.length > 0) {
+            syncRun = runs[0];
+          }
+        } catch {
+          syncError = true;
+        }
+        return { syncRun, syncError };
+      })();
 
       // ── 클라이언트 → 계좌 (Dashboard.tsx와 동일한 패턴) ──
       let accounts: { account_id: string }[] = [];
@@ -172,18 +192,6 @@ export default function OperationsAlertsView() {
         }
       } catch (e) {
         accountsError = true;
-      }
-
-      // ── Snapshot sync run (최신 1건) ──
-      let snapshotSyncRun: SnapshotSyncRunSummary | null = null;
-      let snapshotSyncError = false;
-      try {
-        const runs = await getSnapshotSyncRuns(1);
-        if (runs.length > 0) {
-          snapshotSyncRun = runs[0];
-        }
-      } catch {
-        snapshotSyncError = true;
       }
 
       // ── 계좌 스냅샷(포지션 + 현금 + 정합성 상세) — 계좌당 단일 호출 ──
@@ -245,6 +253,14 @@ export default function OperationsAlertsView() {
       const positionsCount = Array.from(dedupPositions.values()).filter(
         (p) => (p.quantity ?? 0) > 0
       ).length;
+
+      // ── 백그라운드로 미리 시작해 둔 systemStatus/snapshotSync 대기 ──
+      // 위 accounts→account snapshots 체인이 진행되는 동안 이미 병렬로
+      // 진행되었으므로, 여기서는 이미 끝났거나 곧 끝날 결과를 모으기만 한다.
+      const [healthResult, ordersResult, reconSummaryResult, agentRunsResult, sessionResult] =
+        await systemStatusPromise;
+      const { syncRun: snapshotSyncRun, syncError: snapshotSyncError } =
+        await snapshotSyncPromise;
 
       const newAlerts = deriveAlerts({
         health: healthResult.data,
