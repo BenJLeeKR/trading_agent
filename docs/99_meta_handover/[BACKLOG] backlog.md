@@ -7572,3 +7572,65 @@ turn의 "Stage A-1a/A-2" backlog 항목을 해소한다.
 - **신규 backlog(운영 실측 필요)**: 배포 후 실제 EV gate blocked/pass
   사례에서 `gate_margin.margin_value` 값이 기대한 부호/크기로 쌓이는지
   실측.
+
+## FDC strict no-bypass rate limiter + 재시도 포함 shared permit 전환 구현 완료(2026-08-21 KST)
+
+상세: `docs/30_work_log/2026-08-21_fdc_strict_rate_limiter_and_retry_
+permit.md`.
+
+- `fdc_rate_limiter.py`: fail-open bypass 완전 제거 →
+  `FdcRateLimitResult(granted/queue_timeout/state_file_error)`로 재정의,
+  `DEFAULT_MAX_WAIT_SECONDS` 20.0→18.0 재계산.
+- `provider_client.py`: 재시도 루프 안에 `acquire_permit` 콜백을 삽입해
+  최초 요청 + 매 재시도가 각각 permit을 재획득하도록 전환(`fdc_rate_
+  limiter.py` import 없이 얕은 `PermitResult` 프로토콜만 공유).
+- `final_decision_composer.py`/`run_agent_subprocess.py`: `provider_
+  queue_timeout`/`provider_limiter_unavailable` reason code 신설,
+  `_build_fdc_timeout_fallback()`의 빈 `reason_codes` 결함 수정,
+  FDC 전용 `_FDC_PER_AGENT_TIMEOUT=70` 신설(EI/AR/AC는 기존 30 유지).
+- `common_types.py`/`subprocess_helpers.py`/`decision_orchestrator.py`:
+  `provider_observability` 메타데이터를 신규 테이블 없이 `agent_runs.
+  structured_output_json["__provider_observability__"]`에 저장(EI의
+  기존 `__error__` 패턴과 동일).
+- 신규/갱신 테스트 다수 PASS, 기존 회귀 없음(`test_fdc_rate_limiter.py`
+  전면 재작성, `test_provider_client.py`/`test_fdc_skip.py`/`test_
+  subprocess_helpers.py` 확장, `test_agent_subprocess.py`/`test_
+  decision_orchestrator.py` 무관 회귀 없음 확인).
+- **신규 backlog(운영 실측 필요)**: 배포 후 `provider_queue_timeout`/
+  `provider_limiter_unavailable`/`provider_rate_limit` reason_codes
+  분포, `avg_attempts`(재시도 빈도), `_FDC_PER_AGENT_TIMEOUT=70s` 확장이
+  cycle wall-clock에 미치는 영향 실측 필요(work log의 배포 후 측정
+  SQL 참고).
+- **신규 backlog(범위 판단 보류)**: `build_fallback_bundle()`
+  (subprocess 전체 90초 timeout 시 parent가 직접 구성하는 fallback,
+  `subprocess_helpers.py`)의 기존 빈 `reason_codes` 문제는 이번 턴의
+  명시적 스코프(`_build_fdc_timeout_fallback()`만) 밖이라 남아있음 —
+  다음 턴에서 필요성 재검토.
+
+## 위 FDC strict rate limiter 작업 후속 수정 — 관측성 직렬화 누락 배관 결함 발견/수정(같은 PR #311, 2026-08-21 KST)
+
+코드 검토에서 `AgentSubprocessOutput`에 추가한 관측성 필드 8개가
+`subprocess_io.py::build_agent_subprocess_output_payload()`에는
+반영되지 않아 stdout JSON에서 조용히 누락되던 결함을 발견/수정.
+`subprocess_io.py` 양쪽(Protocol + payload 빌더)에 8개 필드 추가,
+`write_agent_subprocess_output()` 실제 호출 기반 round-trip 테스트와
+`decision_orchestrator` recorder 경로 테스트를 추가해 이 배관이
+실제로 연결됐음을 검증. 타임아웃 예산 계산 주석/문서의 "최악 시간
+보장" 오독 소지도 함께 수정(설계 목표치임을 명시, 실제 시간 상한은
+`_FDC_PER_AGENT_TIMEOUT`의 강제 종료가 담당). 상세: work log 동일
+파일 "후속 수정" 절.
+
+## 위 FDC strict rate limiter 작업 후속 수정 2 — outer timeout 관측성 보정(같은 PR #311, 2026-08-21 KST)
+
+코드 검토에서 FDC outer timeout(`asyncio.wait_for(..., timeout=
+_FDC_PER_AGENT_TIMEOUT)`) 경로가 `asyncio.CancelledError`로 취소되면
+`fdc_agent.last_provider_observation`이 채워질 기회가 없어
+`provider_final_status`/`provider_execution_seconds`가 빈 기본값으로
+남는 결함을 발견/수정. `run_agent_subprocess.py`에
+`_run_fdc_with_outer_timeout()` 헬퍼를 신설해 outer timeout 시
+`provider_final_status="provider_timeout"`과 실제 경과 시간을 명시적
+으로 계산하고, HTTP 시도/429 횟수는 취소 전 실측값이 없으면 추정하지
+않고 0으로 남긴다. controlled coroutine 기반 신규 테스트로 outer
+timeout → fallback → 관측값 계산 → stdout JSON → deserialize까지의
+전체 경로를 실제 70초 sleep 없이 검증했다. 상세: work log 동일 파일
+"후속 수정 2" 절.

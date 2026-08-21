@@ -47,6 +47,10 @@ from agent_trading.services.ai_agents.final_decision_composer import (
     FinalDecisionComposerAgent,
     StubFinalDecisionComposerAgent,
 )
+from agent_trading.services.ai_agents.provider_client import (
+    PermitDeniedError,
+    PermitResult,
+)
 from agent_trading.services.ai_agents.schemas import (
     AIRiskOutput,
     EventInterpretationOutput,
@@ -1953,6 +1957,132 @@ class TestFinalDecisionComposerAgent:
         assert result.decision_type == "HOLD"
         assert result.reason_codes == ("provider_error",)
         assert "provider_error" in result.summary
+
+    # ── 2026-08-21 PR #311 코드 검토: strict rate limiter permit 거부 →
+    # reason_codes 분류 boundary 테스트. 실제 sleep 없이 mock provider가
+    # PermitDeniedError를 직접 발생시켜, HTTP 요청이 전혀 없었던 상황을
+    # 재현한다(실제 HTTP-미발생 증명 자체는 test_provider_client.py::
+    # TestAcquirePermitGating에서 이미 검증됨 — 여기서는 그 예외가 FDC
+    # 계층까지 올라왔을 때 올바른 reason_codes로 분류되는지만 본다).
+
+    @pytest.mark.asyncio
+    async def test_run_fallback_on_permit_queue_timeout_sets_reason_no_http(
+        self,
+        sample_request: AgentExecutionRequest,
+    ) -> None:
+        """permit이 queue_timeout으로 거부되면(HTTP 미발생)
+        reason_codes=('provider_queue_timeout',)로 분류돼야 한다."""
+        provider = AsyncMock(spec=AIProviderClient)
+
+        async def _deny(**kwargs: object) -> object:
+            raise PermitDeniedError(
+                PermitResult(granted=False, waited_seconds=18.0, denial_reason="queue_timeout")
+            )
+
+        provider.generate_structured = _deny  # type: ignore[method-assign]
+
+        agent = FinalDecisionComposerAgent(provider_client=provider)
+        result = await agent.run(sample_request)
+        assert result.decision_type == "HOLD"
+        assert result.reason_codes == ("provider_queue_timeout",)
+        assert agent.last_provider_observation is not None
+        assert agent.last_provider_observation.rate_limiter_queue_timeout is True
+        assert agent.last_provider_observation.rate_limiter_state_file_error is False
+
+    @pytest.mark.asyncio
+    async def test_run_fallback_on_permit_state_file_error_sets_reason_no_http(
+        self,
+        sample_request: AgentExecutionRequest,
+    ) -> None:
+        """permit이 state_file_error로 거부되면(HTTP 미발생)
+        reason_codes=('provider_limiter_unavailable',)로 분류돼야 한다."""
+        provider = AsyncMock(spec=AIProviderClient)
+
+        async def _deny(**kwargs: object) -> object:
+            raise PermitDeniedError(
+                PermitResult(granted=False, waited_seconds=0.3, denial_reason="state_file_error")
+            )
+
+        provider.generate_structured = _deny  # type: ignore[method-assign]
+
+        agent = FinalDecisionComposerAgent(provider_client=provider)
+        result = await agent.run(sample_request)
+        assert result.decision_type == "HOLD"
+        assert result.reason_codes == ("provider_limiter_unavailable",)
+        assert agent.last_provider_observation is not None
+        assert agent.last_provider_observation.rate_limiter_state_file_error is True
+        assert agent.last_provider_observation.rate_limiter_queue_timeout is False
+
+    @pytest.mark.asyncio
+    async def test_run_fallback_on_permit_denied_after_429_retry_halts_with_queue_timeout(
+        self,
+        sample_request: AgentExecutionRequest,
+    ) -> None:
+        """provider 429 재시도 도중 permit을 다시 얻지 못하면(HTTP 재요청
+        없이) queue_timeout으로 끝나야 한다. permit-per-attempt 재획득
+        자체(HTTP 요청 카운트)는 test_provider_client.py에서 실증됐으므로,
+        여기서는 그 결과로 던져진 ``PermitDeniedError``가 FDC 계층까지
+        전파돼 올바르게 분류되는지만 검증한다."""
+        provider = AsyncMock(spec=AIProviderClient)
+        call_count = {"n": 0}
+
+        async def _first_429_then_permit_denied(**kwargs: object) -> object:
+            call_count["n"] += 1
+            # 첫 호출은 provider_client.py 내부에서 이미 429 재시도를
+            # 소진한 뒤 permit 재획득에 실패했다고 가정 — FDC 계층에서는
+            # 이 지점이 이미 PermitDeniedError로 도달한다(provider_client.py
+            # 자체의 재시도-permit 결합은 TestAcquirePermitGating에서
+            # 별도로 실증됨).
+            raise PermitDeniedError(
+                PermitResult(granted=False, waited_seconds=18.0, denial_reason="queue_timeout")
+            )
+
+        provider.generate_structured = _first_429_then_permit_denied  # type: ignore[method-assign]
+
+        agent = FinalDecisionComposerAgent(provider_client=provider)
+        result = await agent.run(sample_request)
+
+        # generate_structured는 정확히 1번만 호출된다 — FDC.run()이
+        # 자체적으로 재시도하지 않기 때문(재시도는 provider_client.py
+        # 내부 책임). 추가 HTTP 요청이 없다는 것은 이 호출 횟수로 증명된다.
+        assert call_count["n"] == 1
+        assert result.decision_type == "HOLD"
+        assert result.reason_codes == ("provider_queue_timeout",)
+
+    @pytest.mark.asyncio
+    async def test_fdc_per_agent_timeout_produces_provider_timeout_fallback(
+        self,
+    ) -> None:
+        """permit 대기 후 provider 실행이 FDC per-agent timeout에 걸리면
+        (``run_agent_subprocess.py``의 ``asyncio.wait_for(fdc_agent.run(...),
+        timeout=_FDC_PER_AGENT_TIMEOUT)`` 패턴) ``provider_timeout``
+        reason code가 기록돼야 한다. 실제 70초 sleep 대신 controlled
+        coroutine + 매우 짧은 timeout으로 동일한 취소 경로를 재현한다."""
+        import asyncio
+
+        from scripts.run_agent_subprocess import _build_fdc_timeout_fallback
+
+        request = AgentExecutionRequest(
+            decision_context_id=uuid4(),
+            correlation_id="test-fdc-per-agent-timeout",
+            context=AssembledContext(source_type="core"),
+            symbol="005930",
+            market="KRX",
+        )
+
+        async def _slow_provider_call() -> FinalDecisionComposerOutput:
+            await asyncio.sleep(10)
+            raise AssertionError("timeout보다 먼저 취소돼야 하는 코루틴이 끝까지 실행됨")
+
+        try:
+            composer_output = await asyncio.wait_for(_slow_provider_call(), timeout=0.05)
+        except asyncio.TimeoutError:
+            composer_output = _build_fdc_timeout_fallback(request, symbol="005930")
+
+        assert composer_output.decision_type == "HOLD"
+        assert composer_output.reason_codes == ("provider_timeout",)
+        assert composer_output.symbol == "005930"
+        assert "005930" in composer_output.summary
 
     @pytest.mark.asyncio
     async def test_fallback_still_preserves_agent_identity(

@@ -145,6 +145,21 @@ def deserialize_agent_output(
     else:
         skip_reason_codes = ()
 
+    # 2026-08-21 신설: strict FDC rate limiter + retry-inclusive permit
+    # 관측성 필드. 구버전 subprocess payload(이 필드들이 없는 경우)와도
+    # 호환되도록 키 부재 시 안전한 기본값을 쓴다 — FDC가 아예 생략되거나
+    # provider 미설정(Stub)이면 자연스럽게 "호출 없음" 기본값과 같다.
+    provider_observability: dict[str, object] = {
+        "rate_limiter_waited_seconds": float(data.get("rate_limiter_waited_seconds", 0.0)),
+        "rate_limiter_slot_acquired": bool(data.get("rate_limiter_slot_acquired", True)),
+        "rate_limiter_queue_timeout": bool(data.get("rate_limiter_queue_timeout", False)),
+        "rate_limiter_state_file_error": bool(data.get("rate_limiter_state_file_error", False)),
+        "provider_http_attempt_count": int(data.get("provider_http_attempt_count", 0)),
+        "provider_http_429_count": int(data.get("provider_http_429_count", 0)),
+        "provider_execution_seconds": float(data.get("provider_execution_seconds", 0.0)),
+        "provider_final_status": str(data.get("provider_final_status", "")),
+    }
+
     # --- Assemble AIDecisionInputs (same logic as _run_agents()) ---
     ai_inputs = AIDecisionInputs(
         # FDC-derived
@@ -214,6 +229,7 @@ def deserialize_agent_output(
         compliance_output=ac_output,
         composer_output=fdc_output,
         ei_error_metadata=ei_error_metadata,
+        provider_observability=provider_observability,
     )
 
 

@@ -20,6 +20,7 @@ if TYPE_CHECKING:
     from agent_trading.services.ai_agents.schemas import EventInterpretationOutput
     from agent_trading.services.ai_agents.schemas import AIRiskOutput
     from agent_trading.services.ai_agents.schemas import AIComplianceOutput
+    from agent_trading.services.ai_agents.provider_client import PermitCallback
 
 
 # ---------------------------------------------------------------------------
@@ -140,10 +141,20 @@ class RawProviderResponse:
         The parsed dataclass instance (e.g. ``EventInterpretationOutput``).
     raw_content
         The raw JSON string returned by the provider.
+    http_attempt_count
+        실제로 provider에 전송된 HTTP 요청 횟수(재시도 포함). 대부분의
+        agent(EI/AR)는 재시도 없이 1회만 호출하므로 기본값 ``1``이
+        정확하다. FDC처럼 재시도 가능한 provider client를 쓰는 경우에만
+        의미 있는 값이 채워진다(2026-08-21, strict FDC rate limiter
+        관측성 강화).
+    http_429_count
+        위 시도 중 HTTP 429(Too Many Requests) 응답을 받은 횟수.
     """
 
     parsed: object
     raw_content: str
+    http_attempt_count: int = 1
+    http_429_count: int = 0
 
 
 # ---------------------------------------------------------------------------
@@ -174,6 +185,7 @@ class AIProviderClient(Protocol):
         response_format: type,
         temperature: float = 0.0,
         seed: int | None = None,
+        acquire_permit: "PermitCallback | None" = None,
     ) -> RawProviderResponse:
         """Send a prompt to the Provider and return a structured response.
 

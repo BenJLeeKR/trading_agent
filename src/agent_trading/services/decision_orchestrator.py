@@ -3597,10 +3597,20 @@ class DecisionOrchestratorService:
                 agent_type=self._ai_compliance_agent.agent_name,
                 structured_output=dataclass_to_dict(agent_bundle.compliance_output),
             )
+            # 2026-08-21: strict FDC rate limiter + retry-inclusive permit
+            # 관측성 메타데이터를 FDC structured_output에 side-channel로
+            # 주입한다 — EI의 ``__error__`` 주입과 동일한 패턴이다.
+            # ``FinalDecisionComposerOutput`` 자체(LLM 응답 스키마)는
+            # 건드리지 않는다.
+            fdc_structured = dataclass_to_dict(agent_bundle.composer_output)
+            if agent_bundle.provider_observability is not None:
+                fdc_structured["__provider_observability__"] = (
+                    agent_bundle.provider_observability
+                )
             fdc_run = await self._agent_recorder.record(
                 decision_context_id=resolved_context_id,
                 agent_type=self._final_decision_agent.agent_name,
-                structured_output=dataclass_to_dict(agent_bundle.composer_output),
+                structured_output=fdc_structured,
             )
             fdc_run_id = fdc_run.agent_run_id
             logger.info(

@@ -44,10 +44,12 @@ from agent_trading.services.ai_agents.schemas import (
 from agent_trading.services.decision_orchestrator import AssembledContext
 from scripts.run_agent_subprocess import AgentSubprocessInput, _check_fdc_skip
 from scripts.run_agent_subprocess import (
+    AgentSubprocessOutput,
     _build_agent_triplet,
     _build_ar_timeout_fallback,
     _build_ei_timeout_fallback,
     _build_fdc_timeout_fallback,
+    _run_fdc_with_outer_timeout,
 )
 from agent_trading.services.ai_agents.event_interpretation import (
     DeterministicEventInterpretationAgent,
@@ -344,6 +346,187 @@ def test_build_fdc_timeout_fallback_preserves_symbol_and_context() -> None:
     assert output.symbol == "000660"
     assert output.decision_context_id == str(ctx_id)
     assert output.decision_type == "HOLD"
+
+
+def test_build_fdc_timeout_fallback_reason_codes_not_empty() -> None:
+    """2026-08-21 결함 수정: reason_codes가 더 이상 비어있으면 안 된다 —
+    비어 있으면 정상 HOLD와 timeout fallback을 DB만으로 구분할 수 없다."""
+    request = _make_request(_make_empty_context())
+
+    output = _build_fdc_timeout_fallback(request, symbol="000660")
+
+    assert output.reason_codes == ("provider_timeout",)
+    assert output.summary
+    assert "000660" in output.summary
+
+
+class _SlowFdcAgent:
+    """실제 70초 sleep 없이 outer timeout 취소 경로를 재현하는 fake agent.
+
+    ``asyncio.wait_for()``가 매우 짧은 timeout으로 이 ``run()``을 취소하면
+    ``CancelledError``가 전파되고, ``last_provider_observation``은
+    (실제 ``FinalDecisionComposerAgent``와 동일하게) ``None``으로 남는다
+    — ``except Exception`` 블록에 도달하지 못하기 때문이다.
+    """
+
+    def __init__(self) -> None:
+        self.last_provider_observation = None
+
+    async def run(self, request: AgentExecutionRequest) -> FinalDecisionComposerOutput:
+        import asyncio
+
+        await asyncio.sleep(10)  # 아래 테스트의 매우 짧은 timeout보다 항상 길다
+        raise AssertionError("outer timeout보다 먼저 취소돼야 하는 코루틴이 끝까지 실행됨")
+
+
+class TestRunFdcWithOuterTimeout:
+    """2026-08-21 PR #311 코드 검토 후속 수정 회귀 테스트.
+
+    outer ``asyncio.wait_for(fdc_agent.run(...), timeout=_FDC_PER_AGENT_
+    TIMEOUT)``가 실제로 timeout됐을 때 ``provider_final_status``/
+    ``provider_execution_seconds``가 빈 기본값("", 0.0)으로 남던 결함을
+    ``_run_fdc_with_outer_timeout()`` 신설로 수정했다 — 이 헬퍼가 실제
+    outer timeout 흐름(취소 → fallback → 관측값 계산)을 전부 재현하는지
+    검증한다. 실제 70초 sleep은 사용하지 않고 controlled coroutine +
+    매우 짧은 test-only timeout으로 동일한 취소 경로를 재현한다.
+    """
+
+    @pytest.mark.asyncio
+    async def test_outer_timeout_sets_provider_timeout_status_and_positive_execution_seconds(
+        self,
+    ) -> None:
+        request = _make_request(_make_empty_context())
+        slow_agent = _SlowFdcAgent()
+
+        composer_output, observation_fields = await _run_fdc_with_outer_timeout(
+            slow_agent,
+            request,
+            timeout_seconds=0.05,
+            symbol="005930",
+        )
+
+        assert composer_output.decision_type == "HOLD"
+        assert composer_output.reason_codes == ("provider_timeout",)
+        assert composer_output.symbol == "005930"
+
+        assert observation_fields["provider_final_status"] == "provider_timeout"
+        assert observation_fields["provider_execution_seconds"] > 0
+        # 취소 전 실제로 관측된 HTTP 시도가 없으므로(last_provider_
+        # observation=None) 임의로 추정하지 않고 0으로 남아야 한다.
+        assert observation_fields["provider_http_attempt_count"] == 0
+        assert observation_fields["provider_http_429_count"] == 0
+
+    @pytest.mark.asyncio
+    async def test_outer_timeout_fields_survive_full_subprocess_round_trip(
+        self,
+    ) -> None:
+        """outer timeout 관측값이 ``AgentSubprocessOutput`` →
+        ``write_agent_subprocess_output()`` → stdout JSON →
+        ``deserialize_agent_output()`` → ``AgentExecutionBundle.
+        provider_observability``까지 손실 없이 보존돼야 하며, 기존
+        ``provider_queue_timeout``/실제 429 재시도 케이스와 혼동되지
+        않아야 한다(``rate_limiter_queue_timeout``/``rate_limiter_
+        state_file_error``는 이 경로와 무관하므로 False로 남아야 함)."""
+        import json
+        from io import StringIO
+
+        from agent_trading.services.ai_agents.schemas import (
+            AIComplianceOutput,
+            AIRiskOutput as _AIRiskOutput,
+            EventInterpretationOutput as _EventInterpretationOutput,
+        )
+        from agent_trading.services.ai_agents.subprocess_io import (
+            write_agent_subprocess_output,
+        )
+        from agent_trading.services.common_types import dataclass_to_dict
+        from agent_trading.services.subprocess_helpers import deserialize_agent_output
+
+        request = _make_request(_make_empty_context())
+        slow_agent = _SlowFdcAgent()
+
+        composer_output, observation_fields = await _run_fdc_with_outer_timeout(
+            slow_agent,
+            request,
+            timeout_seconds=0.05,
+            symbol="005930",
+        )
+
+        fake_output = AgentSubprocessOutput(
+            success=True,
+            event_output=dataclass_to_dict(_EventInterpretationOutput()),
+            risk_output=dataclass_to_dict(_AIRiskOutput()),
+            compliance_output=dataclass_to_dict(AIComplianceOutput()),
+            composer_output=dataclass_to_dict(composer_output),
+            duration_seconds=0.05,
+            provider_http_attempt_count=observation_fields["provider_http_attempt_count"],
+            provider_http_429_count=observation_fields["provider_http_429_count"],
+            provider_execution_seconds=observation_fields["provider_execution_seconds"],
+            provider_final_status=observation_fields["provider_final_status"],
+            # outer timeout은 permit 대기/상태 파일 오류와 무관하므로
+            # rate_limiter_* 는 "정상 진행" 기본값을 그대로 둔다.
+        )
+
+        stream = StringIO()
+        write_agent_subprocess_output(fake_output, stream)
+        raw_json = stream.getvalue()
+
+        payload = json.loads(raw_json)
+        assert payload["provider_final_status"] == "provider_timeout"
+        assert payload["provider_execution_seconds"] > 0
+        assert payload["rate_limiter_queue_timeout"] is False
+        assert payload["rate_limiter_state_file_error"] is False
+
+        bundle = deserialize_agent_output(raw_json)
+        assert bundle.composer_output.reason_codes == ("provider_timeout",)
+        assert bundle.composer_output.decision_type == "HOLD"
+
+        obs = bundle.provider_observability
+        assert obs is not None
+        assert obs["provider_final_status"] == "provider_timeout"
+        assert obs["provider_execution_seconds"] > 0
+        assert obs["provider_http_attempt_count"] == 0
+        assert obs["provider_http_429_count"] == 0
+        assert obs["rate_limiter_queue_timeout"] is False
+        assert obs["rate_limiter_state_file_error"] is False
+
+    @pytest.mark.asyncio
+    async def test_successful_run_within_timeout_uses_agent_observation_unaffected(
+        self,
+    ) -> None:
+        """timeout에 걸리지 않는 정상 경로는 기존과 동일하게
+        ``fdc_agent.last_provider_observation``의 실제 값을 그대로
+        사용해야 한다(이번 수정이 성공 경로를 건드리지 않았음을 확인)."""
+        from dataclasses import dataclass
+
+        @dataclass
+        class _FakeObservation:
+            http_attempt_count: int = 2
+            http_429_count: int = 1
+            execution_seconds: float = 3.4
+            provider_final_status: str = "success"
+
+        class _FastFdcAgent:
+            def __init__(self) -> None:
+                self.last_provider_observation = _FakeObservation()
+
+            async def run(self, request: AgentExecutionRequest) -> FinalDecisionComposerOutput:
+                return FinalDecisionComposerOutput(symbol="005930", decision_type="APPROVE")
+
+        request = _make_request(_make_empty_context())
+        fast_agent = _FastFdcAgent()
+
+        composer_output, observation_fields = await _run_fdc_with_outer_timeout(
+            fast_agent,
+            request,
+            timeout_seconds=5.0,
+            symbol="005930",
+        )
+
+        assert composer_output.decision_type == "APPROVE"
+        assert observation_fields["provider_final_status"] == "success"
+        assert observation_fields["provider_http_attempt_count"] == 2
+        assert observation_fields["provider_http_429_count"] == 1
+        assert observation_fields["provider_execution_seconds"] == 3.4
 
 
 class TestFdcSkipRiskReject:
