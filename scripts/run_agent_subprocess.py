@@ -1062,6 +1062,75 @@ def _build_fdc_timeout_fallback(
     )
 
 
+async def _run_fdc_with_outer_timeout(
+    fdc_agent: FinalDecisionComposerAgent | StubFinalDecisionComposerAgent,
+    request: AgentExecutionRequest,
+    *,
+    timeout_seconds: float,
+    symbol: str,
+) -> tuple[FinalDecisionComposerOutput, dict[str, object]]:
+    """FDC를 outer timeout(``_FDC_PER_AGENT_TIMEOUT``)으로 감싸 실행한다.
+
+    2026-08-21 결함 수정(PR #311 코드 검토): outer
+    ``asyncio.wait_for(fdc_agent.run(...), timeout=...)``가 실제로
+    timeout됐을 때, ``fdc_agent.last_provider_observation``은 거의
+    항상 ``None``으로 남는다 — ``asyncio.wait_for()``의 취소는
+    ``asyncio.CancelledError``(``BaseException`` 서브클래스)를 발생시켜
+    ``final_decision_composer.py::run()``의 ``except Exception as exc:``
+    블록을 통과하지 않으므로, 그 블록 안에서만 채워지는
+    ``self.last_provider_observation``이 이 경로에서는 설정될 기회가
+    없기 때문이다. 이 함수는 그 사실을 명시적으로 반영해, outer
+    timeout 시에는 ``last_provider_observation``에 의존하지 않고
+    ``provider_final_status``/``provider_execution_seconds``를 직접
+    계산한다(``http_attempt_count``/``http_429_count``는 취소 전 실제로
+    관측된 값이 없으므로 추정하지 않고 0으로 남긴다 — ``observation``이
+    드문 경합으로 이미 채워져 있는 경우에만 그 실제 값을 그대로 쓴다).
+
+    반환값은 ``(composer_output, observation_fields)`` — 두 번째 값은
+    ``AgentSubprocessOutput``에 그대로 대입 가능한
+    ``provider_http_attempt_count``/``provider_http_429_count``/
+    ``provider_execution_seconds``/``provider_final_status`` 4개 키를
+    담은 dict다. ``rate_limiter_*`` 필드는 이 함수의 책임이 아니다
+    (``_FdcPermitAccumulator``가 별도로 담당).
+    """
+    started_at = time.monotonic()
+    try:
+        composer_output = await asyncio.wait_for(
+            fdc_agent.run(request), timeout=timeout_seconds,
+        )
+    except asyncio.TimeoutError:
+        composer_output = _build_fdc_timeout_fallback(request, symbol=symbol)
+        # outer timeout 자체가 확정적 사실이므로 provider_final_status/
+        # provider_execution_seconds는 여기서 직접 계산한다 — 아래
+        # 성공 경로처럼 last_provider_observation의 값으로 덮어쓰지 않는다.
+        observation = getattr(fdc_agent, "last_provider_observation", None)
+        return composer_output, {
+            "provider_http_attempt_count": (
+                observation.http_attempt_count if observation is not None else 0
+            ),
+            "provider_http_429_count": (
+                observation.http_429_count if observation is not None else 0
+            ),
+            "provider_execution_seconds": time.monotonic() - started_at,
+            "provider_final_status": "provider_timeout",
+        }
+
+    observation = getattr(fdc_agent, "last_provider_observation", None)
+    if observation is not None:
+        return composer_output, {
+            "provider_http_attempt_count": observation.http_attempt_count,
+            "provider_http_429_count": observation.http_429_count,
+            "provider_execution_seconds": observation.execution_seconds,
+            "provider_final_status": observation.provider_final_status,
+        }
+    return composer_output, {
+        "provider_http_attempt_count": 0,
+        "provider_http_429_count": 0,
+        "provider_execution_seconds": 0.0,
+        "provider_final_status": "",
+    }
+
+
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
@@ -1301,34 +1370,31 @@ async def main() -> None:
                 risk_output=risk_output,
                 compliance_output=compliance_output,
             )
-            try:
-                composer_output = await asyncio.wait_for(
-                    fdc_agent.run(request_with_ei_ar_ac),
-                    timeout=_FDC_PER_AGENT_TIMEOUT,
-                )
-            except asyncio.TimeoutError:
+            composer_output, _fdc_provider_observation_fields = await _run_fdc_with_outer_timeout(
+                fdc_agent,
+                request_with_ei_ar_ac,
+                timeout_seconds=_FDC_PER_AGENT_TIMEOUT,
+                symbol=inp.symbol or event_output.symbol or "",
+            )
+            fdc_provider_http_attempt_count = _fdc_provider_observation_fields[
+                "provider_http_attempt_count"
+            ]
+            fdc_provider_http_429_count = _fdc_provider_observation_fields[
+                "provider_http_429_count"
+            ]
+            fdc_provider_execution_seconds = _fdc_provider_observation_fields[
+                "provider_execution_seconds"
+            ]
+            fdc_provider_final_status = _fdc_provider_observation_fields[
+                "provider_final_status"
+            ]
+            if fdc_provider_final_status == "provider_timeout":
                 logger.warning(
                     "FinalDecisionComposerAgent timed out after %ss — using fallback output. symbol=%s decision_context_id=%s",
                     _FDC_PER_AGENT_TIMEOUT,
                     inp.symbol,
                     inp.decision_context_id,
                 )
-                composer_output = _build_fdc_timeout_fallback(
-                    request_with_ei_ar_ac,
-                    symbol=inp.symbol or event_output.symbol or "",
-                )
-
-            observation = getattr(fdc_agent, "last_provider_observation", None)
-            if observation is not None:
-                fdc_provider_http_attempt_count = observation.http_attempt_count
-                fdc_provider_http_429_count = observation.http_429_count
-                fdc_provider_execution_seconds = observation.execution_seconds
-                fdc_provider_final_status = observation.provider_final_status
-            else:
-                fdc_provider_http_attempt_count = 0
-                fdc_provider_http_429_count = 0
-                fdc_provider_execution_seconds = 0.0
-                fdc_provider_final_status = ""
             if fdc_permit_accumulator is not None:
                 fdc_rate_limiter_waited_seconds = fdc_permit_accumulator.total_waited_seconds
                 fdc_rate_limiter_slot_acquired = fdc_permit_accumulator.slot_acquired

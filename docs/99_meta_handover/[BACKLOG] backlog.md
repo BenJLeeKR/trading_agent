@@ -7619,3 +7619,18 @@ permit.md`.
 보장" 오독 소지도 함께 수정(설계 목표치임을 명시, 실제 시간 상한은
 `_FDC_PER_AGENT_TIMEOUT`의 강제 종료가 담당). 상세: work log 동일
 파일 "후속 수정" 절.
+
+## 위 FDC strict rate limiter 작업 후속 수정 2 — outer timeout 관측성 보정(같은 PR #311, 2026-08-21 KST)
+
+코드 검토에서 FDC outer timeout(`asyncio.wait_for(..., timeout=
+_FDC_PER_AGENT_TIMEOUT)`) 경로가 `asyncio.CancelledError`로 취소되면
+`fdc_agent.last_provider_observation`이 채워질 기회가 없어
+`provider_final_status`/`provider_execution_seconds`가 빈 기본값으로
+남는 결함을 발견/수정. `run_agent_subprocess.py`에
+`_run_fdc_with_outer_timeout()` 헬퍼를 신설해 outer timeout 시
+`provider_final_status="provider_timeout"`과 실제 경과 시간을 명시적
+으로 계산하고, HTTP 시도/429 횟수는 취소 전 실측값이 없으면 추정하지
+않고 0으로 남긴다. controlled coroutine 기반 신규 테스트로 outer
+timeout → fallback → 관측값 계산 → stdout JSON → deserialize까지의
+전체 경로를 실제 70초 sleep 없이 검증했다. 상세: work log 동일 파일
+"후속 수정 2" 절.

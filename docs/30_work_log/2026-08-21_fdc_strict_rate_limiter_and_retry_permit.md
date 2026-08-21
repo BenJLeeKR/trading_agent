@@ -182,6 +182,48 @@ TestFinalDecisionComposerAgent`의 `test_run_fallback_on_permit_*`,
 - `bash scripts/harness/run.sh accept script-file scripts/run_agent_subprocess.py` — PASS
 - `bash scripts/harness/run.sh accept backend-runtime` / `accept architecture` / `accept no-bypass`(hard_bypass_count=0) / `accept style` / `accept docs` — 전부 PASS
 
+## 후속 수정 2 — FDC outer timeout 관측성 보정(같은 PR #311, 2026-08-21 KST)
+
+코드 검토에서 FDC outer timeout(`_FDC_PER_AGENT_TIMEOUT=70s`) 경로의
+관측성 공백을 추가로 발견했다: `asyncio.wait_for(fdc_agent.run(...),
+timeout=...)`가 실제로 timeout되면 `asyncio.CancelledError`
+(`BaseException` 서브클래스)가 전파되는데, 이는
+`final_decision_composer.py::run()`의 `except Exception as exc:` 블록을
+통과하지 않는다 — 그 블록 안에서만 채워지는 `self.last_
+provider_observation`이 이 경로에서는 거의 항상 `None`으로 남는다.
+기존 코드는 이 경우 `observation is None` 분기로 빠져
+`provider_final_status=""`, `provider_execution_seconds=0.0`이라는
+빈 기본값을 그대로 저장했다 — timeout이 실제로 발생했다는 사실
+자체가 관측값에서 사라지는 결함이었다.
+
+**수정**: `run_agent_subprocess.py`에 `_run_fdc_with_outer_timeout()`
+헬퍼를 신설해 outer timeout 발생 시 `provider_final_status=
+"provider_timeout"`을 명시적으로 설정하고, `time.monotonic()` 기준
+실제 경과 시간을 `provider_execution_seconds`에 기록한다.
+`provider_http_attempt_count`/`provider_http_429_count`는 취소 전
+실제로 관측된 값이 없으므로(대부분 `last_provider_observation is
+None`) 임의로 추정하지 않고 0으로 남긴다 — 드문 경합으로
+`last_provider_observation`이 이미 채워져 있는 경우에만 그 실제
+값을 그대로 사용한다(코드 주석에 근거 명시). 이 헬퍼는 `main()`이
+직접 읽던 기존 인라인 로직을 대체해, "outer timeout 이후 observation을
+다시 조회해 빈 기본값으로 덮어쓰는" 문제 자체를 구조적으로 제거했다.
+
+`provider_timeout`(FDC 실행 전체가 70초 상한 초과로 강제 종료)과
+`provider_queue_timeout`(permit 대기 한도 안에 슬롯을 못 얻어 HTTP
+요청 자체를 보내지 않음)은 서로 다른 코드 경로에서 나온다 —
+`rate_limiter_queue_timeout`/`rate_limiter_state_file_error`는
+`_FdcPermitAccumulator`가 별도로 관리하며 이번 수정과 무관하게
+`False`로 유지된다(신규 round-trip 테스트에서 명시적으로 검증).
+
+추가 검증:
+- `bash scripts/harness/run.sh test-file tests/scripts/test_fdc_skip.py` — 37 passed(신규 `TestRunFdcWithOuterTimeout` 3건 포함, controlled coroutine으로 실제 70초 sleep 없이 outer timeout 취소 경로 재현)
+- `bash scripts/harness/run.sh test-file tests/services/ai_agents/test_agent_subprocess.py` — 29 passed(무관 회귀 없음)
+- `bash scripts/harness/run.sh test-file tests/services/ai_agents/test_fdc_rate_limiter.py` — 11 passed(무관 회귀 없음)
+- `bash scripts/harness/run.sh test-file tests/services/ai_agents/test_provider_client.py` — 26 passed(무관 회귀 없음)
+- `bash scripts/harness/run.sh test-file tests/services/test_subprocess_helpers.py` — 6 passed(무관 회귀 없음)
+- `bash scripts/harness/run.sh accept script-file scripts/run_agent_subprocess.py` — PASS
+- `bash scripts/harness/run.sh accept backend-runtime` / `accept architecture`(violation=0) / `accept no-bypass`(hard_bypass_count=0, review_bypass_count=2는 "except Exception" 문구를 포함한 설명 주석/docstring — 실제 bare except 아님) / `accept style` / `accept docs` — 전부 PASS
+
 ## 미검증 항목
 
 - `httpx.HTTPStatusError` 등 provider 예외 인스턴스에 임의 속성
