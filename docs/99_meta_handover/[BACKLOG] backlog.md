@@ -7716,3 +7716,21 @@ existing.md`.
   tmpfs/overlay는 지원하나 실측 안 함), `provider_limiter_
   unavailable` 발생 시점이 컨테이너 재기동 직후(초기화 경합)에
   집중되는지 무작위인지(진짜 손상) 구분 필요.
+
+## held_position NO_ACTION FDC 실제 생략(2026-08-21 KST)
+
+상세: `docs/30_work_log/2026-08-21_held_position_no_action_fdc_skip.md`.
+
+- 기존 shadow 관측에서 근거가 확인된 `held_position + 실제 보유 수량 +
+  deterministic_trigger.primary_candidate=NO_ACTION` 구간만 FDC 호출을
+  실제로 생략하고 기본 HOLD를 전달한다.
+- EI/AR 실행, held-position sell override, EV gate, 주문 gate는 모두
+  유지한다. 따라서 이 변경은 FDC 수요만 줄이며 매도 안전장치나 주문
+  정책을 완화하지 않는다.
+- 실제로 생략된 결과는 `shadow_held_position_fdc_skip`에 기록하지 않아,
+  앞으로 WATCH와 REDUCE/SELL shadow 표본을 실제 FDC 응답 기준으로
+  계속 해석할 수 있게 한다.
+- **신규 backlog(운영 실측 필요)**: NO_ACTION 실제 skip의 FDC 호출 수 및
+  `provider_queue_timeout` 감소폭을 측정한 뒤, WATCH와
+  `risk_opinion=reduce` 하위 구간 확대 여부를 shadow 데이터로 별도
+  판단한다.

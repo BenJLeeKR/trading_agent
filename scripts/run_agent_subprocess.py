@@ -908,7 +908,36 @@ def _check_fdc_skip(
             reason_codes=("risk_rejected",),
         ))
 
-    # Condition 2: 최근 이벤트 0건 + 미보유 → 결정론적 HOLD
+    # Condition 2: held_position + NO_ACTION → 결정론적 기본 HOLD
+    #
+    # 2026-08-21: held_position의 NO_ACTION은 shadow 관측에서 FDC 원본과
+    # 최종 실행 의미가 일치했다. EI/AR는 이미 실행된 뒤이므로, 이 조건은
+    # FDC만 생략한다. 특히 이후 orchestrator의 held_position sell override
+    # 는 이 HOLD를 REDUCE/EXIT로 바꿀 수 있으므로 summary에서 최종 HOLD를
+    # 확정했다고 표현하지 않는다.
+    deterministic_trigger = context.deterministic_trigger
+    primary_candidate = (
+        getattr(deterministic_trigger, "primary_candidate", "") or ""
+    ).strip().upper()
+    if (
+        (context.source_type or "core").strip().lower() == "held_position"
+        and has_position
+        and primary_candidate == "NO_ACTION"
+    ):
+        return (True, "held_position_no_action", FinalDecisionComposerOutput(
+            symbol=symbol,
+            decision_type="HOLD",
+            confidence=0.0,
+            summary=(
+                f"[규칙 기반 FDC 생략] {symbol} — 보유 포지션의 결정론적 "
+                "후보가 NO_ACTION으로 확인되어 FDC 호출 없이 기본 HOLD를 "
+                "전달했습니다. 이후 held_position 리스크 override와 기존 "
+                "주문 gate는 동일하게 적용됩니다."
+            ),
+            reason_codes=("held_position_no_action", "fdc_skipped"),
+        ))
+
+    # Condition 3: 최근 이벤트 0건 + 미보유 → 결정론적 HOLD
     # 주의:
     # - recent_events가 실제로 존재하는데 EI가 no_material_events=True로 판단한 경우는
     #   deterministic skip으로 잘라내지 않는다.
@@ -928,7 +957,7 @@ def _check_fdc_skip(
             reason_codes=("no_events", "no_position"),
         ))
 
-    # Condition 3: 주문 가능 잔고 부족 + 미보유 → 결정론적 WATCH
+    # Condition 4: 주문 가능 잔고 부족 + 미보유 → 결정론적 WATCH
     cash = context.cash_balance_snapshot
     if (
         cash is not None
@@ -944,7 +973,7 @@ def _check_fdc_skip(
             reason_codes=("insufficient_cash",),
         ))
 
-    # Condition 4: 미보유 신규 진입 + deterministic eligibility 탈락
+    # Condition 5: 미보유 신규 진입 + deterministic eligibility 탈락
     # → downstream `_check_ai_buy_override_gate()`(decision_orchestrator.py)가
     #   FDC의 실제 decision_type과 무관하게 반드시 WATCH/HOLD로 강등하는 구간을
     #   미리 결정론적으로 확정한다.
@@ -969,7 +998,6 @@ def _check_fdc_skip(
     #   True인 상태에서만 도달 가능해 이 조건의 범위 밖이다.
     #   그래서 이 스킵 조건은 eligibility_passed=False 분기 하나로만 좁게
     #   한정한다 — 의도적으로 좁은 범위이며, 넓히지 않는다.
-    deterministic_trigger = context.deterministic_trigger
     if (
         not has_position
         and deterministic_trigger is not None

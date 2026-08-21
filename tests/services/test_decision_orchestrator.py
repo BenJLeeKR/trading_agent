@@ -4894,6 +4894,35 @@ class TestHeldPositionFdcSkipShadowObservation:
         assert shadow["agreement"] is True
 
     @pytest.mark.asyncio
+    async def test_real_fdc_skip_is_excluded_from_shadow_sample(self) -> None:
+        """실제 skip 결과를 shadow 표본으로 재기록하면 안 된다."""
+        repos = build_in_memory_repositories()
+        service = DecisionOrchestratorService(
+            repos=repos, use_subprocess_isolation=False,
+            held_position_fdc_skip_shadow_enabled=True,
+        )
+        decision = self._make_decision(decision_type=DecisionType.HOLD, side=None)
+        await repos.trade_decisions.add(decision)
+
+        await service._record_held_position_fdc_skip_shadow_observation(
+            trade_decision_id=decision.trade_decision_id,
+            assembled_context=AssembledContext(
+                source_type="held_position",
+                deterministic_trigger=_make_held_position_trigger(
+                    primary_candidate="NO_ACTION",
+                ),
+            ),
+            ar_output=AIRiskOutput(risk_opinion="allow", risk_score=0.1),
+            composer_output=FinalDecisionComposerOutput(decision_type="HOLD", side=""),
+            fdc_raw_decision_type="HOLD",
+            fdc_skipped=True,
+        )
+
+        updated = await repos.trade_decisions.get(decision.trade_decision_id)
+        assert updated is not None
+        assert "shadow_held_position_fdc_skip" not in updated.decision_json
+
+    @pytest.mark.asyncio
     async def test_reduce_candidate_is_not_a_shadow_target(self) -> None:
         """`REDUCE_CANDIDATE`/`SELL_CANDIDATE`는 실측상 FDC가 HOLD로
         되돌리는 비율이 낮지 않아 shadow 관측 대상에서 제외된다."""

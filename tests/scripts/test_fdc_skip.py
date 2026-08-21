@@ -15,6 +15,8 @@ Test coverage
   분기와 signal_feature_snapshot_id 없음 예외는 명시적으로 스코프 밖)
 * 생략 불가: has_position이면 조건 2/3/4/5에서도 skip=False
 * 생략 불가: 모든 조건 통과 → skip=False
+* 조건 6(2026-08-21): held_position + NO_ACTION → FDC만 생략하고 기본 HOLD
+  를 전달한다. 이후 held_position sell override는 기존처럼 적용된다.
 """
 
 from __future__ import annotations
@@ -1082,6 +1084,7 @@ class TestFdcSkipDegraded:
 
 def _make_deterministic_trigger(
     *,
+    primary_candidate: str = "none",
     buy_candidate: bool = False,
     watch_candidate: bool = False,
     eligibility_passed: bool = False,
@@ -1089,7 +1092,7 @@ def _make_deterministic_trigger(
 ) -> DeterministicTriggerAssessment:
     return DeterministicTriggerAssessment(
         trigger_version="v1",
-        primary_candidate="none",
+        primary_candidate=primary_candidate,
         candidate_set=(),
         watch_candidate=watch_candidate,
         buy_candidate=buy_candidate,
@@ -1173,6 +1176,130 @@ def _make_eligibility_blocked_context(
             eligibility_reasons=eligibility_reasons,
         ),
     )
+
+
+def _make_held_position_no_action_context(
+    *, primary_candidate: str = "NO_ACTION", source_type: str = "held_position",
+) -> AssembledContext:
+    """FDC 생략 후보 held_position 컨텍스트.
+
+    최근 이벤트를 포함해 기존 ``no_events_no_position`` 조건과 독립적으로
+    NO_ACTION 조건만 검증한다. 실제 보유 수량도 명시해 core lane 오적용을
+    막는다.
+    """
+    return AssembledContext(
+        source_type=source_type,
+        recent_events=(
+            ExternalEventEntity(
+                event_id=uuid4(),
+                event_type="test_event",
+                source_name="test",
+                published_at=datetime.now(timezone.utc),
+            ),
+        ),
+        position_snapshot=PositionSnapshotEntity(
+            position_snapshot_id=uuid4(),
+            account_id=uuid4(),
+            instrument_id=uuid4(),
+            quantity=Decimal("10"),
+            average_price=Decimal("50000"),
+            market_price=Decimal("50000"),
+            unrealized_pnl=Decimal("0"),
+            source_of_truth="KIS",
+            snapshot_at=datetime.now(timezone.utc),
+        ),
+        deterministic_trigger=_make_deterministic_trigger(
+            primary_candidate=primary_candidate,
+            eligibility_passed=True,
+        ),
+    )
+
+
+class TestFdcSkipHeldPositionNoAction:
+    """held_position + NO_ACTION 실제 FDC 생략(2026-08-21)."""
+
+    def test_skips_and_returns_disclosed_base_hold(
+        self,
+        sample_subprocess_input: AgentSubprocessInput,
+        default_event_output: EventInterpretationOutput,
+        risk_allow_output: AIRiskOutput,
+    ) -> None:
+        inp = AgentSubprocessInput(
+            decision_context_id=sample_subprocess_input.decision_context_id,
+            correlation_id=sample_subprocess_input.correlation_id,
+            symbol=sample_subprocess_input.symbol,
+            market=sample_subprocess_input.market,
+            source_type="held_position",
+        )
+        request = AgentExecutionRequest(
+            decision_context_id=None,
+            correlation_id="test",
+            context=_make_held_position_no_action_context(),
+        )
+
+        skip, reason, output = _check_fdc_skip(
+            inp, request, default_event_output, risk_allow_output,
+        )
+
+        assert skip is True
+        assert reason == "held_position_no_action"
+        assert output.decision_type == "HOLD"
+        assert output.side == ""
+        assert output.reason_codes == ("held_position_no_action", "fdc_skipped")
+        assert output.summary.startswith("[규칙 기반 FDC 생략]")
+        assert "NO_ACTION" in output.summary
+        assert "override" in output.summary
+
+    def test_does_not_skip_watch_candidate(
+        self,
+        sample_subprocess_input: AgentSubprocessInput,
+        default_event_output: EventInterpretationOutput,
+        risk_allow_output: AIRiskOutput,
+    ) -> None:
+        inp = AgentSubprocessInput(
+            decision_context_id=None,
+            correlation_id="test",
+            symbol="005930",
+            market="KRX",
+            source_type="held_position",
+        )
+        request = AgentExecutionRequest(
+            decision_context_id=None,
+            correlation_id="test",
+            context=_make_held_position_no_action_context(primary_candidate="WATCH"),
+        )
+
+        skip, reason, _ = _check_fdc_skip(
+            inp, request, default_event_output, risk_allow_output,
+        )
+
+        assert skip is False
+        assert reason == ""
+
+    def test_does_not_skip_no_action_outside_held_position(
+        self,
+        sample_subprocess_input: AgentSubprocessInput,
+        default_event_output: EventInterpretationOutput,
+        risk_allow_output: AIRiskOutput,
+    ) -> None:
+        context = _make_held_position_no_action_context(source_type="core")
+        inp = AgentSubprocessInput(
+            decision_context_id=None,
+            correlation_id="test",
+            symbol="005930",
+            market="KRX",
+            source_type="core",
+        )
+        request = AgentExecutionRequest(
+            decision_context_id=None, correlation_id="test", context=context,
+        )
+
+        skip, reason, _ = _check_fdc_skip(
+            inp, request, default_event_output, risk_allow_output,
+        )
+
+        assert skip is False
+        assert reason == ""
 
 
 class TestFdcSkipBuyCandidateEligibilityBlocked:
