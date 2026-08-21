@@ -3159,6 +3159,12 @@ class RealizedPnlSummaryInstrumentView(BaseModel):
     allocated_buy_fee_sum: Decimal = Decimal("0")
     """이 종목·기간에 배분된 매수 수수료 합계 — 표시 전용 파생 필드
     (``RealizedPnlDailyAggregateView.allocated_buy_fee_sum`` 참고)."""
+    sell_quantity_sum: Decimal = Decimal("0")
+    """이 종목·기간의 실현손익 대상 매도 체결 수량 합계 — Admin UI 종목별
+    탭의 "수량" 컬럼 표시 전용 파생 필드다. 저장된 aggregate 컬럼이 아니라
+    이 API가 이미 provenance_breakdown/allocated_buy_fee_sum 계산을 위해
+    조회하는 ``realized_pnl_events``에서 그때그때 합산한다 — 새 손익
+    계산식이 아니라 기존 ``sell_quantity`` 값의 단순 합이다."""
     recompute_required: bool
     provenance_breakdown: RealizedPnlProvenanceBreakdown = Field(
         default_factory=RealizedPnlProvenanceBreakdown

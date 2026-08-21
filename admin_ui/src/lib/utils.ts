@@ -143,6 +143,31 @@ export function toNumeric(val: number | string | null | undefined): number {
 }
 
 /**
+ * Format a quantity for display only — rounds to the nearest whole unit.
+ *
+ * Underlying values (API response, calculations) keep full precision;
+ * only the rendered string is rounded. Uses `toNumeric()` so string
+ * `Decimal` values from the API don't need a separate parse step.
+ */
+export function formatQuantity(val: number | string | null | undefined): string {
+  return Math.round(toNumeric(val)).toLocaleString();
+}
+
+/**
+ * Format an already-computed percentage number as `"12.34%"` / `"-3.21%"`.
+ *
+ * Returns `"-"` for non-finite input (`NaN`/`Infinity`) instead of
+ * rendering a misleading number — callers computing a ratio (e.g.
+ * `net / buyAmount * 100`) should guard the zero-denominator case
+ * themselves before calling this (see `pnlRatePercent` usage in
+ * `RealizedPnlView.tsx`).
+ */
+export function formatPercent(val: number): string {
+  if (!Number.isFinite(val)) return "-";
+  return `${val.toFixed(2)}%`;
+}
+
+/**
  * Format an ISO datetime string as KST datetime with elapsed time.
  *
  * Input:  ISO string (UTC assumed)

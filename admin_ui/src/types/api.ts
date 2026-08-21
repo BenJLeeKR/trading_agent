@@ -280,6 +280,7 @@ export interface RealizedPnlSummaryInstrumentView {
   sell_amount_sum: number;
   fee_tax_sum: number;
   allocated_buy_fee_sum: number;
+  sell_quantity_sum: number;
   recompute_required: boolean;
 }
 
