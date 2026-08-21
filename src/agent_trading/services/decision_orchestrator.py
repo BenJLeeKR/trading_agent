@@ -1253,6 +1253,7 @@ class DecisionOrchestratorService:
         ar_output: AIRiskOutput | None,
         composer_output: FinalDecisionComposerOutput | None,
         fdc_raw_decision_type: str | None,
+        fdc_skipped: bool = False,
     ) -> None:
         """``held_position`` FDC 호출 shadow-skip 관측을 기록한다(관측
         전용, 결정 미개입).
@@ -1272,6 +1273,11 @@ class DecisionOrchestratorService:
         값을 호출자가 별도로 캡처해 전달해야 한다.
         """
         if not self._held_position_fdc_skip_shadow_enabled:
+            return
+        # 실제 FDC 생략 결과를 shadow 표본으로 기록하면, "FDC를 호출했다면
+        # 무엇을 골랐을까"라는 관측의 분모가 오염된다. NO_ACTION 실제 skip
+        # 이후에도 WATCH 및 REDUCE shadow 표본은 계속 독립적으로 축적한다.
+        if fdc_skipped:
             return
         if trade_decision_id is None or composer_output is None:
             return
@@ -3241,6 +3247,7 @@ class DecisionOrchestratorService:
             ar_output=agent_bundle.risk_output,
             composer_output=agent_bundle.composer_output,
             fdc_raw_decision_type=_fdc_raw_decision_type,
+            fdc_skipped=agent_bundle.ai_inputs.fdc_skipped,
         )
         await self._record_held_position_reduce_skip_shadow_observation(
             trade_decision_id=trade_decision_id,
