@@ -80,14 +80,26 @@ async def list_positions(
         raise HTTPException(status_code=400, detail="Invalid account_id UUID")
 
     snapshots = await repos.position_snapshots.list_latest_by_account(aid)
+    if not snapshots:
+        return []
+
+    # 포지션 1건마다 instruments.get()/position_cost_basis_states.get()을
+    # 순차 await하던 N+1을 없애기 위해, instrument 조회 1회(get_many)와
+    # 계좌의 cost-basis state 조회 1회(list_by_account)만 배치로 가져온 뒤
+    # 메모리에서 조립한다 — 포지션 개수와 무관하게 항상 2회의 배치 조회다.
+    instrument_ids = {s.instrument_id for s in snapshots}
+    instruments_by_id = await repos.instruments.get_many(instrument_ids)
+    cost_basis_states = await repos.position_cost_basis_states.list_by_account(aid)
+    cost_basis_by_instrument = {state.instrument_id: state for state in cost_basis_states}
+
     result: list[PositionSnapshotView] = []
     for s in snapshots:
         view = PositionSnapshotView.model_validate(s)
-        inst = await repos.instruments.get(s.instrument_id)
+        inst = instruments_by_id.get(s.instrument_id)
         if inst is not None:
             view.symbol = inst.symbol
             view.instrument_name = inst.name
-        cost_basis_state = await repos.position_cost_basis_states.get(aid, s.instrument_id)
+        cost_basis_state = cost_basis_by_instrument.get(s.instrument_id)
         if cost_basis_state is not None:
             view.remaining_buy_fee_pool = float(cost_basis_state.remaining_buy_fee_pool)
         result.append(view)
