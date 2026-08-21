@@ -30,6 +30,13 @@ stand-in built in a test without importing ``scripts.run_agent_subprocess``).
 프로세스(``deserialize_agent_output()``)는 항상 키 부재 기본값만 보고
 있었다. 이 모듈이 stdout JSON 페이로드의 단일 진실 공급원이므로, 여기
 빠진 필드는 그 어떤 하위 경로에서도 복구할 수 없다.
+
+2026-08-21(2차) 신설: in-cycle FIFO 재대기열 관측성 필드 5개
+(``rate_limiter_queue_ticket``/``rate_limiter_queue_position_at_first_
+wait``/``rate_limiter_requeue_count``/``rate_limiter_final_waited_
+seconds``/``rate_limiter_queue_deadline_exceeded``) 추가 — 위와 같은
+실수를 반복하지 않도록 이 모듈의 두 지점(Protocol과 payload 빌더)을
+반드시 함께 수정했다.
 """
 
 from __future__ import annotations
@@ -65,6 +72,11 @@ class AgentSubprocessOutputLike(Protocol):
     provider_http_429_count: int
     provider_execution_seconds: float
     provider_final_status: str
+    rate_limiter_queue_ticket: str
+    rate_limiter_queue_position_at_first_wait: int
+    rate_limiter_requeue_count: int
+    rate_limiter_final_waited_seconds: float
+    rate_limiter_queue_deadline_exceeded: bool
 
 
 def build_agent_subprocess_output_payload(
@@ -101,6 +113,13 @@ def build_agent_subprocess_output_payload(
         "provider_http_429_count": output.provider_http_429_count,
         "provider_execution_seconds": output.provider_execution_seconds,
         "provider_final_status": output.provider_final_status,
+        "rate_limiter_queue_ticket": output.rate_limiter_queue_ticket,
+        "rate_limiter_queue_position_at_first_wait": (
+            output.rate_limiter_queue_position_at_first_wait
+        ),
+        "rate_limiter_requeue_count": output.rate_limiter_requeue_count,
+        "rate_limiter_final_waited_seconds": output.rate_limiter_final_waited_seconds,
+        "rate_limiter_queue_deadline_exceeded": output.rate_limiter_queue_deadline_exceeded,
     }
 
 

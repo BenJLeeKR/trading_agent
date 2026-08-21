@@ -115,6 +115,11 @@ class TestDeserializeAgentOutputProviderObservability:
             "provider_http_429_count": 0,
             "provider_execution_seconds": 18.4,
             "provider_final_status": "provider_queue_timeout",
+            "rate_limiter_queue_ticket": "ticket-xyz",
+            "rate_limiter_queue_position_at_first_wait": 2,
+            "rate_limiter_requeue_count": 1,
+            "rate_limiter_final_waited_seconds": 18.0,
+            "rate_limiter_queue_deadline_exceeded": True,
         }
         base.update(overrides)
         return json.dumps(base)
@@ -134,6 +139,12 @@ class TestDeserializeAgentOutputProviderObservability:
         assert obs["provider_http_429_count"] == 0
         assert obs["provider_execution_seconds"] == 18.4
         assert obs["provider_final_status"] == "provider_queue_timeout"
+        # 2026-08-21(2차) in-cycle FIFO 재대기열 관측성 필드 5개.
+        assert obs["rate_limiter_queue_ticket"] == "ticket-xyz"
+        assert obs["rate_limiter_queue_position_at_first_wait"] == 2
+        assert obs["rate_limiter_requeue_count"] == 1
+        assert obs["rate_limiter_final_waited_seconds"] == 18.0
+        assert obs["rate_limiter_queue_deadline_exceeded"] is True
 
         # fallback 정책: decision_type=HOLD 유지, reason_codes 비어있지 않음,
         # symbol 보존 — no Gemini HTTP request was implied by attempt_count=0.
@@ -219,3 +230,8 @@ class TestDeserializeAgentOutputProviderObservability:
         assert obs["provider_http_attempt_count"] == 0
         assert obs["provider_http_429_count"] == 0
         assert obs["provider_final_status"] == ""
+        assert obs["rate_limiter_queue_ticket"] == ""
+        assert obs["rate_limiter_queue_position_at_first_wait"] == -1
+        assert obs["rate_limiter_requeue_count"] == 0
+        assert obs["rate_limiter_final_waited_seconds"] == 0.0
+        assert obs["rate_limiter_queue_deadline_exceeded"] is False

@@ -158,6 +158,20 @@ def deserialize_agent_output(
         "provider_http_429_count": int(data.get("provider_http_429_count", 0)),
         "provider_execution_seconds": float(data.get("provider_execution_seconds", 0.0)),
         "provider_final_status": str(data.get("provider_final_status", "")),
+        # 2026-08-21(2차) 신설: in-cycle FIFO 재대기열 관측성 필드.
+        # 구버전 payload(키 없음)와의 호환을 위해 "대기 없음/재대기 없음"을
+        # 뜻하는 안전한 기본값을 쓴다.
+        "rate_limiter_queue_ticket": str(data.get("rate_limiter_queue_ticket", "")),
+        "rate_limiter_queue_position_at_first_wait": int(
+            data.get("rate_limiter_queue_position_at_first_wait", -1)
+        ),
+        "rate_limiter_requeue_count": int(data.get("rate_limiter_requeue_count", 0)),
+        "rate_limiter_final_waited_seconds": float(
+            data.get("rate_limiter_final_waited_seconds", 0.0)
+        ),
+        "rate_limiter_queue_deadline_exceeded": bool(
+            data.get("rate_limiter_queue_deadline_exceeded", False)
+        ),
     }
 
     # --- Assemble AIDecisionInputs (same logic as _run_agents()) ---

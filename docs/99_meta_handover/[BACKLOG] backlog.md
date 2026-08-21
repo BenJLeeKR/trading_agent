@@ -7634,3 +7634,85 @@ _FDC_PER_AGENT_TIMEOUT)`) 경로가 `asyncio.CancelledError`로 취소되면
 timeout → fallback → 관측값 계산 → stdout JSON → deserialize까지의
 전체 경로를 실제 70초 sleep 없이 검증했다. 상세: work log 동일 파일
 "후속 수정 2" 절.
+
+## FDC strict limiter — in-cycle FIFO 재대기열 구현 완료(2026-08-21 KST)
+
+상세: `docs/30_work_log/2026-08-21_fdc_in_cycle_fifo_requeue.md`.
+
+- 배포 후 다회 사이클 실측(별도 세션)에서 `provider_queue_timeout`이
+  실제 FDC 호출의 39.4%까지 발생하고 시간이 갈수록 악화되는 추세를
+  확인한 뒤, 설계 검토(별도 세션)에서 안 B(FIFO ticket queue + 1회
+  재대기)를 추천한 것을 실제로 구현.
+- `fdc_rate_limiter.py`의 상태 파일을 `{"version","grants","pending"}`
+  으로 분리해 진짜 FIFO ticket queue 구현. head ticket만 grant 가능,
+  1차 대기(18초) 초과 시 최초 요청에 한해 새 ticket으로 FIFO 맨 뒤에
+  1회 재등록(최대 총 36초), 재시도 permit은 재대기 없이 즉시 확정
+  실패. lease(30초) 기반 orphan 정리, `grants`(60초 트림)와
+  `pending`(heartbeat 기반 lease만 정리 기준) 수명 규칙 완전 분리.
+- `provider_client.py`는 무수정 — "최초 요청 vs 재시도" 구분은
+  `run_agent_subprocess.py`의 `_FdcPermitAccumulator`가 호출 횟수로만
+  판단.
+- 관측성 5개 필드(`rate_limiter_queue_ticket`/`..._queue_position_at_
+  first_wait`/`..._requeue_count`/`..._final_waited_seconds`/`..._
+  queue_deadline_exceeded`) 추가, 기존 `__provider_observability__`
+  round-trip 경로 그대로 재사용(새 테이블/마이그레이션 없음).
+- 신규/갱신 테스트 다수 PASS(FIFO 순서, 재대기, orphan 정리, grant/
+  pending 분리, `_FdcPermitAccumulator` 정책 등), 기존 회귀 없음.
+- **신규 backlog(범위 판단 보류, 설계 검토에서 이미 예견)**: core lane
+  100% starvation 문제는 순수 FIFO만으로는 해결되지 않는다(도착 순서
+  자체가 항상 마지막이므로) — ticket에 `lane` 필드는 남겨뒀으니, lane
+  최소 슬롯/우선순위 정책 도입 여부는 배포 후 실측을 보고 다음 턴에
+  결정.
+- **신규 backlog(운영 실측 필요)**: 1회 재대기가 실제로
+  `provider_queue_timeout` 비율을 얼마나 낮추는지, 재대기+최대 재시도
+  복합 케이스(이론상 84초 > 70초 예산)가 실제로 `provider_timeout`
+  (outer)으로 얼마나 자주 귀결되는지 — work log의 배포 후 측정 SQL
+  참고.
+
+## 위 FDC in-cycle FIFO 재대기열 후속 수정 — 손상 상태 파일 fail-closed 보정(같은 PR #313, 2026-08-21 KST)
+
+상세: `docs/30_work_log/2026-08-21_fdc_state_file_corruption_fail_
+closed.md`.
+
+- 코드 검토에서 `_read_state()`가 JSON 파싱 실패/최상위 구조 이상/
+  지원하지 않는 `version`/`grants`·`pending` 타입 이상을 전부 조용히
+  빈 상태로 대체하던 결함을 발견/수정 — 상태 파일이 손상되면 최근
+  60초 grant 기록이 사라져 RPM 한도를 우회하고 429가 재발할 수 있는
+  fail-open 구멍이었다.
+- `_CorruptStateFileError`(`OSError` 서브클래스) 신설로 손상 상태를
+  기존 `state_file_error=True` 경로에 흡수시킴(새 예외 분기 불필요).
+  신규 빈 파일과 손상 상태를 명확히 구분(빈 파일만 정상 초기화).
+  PR #311 이전 legacy `list[float]` 포맷은 grant 기록을 보존하며 v1
+  구조로 1회 마이그레이션(숫자 아닌 값이 섞이면 손상으로 거부).
+- 재대기가 실제로 성공에 이르는 핵심 경로(O 점유 → Z timeout+재등록
+  → C/D보다 뒤에서 실제 permit 획득)를 테스트로 증명 — `max_calls=1`
+  로는 이 시나리오가 수학적으로 불가능함을 확인하고 `max_calls=3`
+  (운영값 10에 더 가까운 구조)으로 재설계.
+- 신규 테스트 다수 PASS(손상 판정 5건, 신규/legacy 3건, 재대기 성공
+  1건), 기존 회귀 없음.
+- **신규 backlog(운영 실측 필요)**: 배포 후 `provider_limiter_
+  unavailable` 발생 여부로 실제 상태 파일 손상이 발생했는지, 이번
+  fail-closed 수정이 올바르게 차단하는지 확인 필요.
+
+## 위 FDC in-cycle FIFO 재대기열 후속 수정 2 — 신규 파일 vs 기존 빈 파일 구분(같은 PR #313, 2026-08-21 KST)
+
+상세: `docs/30_work_log/2026-08-21_fdc_state_file_new_vs_empty_
+existing.md`.
+
+- 3차 수정 이후에도 `_read_state()`가 "내용이 비어 있으면 무조건
+  신규 파일"로 간주하는 구멍이 남아있었다 — `open(path,"a+")`만으로는
+  "방금 생긴 파일"과 "이미 있던 파일이 비워진 것"을 구분할 수 없어,
+  후자를 전자로 오인하면 grant 기록을 잃고 RPM 한도를 우회할 수
+  있었다.
+- `_ensure_state_file_initialized()`를 도입해 "파일이 존재하는 순간
+  이미 완전한 유효 JSON을 담고 있다"는 불변식을 만들었다 — 임시
+  파일에 먼저 전체 내용을 쓰고 `os.link()`(원자적, 대상 존재 시
+  `FileExistsError`)로 최종 경로에 연결. 이후 `_read_state()`는
+  "빈 내용=신규" 분기를 완전히 제거하고 무조건 손상으로 처리.
+- 신규 테스트 5건(존재하지 않는 경로/사전 0바이트/공백만/부분 JSON/
+  동시 최초 초기화) 전부 PASS, 기존 회귀 없음.
+- **신규 backlog(운영 실측 필요)**: `os.link()`가 실제 운영 컨테이너의
+  임시 디렉터리 파일시스템에서 정상 동작하는지(일반적인 Linux
+  tmpfs/overlay는 지원하나 실측 안 함), `provider_limiter_
+  unavailable` 발생 시점이 컨테이너 재기동 직후(초기화 경합)에
+  집중되는지 무작위인지(진짜 손상) 구분 필요.
