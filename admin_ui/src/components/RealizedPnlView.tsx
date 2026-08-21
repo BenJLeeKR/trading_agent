@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type {
   AccountSummary,
   ClientDetail,
@@ -26,7 +26,7 @@ import { StatusBadge } from "./common/StatusBadge";
 import { ErrorBanner } from "./common/ErrorBanner";
 import { WarningBanner } from "./common/WarningBanner";
 import { LoadingSpinner } from "./common/LoadingSpinner";
-import { formatKrw, formatKstDateTime, getKstTodayString, toNumeric } from "@/lib/utils";
+import { formatKrw, formatKstDateTime, formatPercent, formatQuantity, getKstTodayString, toNumeric } from "@/lib/utils";
 
 /* ───────────────────────────────────────────
  * 기간 프리셋 (design/realized_pnl_screen_spec.md §1 — 항상 날짜 범위)
@@ -111,6 +111,33 @@ function costTooltip(
   return `브로커 비용(fee+tax): ${formatKrw(toNumeric(brokerFeeTax))}\n매수수수료 배분(allocated_buy_fee): ${formatKrw(toNumeric(allocatedBuyFee))}`;
 }
 
+/* ───────────────────────────────────────────
+ * "손익금액" = 매도금액 - 매수금액(비용 차감 전) — "실현손익(순)"(비용까지
+ * 차감한 값)과는 다른 지표다. 두 값을 혼동하지 않도록 화면에 나란히
+ * 배치하되 계산식은 명확히 분리한다. API 필드가 문자열 Decimal일 수
+ * 있으므로 `toNumeric()`으로 정규화한 뒤 뺄셈한다(문자열 결합 방지 —
+ * "비용 0원" 버그와 동일한 함정을 여기서도 피한다).
+ * ─────────────────────────────────────────── */
+function grossPnlAmount(
+  sellAmount: number | string | null | undefined,
+  buyAmount: number | string | null | undefined
+): number {
+  return toNumeric(sellAmount) - toNumeric(buyAmount);
+}
+
+/* ───────────────────────────────────────────
+ * "손익률" = 실현손익(순) ÷ 매수금액 × 100. 매수금액이 0이거나 없으면
+ * 나눗셈이 성립하지 않으므로 0%/Infinity/NaN 대신 "-"를 보여준다.
+ * ─────────────────────────────────────────── */
+function pnlRatePercent(
+  net: number | string | null | undefined,
+  buyAmount: number | string | null | undefined
+): string {
+  const buy = toNumeric(buyAmount);
+  if (buy === 0) return "-";
+  return formatPercent((toNumeric(net) / buy) * 100);
+}
+
 type TabKey = "daily" | "byInstrument" | "events";
 
 const EVENTS_PAGE_LIMIT = 200;
@@ -153,6 +180,25 @@ export default function RealizedPnlView() {
   const [startDate, setStartDate] = useState(() => kstDateMonthsAgo(1));
   const [endDate, setEndDate] = useState(() => getKstTodayString());
   const [instrumentId, setInstrumentId] = useState(""); // "" = 전체
+
+  // 계좌 목록 로딩 완료 후, 사용자가 아직 직접 선택한 적이 없으면
+  // account_id 오름차순 첫 계좌를 기본 선택한다. 이 화면에는 URL 쿼리
+  // 등 더 우선순위 높은 명시적 계좌 선택 계약이 없으므로(확인됨) 이
+  // 기본값이 항상 최종 후보다. 사용자가 한 번이라도 셀렉트를 직접
+  // 조작하면(빈 값 선택 포함) 이 ref가 true로 고정되어, 이후 accounts
+  // 배열이 재조회/리렌더링되어도 자동 선택이 다시 끼어들어 사용자
+  // 선택을 되돌리지 않는다.
+  const userSelectedAccountRef = useRef(false);
+  useEffect(() => {
+    if (accountsLoading) return;
+    if (userSelectedAccountRef.current) return;
+    if (accountId) return;
+    if (accounts.length === 0) return;
+    const sortedByIdAsc = [...accounts].sort((a, b) =>
+      a.account_id < b.account_id ? -1 : a.account_id > b.account_id ? 1 : 0
+    );
+    setAccountId(sortedByIdAsc[0].account_id);
+  }, [accounts, accountsLoading, accountId]);
 
   // 계좌 선택 시 종목 후보 목록(all-time, 기간 무관) — positions 후보 열거는
   // quantity로 필터링하지 않는다(설계서 "전체매도 종목도 빠지지 않는다" 절 준수).
@@ -301,6 +347,15 @@ export default function RealizedPnlView() {
     { key: "buy_amount_sum", header: "매수금액", align: "right", render: (r) => formatKrw(r.buy_amount_sum) },
     { key: "sell_amount_sum", header: "매도금액", align: "right", render: (r) => formatKrw(r.sell_amount_sum) },
     {
+      key: "gross_pnl_amount",
+      header: "손익금액",
+      align: "right",
+      render: (r) => {
+        const gross = grossPnlAmount(r.sell_amount_sum, r.buy_amount_sum);
+        return <span className={pnlClass(gross)}>{formatSignedKrw(gross)}</span>;
+      },
+    },
+    {
       key: "fee_tax_sum",
       header: "비용",
       align: "right",
@@ -315,6 +370,12 @@ export default function RealizedPnlView() {
       header: "실현손익(순)",
       align: "right",
       render: (r) => <span className={pnlClass(r.realized_pnl_net_sum)}>{formatSignedKrw(r.realized_pnl_net_sum)}</span>,
+    },
+    {
+      key: "pnl_rate",
+      header: "손익률",
+      align: "right",
+      render: (r) => pnlRatePercent(r.realized_pnl_net_sum, r.buy_amount_sum),
     },
   ];
 
@@ -322,8 +383,18 @@ export default function RealizedPnlView() {
     { key: "symbol", header: "심볼", render: (r) => r.symbol ?? "—" },
     { key: "instrument_name", header: "종목", render: (r) => r.instrument_name ?? "—" },
     { key: "sell_event_count", header: "매도 건수", align: "right", render: (r) => r.sell_event_count.toLocaleString() },
+    { key: "sell_quantity_sum", header: "수량", align: "right", render: (r) => formatQuantity(r.sell_quantity_sum) },
     { key: "buy_amount_sum", header: "매수금액", align: "right", render: (r) => formatKrw(r.buy_amount_sum) },
     { key: "sell_amount_sum", header: "매도금액", align: "right", render: (r) => formatKrw(r.sell_amount_sum) },
+    {
+      key: "gross_pnl_amount",
+      header: "손익금액",
+      align: "right",
+      render: (r) => {
+        const gross = grossPnlAmount(r.sell_amount_sum, r.buy_amount_sum);
+        return <span className={pnlClass(gross)}>{formatSignedKrw(gross)}</span>;
+      },
+    },
     {
       key: "fee_tax_sum",
       header: "비용",
@@ -339,6 +410,12 @@ export default function RealizedPnlView() {
       header: "실현손익(순)",
       align: "right",
       render: (r) => <span className={pnlClass(r.realized_pnl_net_sum)}>{formatSignedKrw(r.realized_pnl_net_sum)}</span>,
+    },
+    {
+      key: "pnl_rate",
+      header: "손익률",
+      align: "right",
+      render: (r) => pnlRatePercent(r.realized_pnl_net_sum, r.buy_amount_sum),
     },
     {
       key: "recompute_required",
@@ -350,9 +427,20 @@ export default function RealizedPnlView() {
 
   const eventColumns: Column<RealizedPnlEventView>[] = [
     { key: "fill_timestamp", header: "체결시각", render: (r) => formatKstDateTime(r.fill_timestamp) },
-    { key: "sell_quantity", header: "수량", align: "right", render: (r) => r.sell_quantity.toLocaleString() },
+    { key: "sell_quantity", header: "수량", align: "right", render: (r) => formatQuantity(r.sell_quantity) },
     { key: "avg_cost_basis_before", header: "매수단가", align: "right", render: (r) => formatKrw(r.avg_cost_basis_before) },
     { key: "sell_price", header: "매도단가", align: "right", render: (r) => formatKrw(r.sell_price) },
+    {
+      key: "gross_pnl_amount",
+      header: "손익금액",
+      align: "right",
+      render: (r) => {
+        const buyAmount = toNumeric(r.avg_cost_basis_before) * toNumeric(r.sell_quantity);
+        const sellAmount = toNumeric(r.sell_price) * toNumeric(r.sell_quantity);
+        const gross = grossPnlAmount(sellAmount, buyAmount);
+        return <span className={pnlClass(gross)}>{formatSignedKrw(gross)}</span>;
+      },
+    },
     {
       key: "fee_tax",
       header: "비용",
@@ -368,6 +456,15 @@ export default function RealizedPnlView() {
       header: "실현손익(순)",
       align: "right",
       render: (r) => <span className={pnlClass(r.realized_pnl_net)}>{formatSignedKrw(r.realized_pnl_net)}</span>,
+    },
+    {
+      key: "pnl_rate",
+      header: "손익률",
+      align: "right",
+      render: (r) => {
+        const buyAmount = toNumeric(r.avg_cost_basis_before) * toNumeric(r.sell_quantity);
+        return pnlRatePercent(r.realized_pnl_net, buyAmount);
+      },
     },
   ];
 
@@ -422,6 +519,7 @@ export default function RealizedPnlView() {
           <select
             value={accountId}
             onChange={(e) => {
+              userSelectedAccountRef.current = true;
               setAccountId(e.target.value);
               setInstrumentId("");
               setHasQueried(false);

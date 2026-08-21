@@ -2762,6 +2762,10 @@ class TestRealizedPnl:
         by_instrument = {row["instrument_id"]: row for row in data["by_instrument"]}
         assert Decimal(str(by_instrument[str(instrument_a)]["allocated_buy_fee_sum"])) == Decimal("5.5")
         assert Decimal(str(by_instrument[str(instrument_b)]["allocated_buy_fee_sum"])) == Decimal("2")
+        # sell_quantity_sum — _seed_event()의 기본 sell_quantity=5, instrument_a는
+        # 이벤트 2건(5+5=10), instrument_b는 1건(5).
+        assert Decimal(str(by_instrument[str(instrument_a)]["sell_quantity_sum"])) == Decimal("10")
+        assert Decimal(str(by_instrument[str(instrument_b)]["sell_quantity_sum"])) == Decimal("5")
 
     def test_summary_single_instrument_scopes_to_that_instrument(self) -> None:
         """instrument_id를 주면 활동이 없어도 그 종목 1건만 by_instrument에 노출한다."""

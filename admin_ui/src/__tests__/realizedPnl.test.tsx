@@ -1,4 +1,4 @@
-import { render, screen, waitFor, fireEvent, act, cleanup } from "@testing-library/react";
+import { render, screen, waitFor, fireEvent, act, cleanup, within } from "@testing-library/react";
 import { describe, expect, it, afterEach, vi, beforeEach } from "vitest";
 import RealizedPnlView from "../components/RealizedPnlView";
 import { setStoredToken, clearStoredToken } from "../api/client";
@@ -71,6 +71,7 @@ const mockSummaryAllInstruments: RealizedPnlSummaryResponse = {
       sell_amount_sum: 950000,
       fee_tax_sum: 10000,
       allocated_buy_fee_sum: 0,
+      sell_quantity_sum: 10,
       recompute_required: false,
     },
     {
@@ -83,6 +84,7 @@ const mockSummaryAllInstruments: RealizedPnlSummaryResponse = {
       sell_amount_sum: 180000,
       fee_tax_sum: 5000,
       allocated_buy_fee_sum: 0,
+      sell_quantity_sum: 5,
       recompute_required: true,
     },
   ],
@@ -135,6 +137,7 @@ const mockSummarySingleInstrument: RealizedPnlSummaryResponse = {
       sell_amount_sum: 950000,
       fee_tax_sum: 10000,
       allocated_buy_fee_sum: 0,
+      sell_quantity_sum: 10,
       recompute_required: false,
     },
   ],
@@ -991,5 +994,250 @@ describe("RealizedPnlView — 비용 문자열 합산 회귀 방지(007070 재�
     // 화면이 죽지 않고(에러 경계 없이) 안전한 기본값(0원)으로 표시된다 —
     // buy/sell/cost 등 여러 셀이 0원이라 getAllByText로 개수만 확인한다.
     expect(screen.getAllByText("0원", { exact: false }).length).toBeGreaterThan(0);
+  });
+});
+
+/* ───────────────────────────────────────────
+ * 8. 계좌 기본 선택 — account_id 오름차순 첫 계좌 자동 선택, 사용자 선택 보존.
+ * ─────────────────────────────────────────── */
+describe("RealizedPnlView — 계좌 기본 선택", () => {
+  it("계좌 목록 로딩 완료 후 account_id 오름차순 첫 계좌가 자동 선택된다", async () => {
+    // mockAccounts는 이미 오름차순(00a1 < 00a2 < 00a3)이므로, 정렬이 실제로
+    // 동작하는지 확인하기 위해 일부러 역순으로 응답을 준다.
+    const reversedAccounts = [...mockAccounts].reverse();
+    vi.spyOn(apiClient, "getDefaultClient").mockResolvedValue(null);
+    vi.spyOn(apiClient, "getClients").mockResolvedValue(mockClients);
+    vi.spyOn(apiClient, "getAccounts").mockResolvedValue(reversedAccounts);
+    vi.spyOn(apiClient, "getRealizedPnlPositions").mockResolvedValue([]);
+
+    render(<RealizedPnlView />);
+
+    await waitFor(() => {
+      const select = screen.getByLabelText(/계좌/) as HTMLSelectElement;
+      expect(select.value).toBe(mockAccounts[0].account_id); // 00a1 — 오름차순 최솟값
+    });
+  });
+
+  it("사용자가 계좌를 직접 변경한 뒤에는 재렌더링이 발생해도 자동 선택이 되돌리지 않는다", async () => {
+    mockAccountLoading();
+    vi.spyOn(apiClient, "getRealizedPnlPositions").mockResolvedValue([]);
+
+    const { rerender } = render(<RealizedPnlView />);
+
+    await waitFor(() => {
+      const select = screen.getByLabelText(/계좌/) as HTMLSelectElement;
+      expect(select.value).toBe(mockAccounts[0].account_id);
+    });
+
+    // 사용자가 세 번째 계좌(오름차순 마지막)로 직접 변경한다.
+    await act(async () => {
+      fireEvent.change(screen.getByLabelText(/계좌/), {
+        target: { value: mockAccounts[2].account_id },
+      });
+    });
+    expect((screen.getByLabelText(/계좌/) as HTMLSelectElement).value).toBe(
+      mockAccounts[2].account_id
+    );
+
+    // 강제 리렌더링(예: 상위 트리 리렌더 시뮬레이션) 후에도 사용자 선택이 유지돼야 한다.
+    rerender(<RealizedPnlView />);
+    expect((screen.getByLabelText(/계좌/) as HTMLSelectElement).value).toBe(
+      mockAccounts[2].account_id
+    );
+  });
+});
+
+/* ───────────────────────────────────────────
+ * 9. 손익금액 / 손익률 / 수량 컬럼 — 일자별·종목별·체결별.
+ * ─────────────────────────────────────────── */
+describe("RealizedPnlView — 손익금액/손익률/수량 컬럼", () => {
+  it("일자별 탭: 손익금액(매도금액-매수금액)과 손익률(실현손익÷매수금액×100)이 정확히 표시된다", async () => {
+    mockAccountLoading();
+    vi.spyOn(apiClient, "getRealizedPnlPositions").mockResolvedValue([]);
+    vi.spyOn(apiClient, "getRealizedPnlSummary").mockResolvedValue(mockSummaryEmpty);
+    vi.spyOn(apiClient, "getRealizedPnlDailySummary").mockResolvedValue(
+      mockDailySummaryAllInstruments // buy=400000, sell=477000, net=77000
+    );
+
+    render(<RealizedPnlView />);
+    await selectAccount();
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "조회" }));
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText("2026-08-01")).toBeInTheDocument();
+    });
+    // 손익금액(477000-400000=77000)과 실현손익(순)(mock상 우연히 동일값 77000)이
+    // 겹치므로, 컬럼 순서(날짜/매도건수/매수금액/매도금액/손익금액/비용/
+    // 실현손익(순)/손익률)대로 셀 인덱스를 짚어 모호함 없이 검증한다.
+    const row = screen.getByText("2026-08-01").closest("tr");
+    expect(row).not.toBeNull();
+    const cells = row!.querySelectorAll("td");
+    expect(cells[4].textContent).toContain("+77,000원"); // 손익금액
+    expect(cells[7].textContent).toBe("19.25%"); // 손익률 = 77000/400000*100
+  });
+
+  it("종목별 탭: 수량 합계·손익금액·손익률이 정확히 표시된다", async () => {
+    mockAccountLoading();
+    vi.spyOn(apiClient, "getRealizedPnlPositions").mockResolvedValue(mockPositions);
+    vi.spyOn(apiClient, "getRealizedPnlSummary").mockResolvedValue(mockSummaryAllInstruments);
+    vi.spyOn(apiClient, "getRealizedPnlDailySummary").mockResolvedValue(mockDailySummaryAllInstruments);
+
+    render(<RealizedPnlView />);
+    await selectAccount();
+    await waitFor(() => {
+      expect(screen.getByRole("option", { name: /005930/ })).toBeInTheDocument();
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "조회" }));
+    });
+    await waitFor(() => expect(screen.getByText("재계산 대기중 — 1개 종목")).toBeInTheDocument());
+
+    fireEvent.click(screen.getByRole("button", { name: "종목별" }));
+
+    // instrument_a: sell_quantity_sum=10, buy=800000, sell=950000, net=150000.
+    // 손익금액(950000-800000=150000)과 실현손익(순)(mock상 우연히 동일값 150000)이
+    // 겹치므로, 컬럼 순서(심볼/종목/매도건수/수량/매수금액/매도금액/손익금액/
+    // 비용/실현손익(순)/손익률/상태)대로 셀 인덱스를 짚어 모호함 없이 검증한다.
+    const row = screen.getByText("005930").closest("tr");
+    expect(row).not.toBeNull();
+    const cells = row!.querySelectorAll("td");
+    expect(cells[3].textContent).toBe("10"); // 수량 합계(소수점 없이)
+    expect(cells[6].textContent).toContain("+150,000원"); // 손익금액
+    expect(cells[9].textContent).toBe("18.75%"); // 손익률 = 150000/800000*100
+  });
+
+  it("체결별 탭: 수량이 정수로 반올림되고, 손익금액·손익률이 정확히 표시된다", async () => {
+    mockAccountLoading();
+    vi.spyOn(apiClient, "getRealizedPnlPositions").mockResolvedValue(mockPositions);
+    vi.spyOn(apiClient, "getRealizedPnlSummary").mockResolvedValue(mockSummarySingleInstrument);
+    vi.spyOn(apiClient, "getRealizedPnlDaily").mockResolvedValue(makeDailyResponse(INSTRUMENT_A));
+    vi.spyOn(apiClient, "getRealizedPnlEvents").mockResolvedValue({
+      account_id: ACCOUNT_ID,
+      instrument_id: INSTRUMENT_A,
+      limit: 200,
+      before: null,
+      events: [
+        makeEvent({
+          sell_quantity: 5.6, // 표시는 반올림(6)되지만 계산은 원값을 그대로 쓴다
+          sell_price: 75000,
+          avg_cost_basis_before: 70000,
+          realized_pnl_net: 24500,
+        }),
+      ],
+    });
+
+    render(<RealizedPnlView />);
+    await selectAccount();
+    await waitFor(() => {
+      expect(screen.getByRole("option", { name: /005930/ })).toBeInTheDocument();
+    });
+    await act(async () => {
+      fireEvent.change(screen.getByLabelText(/종목/), { target: { value: INSTRUMENT_A } });
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "조회" }));
+    });
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: /체결별 \(005930\)/ })).toBeInTheDocument();
+    });
+
+    // 수량 표시는 반올림된 정수(6)여야 한다 — 원본 5.6이 그대로 노출되면 안 된다.
+    expect(screen.queryByText("5.6")).not.toBeInTheDocument();
+    expect(screen.getByText("6")).toBeInTheDocument();
+
+    // 손익금액 = sell_price×sell_quantity - avg_cost_basis_before×sell_quantity
+    //          = 75000×5.6 - 70000×5.6 = 420000 - 392000 = 28000 (반올림 전 원본 수량으로 계산)
+    expect(screen.getByText("+28,000원", { exact: false })).toBeInTheDocument();
+    // 손익률 = realized_pnl_net(24500) / buyAmount(392000) * 100 = 6.25%
+    expect(screen.getByText("6.25%")).toBeInTheDocument();
+  });
+
+  it("매수금액이 0이면 손익률은 0%/Infinity/NaN이 아니라 '-'로 표시된다", async () => {
+    mockAccountLoading();
+    vi.spyOn(apiClient, "getRealizedPnlPositions").mockResolvedValue([]);
+    vi.spyOn(apiClient, "getRealizedPnlSummary").mockResolvedValue(mockSummaryEmpty);
+    vi.spyOn(apiClient, "getRealizedPnlDailySummary").mockResolvedValue({
+      account_id: ACCOUNT_ID,
+      start_date: "2026-07-01",
+      end_date: "2026-08-05",
+      daily: [
+        {
+          trade_date: "2026-08-01",
+          realized_pnl_net_sum: 5000,
+          sell_event_count: 1,
+          buy_amount_sum: 0,
+          sell_amount_sum: 5000,
+          fee_tax_sum: 0,
+          allocated_buy_fee_sum: 0,
+        },
+      ],
+    });
+
+    render(<RealizedPnlView />);
+    await selectAccount();
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "조회" }));
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText("2026-08-01")).toBeInTheDocument();
+    });
+    const row = screen.getByText("2026-08-01").closest("tr");
+    expect(row).not.toBeNull();
+    expect(row!.textContent).not.toMatch(/0%|Infinity|NaN/);
+    // 손익률 셀은 정확히 "-"여야 한다(trade_date "2026-08-01" 자체에 하이픈이
+    // 있어 텍스트 전체를 대상으로 한 "-" 포함 검사는 의미가 없다).
+    expect(within(row!).getByText("-", { exact: true })).toBeInTheDocument();
+  });
+
+  it("API 값이 문자열 Decimal이어도 손익금액/손익률 계산에 문자열 결합이 발생하지 않는다", async () => {
+    mockAccountLoading();
+    vi.spyOn(apiClient, "getRealizedPnlPositions").mockResolvedValue(mockPositions);
+    vi.spyOn(apiClient, "getRealizedPnlSummary").mockResolvedValue(mockSummarySingleInstrument);
+    vi.spyOn(apiClient, "getRealizedPnlDaily").mockResolvedValue({
+      account_id: ACCOUNT_ID,
+      instrument_id: INSTRUMENT_A,
+      start_date: "2026-08-01",
+      end_date: "2026-08-13",
+      daily: [
+        {
+          trade_date: "2026-08-13",
+          realized_pnl_net_sum: "-200722.12500000" as unknown as number,
+          sell_event_count: 2,
+          buy_amount_sum: "4424000.00000000" as unknown as number,
+          sell_amount_sum: "4223900.00000000" as unknown as number,
+          fee_tax_sum: "0E-8" as unknown as number,
+          allocated_buy_fee_sum: "622.12500000" as unknown as number,
+        },
+      ],
+    });
+
+    render(<RealizedPnlView />);
+    await selectAccount();
+    await waitFor(() => {
+      expect(screen.getByRole("option", { name: /005930/ })).toBeInTheDocument();
+    });
+    await act(async () => {
+      fireEvent.change(screen.getByLabelText(/종목/), { target: { value: INSTRUMENT_A } });
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "조회" }));
+    });
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "일자별" })).toBeInTheDocument();
+    });
+    fireEvent.click(screen.getByRole("button", { name: "일자별" }));
+
+    await waitFor(() => {
+      expect(screen.getByText("2026-08-13")).toBeInTheDocument();
+    });
+    // 손익금액 = 4223900 - 4424000 = -200100 (문자열 결합이었다면 전혀 다른 값이 됐을 것)
+    expect(screen.getByText("-200,100원", { exact: false })).toBeInTheDocument();
+    // 손익률 = -200722.125 / 4424000 * 100 = -4.54%(반올림)
+    expect(screen.getByText("-4.54%")).toBeInTheDocument();
   });
 });

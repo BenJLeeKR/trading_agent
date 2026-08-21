@@ -407,6 +407,9 @@ async def get_realized_pnl_summary(
         instrument_allocated_buy_fee = sum(
             (e.allocated_buy_fee for e in instrument_events), Decimal("0")
         )
+        instrument_sell_quantity = sum(
+            (e.sell_quantity for e in instrument_events), Decimal("0")
+        )
         by_instrument.append(
             RealizedPnlSummaryInstrumentView(
                 instrument_id=iid_key,
@@ -418,6 +421,7 @@ async def get_realized_pnl_summary(
                 sell_amount_sum=sell,
                 fee_tax_sum=fee_tax,
                 allocated_buy_fee_sum=instrument_allocated_buy_fee,
+                sell_quantity_sum=instrument_sell_quantity,
                 recompute_required=recompute_required,
                 provenance_breakdown=instrument_breakdown,
             )
