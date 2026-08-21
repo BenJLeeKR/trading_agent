@@ -1163,6 +1163,99 @@ class TestRunOneCycle:
         assert result["cycle"] == 1
 
     @pytest.mark.asyncio
+    async def test_held_position_default_request_side_is_sell(self) -> None:
+        """2026-08-21: held_position의 기본 ``request.side``는 ``SELL``이어야
+        한다 — 이미 보유 중인 포지션이라 actionable 판단은 항상 REDUCE/EXIT
+        (매도) 방향이고, 신규 매수는 이 lane에서 구조적으로 허용되지
+        않는다. ``DecisionOrchestratorService.assemble()``에 실제로 전달되는
+        ``SubmitOrderRequest``를 가로채 확인한다(요청 생성 지점 자체를
+        검증 — DB/FDC 판정 결과와 무관)."""
+        captured_requests: list[SubmitOrderRequest] = []
+        original_assemble = DecisionOrchestratorService.assemble
+
+        async def _capture_assemble(
+            self: DecisionOrchestratorService, request: SubmitOrderRequest, **kwargs: object
+        ) -> object:
+            captured_requests.append(request)
+            return await original_assemble(self, request, **kwargs)
+
+        async with _mock_runtime_for_one_cycle() as runtime:
+            with patch.object(
+                DecisionOrchestratorService, "assemble", _capture_assemble,
+            ):
+                await _run_one_cycle(
+                    cycle=1,
+                    submit=False,
+                    dry_run=True,
+                    output="text",
+                    source_type="held_position",
+                    runtime=runtime,
+                )
+
+        assert len(captured_requests) == 1
+        assert captured_requests[0].side == OrderSide.SELL
+
+    @pytest.mark.asyncio
+    async def test_core_default_request_side_is_buy(self) -> None:
+        """회귀 확인: core(및 그 외 source_type)의 기본 ``request.side``는
+        기존과 동일하게 ``BUY``여야 한다 — held_position 전용 변경이
+        다른 lane에 영향을 주지 않았는지 확인."""
+        captured_requests: list[SubmitOrderRequest] = []
+        original_assemble = DecisionOrchestratorService.assemble
+
+        async def _capture_assemble(
+            self: DecisionOrchestratorService, request: SubmitOrderRequest, **kwargs: object
+        ) -> object:
+            captured_requests.append(request)
+            return await original_assemble(self, request, **kwargs)
+
+        async with _mock_runtime_for_one_cycle() as runtime:
+            with patch.object(
+                DecisionOrchestratorService, "assemble", _capture_assemble,
+            ):
+                await _run_one_cycle(
+                    cycle=1,
+                    submit=False,
+                    dry_run=True,
+                    output="text",
+                    source_type="core",
+                    runtime=runtime,
+                )
+
+        assert len(captured_requests) == 1
+        assert captured_requests[0].side == OrderSide.BUY
+
+    @pytest.mark.asyncio
+    async def test_held_position_fdc_fallback_empty_side_resolves_to_sell(
+        self,
+    ) -> None:
+        """held_position + FDC(Stub, provider 미설정)가 항상 반환하는 빈
+        ``side=""`` 조합에서, 최종 저장된 ``TradeDecisionEntity.side``가
+        ``request.side``(이번 수정 후 SELL)로 정상 대체되는지 확인한다 —
+        ``decision_factory.resolve_order_side(composer_output.side="",
+        request.side)`` 실제 경로를 dry-run 전체 파이프라인으로 검증."""
+        async with _mock_runtime_for_one_cycle() as runtime:
+            repos = runtime["repositories"]
+            result = await _run_one_cycle(
+                cycle=1,
+                submit=False,
+                dry_run=True,
+                output="text",
+                source_type="held_position",
+                runtime=runtime,
+            )
+
+        assert result["status"] == "DRY_RUN"
+        # FDC(Stub)는 provider 미설정 시 항상 기본 출력(side="")을 반환한다
+        # — 즉 이 테스트는 실제로 "FDC fallback side 공백" 조건을 만든다.
+        assert result["side"] in ("", None)
+
+        decisions = list(repos.trade_decisions._items.values())  # type: ignore[attr-defined]
+        assert len(decisions) == 1
+        assert decisions[0].side == OrderSide.SELL
+        assert decisions[0].source_type == "held_position"
+
+    @pytest.mark.asyncio
     async def test_scheduler_dry_run_records_guardrail_evaluation(self) -> None:
         """scheduler gate dry-run 사유도 guardrail_evaluations에 남겨야 한다."""
         async with _mock_runtime_for_one_cycle() as runtime:
