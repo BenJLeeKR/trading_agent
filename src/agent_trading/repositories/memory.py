@@ -545,6 +545,19 @@ class InMemoryCashBalanceSnapshotRepository:
         candidates.sort(key=lambda item: item.snapshot_at, reverse=True)
         return candidates[0].snapshot_sync_run_id
 
+    async def get_latest_with_orderable_amount(
+        self, account_id: UUID,
+    ) -> CashBalanceSnapshotEntity | None:
+        candidates = [
+            item
+            for item in self._items.values()
+            if item.account_id == account_id and item.orderable_amount is not None
+        ]
+        if not candidates:
+            return None
+        candidates.sort(key=lambda item: item.snapshot_at, reverse=True)
+        return candidates[0]
+
 
 class InMemoryTradeDecisionRepository:
     def __init__(self) -> None:
