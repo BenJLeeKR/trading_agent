@@ -11,12 +11,9 @@ import {
   getHealth,
   getOrders,
   getReconciliationSummary,
-  getReconciliationRuns,
   getAgentRuns,
   getClients,
   getAccounts,
-  getPositions,
-  getCashBalance,
   getSnapshotSyncRuns,
   getLatestMarketSession,
   getAccountSnapshots,
@@ -24,7 +21,6 @@ import {
 import type {
   HealthResponse,
   OrderSummary,
-  ReconciliationRunSummary,
   ClientDetail,
   SnapshotSyncRunSummary,
   SchedulerStatusResponse,
@@ -178,47 +174,6 @@ export default function OperationsAlertsView() {
         accountsError = true;
       }
 
-      // ── 정합성 실행 이력 (account_id 있을 때만 호출) ──
-      let reconRunsResult: { data: ReconciliationRunSummary[]; error: boolean } = { data: [], error: false };
-      const firstAccountId = accounts.length > 0 ? accounts[0].account_id : null;
-      if (firstAccountId) {
-        try {
-          const runs = await getReconciliationRuns(firstAccountId);
-          reconRunsResult = { data: runs, error: false };
-        } catch {
-          reconRunsResult = { data: [], error: true };
-        }
-      }
-
-      // ── Positions (dedup by instrument_id, 최신 snapshot_at 유지) ──
-      // 이 결과를 아래 positionsCount / latestPositionSnapshotAt 두 곳에서
-      // 재사용한다 — 예전엔 accounts.map(getPositions)를 두 번(동일 계좌
-      // 목록에 대해) 호출해 완전히 같은 API를 중복 조회하고 있었다.
-      let positionsError = false;
-      const dedupPositions = new Map<string, PositionSnapshotView>();
-      if (accounts.length > 0) {
-        const posResults = await Promise.allSettled(
-          accounts.map((a) => getPositions(a.account_id))
-        );
-        posResults.forEach((r) => {
-          if (r.status === "fulfilled") {
-            for (const pos of r.value) {
-              const existing = dedupPositions.get(pos.instrument_id);
-              // instrument_id 기준 최신 snapshot_at 유지
-              if (!existing || pos.snapshot_at > existing.snapshot_at) {
-                dedupPositions.set(pos.instrument_id, pos);
-              }
-            }
-          } else {
-            positionsError = true;
-          }
-        });
-      }
-      // quantity > 0인 포지션만 카운트
-      const positionsCount = Array.from(dedupPositions.values()).filter(
-        (p) => (p.quantity ?? 0) > 0
-      ).length;
-
       // ── Snapshot sync run (최신 1건) ──
       let snapshotSyncRun: SnapshotSyncRunSummary | null = null;
       let snapshotSyncError = false;
@@ -231,43 +186,65 @@ export default function OperationsAlertsView() {
         snapshotSyncError = true;
       }
 
-      // ── Position / Cash snapshot_at (최신 시각) ──
+      // ── 계좌 스냅샷(포지션 + 현금 + 정합성 상세) — 계좌당 단일 호출 ──
+      // 예전엔 같은 계좌에 대해 GET /positions, GET /cash-balances,
+      // GET /account-snapshots/latest를 각각 따로(계좌당 3회) 순차 조회했다.
+      // 셋 다 GET /account-snapshots/latest 응답 하나(positions,
+      // cash_balance, positions_snapshot_at, cash_snapshot_at,
+      // alignment_detail)에 이미 들어있는 값이라, 계좌당 호출을 1회로
+      // 줄인다. positionsError는 이 통합 호출 실패를 그대로 가리키므로
+      // "포지션/계좌 스냅샷 조회 실패"라는 기존 의미가 유지된다.
+      let positionsError = false;
+      const dedupPositions = new Map<string, PositionSnapshotView>();
       let latestPositionSnapshotAt: string | null = null;
       let latestCashSnapshotAt: string | null = null;
-      for (const pos of dedupPositions.values()) {
-        if (!latestPositionSnapshotAt || pos.snapshot_at > latestPositionSnapshotAt) {
-          latestPositionSnapshotAt = pos.snapshot_at;
-        }
-      }
-      if (accounts.length > 0) {
-        // Cash (각 계좌별 단일 CashBalanceSnapshotView 또는 null)
-        const cashResults = await Promise.allSettled(
-          accounts.map((a) => getCashBalance(a.account_id))
-        );
-        cashResults.forEach((r) => {
-          if (r.status === "fulfilled" && r.value) {
-            if (!latestCashSnapshotAt || r.value.snapshot_at > latestCashSnapshotAt) {
-              latestCashSnapshotAt = r.value.snapshot_at;
-            }
-          }
-        });
-      }
-
-      // ── Account-level alignment details ──
       let alignmentDetails: Array<{ account_id: string; detail: AlignmentDetail }> = [];
       if (accounts.length > 0) {
         const snapResults = await Promise.allSettled(
           accounts.map((a) => getAccountSnapshots(a.account_id))
         );
-        for (const r of snapResults) {
+        snapResults.forEach((r) => {
           if (r.status === "fulfilled") {
+            const snap = r.value;
+            for (const pos of snap.positions) {
+              const existing = dedupPositions.get(pos.instrument_id);
+              // instrument_id 기준 최신 snapshot_at 유지
+              if (!existing || pos.snapshot_at > existing.snapshot_at) {
+                dedupPositions.set(pos.instrument_id, pos);
+              }
+            }
+            // positions_snapshot_at을 우선 사용하고, 없으면(예: 예전 legacy
+            // 응답) positions[]의 snapshot_at에서 보수적으로 산출한다.
+            const accountPositionAt =
+              snap.positions_snapshot_at ??
+              snap.positions.reduce<string | null>(
+                (latest, p) => (!latest || p.snapshot_at > latest ? p.snapshot_at : latest),
+                null,
+              );
+            if (accountPositionAt && (!latestPositionSnapshotAt || accountPositionAt > latestPositionSnapshotAt)) {
+              latestPositionSnapshotAt = accountPositionAt;
+            }
+            const accountCashAt = snap.cash_snapshot_at ?? snap.cash_balance?.snapshot_at ?? null;
+            if (accountCashAt && (!latestCashSnapshotAt || accountCashAt > latestCashSnapshotAt)) {
+              latestCashSnapshotAt = accountCashAt;
+            }
             alignmentDetails.push({
-              account_id: r.value.account_id,
-              detail: r.value.alignment_detail,
+              account_id: snap.account_id,
+              detail: snap.alignment_detail,
+            });
+          } else {
+            positionsError = true;
+            apiErrors.push({
+              apiName: "GET /account-snapshots/latest",
+              message: String(r.reason),
             });
           }
-        }
+        });
       }
+      // quantity > 0인 포지션만 카운트
+      const positionsCount = Array.from(dedupPositions.values()).filter(
+        (p) => (p.quantity ?? 0) > 0
+      ).length;
 
       const newAlerts = deriveAlerts({
         health: healthResult.data,
