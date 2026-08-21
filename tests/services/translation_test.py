@@ -65,6 +65,23 @@ class TestResolveOrderSide:
     def test_none_fallback(self) -> None:
         assert resolve_order_side(None, OrderSide.SELL) == OrderSide.SELL
 
+    def test_empty_string_fallback_to_sell(self) -> None:
+        """2026-08-21: FDC(held_position)의 실제 fallback 출력값은
+        ``None``이 아니라 빈 문자열(``""``)이다(``FinalDecisionComposerOutput``
+        의 dataclass 기본값). held_position의 기본 ``request.side``가
+        ``SELL``로 바뀐 뒤, FDC output이 비어 있으면 이 SELL이 그대로
+        최종 side로 살아남아야 한다 — 실제 프로덕션 값 형태(빈 문자열)로
+        정확히 재현해 검증한다."""
+        assert resolve_order_side("", OrderSide.SELL) == OrderSide.SELL
+
+    def test_explicit_sell_from_fdc_wins_over_sell_fallback(self) -> None:
+        """held_position REDUCE/EXIT 정상 경로 회귀 확인: FDC가 명시적으로
+        ``SELL``을 반환하면(성공 경로) fallback 값과 무관하게 그 값이
+        그대로 사용돼야 한다 — 이번 수정이 이 경로를 바꾸지 않았음을
+        확인."""
+        assert resolve_order_side("SELL", OrderSide.SELL) == OrderSide.SELL
+        assert resolve_order_side("SELL", OrderSide.BUY) == OrderSide.SELL
+
 
 class TestResolveEntryStyle:
     def test_limit(self) -> None:

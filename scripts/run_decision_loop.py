@@ -1981,6 +1981,23 @@ async def _run_one_cycle(
             # NOTE: 초기 request는 MARKET + price=None으로 시작한다.
             # quote fetch는 execution_service._resolve_quote() 단일 경로에서 처리하고,
             # 저유동성 BUY는 execution_service가 LIMIT 강제/차단까지 담당한다.
+            #
+            # 2026-08-21: 기본 side는 source_type별로 다르다 — held_position은
+            # 이미 보유 중인 포지션이라 실제 actionable 판단은 항상
+            # REDUCE/EXIT(=SELL) 방향이고 신규 매수(APPROVE/BUY)는 이 lane에서
+            # 구조적으로 허용되지 않는다(FDC prompt의 held_position scope
+            # 제약과 동일한 전제). FDC가 permit 거부(queue timeout 등)·
+            # timeout·parse error로 fallback해 side가 빈 값(``""``)이 되면
+            # decision_factory.resolve_order_side()가 이 request.side로
+            # 대체하므로, 그 fallback 값 자체를 held_position의 실제 방향과
+            # 일치하는 SELL로 맞춘다 — 이전에는 core/held_position 구분 없이
+            # 항상 BUY였고, 그 결과 non-actionable(HOLD/WATCH) fallback 건의
+            # 최종 trade_decisions.side가 실제로는 매수 신호가 전혀 없었음에도
+            # BUY로 저장되는 표시 오류가 있었다(2026-08-21 실측 조사).
+            # core/event_overlay/market_overlay는 기존과 동일하게 BUY 유지.
+            default_side = (
+                OrderSide.SELL if source_type == "held_position" else OrderSide.BUY
+            )
             order_type, price = _resolve_order_type_and_price(
                 side="buy",
                 decision_type=None,
@@ -1993,7 +2010,7 @@ async def _run_one_cycle(
                 strategy_id=str(STRATEGY_ID),
                 symbol=symbol,
                 market=market,
-                side=OrderSide.BUY,
+                side=default_side,
                 order_type=order_type,
                 quantity=Decimal("1"),
                 price=price,
