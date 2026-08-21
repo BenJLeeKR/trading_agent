@@ -7606,3 +7606,16 @@ permit.md`.
   `subprocess_helpers.py`)의 기존 빈 `reason_codes` 문제는 이번 턴의
   명시적 스코프(`_build_fdc_timeout_fallback()`만) 밖이라 남아있음 —
   다음 턴에서 필요성 재검토.
+
+## 위 FDC strict rate limiter 작업 후속 수정 — 관측성 직렬화 누락 배관 결함 발견/수정(같은 PR #311, 2026-08-21 KST)
+
+코드 검토에서 `AgentSubprocessOutput`에 추가한 관측성 필드 8개가
+`subprocess_io.py::build_agent_subprocess_output_payload()`에는
+반영되지 않아 stdout JSON에서 조용히 누락되던 결함을 발견/수정.
+`subprocess_io.py` 양쪽(Protocol + payload 빌더)에 8개 필드 추가,
+`write_agent_subprocess_output()` 실제 호출 기반 round-trip 테스트와
+`decision_orchestrator` recorder 경로 테스트를 추가해 이 배관이
+실제로 연결됐음을 검증. 타임아웃 예산 계산 주석/문서의 "최악 시간
+보장" 오독 소지도 함께 수정(설계 목표치임을 명시, 실제 시간 상한은
+`_FDC_PER_AGENT_TIMEOUT`의 강제 종료가 담당). 상세: work log 동일
+파일 "후속 수정" 절.

@@ -528,6 +528,14 @@ class TestWriteAgentSubprocessOutputRoundTrip:
             ar_skipped=False,
             fdc_skipped=False,
             skip_reason_codes=(),
+            rate_limiter_waited_seconds=0.0,
+            rate_limiter_slot_acquired=True,
+            rate_limiter_queue_timeout=False,
+            rate_limiter_state_file_error=False,
+            provider_http_attempt_count=0,
+            provider_http_429_count=0,
+            provider_execution_seconds=0.0,
+            provider_final_status="",
         )
 
         stream = StringIO()
@@ -586,6 +594,14 @@ class TestWriteAgentSubprocessOutputRoundTrip:
             ar_skipped=False,
             fdc_skipped=False,
             skip_reason_codes=(),
+            rate_limiter_waited_seconds=0.0,
+            rate_limiter_slot_acquired=True,
+            rate_limiter_queue_timeout=False,
+            rate_limiter_state_file_error=False,
+            provider_http_attempt_count=0,
+            provider_http_429_count=0,
+            provider_execution_seconds=0.0,
+            provider_final_status="",
         )
 
         stream = StringIO()
@@ -653,6 +669,14 @@ class TestWriteAgentSubprocessOutputRoundTrip:
                 ar_skipped=False,
                 fdc_skipped=False,
                 skip_reason_codes=(),
+                rate_limiter_waited_seconds=0.0,
+                rate_limiter_slot_acquired=True,
+                rate_limiter_queue_timeout=False,
+                rate_limiter_state_file_error=False,
+                provider_http_attempt_count=0,
+                provider_http_429_count=0,
+                provider_execution_seconds=0.0,
+                provider_final_status="",
             )
             stream = StringIO()
             write_agent_subprocess_output(fake_output, stream)
@@ -697,6 +721,14 @@ class TestWriteAgentSubprocessOutputRoundTrip:
             ar_skipped=False,
             fdc_skipped=True,
             skip_reason_codes=("risk_reject",),
+            rate_limiter_waited_seconds=0.0,
+            rate_limiter_slot_acquired=True,
+            rate_limiter_queue_timeout=False,
+            rate_limiter_state_file_error=False,
+            provider_http_attempt_count=0,
+            provider_http_429_count=0,
+            provider_execution_seconds=0.0,
+            provider_final_status="",
         )
 
         stream = StringIO()
@@ -739,6 +771,184 @@ class TestWriteAgentSubprocessOutputRoundTrip:
         assert bundle.ai_inputs.ar_skipped is False
         assert bundle.ai_inputs.fdc_skipped is False
         assert bundle.ai_inputs.skip_reason_codes == ()
+
+
+class TestProviderObservabilityRoundTrip:
+    """2026-08-21 결함 수정 회귀 테스트: strict FDC rate limiter +
+    retry-inclusive permit 관측성 필드 8개가 실제
+    ``write_agent_subprocess_output()`` → stdout JSON →
+    ``deserialize_agent_output()`` 경로를 무손실로 통과하는지 검증한다.
+
+    배경: ``AgentSubprocessOutput``(``scripts/run_agent_subprocess.py``)에는
+    이 8개 필드가 추가돼 있었지만, 실제 stdout JSON 페이로드를 만드는
+    ``subprocess_io.py::build_agent_subprocess_output_payload()``에는
+    반영되지 않아 조용히 누락되고 있었다(PR #311 코드 검토로 발견) —
+    부모 프로세스와 DB는 항상 "호출 없음" 기본값만 보고 있었다. 이
+    테스트는 실제 ``write_agent_subprocess_output()`` 호출(AST 정적
+    검사나 dict 수동 구성이 아님)로 이 배관 전체를 검증한다.
+    """
+
+    def _build_fake_output(
+        self,
+        *,
+        sample_event_output: EventInterpretationOutput,
+        sample_risk_output: AIRiskOutput,
+        sample_compliance_output: AIComplianceOutput,
+        sample_composer_output: FinalDecisionComposerOutput,
+        **observability_overrides: Any,
+    ) -> SimpleNamespace:
+        base_observability: dict[str, Any] = {
+            "rate_limiter_waited_seconds": 17.5,
+            "rate_limiter_slot_acquired": False,
+            "rate_limiter_queue_timeout": True,
+            "rate_limiter_state_file_error": False,
+            "provider_http_attempt_count": 2,
+            "provider_http_429_count": 1,
+            "provider_execution_seconds": 19.25,
+            "provider_final_status": "provider_queue_timeout",
+        }
+        base_observability.update(observability_overrides)
+        return SimpleNamespace(
+            success=True,
+            event_output=dataclass_to_dict(sample_event_output),
+            risk_output=dataclass_to_dict(sample_risk_output),
+            compliance_output=dataclass_to_dict(sample_compliance_output),
+            composer_output=dataclass_to_dict(sample_composer_output),
+            error=None,
+            duration_seconds=19.3,
+            ei_error_metadata=None,
+            ei_skipped=False,
+            ar_skipped=False,
+            fdc_skipped=False,
+            skip_reason_codes=(),
+            **base_observability,
+        )
+
+    def test_all_eight_fields_survive_real_round_trip(
+        self,
+        sample_event_output: EventInterpretationOutput,
+        sample_risk_output: AIRiskOutput,
+        sample_compliance_output: AIComplianceOutput,
+        sample_composer_output: FinalDecisionComposerOutput,
+    ) -> None:
+        """0/false가 아닌 식별 가능한 값 8개가 실제 직렬화 왕복 후에도
+        정확히 동일하게 보존돼야 한다."""
+        from io import StringIO
+
+        from agent_trading.services.ai_agents.subprocess_io import (
+            write_agent_subprocess_output,
+        )
+
+        fake_output = self._build_fake_output(
+            sample_event_output=sample_event_output,
+            sample_risk_output=sample_risk_output,
+            sample_compliance_output=sample_compliance_output,
+            sample_composer_output=sample_composer_output,
+        )
+
+        stream = StringIO()
+        write_agent_subprocess_output(fake_output, stream)
+        raw_json = stream.getvalue()
+
+        # payload 자체에 8개 키가 실제로 존재하는지 직접 확인
+        # (subprocess_io.py 회귀의 정확한 지점).
+        payload = json.loads(raw_json)
+        assert payload["rate_limiter_waited_seconds"] == 17.5
+        assert payload["rate_limiter_slot_acquired"] is False
+        assert payload["rate_limiter_queue_timeout"] is True
+        assert payload["rate_limiter_state_file_error"] is False
+        assert payload["provider_http_attempt_count"] == 2
+        assert payload["provider_http_429_count"] == 1
+        assert payload["provider_execution_seconds"] == 19.25
+        assert payload["provider_final_status"] == "provider_queue_timeout"
+
+        bundle = deserialize_agent_output(raw_json)
+        obs = bundle.provider_observability
+        assert obs is not None
+        assert obs["rate_limiter_waited_seconds"] == 17.5
+        assert obs["rate_limiter_slot_acquired"] is False
+        assert obs["rate_limiter_queue_timeout"] is True
+        assert obs["rate_limiter_state_file_error"] is False
+        assert obs["provider_http_attempt_count"] == 2
+        assert obs["provider_http_429_count"] == 1
+        assert obs["provider_execution_seconds"] == 19.25
+        assert obs["provider_final_status"] == "provider_queue_timeout"
+
+    def test_legacy_payload_without_observability_keys_defaults_to_no_call_state(
+        self,
+        sample_event_output: EventInterpretationOutput,
+        sample_risk_output: AIRiskOutput,
+        sample_compliance_output: AIComplianceOutput,
+        sample_composer_output: FinalDecisionComposerOutput,
+    ) -> None:
+        """구버전 payload(8개 키가 아예 없음)와의 하위 호환 — 예외 없이
+        '호출 없음'을 뜻하는 안전한 기본값으로 복원돼야 한다."""
+        legacy_payload = {
+            "success": True,
+            "event_output": dataclass_to_dict(sample_event_output),
+            "risk_output": dataclass_to_dict(sample_risk_output),
+            "compliance_output": dataclass_to_dict(sample_compliance_output),
+            "composer_output": dataclass_to_dict(sample_composer_output),
+            "error": None,
+            "duration_seconds": 0.1,
+            "ei_error_metadata": None,
+            # rate_limiter_*/provider_* 키 없음(구버전 payload)
+        }
+        bundle = deserialize_agent_output(json.dumps(legacy_payload))
+        obs = bundle.provider_observability
+        assert obs is not None
+        assert obs["rate_limiter_waited_seconds"] == 0.0
+        assert obs["rate_limiter_slot_acquired"] is True
+        assert obs["rate_limiter_queue_timeout"] is False
+        assert obs["rate_limiter_state_file_error"] is False
+        assert obs["provider_http_attempt_count"] == 0
+        assert obs["provider_http_429_count"] == 0
+        assert obs["provider_execution_seconds"] == 0.0
+        assert obs["provider_final_status"] == ""
+
+    def test_removing_a_payload_key_breaks_round_trip_then_restored(
+        self,
+        sample_event_output: EventInterpretationOutput,
+        sample_risk_output: AIRiskOutput,
+        sample_compliance_output: AIComplianceOutput,
+        sample_composer_output: FinalDecisionComposerOutput,
+    ) -> None:
+        """이 round-trip 테스트가 실제로 배관 누락을 잡아낼 수 있는지
+        자체 검증한다 — payload에서 키 하나를 임시로 지우면 이 테스트가
+        기대하는 값과 달라져야 하고(구버전 기본값으로 대체됨), 키를
+        복원하면 다시 통과해야 한다."""
+        from io import StringIO
+
+        from agent_trading.services.ai_agents.subprocess_io import (
+            write_agent_subprocess_output,
+        )
+
+        fake_output = self._build_fake_output(
+            sample_event_output=sample_event_output,
+            sample_risk_output=sample_risk_output,
+            sample_compliance_output=sample_compliance_output,
+            sample_composer_output=sample_composer_output,
+            provider_http_attempt_count=3,
+        )
+
+        stream = StringIO()
+        write_agent_subprocess_output(fake_output, stream)
+        payload = json.loads(stream.getvalue())
+
+        # 키를 임시로 제거 — 구버전 payload를 흉내낸다.
+        removed_value = payload.pop("provider_http_attempt_count")
+        assert removed_value == 3
+
+        degraded_bundle = deserialize_agent_output(json.dumps(payload))
+        # 키가 없으면 "호출 없음" 기본값(0)으로 안전하게 대체돼야 한다 —
+        # 즉 실제로 기록됐던 값(3)과는 달라야 한다.
+        assert degraded_bundle.provider_observability["provider_http_attempt_count"] == 0
+        assert degraded_bundle.provider_observability["provider_http_attempt_count"] != removed_value
+
+        # 키를 복원하면 다시 원래 값이 보존돼야 한다.
+        payload["provider_http_attempt_count"] = removed_value
+        restored_bundle = deserialize_agent_output(json.dumps(payload))
+        assert restored_bundle.provider_observability["provider_http_attempt_count"] == 3
 
 
 @pytest.mark.asyncio
@@ -842,6 +1052,76 @@ async def test_rehydrate_subprocess_agent_runs_records_all_four() -> None:
     assert ac_run.structured_output_json.get("compliance_opinion") in {
         "allow", "warn", "review", "reject",
     }
+
+
+@pytest.mark.asyncio
+async def test_rehydrate_subprocess_agent_runs_injects_provider_observability() -> None:
+    """2026-08-21 결함 수정 회귀: ``_rehydrate_subprocess_agent_runs()``가
+    FDC의 ``structured_output_json["__provider_observability__"]``에
+    실제 rate limiter/provider 관측값을 주입하는지 recorder 경로까지
+    좁게 검증한다(EI의 기존 ``__error__`` side-channel 패턴과 동일한
+    지점).
+
+    이 테스트에서는 provider가 설정돼 있지 않아 FDC가 Stub 경로로
+    생략(``fdc_skipped``는 아니고 ``StubFinalDecisionComposerAgent``가
+    실행됨)되므로 관측값은 "호출 없음" 기본값이지만, side-channel 키
+    자체가 존재하고 8개 필드를 모두 담고 있는지가 이 테스트의 요점이다
+    (subprocess_io.py 배관이 실제로 연결돼 있는지 검증).
+    """
+    from agent_trading.services.ai_agents.recorder import AgentRunRecorder
+    from agent_trading.services.decision_orchestrator import (
+        DecisionOrchestratorService,
+    )
+
+    from unittest.mock import MagicMock
+
+    mock_repos = MagicMock()
+    mock_repos.unit_of_work = MagicMock()
+    mock_repos.unit_of_work.connection = None
+
+    orchestrator = DecisionOrchestratorService(
+        repos=mock_repos,  # type: ignore[arg-type]
+        use_subprocess_isolation=False,
+        agent_recorder=AgentRunRecorder(),
+    )
+
+    ctx_id = uuid4()
+    context = AssembledContext(source_type="core")
+    request = AgentExecutionRequest(
+        decision_context_id=ctx_id,
+        correlation_id="test-rehydrate-observability",
+        context=context,
+        symbol="005930",
+        market="KRX",
+    )
+
+    bundle = await orchestrator._run_agents_in_subprocess(
+        request=request,
+        assembled_context=context,
+    )
+    assert bundle.provider_observability is not None
+
+    await orchestrator._rehydrate_subprocess_agent_runs(
+        resolved_context_id=ctx_id,
+        agent_bundle=bundle,
+    )
+
+    runs = await orchestrator._agent_recorder.list_by_decision_context(ctx_id)
+    fdc_run = next(run for run in runs if run.agent_type == "final_decision_composer")
+
+    obs = fdc_run.structured_output_json.get("__provider_observability__")
+    assert obs is not None
+    for key in (
+        "rate_limiter_waited_seconds",
+        "rate_limiter_slot_acquired",
+        "rate_limiter_queue_timeout",
+        "rate_limiter_state_file_error",
+        "provider_http_attempt_count",
+        "provider_http_429_count",
+        "provider_execution_seconds",
+        "provider_final_status",
+    ):
+        assert key in obs
 
 
 # =========================================================================

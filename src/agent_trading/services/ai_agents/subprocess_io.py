@@ -14,9 +14,22 @@ import it directly regardless of that constraint.
 ``output`` below is duck-typed: any object exposing ``success``,
 ``event_output``, ``risk_output``, ``compliance_output``,
 ``composer_output``, ``error``, ``duration_seconds``, ``ei_error_metadata``,
-``ei_skipped``, ``ar_skipped``, ``fdc_skipped``, ``skip_reason_codes`` works
+``ei_skipped``, ``ar_skipped``, ``fdc_skipped``, ``skip_reason_codes``,
+``rate_limiter_waited_seconds``, ``rate_limiter_slot_acquired``,
+``rate_limiter_queue_timeout``, ``rate_limiter_state_file_error``,
+``provider_http_attempt_count``, ``provider_http_429_count``,
+``provider_execution_seconds``, ``provider_final_status`` works
 (e.g. the real ``AgentSubprocessOutput`` dataclass, or a lightweight
 stand-in built in a test without importing ``scripts.run_agent_subprocess``).
+
+2026-08-21 결함 수정: strict FDC rate limiter + retry-inclusive permit
+관측성 필드 8개(``rate_limiter_*``/``provider_*``)가
+``AgentSubprocessOutput``에는 추가됐지만 이 모듈의
+``AgentSubprocessOutputLike``/``build_agent_subprocess_output_payload()``
+에는 반영되지 않아, 실제 stdout JSON에서 조용히 누락되고 있었다 — 부모
+프로세스(``deserialize_agent_output()``)는 항상 키 부재 기본값만 보고
+있었다. 이 모듈이 stdout JSON 페이로드의 단일 진실 공급원이므로, 여기
+빠진 필드는 그 어떤 하위 경로에서도 복구할 수 없다.
 """
 
 from __future__ import annotations
@@ -44,6 +57,14 @@ class AgentSubprocessOutputLike(Protocol):
     ar_skipped: bool
     fdc_skipped: bool
     skip_reason_codes: tuple[str, ...]
+    rate_limiter_waited_seconds: float
+    rate_limiter_slot_acquired: bool
+    rate_limiter_queue_timeout: bool
+    rate_limiter_state_file_error: bool
+    provider_http_attempt_count: int
+    provider_http_429_count: int
+    provider_execution_seconds: float
+    provider_final_status: str
 
 
 def build_agent_subprocess_output_payload(
@@ -72,6 +93,14 @@ def build_agent_subprocess_output_payload(
         "ar_skipped": output.ar_skipped,
         "fdc_skipped": output.fdc_skipped,
         "skip_reason_codes": output.skip_reason_codes,
+        "rate_limiter_waited_seconds": output.rate_limiter_waited_seconds,
+        "rate_limiter_slot_acquired": output.rate_limiter_slot_acquired,
+        "rate_limiter_queue_timeout": output.rate_limiter_queue_timeout,
+        "rate_limiter_state_file_error": output.rate_limiter_state_file_error,
+        "provider_http_attempt_count": output.provider_http_attempt_count,
+        "provider_http_429_count": output.provider_http_429_count,
+        "provider_execution_seconds": output.provider_execution_seconds,
+        "provider_final_status": output.provider_final_status,
     }
 
 

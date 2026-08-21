@@ -54,35 +54,54 @@ class TestDefaultMaxWaitSeconds:
 
     배경: strict queue + retry-inclusive permit 전환으로 이 대기가 이제
     FDC per-agent timeout(``_FDC_PER_AGENT_TIMEOUT=70``) 예산 **안에서**
-    최초 요청 + 매 재시도(``MAX_RETRIES=3``)마다 반복될 수 있다. 최악의
-    경우(3회 모두 대기+HTTP+백오프)를 그 70초 예산 안에 담기 위해
-    18.0초로 낮췄다(자세한 계산은 ``fdc_rate_limiter.py`` 및
+    최초 요청 + 매 재시도(``MAX_RETRIES=3``)마다 반복될 수 있다. 아래
+    계산은 Gemini HTTP 왕복을 약 3초/회로 가정한 **설계 목표치**이지
+    "최악 시간을 보장"하지는 않는다 — 실제 시간 상한 자체는
+    ``_FDC_PER_AGENT_TIMEOUT``의 ``asyncio.wait_for()`` 강제 종료가
+    담당한다(자세한 계산과 그 한계는 ``fdc_rate_limiter.py`` 및
     ``scripts/run_agent_subprocess.py``의 상수 주석 참고).
     """
 
     def test_default_is_18_seconds(self) -> None:
         assert DEFAULT_MAX_WAIT_SECONDS == 18.0
 
-    def test_worst_case_three_retries_stays_within_fdc_agent_timeout(self) -> None:
-        """3회 permit 대기 + 3회 HTTP 왕복(~3s) + 재시도 backoff(~3s)가
-        FDC per-agent timeout(70초) 예산 안에 들어와야 한다."""
+    def test_assumed_worst_case_three_retries_fits_fdc_agent_timeout_design_target(
+        self,
+    ) -> None:
+        """3회 permit 대기 + 3회 가정 HTTP 왕복(~3s) + 재시도 backoff(~3s)가
+        FDC per-agent timeout(70초) 예산 안에 들어오도록 설계됐다 — 이는
+        HTTP 왕복 시간 가정 위의 설계 목표치 검증이며, 실제 시간 상한
+        보장은 별도로 ``_FDC_PER_AGENT_TIMEOUT``의 강제 종료가 담당한다
+        (그 관계는 ``test_fdc_agent_timeout_stays_within_subprocess_
+        budget``에서 검증)."""
         fdc_per_agent_timeout = 70.0
         max_retries = 3
         assumed_http_round_trip_seconds = 3.0
         assumed_retry_backoff_seconds = 3.0
-        worst_case = (
+        design_target = (
             max_retries * DEFAULT_MAX_WAIT_SECONDS
             + max_retries * assumed_http_round_trip_seconds
             + assumed_retry_backoff_seconds
         )
-        assert worst_case <= fdc_per_agent_timeout
+        assert design_target <= fdc_per_agent_timeout
 
     def test_fdc_agent_timeout_stays_within_subprocess_budget(self) -> None:
         """FDC per-agent timeout(70초)이 subprocess 전체 timeout(90초)
-        예산 안에서 안전마진을 남겨야 한다."""
-        fdc_per_agent_timeout = 70.0
-        subprocess_timeout_default = 90.0
-        assert fdc_per_agent_timeout < subprocess_timeout_default
+        예산 안에서 안전마진을 남겨야 한다 — 실제 상수/기본값을 직접
+        import해 비교한다(하드코딩된 리터럴 드리프트 방지). 이 관계가
+        유지돼야 FDC 내부 fallback(``_build_fdc_timeout_fallback()``)이
+        항상 부모 프로세스의 90초 강제 종료(``build_fallback_bundle()``,
+        더 관측성이 떨어지는 경로)보다 먼저 정상적으로 반환된다."""
+        import inspect
+
+        from agent_trading.services.decision_agent_runner import DecisionAgentRunner
+        from scripts.run_agent_subprocess import _FDC_PER_AGENT_TIMEOUT
+
+        subprocess_timeout_default = inspect.signature(
+            DecisionAgentRunner.__init__
+        ).parameters["subprocess_timeout"].default
+
+        assert _FDC_PER_AGENT_TIMEOUT < subprocess_timeout_default
 
 
 class TestWaitForFdcSlotBasic:

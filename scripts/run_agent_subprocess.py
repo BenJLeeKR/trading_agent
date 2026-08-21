@@ -112,11 +112,18 @@ _PER_AGENT_TIMEOUT = 30
 # 계산 근거: subprocess 전체 timeout(``DecisionAgentRunner.
 # subprocess_timeout``, 기본 90초) - EI/AR/AC 소요(수 ms, 무시 가능) -
 # 프로세스 spawn/직렬화 오버헤드 및 SIGTERM 유예 등 안전마진(약 20초)
-# = 70초. 이 70초는 `fdc_rate_limiter.DEFAULT_MAX_WAIT_SECONDS`(18.0초,
-# 최악 3회 permit 대기 기준)가 이 예산 안에 들어맞도록 역산된 값이다
-# (자세한 계산은 ``fdc_rate_limiter.py``의 ``DEFAULT_MAX_WAIT_SECONDS``
-# 주석 참고). EI/AR/AC는 재시도/permit 대기가 없으므로 기존 공유
-# ``_PER_AGENT_TIMEOUT=30``을 그대로 유지한다.
+# = 70초. 이 70초는 strict queue 대기(permit 획득)와 provider 실행
+# 시간을 합친 **상한**이다 — `fdc_rate_limiter.DEFAULT_MAX_WAIT_SECONDS`
+# (18.0초)는 Gemini HTTP 왕복을 약 3초/회로 가정한 설계 목표치일 뿐,
+# 이 70초 자체가 "최악 시간을 보장"하지는 않는다(자세한 계산과 그
+# 한계는 ``fdc_rate_limiter.py``의 ``DEFAULT_MAX_WAIT_SECONDS`` 주석
+# 참고). 실제 HTTP 왕복이 이 가정보다 오래 걸려도, 아래
+# ``asyncio.wait_for(..., timeout=_FDC_PER_AGENT_TIMEOUT)``가 70초에서
+# 확정적으로 강제 종료해 `provider_timeout` fallback으로 귀결시킨다 —
+# 즉 시간 상한 자체의 보장은 이 상수(및 그 `asyncio.wait_for` 적용)가
+# 담당하고, `DEFAULT_MAX_WAIT_SECONDS` 산식은 그 예산을 나누는 설계
+# 목표치에 불과하다. EI/AR/AC는 재시도/permit 대기가 없으므로 기존
+# 공유 ``_PER_AGENT_TIMEOUT=30``을 그대로 유지한다.
 _FDC_PER_AGENT_TIMEOUT = 70
 
 # Configure logging to stderr so parent can capture subprocess diagnostics.

@@ -78,15 +78,31 @@ DEFAULT_WINDOW_SECONDS = 60.0
 #
 # 예산 재계산 근거(``_FDC_PER_AGENT_TIMEOUT=70``, run_agent_subprocess.py):
 #   subprocess 전체 timeout 90초 - 그 외 오버헤드/안전마진 20초 = 70초.
-# 이 70초 안에서 최악의 경우(3회 모두 429로 재시도)를 감당해야 한다:
-#   3 x max_wait_seconds(permit 대기) + 3 x 실제 HTTP 왕복(약 3초/회 가정)
+#
+# 2026-08-21 표현 수정(PR #311 코드 검토): 아래 계산은 "최악의 경우
+# 시간을 보장한다"는 뜻이 **아니다** — Gemini HTTP 왕복 시간을 통상
+# 관측치인 약 3초/회로 가정한 **설계 목표치**일 뿐이며, 실제 요청이 이
+# 가정보다 오래 걸리는 경우까지 상한을 강제하지는 못한다. 70초라는
+# 상한 자체는 strict queue 대기(permit 획득)와 provider 실행 시간을
+# 합친 총 예산이며, 이 예산을 넘으면(느린 HTTP 응답 등으로) 아래
+# `max_wait_seconds` 계산과 무관하게 `_FDC_PER_AGENT_TIMEOUT` 자체가
+# `asyncio.wait_for()`로 강제 종료돼 `provider_timeout` fallback으로
+# 귀결된다(``run_agent_subprocess.py`` 참고) — 즉 실제 시간 상한 보장은
+# 이 permit 대기 계산이 아니라 그 바깥의 `_FDC_PER_AGENT_TIMEOUT`이
+# 담당한다.
+#
+# 설계 목표치 산출(3초/회 HTTP 왕복 가정, 최악 3회 모두 429로 재시도):
+#   3 x max_wait_seconds(permit 대기) + 3 x 가정 HTTP 왕복(약 3초/회)
 #   + 2회 재시도 사이 backoff(RETRY_DELAY 기반, 약 1초+2초=3초)
 #   <= 70초
 #   => 3 x max_wait_seconds <= 70 - 9 - 3 = 58
 #   => max_wait_seconds <= 19.33초
-# 18.0초로 설정해 약 4초의 안전 마진을 남긴다(3x18 + 9 + 3 = 66 <= 70).
-# 큐 대기는 반드시 유한 시간 안에 종료돼야 하며(무한 대기 금지),
-# 상한 초과 시 `queue_timeout=True`로 확정 종료한다(더 이상 bypass하지
+# 18.0초로 설정해 이 가정 위에서 약 4초의 여유를 남긴다
+# (3x18 + 9 + 3 = 66 <= 70, 단 HTTP 왕복이 가정보다 느리면 이 여유는
+# 줄어들거나 소진될 수 있다 — 그 경우의 확정적 종료는
+# `_FDC_PER_AGENT_TIMEOUT`이 담당).
+# 큐 대기 자체는 항상 유한 시간 안에 종료되며(무한 대기 금지), 상한
+# 초과 시 `queue_timeout=True`로 확정 종료한다(더 이상 bypass하지
 # 않음 — 상단 모듈 docstring 참고).
 DEFAULT_MAX_WAIT_SECONDS = 18.0
 DEFAULT_POLL_INTERVAL_SECONDS = 1.0

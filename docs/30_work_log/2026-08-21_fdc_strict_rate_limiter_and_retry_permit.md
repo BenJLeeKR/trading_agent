@@ -92,22 +92,31 @@ acquire()`이며, 내부적으로 `fdc_rate_limiter.wait_for_fdc_slot()`을
 
 ## 타임아웃 예산 계산
 
+**중요(2026-08-21 PR #311 코드 검토로 표현 수정)**: 아래 계산은 "최악
+시간을 보장한다"는 뜻이 아니다 — Gemini HTTP 왕복을 약 3초/회로 가정한
+**설계 목표치**일 뿐이다. 실제 시간 상한 보장은 `_FDC_PER_AGENT_TIMEOUT`
+자체의 `asyncio.wait_for()` 강제 종료가 담당한다 — 실제 HTTP 요청이
+이 가정보다 오래 걸리면, 아래 `max_wait_seconds` 산식과 무관하게 70초
+지점에서 `provider_timeout` fallback으로 확정 종료된다.
+
 ```
 subprocess 전체 timeout (DecisionAgentRunner.subprocess_timeout)  = 90s
   - EI/AR/AC 소요(수 ms, 무시 가능)
   - 프로세스 spawn/직렬화/SIGTERM 유예 등 안전마진               ≈ 20s
-  = FDC 전용 per-agent timeout(_FDC_PER_AGENT_TIMEOUT)            = 70s   (신규 상수, run_agent_subprocess.py)
+  = FDC 전용 per-agent timeout(_FDC_PER_AGENT_TIMEOUT)            = 70s   (신규 상수, run_agent_subprocess.py — 이 값이 실제 시간 상한을 강제)
 
-70s 예산 안에서 최악의 경우(MAX_RETRIES=3, 매번 429 후 재시도):
+70s 예산을 나누는 설계 목표치(MAX_RETRIES=3, 매번 429 후 재시도, HTTP 왕복 3s/회 가정):
   3 x max_wait_seconds(permit 대기)
-  + 3 x 실제 HTTP 왕복(~3s/회 가정)
+  + 3 x 가정 HTTP 왕복(~3s/회)
   + 재시도 사이 backoff(RETRY_DELAY 기반, 약 1s+2s=3s)
   <= 70s
   => 3 x max_wait_seconds <= 70 - 9 - 3 = 58
   => max_wait_seconds <= 19.33s
 
 DEFAULT_MAX_WAIT_SECONDS = 18.0s로 설정(fdc_rate_limiter.py)
-  → worst case: 3x18 + 9 + 3 = 66s <= 70s (안전마진 약 4s)
+  → 가정 위 여유: 3x18 + 9 + 3 = 66s <= 70s(약 4s) — 단 실제 HTTP 왕복이
+    가정보다 느리면 이 여유는 줄거나 소진될 수 있으며, 그 경우
+    `_FDC_PER_AGENT_TIMEOUT=70s`가 확정적으로 종료시킨다.
 ```
 
 **EI/AR/AC는 이번 변경 대상이 아니다** — 재시도/permit 대기가 없으므로
@@ -139,6 +148,39 @@ timeout(70초)이 그 예산 안에서 충분한 안전마진(20초)을 두고 �
 - `bash scripts/harness/run.sh accept docs` — PASS
 - `bash scripts/harness/run.sh type-check backend` — PASS(mypy/pyright 미설치 환경, 실질 미실행)
 - 명시적으로 실행하지 않음(요청에 따라 스코프 밖): 전체 pytest, smoke/integration/broker/KIS 테스트, 외부 API 호출.
+
+## 후속 수정(PR #311 코드 검토 반영, 같은 브랜치)
+
+코드 검토에서 `AgentSubprocessOutput`(`run_agent_subprocess.py`)에
+추가한 관측성 필드 8개가 실제 stdout JSON 페이로드를 만드는
+`subprocess_io.py::build_agent_subprocess_output_payload()`에는
+반영되지 않아 조용히 누락되는 배관 결함이 발견됐다 — 부모 프로세스와
+DB는 항상 "호출 없음" 기본값만 보고 있었다. `subprocess_io.py`의
+`AgentSubprocessOutputLike`/`build_agent_subprocess_output_payload()`
+양쪽에 8개 필드를 추가해 수정했고, `write_agent_subprocess_output()`
+실제 호출을 통한 round-trip 테스트(`TestProviderObservabilityRoundTrip`,
+`tests/services/ai_agents/test_agent_subprocess.py`)와
+`decision_orchestrator._rehydrate_subprocess_agent_runs()` 경로까지
+검증하는 recorder 테스트를 추가했다.
+
+또한 `DEFAULT_MAX_WAIT_SECONDS`/`_FDC_PER_AGENT_TIMEOUT` 관련 주석과
+이 문서의 "타임아웃 예산 계산" 절에서 "최악 시간을 보장한다"처럼 읽힐
+수 있는 표현을 수정했다 — 그 계산은 HTTP 왕복 3초/회를 가정한 설계
+목표치일 뿐이며, 실제 시간 상한 보장은 `_FDC_PER_AGENT_TIMEOUT`의
+`asyncio.wait_for()` 강제 종료가 담당한다는 점을 명시했다(위 "타임아웃
+예산 계산" 절 참고). permit 거부/FDC timeout/재시도 중 permit 재획득
+실패 경계는 mock/controlled coroutine 기반 신규 테스트로 추가
+검증했다(`tests/services/ai_agents/test_agents.py::
+TestFinalDecisionComposerAgent`의 `test_run_fallback_on_permit_*`,
+`test_fdc_per_agent_timeout_produces_provider_timeout_fallback`).
+
+추가 검증:
+- `bash scripts/harness/run.sh test-file tests/services/ai_agents/test_agent_subprocess.py` — 29 passed(신규 round-trip/recorder 테스트 4건 포함)
+- `bash scripts/harness/run.sh test-file tests/services/ai_agents/test_agents.py` — 128 passed(신규 permit/timeout boundary 테스트 4건 포함)
+- `bash scripts/harness/run.sh test-file tests/services/ai_agents/test_fdc_rate_limiter.py` — 11 passed(예산 테스트가 실제 상수 import로 강화됨)
+- `bash scripts/harness/run.sh accept backend-file src/agent_trading/services/ai_agents/subprocess_io.py` / `fdc_rate_limiter.py` — 각각 PASS
+- `bash scripts/harness/run.sh accept script-file scripts/run_agent_subprocess.py` — PASS
+- `bash scripts/harness/run.sh accept backend-runtime` / `accept architecture` / `accept no-bypass`(hard_bypass_count=0) / `accept style` / `accept docs` — 전부 PASS
 
 ## 미검증 항목
 
