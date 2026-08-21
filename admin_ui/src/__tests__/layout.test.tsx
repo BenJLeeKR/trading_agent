@@ -41,7 +41,10 @@ describe("Layout navigation", () => {
     expect(screen.getByText("정합성 점검")).toBeInTheDocument();
     expect(screen.getByText("현재가")).toBeInTheDocument();
     expect(screen.getByText("주문내역")).toBeInTheDocument();
+    // "계좌"는 클릭 불가능한 부모 그룹 레이블, 실제 링크는 하위의 "계좌잔고"/"실현손익"
     expect(screen.getByText("계좌")).toBeInTheDocument();
+    expect(screen.getByText("계좌잔고")).toBeInTheDocument();
+    expect(screen.getByText("실현손익")).toBeInTheDocument();
     expect(screen.getByText("의사결정")).toBeInTheDocument();
     expect(screen.getByText("에이전트 실행")).toBeInTheDocument();
 
@@ -187,13 +190,14 @@ describe("Layout mobile menu", () => {
     );
 
     await user.click(screen.getByRole("button", { name: "메뉴 열기" }));
-    expect(screen.getAllByText("계좌")).toHaveLength(2);
+    // "계좌"는 클릭 불가능한 부모 그룹 레이블이므로, 실제 링크인 "계좌잔고"를 클릭한다.
+    expect(screen.getAllByText("계좌잔고")).toHaveLength(2);
 
-    // Click the mobile dropdown's copy of the "계좌" link (the last one rendered).
-    const accountLinks = screen.getAllByText("계좌");
+    // Click the mobile dropdown's copy of the "계좌잔고" link (the last one rendered).
+    const accountLinks = screen.getAllByText("계좌잔고");
     await user.click(accountLinks[accountLinks.length - 1]);
 
     await screen.findByText("Accounts Page");
-    expect(screen.getAllByText("계좌")).toHaveLength(1);
+    expect(screen.getAllByText("계좌잔고")).toHaveLength(1);
   });
 });
