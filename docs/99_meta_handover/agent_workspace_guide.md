@@ -37,7 +37,7 @@
 - `docs/03_execution_order/`: 주문 실행과 broker boundary.
 - `docs/05_reconciliation_snapshot/`: reconciliation과 snapshot sync.
 - `docs/07_scheduler_ops/`: 스케줄러와 운영 자동화.
-- `docs/08_admin_ui_dashboard/`: Admin UI와 운영 대시보드.
+- `docs/08_frontend_design/`: Admin UI와 운영 대시보드.
 - `docs/09_paper_trading_validation/`: paper trading 검증.
 - `docs/10_signal_research_sppv/`: 시그널 리서치와 분석 문서.
 - `docs/99_meta_handover/`: 인수인계, 백로그, 문서 운영 원칙.
