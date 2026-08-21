@@ -251,6 +251,15 @@ class AgentSubprocessOutput:
     provider_http_429_count: int = 0
     provider_execution_seconds: float = 0.0
     provider_final_status: str = ""
+    # 2026-08-21(2차) 신설: in-cycle FIFO 재대기열 관측성 필드.
+    # ``rate_limiter_queue_position_at_first_wait``는 대기가 전혀
+    # 없었으면(즉시 grant) ``-1``을 sentinel로 쓴다(0은 "내 앞에 대기자가
+    # 0명"이라는 실제 의미 있는 값이므로 구분 필요).
+    rate_limiter_queue_ticket: str = ""
+    rate_limiter_queue_position_at_first_wait: int = -1
+    rate_limiter_requeue_count: int = 0
+    rate_limiter_final_waited_seconds: float = 0.0
+    rate_limiter_queue_deadline_exceeded: bool = False
 
 
 # ---------------------------------------------------------------------------
@@ -300,23 +309,55 @@ class _FdcPermitAccumulator:
     만족하는 얕은 어댑터 역할을 하며, 실제 구현(``wait_for_fdc_slot``)은
     이 파일(최상위 호출자)에서만 안다. 여러 permit 호출의 대기 시간을
     합산해 최종 관측성 필드로 노출한다.
+
+    2026-08-21(2차) in-cycle FIFO 재대기 도입: **최초 HTTP 요청**의
+    permit 획득(``acquire()``의 첫 호출)에만 ``allow_requeue=True``를
+    전달해 1회 재대기(FIFO tail 재등록)를 허용한다. 그 이후의 모든
+    호출(``provider_client.py``의 429/5xx 재시도 permit 획득)은
+    ``allow_requeue=False``로 호출해 재대기를 허용하지 않는다 —
+    재시도마다 최대 36초(18+18)씩 재대기를 허용하면
+    ``_FDC_PER_AGENT_TIMEOUT``(70초) 예산을 초과할 수 있기 때문이다
+    (``fdc_rate_limiter.py`` 모듈 docstring "2026-08-21(2차)" 절의
+    예산 계산 참고). ``provider_client.py``는 이 구분을 전혀 모른다 —
+    이 accumulator가 호출 횟수(``self._call_count``)만으로 내부적으로
+    판단한다.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, *, lane: str = "unknown") -> None:
         self.total_waited_seconds = 0.0
         self.slot_acquired = False
         self.queue_timeout = False
         self.state_file_error = False
+        self.lane = lane
+        self.last_queue_ticket: str | None = None
+        self.queue_position_at_first_wait: int | None = None
+        self.requeue_count = 0
+        self.final_waited_seconds = 0.0
+        self.queue_deadline_exceeded = False
+        self._call_count = 0
 
     async def acquire(self) -> PermitResult:
-        result = await wait_for_fdc_slot(max_wait_seconds=_FDC_MAX_WAIT_SECONDS)
+        self._call_count += 1
+        allow_requeue = self._call_count == 1
+        result = await wait_for_fdc_slot(
+            max_wait_seconds=_FDC_MAX_WAIT_SECONDS,
+            allow_requeue=allow_requeue,
+            lane=self.lane,
+        )
         self.total_waited_seconds += result.waited_seconds
+        self.final_waited_seconds = result.final_waited_seconds
         if result.granted:
             self.slot_acquired = True
         if result.queue_timeout:
             self.queue_timeout = True
         if result.state_file_error:
             self.state_file_error = True
+        if self.queue_position_at_first_wait is None:
+            self.queue_position_at_first_wait = result.queue_position_at_first_wait
+        self.last_queue_ticket = result.queue_ticket
+        self.requeue_count = max(self.requeue_count, result.requeue_count)
+        if result.queue_deadline_exceeded:
+            self.queue_deadline_exceeded = True
         denial_reason: str | None = None
         if result.queue_timeout:
             denial_reason = "queue_timeout"
@@ -1182,7 +1223,8 @@ async def main() -> None:
     # HTTP 호출이 없으므로 만들지 않는다 — Stub은 permit 대기 없이
     # 기존 동작을 그대로 유지한다.
     fdc_permit_accumulator = (
-        _FdcPermitAccumulator() if provider_client is not None else None
+        _FdcPermitAccumulator(lane=inp.source_type or "unknown")
+        if provider_client is not None else None
     )
     ei_agent, ar_agent, ac_agent, fdc_agent = _build_agent_triplet(
         provider_client=provider_client,
@@ -1327,6 +1369,11 @@ async def main() -> None:
         fdc_rate_limiter_slot_acquired = True
         fdc_rate_limiter_queue_timeout = False
         fdc_rate_limiter_state_file_error = False
+        fdc_rate_limiter_queue_ticket = ""
+        fdc_rate_limiter_queue_position_at_first_wait = -1
+        fdc_rate_limiter_requeue_count = 0
+        fdc_rate_limiter_final_waited_seconds = 0.0
+        fdc_rate_limiter_queue_deadline_exceeded = False
 
         if skip_fdc:
             composer_output = skip_output
@@ -1400,11 +1447,27 @@ async def main() -> None:
                 fdc_rate_limiter_slot_acquired = fdc_permit_accumulator.slot_acquired
                 fdc_rate_limiter_queue_timeout = fdc_permit_accumulator.queue_timeout
                 fdc_rate_limiter_state_file_error = fdc_permit_accumulator.state_file_error
+                fdc_rate_limiter_queue_ticket = fdc_permit_accumulator.last_queue_ticket or ""
+                fdc_rate_limiter_queue_position_at_first_wait = (
+                    fdc_permit_accumulator.queue_position_at_first_wait
+                    if fdc_permit_accumulator.queue_position_at_first_wait is not None
+                    else -1
+                )
+                fdc_rate_limiter_requeue_count = fdc_permit_accumulator.requeue_count
+                fdc_rate_limiter_final_waited_seconds = fdc_permit_accumulator.final_waited_seconds
+                fdc_rate_limiter_queue_deadline_exceeded = (
+                    fdc_permit_accumulator.queue_deadline_exceeded
+                )
             else:
                 fdc_rate_limiter_waited_seconds = 0.0
                 fdc_rate_limiter_slot_acquired = True
                 fdc_rate_limiter_queue_timeout = False
                 fdc_rate_limiter_state_file_error = False
+                fdc_rate_limiter_queue_ticket = ""
+                fdc_rate_limiter_queue_position_at_first_wait = -1
+                fdc_rate_limiter_requeue_count = 0
+                fdc_rate_limiter_final_waited_seconds = 0.0
+                fdc_rate_limiter_queue_deadline_exceeded = False
             _diag(
                 "FDC provider observation: "
                 f"http_attempts={fdc_provider_http_attempt_count} "
@@ -1414,7 +1477,12 @@ async def main() -> None:
                 f"limiter_waited={fdc_rate_limiter_waited_seconds:.1f}s "
                 f"slot_acquired={fdc_rate_limiter_slot_acquired} "
                 f"queue_timeout={fdc_rate_limiter_queue_timeout} "
-                f"state_file_error={fdc_rate_limiter_state_file_error}"
+                f"state_file_error={fdc_rate_limiter_state_file_error} "
+                f"queue_ticket={fdc_rate_limiter_queue_ticket} "
+                f"queue_position_at_first_wait={fdc_rate_limiter_queue_position_at_first_wait} "
+                f"requeue_count={fdc_rate_limiter_requeue_count} "
+                f"final_waited_seconds={fdc_rate_limiter_final_waited_seconds:.1f} "
+                f"queue_deadline_exceeded={fdc_rate_limiter_queue_deadline_exceeded}"
             )
             _diag(f"FinalDecisionComposerAgent completed: symbol={composer_output.symbol} decision_type={composer_output.decision_type}")
             logger.info(
@@ -1465,6 +1533,13 @@ async def main() -> None:
             provider_http_429_count=fdc_provider_http_429_count,
             provider_execution_seconds=fdc_provider_execution_seconds,
             provider_final_status=fdc_provider_final_status,
+            rate_limiter_queue_ticket=fdc_rate_limiter_queue_ticket,
+            rate_limiter_queue_position_at_first_wait=(
+                fdc_rate_limiter_queue_position_at_first_wait
+            ),
+            rate_limiter_requeue_count=fdc_rate_limiter_requeue_count,
+            rate_limiter_final_waited_seconds=fdc_rate_limiter_final_waited_seconds,
+            rate_limiter_queue_deadline_exceeded=fdc_rate_limiter_queue_deadline_exceeded,
         )
         _write_output(output)
         if skip_fdc:

@@ -49,6 +49,7 @@ from scripts.run_agent_subprocess import (
     _build_ar_timeout_fallback,
     _build_ei_timeout_fallback,
     _build_fdc_timeout_fallback,
+    _FdcPermitAccumulator,
     _run_fdc_with_outer_timeout,
 )
 from agent_trading.services.ai_agents.event_interpretation import (
@@ -527,6 +528,46 @@ class TestRunFdcWithOuterTimeout:
         assert observation_fields["provider_http_attempt_count"] == 2
         assert observation_fields["provider_http_429_count"] == 1
         assert observation_fields["provider_execution_seconds"] == 3.4
+
+
+class TestFdcPermitAccumulatorRequeuePolicy:
+    """2026-08-21(2차) in-cycle FIFO 재대기열 — ``_FdcPermitAccumulator``가
+    최초 호출(``acquire()`` 1번째)에만 ``allow_requeue=True``를 전달하고,
+    이후 모든 호출(provider 429/5xx 재시도)에는 ``allow_requeue=False``를
+    전달하는지 검증한다. ``provider_client.py``는 이 구분을 전혀 모르는
+    채로 그저 ``acquire_permit()``을 반복 호출할 뿐이므로, 이 정책은
+    전적으로 accumulator 내부(``self._call_count``)에 달려 있다."""
+
+    @pytest.mark.asyncio
+    async def test_first_call_allows_requeue_subsequent_calls_do_not(
+        self, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        from agent_trading.services.ai_agents.provider_client import PermitResult
+
+        captured_allow_requeue: list[bool] = []
+        captured_lane: list[str] = []
+
+        async def _fake_wait_for_fdc_slot(*, max_wait_seconds, allow_requeue, lane):
+            captured_allow_requeue.append(allow_requeue)
+            captured_lane.append(lane)
+            from agent_trading.services.ai_agents.fdc_rate_limiter import (
+                FdcRateLimitResult,
+            )
+            return FdcRateLimitResult(granted=True, waited_seconds=0.0)
+
+        monkeypatch.setattr(
+            "scripts.run_agent_subprocess.wait_for_fdc_slot",
+            _fake_wait_for_fdc_slot,
+        )
+
+        accumulator = _FdcPermitAccumulator(lane="held_position")
+        for _ in range(3):  # provider_client.py의 MAX_RETRIES=3과 동일한 횟수
+            permit = await accumulator.acquire()
+            assert isinstance(permit, PermitResult)
+            assert permit.granted is True
+
+        assert captured_allow_requeue == [True, False, False]
+        assert captured_lane == ["held_position"] * 3
 
 
 class TestFdcSkipRiskReject:

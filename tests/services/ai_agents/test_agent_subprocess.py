@@ -536,6 +536,11 @@ class TestWriteAgentSubprocessOutputRoundTrip:
             provider_http_429_count=0,
             provider_execution_seconds=0.0,
             provider_final_status="",
+            rate_limiter_queue_ticket="",
+            rate_limiter_queue_position_at_first_wait=-1,
+            rate_limiter_requeue_count=0,
+            rate_limiter_final_waited_seconds=0.0,
+            rate_limiter_queue_deadline_exceeded=False,
         )
 
         stream = StringIO()
@@ -602,6 +607,11 @@ class TestWriteAgentSubprocessOutputRoundTrip:
             provider_http_429_count=0,
             provider_execution_seconds=0.0,
             provider_final_status="",
+            rate_limiter_queue_ticket="",
+            rate_limiter_queue_position_at_first_wait=-1,
+            rate_limiter_requeue_count=0,
+            rate_limiter_final_waited_seconds=0.0,
+            rate_limiter_queue_deadline_exceeded=False,
         )
 
         stream = StringIO()
@@ -677,6 +687,11 @@ class TestWriteAgentSubprocessOutputRoundTrip:
                 provider_http_429_count=0,
                 provider_execution_seconds=0.0,
                 provider_final_status="",
+                rate_limiter_queue_ticket="",
+                rate_limiter_queue_position_at_first_wait=-1,
+                rate_limiter_requeue_count=0,
+                rate_limiter_final_waited_seconds=0.0,
+                rate_limiter_queue_deadline_exceeded=False,
             )
             stream = StringIO()
             write_agent_subprocess_output(fake_output, stream)
@@ -729,6 +744,11 @@ class TestWriteAgentSubprocessOutputRoundTrip:
             provider_http_429_count=0,
             provider_execution_seconds=0.0,
             provider_final_status="",
+            rate_limiter_queue_ticket="",
+            rate_limiter_queue_position_at_first_wait=-1,
+            rate_limiter_requeue_count=0,
+            rate_limiter_final_waited_seconds=0.0,
+            rate_limiter_queue_deadline_exceeded=False,
         )
 
         stream = StringIO()
@@ -806,6 +826,11 @@ class TestProviderObservabilityRoundTrip:
             "provider_http_429_count": 1,
             "provider_execution_seconds": 19.25,
             "provider_final_status": "provider_queue_timeout",
+            "rate_limiter_queue_ticket": "ticket-abc123",
+            "rate_limiter_queue_position_at_first_wait": 3,
+            "rate_limiter_requeue_count": 1,
+            "rate_limiter_final_waited_seconds": 8.75,
+            "rate_limiter_queue_deadline_exceeded": True,
         }
         base_observability.update(observability_overrides)
         return SimpleNamespace(
@@ -861,6 +886,12 @@ class TestProviderObservabilityRoundTrip:
         assert payload["provider_http_429_count"] == 1
         assert payload["provider_execution_seconds"] == 19.25
         assert payload["provider_final_status"] == "provider_queue_timeout"
+        # 2026-08-21(2차) in-cycle FIFO 재대기열 관측성 필드 5개.
+        assert payload["rate_limiter_queue_ticket"] == "ticket-abc123"
+        assert payload["rate_limiter_queue_position_at_first_wait"] == 3
+        assert payload["rate_limiter_requeue_count"] == 1
+        assert payload["rate_limiter_final_waited_seconds"] == 8.75
+        assert payload["rate_limiter_queue_deadline_exceeded"] is True
 
         bundle = deserialize_agent_output(raw_json)
         obs = bundle.provider_observability
@@ -873,6 +904,11 @@ class TestProviderObservabilityRoundTrip:
         assert obs["provider_http_429_count"] == 1
         assert obs["provider_execution_seconds"] == 19.25
         assert obs["provider_final_status"] == "provider_queue_timeout"
+        assert obs["rate_limiter_queue_ticket"] == "ticket-abc123"
+        assert obs["rate_limiter_queue_position_at_first_wait"] == 3
+        assert obs["rate_limiter_requeue_count"] == 1
+        assert obs["rate_limiter_final_waited_seconds"] == 8.75
+        assert obs["rate_limiter_queue_deadline_exceeded"] is True
 
     def test_legacy_payload_without_observability_keys_defaults_to_no_call_state(
         self,
@@ -905,6 +941,11 @@ class TestProviderObservabilityRoundTrip:
         assert obs["provider_http_429_count"] == 0
         assert obs["provider_execution_seconds"] == 0.0
         assert obs["provider_final_status"] == ""
+        assert obs["rate_limiter_queue_ticket"] == ""
+        assert obs["rate_limiter_queue_position_at_first_wait"] == -1
+        assert obs["rate_limiter_requeue_count"] == 0
+        assert obs["rate_limiter_final_waited_seconds"] == 0.0
+        assert obs["rate_limiter_queue_deadline_exceeded"] is False
 
     def test_removing_a_payload_key_breaks_round_trip_then_restored(
         self,
@@ -1120,6 +1161,11 @@ async def test_rehydrate_subprocess_agent_runs_injects_provider_observability() 
         "provider_http_429_count",
         "provider_execution_seconds",
         "provider_final_status",
+        "rate_limiter_queue_ticket",
+        "rate_limiter_queue_position_at_first_wait",
+        "rate_limiter_requeue_count",
+        "rate_limiter_final_waited_seconds",
+        "rate_limiter_queue_deadline_exceeded",
     ):
         assert key in obs
 

@@ -7634,3 +7634,37 @@ _FDC_PER_AGENT_TIMEOUT)`) 경로가 `asyncio.CancelledError`로 취소되면
 timeout → fallback → 관측값 계산 → stdout JSON → deserialize까지의
 전체 경로를 실제 70초 sleep 없이 검증했다. 상세: work log 동일 파일
 "후속 수정 2" 절.
+
+## FDC strict limiter — in-cycle FIFO 재대기열 구현 완료(2026-08-21 KST)
+
+상세: `docs/30_work_log/2026-08-21_fdc_in_cycle_fifo_requeue.md`.
+
+- 배포 후 다회 사이클 실측(별도 세션)에서 `provider_queue_timeout`이
+  실제 FDC 호출의 39.4%까지 발생하고 시간이 갈수록 악화되는 추세를
+  확인한 뒤, 설계 검토(별도 세션)에서 안 B(FIFO ticket queue + 1회
+  재대기)를 추천한 것을 실제로 구현.
+- `fdc_rate_limiter.py`의 상태 파일을 `{"version","grants","pending"}`
+  으로 분리해 진짜 FIFO ticket queue 구현. head ticket만 grant 가능,
+  1차 대기(18초) 초과 시 최초 요청에 한해 새 ticket으로 FIFO 맨 뒤에
+  1회 재등록(최대 총 36초), 재시도 permit은 재대기 없이 즉시 확정
+  실패. lease(30초) 기반 orphan 정리, `grants`(60초 트림)와
+  `pending`(heartbeat 기반 lease만 정리 기준) 수명 규칙 완전 분리.
+- `provider_client.py`는 무수정 — "최초 요청 vs 재시도" 구분은
+  `run_agent_subprocess.py`의 `_FdcPermitAccumulator`가 호출 횟수로만
+  판단.
+- 관측성 5개 필드(`rate_limiter_queue_ticket`/`..._queue_position_at_
+  first_wait`/`..._requeue_count`/`..._final_waited_seconds`/`..._
+  queue_deadline_exceeded`) 추가, 기존 `__provider_observability__`
+  round-trip 경로 그대로 재사용(새 테이블/마이그레이션 없음).
+- 신규/갱신 테스트 다수 PASS(FIFO 순서, 재대기, orphan 정리, grant/
+  pending 분리, `_FdcPermitAccumulator` 정책 등), 기존 회귀 없음.
+- **신규 backlog(범위 판단 보류, 설계 검토에서 이미 예견)**: core lane
+  100% starvation 문제는 순수 FIFO만으로는 해결되지 않는다(도착 순서
+  자체가 항상 마지막이므로) — ticket에 `lane` 필드는 남겨뒀으니, lane
+  최소 슬롯/우선순위 정책 도입 여부는 배포 후 실측을 보고 다음 턴에
+  결정.
+- **신규 backlog(운영 실측 필요)**: 1회 재대기가 실제로
+  `provider_queue_timeout` 비율을 얼마나 낮추는지, 재대기+최대 재시도
+  복합 케이스(이론상 84초 > 70초 예산)가 실제로 `provider_timeout`
+  (outer)으로 얼마나 자주 귀결되는지 — work log의 배포 후 측정 SQL
+  참고.
