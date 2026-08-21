@@ -437,6 +437,118 @@ class TestStateFileCorruption:
         assert result.granted is True
 
 
+class TestNewFileVsExistingEmptyFile:
+    """2026-08-21(4차) 결함 수정 회귀 테스트: "상태 파일이 아직 존재하지
+    않는 정상 최초 실행"과 "이미 존재하던 상태 파일이 비어 버린 비정상
+    상태"(프로세스 강제 종료, truncate 직후 종료, 부분 기록 실패 등)를
+    명확히 구분한다. ``open(path, "a+")``만으로는 이 둘을 구분할 수
+    없었다 — 둘 다 "내용이 빈 파일"이기 때문이다."""
+
+    @pytest.mark.asyncio
+    async def test_nonexistent_path_initializes_and_grants_first_permit(
+        self, tmp_path: Path
+    ) -> None:
+        state_path = str(tmp_path / "state.json")
+        assert not Path(state_path).exists()
+
+        result = await wait_for_fdc_slot(
+            max_calls=1, window_seconds=60.0, max_wait_seconds=1.0,
+            poll_interval_seconds=0.05, state_path=state_path,
+        )
+        assert result.granted is True
+        assert result.state_file_error is False
+
+        with open(state_path) as fh:
+            state = json.loads(fh.read())
+        assert state == {"version": 1, "grants": [], "pending": []} or (
+            state["version"] == 1
+            and isinstance(state["grants"], list)
+            and isinstance(state["pending"], list)
+        )
+
+    @pytest.mark.asyncio
+    async def test_preexisting_zero_byte_file_fails_closed(
+        self, tmp_path: Path
+    ) -> None:
+        """사전에 0바이트로 존재하던 파일은 "신규"가 아니라 손상으로
+        취급해 permit을 거부해야 한다."""
+        state_path = str(tmp_path / "state.json")
+        Path(state_path).touch()  # 0바이트로 미리 존재
+        assert Path(state_path).exists()
+        assert Path(state_path).stat().st_size == 0
+
+        result = await wait_for_fdc_slot(
+            max_calls=1, window_seconds=60.0, max_wait_seconds=0.2,
+            poll_interval_seconds=0.05, state_path=state_path,
+        )
+        assert result.granted is False
+        assert result.state_file_error is True
+        assert result.queue_timeout is False
+
+    @pytest.mark.asyncio
+    async def test_preexisting_whitespace_only_file_fails_closed(
+        self, tmp_path: Path
+    ) -> None:
+        state_path = str(tmp_path / "state.json")
+        with open(state_path, "w") as fh:
+            fh.write("   \n\t  \n")
+
+        result = await wait_for_fdc_slot(
+            max_calls=1, window_seconds=60.0, max_wait_seconds=0.2,
+            poll_interval_seconds=0.05, state_path=state_path,
+        )
+        assert result.granted is False
+        assert result.state_file_error is True
+
+    @pytest.mark.asyncio
+    async def test_partial_json_write_fails_closed(self, tmp_path: Path) -> None:
+        """디스크 쓰기 도중 중단된 것을 흉내내는 부분 JSON — 기존 손상
+        JSON 테스트와 동일하게 fail-closed 처리돼야 한다."""
+        state_path = str(tmp_path / "state.json")
+        with open(state_path, "w") as fh:
+            fh.write('{"version": 1, "grants":')  # 잘린 JSON
+
+        result = await wait_for_fdc_slot(
+            max_calls=1, window_seconds=60.0, max_wait_seconds=0.2,
+            poll_interval_seconds=0.05, state_path=state_path,
+        )
+        assert result.granted is False
+        assert result.state_file_error is True
+
+    @pytest.mark.asyncio
+    async def test_concurrent_first_initialization_is_race_free(
+        self, tmp_path: Path
+    ) -> None:
+        """존재하지 않는 동일 경로에 여러 호출을 동시에 시작해도, 유효한
+        JSON만 최종적으로 남고 초기화 경합으로 빈 상태를 손상으로 잘못
+        재해석해 일부가 부당하게 실패(state_file_error)해서는 안 된다.
+        ``max_calls``를 동시 호출 수와 같게 둬 전부 즉시 grant 가능한
+        여유를 주고, 실제로 전부 정상 grant되는지 확인한다."""
+        state_path = str(tmp_path / "state.json")
+        assert not Path(state_path).exists()
+
+        concurrency = 5
+
+        async def _call() -> FdcRateLimitResult:
+            return await wait_for_fdc_slot(
+                max_calls=concurrency, window_seconds=5.0, max_wait_seconds=1.5,
+                poll_interval_seconds=0.05, state_path=state_path,
+            )
+
+        results = await asyncio.gather(*(_call() for _ in range(concurrency)))
+
+        # 초기화 경합 자체가 원인이 되어 state_file_error가 나면 안 된다.
+        assert not any(r.state_file_error for r in results)
+        # max_calls를 동시 호출 수와 같게 뒀으므로 전부 grant돼야 한다.
+        assert all(r.granted for r in results)
+
+        with open(state_path) as fh:
+            state = json.loads(fh.read())
+        assert state["version"] == 1
+        assert len(state["grants"]) <= concurrency  # max_calls를 넘는 grant 없음
+        assert state["pending"] == []
+
+
 class TestWaitForFdcSlotConcurrency:
     """여러 코루틴이 동시에 호출해도 상한을 정확히 지키는지 확인."""
 

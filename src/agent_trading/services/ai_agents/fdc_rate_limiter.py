@@ -105,6 +105,37 @@ strict no-bypass 원칙의 허점이다: 상태 파일이 어떤 이유로든 �
   않고 손상으로 취급한다. legacy grant도 기존 ``_trim_grants()``가
   그대로 60초 기준 트림한다(별도 로직 불필요).
 
+설계(2026-08-21, 4차 — 신규 파일과 "이미 존재하지만 빈 파일" 구분)
+---------------------------------------------------------------------
+3차 수정은 "내용을 해석할 수 없는" 경우를 손상으로 fail-closed
+처리했지만, 여전히 남은 구멍이 하나 있었다: ``_read_state()``는
+**내용이 비어 있으면**(``raw.strip()``이 빈 문자열) 무조건 "방금
+생성된 정상 신규 파일"로 간주했다. 하지만 ``open(path, "a+")``는
+파일이 이미 존재하든 존재하지 않든 똑같이 성공하므로, "이미 있던
+파일이 크래시/부분 쓰기 실패/수동 truncate 등으로 비어 버린 경우"와
+"정말 방금 처음 생긴 파일"을 이 함수만으로는 구분할 수 없었다 — 둘 다
+그냥 "내용이 빈 파일"이기 때문이다.
+
+이를 해결하기 위해 ``_ensure_state_file_initialized()``를 도입했다:
+- 상태 파일이 **아직 경로에 존재하지 않을 때만**, 임시 파일에 유효한
+  빈 v1 JSON을 전부 먼저 써넣은 뒤 ``os.link()``로 최종 경로에
+  원자적으로 연결한다. ``os.link()``는 대상 경로가 이미 존재하면
+  ``FileExistsError``를 던지므로, 여러 프로세스가 동시에 최초
+  호출해도 정확히 하나만 성공한다("최초 생성자"가 유일하게 결정됨).
+- 이 방식의 핵심: **공유 경로에 파일이 "존재하는" 순간, 그 파일은
+  이미 완전한 유효 JSON을 담고 있다** — ``open(path, "a+")``가 만드는
+  "존재하지만 아직 비어 있는" 중간 상태가 공유 경로에 절대 나타나지
+  않는다. 따라서 이후 ``_read_state()``가 보는 "내용이 비어 있는
+  파일"은 오직 **이미 존재하던(유효한 내용을 담고 있었던) 파일이 그
+  이후 어떤 이유로든 비워진 경우**만을 의미하게 되고, 이는 예외 없이
+  손상으로 fail-closed 처리한다(``_read_state()``에서 "빈 내용 =
+  신규 파일" 분기를 완전히 제거).
+- ``_poll_ticket()``과 ``_remove_ticket()`` 양쪽 모두 실제
+  ``open(path, "a+")`` 호출 **이전에** 이 초기화 함수를 호출한다 —
+  ``_remove_ticket()``이 먼저 호출돼도(예: ticket 등록 전 즉시 취소)
+  의도치 않게 빈 파일을 만들어 다음 폴러가 이를 손상으로 오판하는
+  일이 없다.
+
 Gemini RPM 정책
 ---------------
 운영 계약상 정확한 RPM 한도는 ``.env`` 열람 없이는 확인할 수 없으나,
@@ -278,12 +309,59 @@ class _CorruptStateFileError(OSError):
     """
 
 
+def _ensure_state_file_initialized(state_path: str) -> None:
+    """상태 파일이 아직 경로에 존재하지 않으면, 유효한 빈 v1 JSON을
+    담은 채로 원자적으로 생성한다.
+
+    2026-08-21(4차): ``open(path, "a+")``만으로는 "방금 처음 생긴
+    파일"과 "이미 존재하던 파일이 어떤 이유로든 비워진 경우"를 절대
+    구분할 수 없다 — 둘 다 그냥 "0바이트 파일"이기 때문이다. 이
+    함수는 그 애매함 자체를 없앤다: 임시 파일에 완전한 v1 JSON을
+    먼저 써넣은 뒤 ``os.link()``로 최종 경로에 연결한다.
+    ``os.link()``는 대상이 이미 존재하면 ``FileExistsError``를
+    던지므로(원자적 "없을 때만 생성" 보장), 여러 프로세스가 동시에
+    최초 호출해도 정확히 하나만 실제로 파일을 만들고 나머지는 조용히
+    자기 임시 파일만 정리한다.
+
+    이 함수가 성공적으로 끝난 뒤에는(또는 이미 파일이 존재해 아무
+    것도 하지 않았을 때도) **경로에 파일이 존재한다면 그 내용은 항상
+    유효한 JSON**이라는 불변식이 성립한다 — 이후 ``_read_state()``가
+    보는 "내용이 빈 파일"은 오직 진짜 손상만을 의미하게 된다.
+
+    이 함수 자체의 I/O 실패(디스크 오류 등)는 예외를 삼키지 않고
+    그대로 전파한다 — 호출자(``_poll_ticket``/``_remove_ticket``)의
+    뒤이은 ``open()``에서도 동일한 원인으로 자연스럽게 실패할 것이므로
+    별도 처리가 필요 없다.
+    """
+    if os.path.exists(state_path):
+        return
+    directory = os.path.dirname(state_path) or "."
+    os.makedirs(directory, exist_ok=True)
+    tmp_path = f"{state_path}.init.{uuid.uuid4().hex}.tmp"
+    with open(tmp_path, "w") as tmp_fh:
+        tmp_fh.write(json.dumps(_empty_state()))
+        tmp_fh.flush()
+        os.fsync(tmp_fh.fileno())
+    try:
+        os.link(tmp_path, state_path)
+    except FileExistsError:
+        # 다른 프로세스가 그 사이 먼저 만들었다 — 정상 경합 결과.
+        pass
+    finally:
+        os.unlink(tmp_path)
+
+
 def _read_state(fh: object) -> dict:
     """상태 파일 내용을 읽어 ``{"version", "grants", "pending"}`` 구조로
     반환한다.
 
-    - 파일이 **완전히 비어 있으면**(``open(path, "a+")``가 방금 새로
-      만든 신규 파일) 정상적인 빈 v1 상태로 취급한다.
+    2026-08-21(4차) 변경: 이 함수가 호출되는 시점에는 호출자가 이미
+    ``_ensure_state_file_initialized()``를 실행했다는 전제가 있다 —
+    즉 파일이 존재한다면 그 내용은 항상 유효한 JSON이었어야 한다.
+    따라서 **내용이 비어 있으면 더 이상 "신규 파일"로 보지 않고
+    무조건 손상으로 간주**한다(과거에는 이 구분이 불가능해 빈 파일을
+    전부 신규로 오인했다 — 이번 수정으로 그 구멍을 막는다).
+
     - **PR #311 이전 legacy ``list[float]`` 포맷**(순수 숫자로만 구성된
       리스트, 빈 리스트 포함)은 ``{"version": 1, "grants": <그 값>,
       "pending": []}``로 1회 변환해 반환한다 — 호출자(``_poll_ticket``)
@@ -297,10 +375,11 @@ def _read_state(fh: object) -> dict:
     fh.seek(0)  # type: ignore[attr-defined]
     raw = fh.read()  # type: ignore[attr-defined]
     if not raw.strip():
-        # 방금 생성된 신규 파일(또는 명시적으로 비워진 파일) — 정상
-        # 초기 상태로 취급한다. 손상 상태와 구분되는 유일한 "안전하게
-        # 빈 상태로 봐도 되는" 경우다.
-        return _empty_state()
+        raise _CorruptStateFileError(
+            "상태 파일이 존재하지만 내용이 비어 있음 — 신규 생성 경로"
+            "(_ensure_state_file_initialized)를 거쳤다면 발생할 수 없는"
+            " 상태이므로 손상으로 간주함(빈 상태로 대체하지 않음)"
+        )
 
     try:
         data = json.loads(raw)
@@ -439,8 +518,7 @@ def _poll_ticket(
         위와 동일하게 ``state_file_error``로 처리되며, 절대 빈 상태로
         조용히 대체되지 않는다(2026-08-21 3차 수정).
     """
-    directory = os.path.dirname(state_path) or "."
-    os.makedirs(directory, exist_ok=True)
+    _ensure_state_file_initialized(state_path)
     with open(state_path, "a+") as fh:
         fcntl.flock(fh, fcntl.LOCK_EX)
         try:
@@ -492,8 +570,7 @@ def _remove_ticket(state_path: str, ticket_id: str) -> None:
     판정이 끝난 뒤에 호출되므로).
     """
     try:
-        directory = os.path.dirname(state_path) or "."
-        os.makedirs(directory, exist_ok=True)
+        _ensure_state_file_initialized(state_path)
         with open(state_path, "a+") as fh:
             fcntl.flock(fh, fcntl.LOCK_EX)
             try:

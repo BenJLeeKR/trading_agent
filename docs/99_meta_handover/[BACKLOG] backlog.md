@@ -7693,3 +7693,26 @@ closed.md`.
 - **신규 backlog(운영 실측 필요)**: 배포 후 `provider_limiter_
   unavailable` 발생 여부로 실제 상태 파일 손상이 발생했는지, 이번
   fail-closed 수정이 올바르게 차단하는지 확인 필요.
+
+## 위 FDC in-cycle FIFO 재대기열 후속 수정 2 — 신규 파일 vs 기존 빈 파일 구분(같은 PR #313, 2026-08-21 KST)
+
+상세: `docs/30_work_log/2026-08-21_fdc_state_file_new_vs_empty_
+existing.md`.
+
+- 3차 수정 이후에도 `_read_state()`가 "내용이 비어 있으면 무조건
+  신규 파일"로 간주하는 구멍이 남아있었다 — `open(path,"a+")`만으로는
+  "방금 생긴 파일"과 "이미 있던 파일이 비워진 것"을 구분할 수 없어,
+  후자를 전자로 오인하면 grant 기록을 잃고 RPM 한도를 우회할 수
+  있었다.
+- `_ensure_state_file_initialized()`를 도입해 "파일이 존재하는 순간
+  이미 완전한 유효 JSON을 담고 있다"는 불변식을 만들었다 — 임시
+  파일에 먼저 전체 내용을 쓰고 `os.link()`(원자적, 대상 존재 시
+  `FileExistsError`)로 최종 경로에 연결. 이후 `_read_state()`는
+  "빈 내용=신규" 분기를 완전히 제거하고 무조건 손상으로 처리.
+- 신규 테스트 5건(존재하지 않는 경로/사전 0바이트/공백만/부분 JSON/
+  동시 최초 초기화) 전부 PASS, 기존 회귀 없음.
+- **신규 backlog(운영 실측 필요)**: `os.link()`가 실제 운영 컨테이너의
+  임시 디렉터리 파일시스템에서 정상 동작하는지(일반적인 Linux
+  tmpfs/overlay는 지원하나 실측 안 함), `provider_limiter_
+  unavailable` 발생 시점이 컨테이너 재기동 직후(초기화 경합)에
+  집중되는지 무작위인지(진짜 손상) 구분 필요.
