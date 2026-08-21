@@ -76,6 +76,35 @@ FIFO ticket queue를 구현한다.
   판별해 정리한다. lease는 poll 주기(1초)보다 훨씬 길게(30초) 잡아
   일시적 스케줄링 지연만으로 살아있는 ticket이 삭제되지 않게 한다.
 
+설계(2026-08-21, 3차 — 손상 상태 파일 fail-closed 보정)
+---------------------------------------------------------
+코드 검토에서 ``_read_state()``가 JSON 파싱 실패/최상위 구조 이상/
+``version`` 불일치/``grants``·``pending`` 타입 이상을 **전부 조용히
+빈 상태(``_empty_state()``)로 대체**하고 있었음이 확인됐다 — 이는
+strict no-bypass 원칙의 허점이다: 상태 파일이 어떤 이유로든 손상되면
+최근 60초 ``grants`` 기록이 통째로 사라지고, 다음 폴러가 "윈도우가
+비어 있다"고 오판해 ``DEFAULT_MAX_CALLS_PER_WINDOW`` 한도를 무시한
+채 새 permit을 계속 발급할 수 있었다(사실상 fail-open으로 되돌아가는
+구멍). 이번 개정은 이 구분을 명확히 한다:
+
+- **정상 신규 파일**(``open(path, "a+")``가 방금 새로 만든, 내용이
+  완전히 비어 있는 파일)만 빈 v1 상태로 초기화한다.
+- 그 외 **읽을 수 없거나 해석할 수 없는 모든 내용**(JSON 파싱 실패,
+  최상위가 dict/list가 아님, 지원하지 않는 ``version``, ``grants``/
+  ``pending``이 list가 아님)은 ``_CorruptStateFileError``(``OSError``
+  서브클래스)를 발생시켜 ``wait_for_fdc_slot()``의 기존
+  ``state_file_error=True`` 경로로 확정 실패시킨다 — HTTP 요청을
+  절대 보내지 않는다(호출자는 ``provider_limiter_unavailable``로
+  처리).
+- **PR #311 이전의 legacy ``list[float]`` 포맷**(순수 숫자 리스트,
+  예: ``[1755, 1758.2]``)만 예외적으로 허용해
+  ``{"version": 1, "grants": <그 리스트>, "pending": []}``로 flock
+  안에서 1회 변환하고, 같은 폴링 호출이 끝나기 전에 v1 구조로 다시
+  저장한다 — 배포 직후 기존 60초 grant 기록을 잃지 않기 위함이다.
+  리스트에 숫자가 아닌 값이 섞여 있으면(혼합/손상) 마이그레이션하지
+  않고 손상으로 취급한다. legacy grant도 기존 ``_trim_grants()``가
+  그대로 60초 기준 트림한다(별도 로직 불필요).
+
 Gemini RPM 정책
 ---------------
 운영 계약상 정확한 RPM 한도는 ``.env`` 열람 없이는 확인할 수 없으나,
@@ -237,28 +266,90 @@ def _empty_state() -> dict:
     return {"version": _STATE_VERSION, "grants": [], "pending": []}
 
 
+class _CorruptStateFileError(OSError):
+    """상태 파일 내용이 손상됐거나 지원하지 않는 형식이다.
+
+    ``OSError``의 서브클래스로 만들어 ``wait_for_fdc_slot()``의 기존
+    ``except OSError`` 처리 경로(``state_file_error=True``, HTTP 요청
+    금지, ``provider_limiter_unavailable``로 귀결)를 그대로 재사용한다.
+    이 예외를 빈 상태로 조용히 삼키면(과거 결함) 최근 60초 ``grants``
+    기록을 잃어 strict RPM 한도를 우회하게 되므로, 반드시 fail-closed
+    경로로 전파돼야 한다.
+    """
+
+
 def _read_state(fh: object) -> dict:
     """상태 파일 내용을 읽어 ``{"version", "grants", "pending"}`` 구조로
-    반환한다. 손상되었거나 구버전(``version`` 없음/불일치, 예:
-    2026-08-21 이전의 순수 ``list[float]`` 포맷) 내용은 빈 상태로
-    안전하게 대체한다 — 이 상태 파일은 OS 임시 디렉터리의 ephemeral
-    캐시일 뿐이므로, 포맷이 바뀌어도 마이그레이션이 필요 없다.
+    반환한다.
+
+    - 파일이 **완전히 비어 있으면**(``open(path, "a+")``가 방금 새로
+      만든 신규 파일) 정상적인 빈 v1 상태로 취급한다.
+    - **PR #311 이전 legacy ``list[float]`` 포맷**(순수 숫자로만 구성된
+      리스트, 빈 리스트 포함)은 ``{"version": 1, "grants": <그 값>,
+      "pending": []}``로 1회 변환해 반환한다 — 호출자(``_poll_ticket``)
+      가 이 반환값을 그대로 다시 저장하므로 다음 호출부터는 v1
+      구조다. 숫자가 아닌 값이 섞여 있으면 마이그레이션하지 않는다.
+    - 그 외 JSON 파싱 실패, 최상위가 dict/list가 아님, 지원하지 않는
+      ``version``, ``grants``/``pending``이 list가 아닌 모든 경우는
+      **손상으로 간주**해 ``_CorruptStateFileError``를 던진다 — 빈
+      상태로 조용히 대체하지 않는다(strict no-bypass 보장의 핵심).
     """
     fh.seek(0)  # type: ignore[attr-defined]
     raw = fh.read()  # type: ignore[attr-defined]
-    try:
-        data = json.loads(raw) if raw.strip() else None
-    except (json.JSONDecodeError, ValueError):
-        data = None
-    if not isinstance(data, dict) or data.get("version") != _STATE_VERSION:
+    if not raw.strip():
+        # 방금 생성된 신규 파일(또는 명시적으로 비워진 파일) — 정상
+        # 초기 상태로 취급한다. 손상 상태와 구분되는 유일한 "안전하게
+        # 빈 상태로 봐도 되는" 경우다.
         return _empty_state()
+
+    try:
+        data = json.loads(raw)
+    except (json.JSONDecodeError, ValueError) as exc:
+        raise _CorruptStateFileError(
+            f"상태 파일 JSON 파싱 실패(빈 상태로 대체하지 않음): {exc}"
+        ) from exc
+
+    if isinstance(data, list):
+        # legacy 포맷(PR #311 이전, 순수 list[float] 타임스탬프).
+        if all(
+            isinstance(item, (int, float)) and not isinstance(item, bool)
+            for item in data
+        ):
+            logger.info(
+                "FDC rate limiter: legacy list[float] 상태 파일을 v1 "
+                "구조로 마이그레이션함(grants=%d건 보존).",
+                len(data),
+            )
+            return {"version": _STATE_VERSION, "grants": list(data), "pending": []}
+        raise _CorruptStateFileError(
+            "legacy list 상태에 숫자가 아닌 항목이 섞여 있어 "
+            "마이그레이션할 수 없음(빈 상태로 대체하지 않음)"
+        )
+
+    if not isinstance(data, dict):
+        raise _CorruptStateFileError(
+            f"상태 파일 최상위 구조가 dict/list가 아님: {type(data).__name__}"
+        )
+
+    version = data.get("version")
+    if version != _STATE_VERSION:
+        raise _CorruptStateFileError(
+            f"지원하지 않는 상태 파일 version={version!r}"
+            f"(기대값={_STATE_VERSION!r})"
+        )
+
     grants = data.get("grants")
     pending = data.get("pending")
-    return {
-        "version": _STATE_VERSION,
-        "grants": grants if isinstance(grants, list) else [],
-        "pending": pending if isinstance(pending, list) else [],
-    }
+    if not isinstance(grants, list):
+        raise _CorruptStateFileError(
+            f"grants가 list가 아님: {type(grants).__name__}"
+        )
+    if not isinstance(pending, list):
+        raise _CorruptStateFileError(
+            f"pending이 list가 아님: {type(pending).__name__}"
+        )
+
+    return {"version": _STATE_VERSION, "grants": grants, "pending": pending}
 
 
 def _write_state(fh: object, state: dict) -> None:
@@ -342,6 +433,11 @@ def _poll_ticket(
         상태 파일을 열거나 잠그는 데 실패한 경우 — 호출자가
         ``state_file_error``로 처리한다(기존과 동일한 계약, strict —
         더 이상 fail-open bypass 아님).
+    _CorruptStateFileError
+        (``OSError`` 서브클래스) 상태 파일 내용이 손상됐거나 지원하지
+        않는 형식인 경우 — ``_read_state()``가 던진다. 이 경우도
+        위와 동일하게 ``state_file_error``로 처리되며, 절대 빈 상태로
+        조용히 대체되지 않는다(2026-08-21 3차 수정).
     """
     directory = os.path.dirname(state_path) or "."
     os.makedirs(directory, exist_ok=True)

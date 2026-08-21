@@ -7668,3 +7668,28 @@ timeout → fallback → 관측값 계산 → stdout JSON → deserialize까지�
   복합 케이스(이론상 84초 > 70초 예산)가 실제로 `provider_timeout`
   (outer)으로 얼마나 자주 귀결되는지 — work log의 배포 후 측정 SQL
   참고.
+
+## 위 FDC in-cycle FIFO 재대기열 후속 수정 — 손상 상태 파일 fail-closed 보정(같은 PR #313, 2026-08-21 KST)
+
+상세: `docs/30_work_log/2026-08-21_fdc_state_file_corruption_fail_
+closed.md`.
+
+- 코드 검토에서 `_read_state()`가 JSON 파싱 실패/최상위 구조 이상/
+  지원하지 않는 `version`/`grants`·`pending` 타입 이상을 전부 조용히
+  빈 상태로 대체하던 결함을 발견/수정 — 상태 파일이 손상되면 최근
+  60초 grant 기록이 사라져 RPM 한도를 우회하고 429가 재발할 수 있는
+  fail-open 구멍이었다.
+- `_CorruptStateFileError`(`OSError` 서브클래스) 신설로 손상 상태를
+  기존 `state_file_error=True` 경로에 흡수시킴(새 예외 분기 불필요).
+  신규 빈 파일과 손상 상태를 명확히 구분(빈 파일만 정상 초기화).
+  PR #311 이전 legacy `list[float]` 포맷은 grant 기록을 보존하며 v1
+  구조로 1회 마이그레이션(숫자 아닌 값이 섞이면 손상으로 거부).
+- 재대기가 실제로 성공에 이르는 핵심 경로(O 점유 → Z timeout+재등록
+  → C/D보다 뒤에서 실제 permit 획득)를 테스트로 증명 — `max_calls=1`
+  로는 이 시나리오가 수학적으로 불가능함을 확인하고 `max_calls=3`
+  (운영값 10에 더 가까운 구조)으로 재설계.
+- 신규 테스트 다수 PASS(손상 판정 5건, 신규/legacy 3건, 재대기 성공
+  1건), 기존 회귀 없음.
+- **신규 backlog(운영 실측 필요)**: 배포 후 `provider_limiter_
+  unavailable` 발생 여부로 실제 상태 파일 손상이 발생했는지, 이번
+  fail-closed 수정이 올바르게 차단하는지 확인 필요.

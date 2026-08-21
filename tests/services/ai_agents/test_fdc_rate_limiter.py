@@ -249,6 +249,194 @@ class TestWaitForFdcSlotBasic:
         )
 
 
+class TestStateFileCorruption:
+    """2026-08-21(3차) 결함 수정 회귀 테스트: 손상된/지원하지 않는
+    형식의 상태 파일 내용을 빈 상태로 조용히 대체하던 과거 결함을
+    fail-closed로 고쳤는지 검증한다 — 이를 방치하면 최근 60초 grant
+    기록이 사라져 ``DEFAULT_MAX_CALLS_PER_WINDOW`` 한도를 우회하고
+    실제 429가 재발할 수 있었다."""
+
+    @pytest.mark.asyncio
+    async def test_malformed_json_fails_closed(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        state_path = str(tmp_path / "state.json")
+        with open(state_path, "w") as fh:
+            fh.write("{not valid json!!")
+
+        with caplog.at_level(logging.WARNING):
+            result = await wait_for_fdc_slot(
+                max_calls=1, window_seconds=60.0, max_wait_seconds=0.2,
+                poll_interval_seconds=0.05, state_path=state_path,
+            )
+        assert result.granted is False
+        assert result.state_file_error is True
+        assert result.queue_timeout is False
+        # 손상된 상태를 "빈 상태"로 취급해 permit을 내주지 않았어야 한다
+        # (granted=True가 나오면 안 됨 — 위 assert로 이미 확인됨).
+
+    @pytest.mark.asyncio
+    async def test_unsupported_version_fails_closed(self, tmp_path: Path) -> None:
+        state_path = str(tmp_path / "state.json")
+        with open(state_path, "w") as fh:
+            json.dump({"version": 999, "grants": [], "pending": []}, fh)
+
+        result = await wait_for_fdc_slot(
+            max_calls=1, window_seconds=60.0, max_wait_seconds=0.2,
+            poll_interval_seconds=0.05, state_path=state_path,
+        )
+        assert result.granted is False
+        assert result.state_file_error is True
+
+    @pytest.mark.asyncio
+    async def test_wrong_top_level_type_fails_closed(self, tmp_path: Path) -> None:
+        state_path = str(tmp_path / "state.json")
+        with open(state_path, "w") as fh:
+            json.dump("this is a string, not a dict or list", fh)
+
+        result = await wait_for_fdc_slot(
+            max_calls=1, window_seconds=60.0, max_wait_seconds=0.2,
+            poll_interval_seconds=0.05, state_path=state_path,
+        )
+        assert result.granted is False
+        assert result.state_file_error is True
+
+    @pytest.mark.asyncio
+    async def test_malformed_grants_type_fails_closed(self, tmp_path: Path) -> None:
+        state_path = str(tmp_path / "state.json")
+        with open(state_path, "w") as fh:
+            json.dump({"version": 1, "grants": "not-a-list", "pending": []}, fh)
+
+        result = await wait_for_fdc_slot(
+            max_calls=1, window_seconds=60.0, max_wait_seconds=0.2,
+            poll_interval_seconds=0.05, state_path=state_path,
+        )
+        assert result.granted is False
+        assert result.state_file_error is True
+
+    @pytest.mark.asyncio
+    async def test_malformed_pending_type_fails_closed(self, tmp_path: Path) -> None:
+        state_path = str(tmp_path / "state.json")
+        with open(state_path, "w") as fh:
+            json.dump({"version": 1, "grants": [], "pending": {"not": "a list"}}, fh)
+
+        result = await wait_for_fdc_slot(
+            max_calls=1, window_seconds=60.0, max_wait_seconds=0.2,
+            poll_interval_seconds=0.05, state_path=state_path,
+        )
+        assert result.granted is False
+        assert result.state_file_error is True
+
+    @pytest.mark.asyncio
+    async def test_mixed_legacy_list_fails_closed(self, tmp_path: Path) -> None:
+        """숫자가 아닌 값이 섞인 legacy list는 마이그레이션하지 않고
+        손상으로 취급해야 한다."""
+        state_path = str(tmp_path / "state.json")
+        with open(state_path, "w") as fh:
+            json.dump([1755000000.0, "not-a-timestamp", 1755000001.0], fh)
+
+        result = await wait_for_fdc_slot(
+            max_calls=1, window_seconds=60.0, max_wait_seconds=0.2,
+            poll_interval_seconds=0.05, state_path=state_path,
+        )
+        assert result.granted is False
+        assert result.state_file_error is True
+
+    @pytest.mark.asyncio
+    async def test_brand_new_empty_file_initializes_normally(
+        self, tmp_path: Path
+    ) -> None:
+        """파일이 아예 없던 경우(``wait_for_fdc_slot()``이 처음
+        만드는 경우)는 정상적인 빈 v1 상태로 초기화돼 즉시 permit을
+        발급해야 한다 — 손상 상태와 혼동하면 안 된다."""
+        state_path = str(tmp_path / "state.json")
+        assert not Path(state_path).exists()
+
+        result = await wait_for_fdc_slot(
+            max_calls=1, window_seconds=60.0, max_wait_seconds=1.0,
+            poll_interval_seconds=0.05, state_path=state_path,
+        )
+        assert result.granted is True
+        assert result.state_file_error is False
+
+        with open(state_path) as fh:
+            state = json.loads(fh.read())
+        assert state["version"] == 1
+        assert isinstance(state["grants"], list)
+        assert isinstance(state["pending"], list)
+
+    @pytest.mark.asyncio
+    async def test_legacy_list_float_migrates_and_preserves_grants(
+        self, tmp_path: Path
+    ) -> None:
+        """PR #311 이전 legacy ``list[float]`` 포맷은 v1 구조로
+        마이그레이션돼야 하며, 아직 60초 이내인 legacy grant가
+        ``max_calls``를 채우면 새 permit이 발급되지 않아야 한다(배포
+        직후 grant 기록을 잃어 RPM 한도를 우회하는 것을 방지)."""
+        state_path = str(tmp_path / "state.json")
+        now = time.time()
+        # max_calls=1이므로, 방금(0.1초 전) 발급된 legacy grant 1건만
+        # 있어도 윈도우가 가득 찬 것으로 간주돼야 한다.
+        legacy_grants = [now - 0.1]
+        with open(state_path, "w") as fh:
+            json.dump(legacy_grants, fh)
+
+        result = await wait_for_fdc_slot(
+            max_calls=1, window_seconds=60.0, max_wait_seconds=0.15,
+            poll_interval_seconds=0.05, state_path=state_path,
+        )
+        # legacy grant가 유효하게 보존됐다면 새 permit을 못 받고
+        # queue_timeout이어야 한다(state_file_error가 아님 — 정상
+        # 마이그레이션 경로).
+        assert result.state_file_error is False
+        assert result.granted is False
+        assert result.queue_timeout is True
+
+        # 변환된 파일은 v1 dict 구조여야 하고, legacy grant 값을
+        # 그대로 보존해야 한다.
+        with open(state_path) as fh:
+            migrated = json.loads(fh.read())
+        assert migrated["version"] == 1
+        assert isinstance(migrated["grants"], list)
+        assert any(abs(g - legacy_grants[0]) < 0.001 for g in migrated["grants"])
+
+    @pytest.mark.asyncio
+    async def test_legacy_list_float_old_timestamps_are_trimmed(
+        self, tmp_path: Path
+    ) -> None:
+        """60초보다 오래된 legacy timestamp는 마이그레이션 후 정상적으로
+        트림돼 새 permit 발급을 막지 않아야 한다."""
+        state_path = str(tmp_path / "state.json")
+        now = time.time()
+        legacy_grants = [now - 100.0]  # window_seconds=60보다 훨씬 오래됨
+        with open(state_path, "w") as fh:
+            json.dump(legacy_grants, fh)
+
+        result = await wait_for_fdc_slot(
+            max_calls=1, window_seconds=60.0, max_wait_seconds=1.0,
+            poll_interval_seconds=0.05, state_path=state_path,
+        )
+        assert result.state_file_error is False
+        assert result.granted is True  # 오래된 legacy grant는 트림돼 슬롯이 비어 있음
+
+    @pytest.mark.asyncio
+    async def test_empty_legacy_list_migrates_to_empty_v1_state(
+        self, tmp_path: Path
+    ) -> None:
+        """빈 legacy list(``[]``)도 손상이 아니라 정상적인 빈 v1
+        상태로 마이그레이션돼야 한다."""
+        state_path = str(tmp_path / "state.json")
+        with open(state_path, "w") as fh:
+            json.dump([], fh)
+
+        result = await wait_for_fdc_slot(
+            max_calls=1, window_seconds=60.0, max_wait_seconds=1.0,
+            poll_interval_seconds=0.05, state_path=state_path,
+        )
+        assert result.state_file_error is False
+        assert result.granted is True
+
+
 class TestWaitForFdcSlotConcurrency:
     """여러 코루틴이 동시에 호출해도 상한을 정확히 지키는지 확인."""
 
@@ -433,6 +621,73 @@ class TestRequeueToTail:
         assert result.queue_deadline_exceeded is True
         # 누적 대기시간은 두 attempt의 합이어야 한다(대략 0.2s 이상).
         assert result.waited_seconds >= 0.1 * 2 * 0.8  # 약간의 스케줄링 오차 허용
+
+    @pytest.mark.asyncio
+    async def test_requeued_ticket_eventually_succeeds_after_c_and_d(
+        self, tmp_path: Path
+    ) -> None:
+        """재대기가 실패로만 끝나는 게 아니라 실제로 성공하는 핵심
+        경로를 검증한다: O(점유) → Z(1차 timeout, tail 재등록) →
+        C, D가 Z보다 먼저 대기 중 → window가 열리면 C → D → 재등록된
+        Z 순서로 permit이 발급돼야 한다.
+
+        ``max_calls=1``로는 C와 D가 각자 전체 window를 순차로 점유해야
+        해서(2회분 대기), Z의 1차 attempt를 실패시킬 만큼 짧은
+        ``max_wait_seconds``로는 2차 attempt의 필요 대기(2 x window)를
+        절대 감당할 수 없다(수학적으로 불가능 — 설계 검토에서 이미
+        분석됨: 실패에 필요한 대기 < 성공에 필요한 대기가 항상 성립하지
+        않으면 안 되는데, 동일 예산으로 "실패 후 재시도해서 성공"을
+        만들려면 성공에 필요한 추가 대기가 실패 판정 시간보다 짧아야
+        한다). 그래서 ``max_calls=3``(O 3명이 정확히 capacity를 채우고,
+        O들이 동시에 만료되면 C/D/Z가 각자 순서대로 하나의 "세대" 안에서
+        모두 grant를 받을 수 있게 함)을 사용해 재대기 2차 attempt의 필요
+        대기가 1차 attempt의 실패 판정 시간보다 짧아지도록 구성한다.
+        """
+        state_path = str(tmp_path / "state.json")
+        max_calls = 3
+        window_seconds = 0.4
+
+        # capacity를 정확히 채우는 점유자 3명("O" 그룹) — 전부 거의
+        # 동시(t≈0)에 grant돼 거의 동시에 만료된다.
+        for _ in range(max_calls):
+            occ = await wait_for_fdc_slot(
+                max_calls=max_calls, window_seconds=window_seconds,
+                max_wait_seconds=1.0, poll_interval_seconds=0.02,
+                state_path=state_path,
+            )
+            assert occ.granted is True
+
+        completion_order: list[str] = []
+
+        async def _call(name: str, max_wait: float) -> FdcRateLimitResult:
+            result = await wait_for_fdc_slot(
+                max_calls=max_calls, window_seconds=window_seconds,
+                max_wait_seconds=max_wait, poll_interval_seconds=0.02,
+                state_path=state_path, allow_requeue=(name == "Z"),
+            )
+            completion_order.append(name)
+            return result
+
+        # Z의 1차 attempt는 O 그룹이 만료(t=0.4)되기 전에 실패해야 한다.
+        z_task = asyncio.create_task(_call("Z", 0.3))
+        await asyncio.sleep(0.03)
+        c_task = asyncio.create_task(_call("C", 3.0))  # 충분히 patient
+        await asyncio.sleep(0.03)
+        d_task = asyncio.create_task(_call("D", 3.0))
+
+        z_result, c_result, d_result = await asyncio.gather(z_task, c_task, d_task)
+
+        assert c_result.granted is True
+        assert d_result.granted is True
+        assert z_result.granted is True
+        assert z_result.requeue_count == 1
+        assert z_result.queue_deadline_exceeded is False
+        # 완료 순서: C, D가 재등록된 Z보다 먼저 permit을 받아야 한다.
+        assert completion_order.index("C") < completion_order.index("Z")
+        assert completion_order.index("D") < completion_order.index("Z")
+        # 누적 대기시간(1차+2차)이 남아있어야 한다 — 0이면 재대기가 실제로
+        # 일어나지 않았다는 뜻이므로 결함.
+        assert z_result.waited_seconds > 0.0
 
 
 class TestRetryPermitDoesNotRequeue:
