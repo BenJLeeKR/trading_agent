@@ -2325,6 +2325,239 @@ class TestPositions:
         assert by_symbol["SYM1"]["remaining_buy_fee_pool"] is None
         assert by_symbol["SYM4"]["remaining_buy_fee_pool"] is None
 
+    def _seed_cash_history_for_orderable_amount_backfill(self, repos, account_id, now):
+        """orderable_amount 백필 테스트용 현금 스냅샷 3건(오래된 → 최신).
+
+        t1(orderable=111111) → t2(orderable=222222) → t3(orderable=None, 최신).
+        "가장 최근 non-null" 판정이 t1이 아니라 t2를 골라야 한다는 것과,
+        백필된 뷰가 t3(최신)의 다른 필드(settlement_amount 등)는 그대로
+        유지해야 한다는 것을 함께 검증하기 위한 구성이다.
+        """
+        t1 = now
+        t2 = now + timedelta(minutes=1)
+        t3 = now + timedelta(minutes=2)
+        asyncio.run(
+            repos.cash_balance_snapshots.add(
+                CashBalanceSnapshotEntity(
+                    cash_balance_snapshot_id=uuid4(),
+                    account_id=account_id,
+                    currency="KRW",
+                    available_cash=Decimal("1000000"),
+                    settled_cash=Decimal("1000000"),
+                    unsettled_cash=Decimal("0"),
+                    source_of_truth="broker",
+                    snapshot_at=t1,
+                    orderable_amount=Decimal("111111"),
+                    settlement_amount=Decimal("100"),
+                    created_at=t1,
+                )
+            )
+        )
+        asyncio.run(
+            repos.cash_balance_snapshots.add(
+                CashBalanceSnapshotEntity(
+                    cash_balance_snapshot_id=uuid4(),
+                    account_id=account_id,
+                    currency="KRW",
+                    available_cash=Decimal("1000000"),
+                    settled_cash=Decimal("1000000"),
+                    unsettled_cash=Decimal("0"),
+                    source_of_truth="broker",
+                    snapshot_at=t2,
+                    orderable_amount=Decimal("222222"),
+                    settlement_amount=Decimal("200"),
+                    created_at=t2,
+                )
+            )
+        )
+        asyncio.run(
+            repos.cash_balance_snapshots.add(
+                CashBalanceSnapshotEntity(
+                    cash_balance_snapshot_id=uuid4(),
+                    account_id=account_id,
+                    currency="KRW",
+                    available_cash=Decimal("1000000"),
+                    settled_cash=Decimal("1000000"),
+                    unsettled_cash=Decimal("0"),
+                    source_of_truth="broker",
+                    snapshot_at=t3,
+                    orderable_amount=None,
+                    settlement_amount=Decimal("300"),
+                    created_at=t3,
+                )
+            )
+        )
+        return t3
+
+    def test_get_latest_with_orderable_amount_picks_most_recent_non_null(self) -> None:
+        """저장소 메서드 자체가 "가장 최근 non-null orderable_amount" 1건을
+
+        정확히 고르는지 직접 확인한다(엔드포인트 라우팅 경로와 분리된
+        fake-repository 단위 테스트).
+        """
+        repos = build_in_memory_repositories()
+        account_id = uuid4()
+        now = datetime.now(timezone.utc)
+        self._seed_cash_history_for_orderable_amount_backfill(repos, account_id, now)
+
+        result = asyncio.run(
+            repos.cash_balance_snapshots.get_latest_with_orderable_amount(account_id)
+        )
+        assert result is not None
+        assert result.orderable_amount == Decimal("222222")
+
+    def test_get_latest_with_orderable_amount_returns_none_when_no_candidate(self) -> None:
+        """non-null orderable_amount가 계좌 이력에 하나도 없으면 ``None``을 반환한다."""
+        repos = build_in_memory_repositories()
+        account_id = uuid4()
+        now = datetime.now(timezone.utc)
+        asyncio.run(
+            repos.cash_balance_snapshots.add(
+                CashBalanceSnapshotEntity(
+                    cash_balance_snapshot_id=uuid4(),
+                    account_id=account_id,
+                    currency="KRW",
+                    available_cash=Decimal("1000000"),
+                    settled_cash=Decimal("1000000"),
+                    unsettled_cash=Decimal("0"),
+                    source_of_truth="broker",
+                    snapshot_at=now,
+                    orderable_amount=None,
+                    created_at=now,
+                )
+            )
+        )
+        result = asyncio.run(
+            repos.cash_balance_snapshots.get_latest_with_orderable_amount(account_id)
+        )
+        assert result is None
+
+    def test_get_account_snapshots_latest_orderable_amount_backfill_avoids_full_history_scan(
+        self,
+    ) -> None:
+        """``/account-snapshots/latest``의 orderable_amount 백필이
+
+        ``get_latest_with_orderable_amount()`` 1회만 쓰고
+        ``list_by_account()``(전체 이력)는 전혀 호출하지 않는지, 그리고
+        백필 후에도 최신 snapshot의 다른 필드(``settlement_amount`` 등)는
+        그대로 유지되는지 확인한다.
+        """
+        repos = build_in_memory_repositories()
+        app = create_app(repos=repos, auth_enabled=False)
+        account_id = uuid4()
+        now = datetime.now(timezone.utc).replace(microsecond=0)
+        self._seed_cash_history_for_orderable_amount_backfill(repos, account_id, now)
+
+        with (
+            patch.object(
+                repos.cash_balance_snapshots,
+                "list_by_account",
+                wraps=repos.cash_balance_snapshots.list_by_account,
+            ) as list_by_account_spy,
+            patch.object(
+                repos.cash_balance_snapshots,
+                "get_latest_with_orderable_amount",
+                wraps=repos.cash_balance_snapshots.get_latest_with_orderable_amount,
+            ) as fallback_spy,
+        ):
+            with TestClient(app) as client:
+                response = client.get(f"/account-snapshots/latest?account_id={account_id}")
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["cash_balance"] is not None
+        # 가장 최근 non-null(t2=222222)로 백필되어야 한다(t1=111111이 아님).
+        assert data["cash_balance"]["orderable_amount"] == 222222.0
+        # 최신 snapshot(t3) 자신의 다른 필드는 그대로 유지된다.
+        assert data["cash_balance"]["settlement_amount"] == 300.0
+
+        assert list_by_account_spy.call_count == 0
+        assert fallback_spy.call_count == 1
+
+    def test_get_account_snapshots_latest_orderable_amount_stays_none_without_fallback(
+        self,
+    ) -> None:
+        """non-null 후보가 전혀 없으면 orderable_amount는 여전히 ``None``이고,
+
+        여전히 전체 이력을 읽지 않는다(빈 데이터를 오류처럼 보이게도,
+        실패를 정상처럼 보이게도 하지 않는다 — 그냥 값이 없는 그대로).
+        """
+        repos = build_in_memory_repositories()
+        app = create_app(repos=repos, auth_enabled=False)
+        account_id = uuid4()
+        now = datetime.now(timezone.utc).replace(microsecond=0)
+        asyncio.run(
+            repos.cash_balance_snapshots.add(
+                CashBalanceSnapshotEntity(
+                    cash_balance_snapshot_id=uuid4(),
+                    account_id=account_id,
+                    currency="KRW",
+                    available_cash=Decimal("1000000"),
+                    settled_cash=Decimal("1000000"),
+                    unsettled_cash=Decimal("0"),
+                    source_of_truth="broker",
+                    snapshot_at=now,
+                    orderable_amount=None,
+                    settlement_amount=Decimal("300"),
+                    created_at=now,
+                )
+            )
+        )
+
+        with (
+            patch.object(
+                repos.cash_balance_snapshots,
+                "list_by_account",
+                wraps=repos.cash_balance_snapshots.list_by_account,
+            ) as list_by_account_spy,
+            patch.object(
+                repos.cash_balance_snapshots,
+                "get_latest_with_orderable_amount",
+                wraps=repos.cash_balance_snapshots.get_latest_with_orderable_amount,
+            ) as fallback_spy,
+        ):
+            with TestClient(app) as client:
+                response = client.get(f"/account-snapshots/latest?account_id={account_id}")
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["cash_balance"]["orderable_amount"] is None
+        assert list_by_account_spy.call_count == 0
+        assert fallback_spy.call_count == 1
+
+    def test_get_cash_balance_orderable_amount_backfill_avoids_full_history_scan(self) -> None:
+        """``GET /cash-balances``(positions.py)도 동일하게 배치 대신
+
+        ``get_latest_with_orderable_amount()`` 1회만 사용한다.
+        """
+        repos = build_in_memory_repositories()
+        app = create_app(repos=repos, auth_enabled=False)
+        account_id = uuid4()
+        now = datetime.now(timezone.utc).replace(microsecond=0)
+        self._seed_cash_history_for_orderable_amount_backfill(repos, account_id, now)
+
+        with (
+            patch.object(
+                repos.cash_balance_snapshots,
+                "list_by_account",
+                wraps=repos.cash_balance_snapshots.list_by_account,
+            ) as list_by_account_spy,
+            patch.object(
+                repos.cash_balance_snapshots,
+                "get_latest_with_orderable_amount",
+                wraps=repos.cash_balance_snapshots.get_latest_with_orderable_amount,
+            ) as fallback_spy,
+        ):
+            with TestClient(app) as client:
+                response = client.get(f"/cash-balances?account_id={account_id}")
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["orderable_amount"] == 222222.0
+        assert data["settlement_amount"] == 300.0
+        assert list_by_account_spy.call_count == 0
+        assert fallback_spy.call_count == 1
+
 
 class TestRealizedPnl:
     """Realized PnL ledger inspection endpoints (read-only, no calculation)."""

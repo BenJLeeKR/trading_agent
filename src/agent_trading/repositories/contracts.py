@@ -540,6 +540,31 @@ class CashBalanceSnapshotRepository(Protocol):
     async def get_latest_by_account(self, account_id: UUID) -> CashBalanceSnapshotEntity | None:
         ...
 
+    async def get_latest_with_orderable_amount(
+        self, account_id: UUID,
+    ) -> CashBalanceSnapshotEntity | None:
+        """계좌의 ``orderable_amount``가 ``NOT NULL``인 가장 최근 snapshot 1건을 반환합니다.
+
+        ``_build_cash_balance_view()``의 백필 fallback 전용 조회다.
+        최신 snapshot의 ``orderable_amount``가 ``NULL``일 때(예: 장 마감 후
+        `orderable_amount`를 갱신하지 않는 경로), 화면에 보여줄 "가장 최근
+        유효했던 주문가능금액" 하나만 필요하다 — 계좌의 전체 현금 이력을
+        ``list_by_account()``로 다 읽어 Python에서 첫 non-null 값을 찾던
+        방식은 이력이 많은 계좌에서 매 요청마다 수천 행을 왕복시키는
+        비용이 크므로, DB에서 ``LIMIT 1``로 직접 걸러 받는다.
+
+        Parameters
+        ----------
+        account_id:
+            대상 계좌 UUID.
+
+        Returns
+        -------
+        CashBalanceSnapshotEntity | None
+            ``orderable_amount``가 있는 가장 최근 snapshot. 없으면 ``None``.
+        """
+        ...
+
     async def list_by_account(self, account_id: UUID) -> Sequence[CashBalanceSnapshotEntity]:
         """계좌의 모든 현금 snapshot을 snapshot_at DESC 정렬로 반환합니다.
 

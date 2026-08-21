@@ -44,20 +44,23 @@ async def _build_cash_balance_view(
     ``orderable_amount=None``. For inspection UI readability, backfill the
     most recent non-null ``orderable_amount`` from the same account when the
     latest snapshot omits it.
+
+    이 백필은 ``get_latest_with_orderable_amount()``로 1건만 DB에서
+    직접 조회한다 — ``list_by_account()``로 계좌 전체 현금 이력을
+    전부 읽어와 Python에서 첫 non-null 값을 찾던 방식은, 이력이 많은
+    계좌에서 요청마다 수천 행을 왕복시켜 이 endpoint의 지배적인 지연
+    요인이었다(실측 근거: PR #318 후속 조사).
     """
     if snapshot is None:
         return None
 
     effective_snapshot = snapshot
     if snapshot.orderable_amount is None:
-        recent_cash_snapshots = await repos.cash_balance_snapshots.list_by_account(account_id)
-        fallback_orderable_amount = next(
-            (
-                item.orderable_amount
-                for item in recent_cash_snapshots
-                if item.orderable_amount is not None
-            ),
-            None,
+        fallback_snapshot = await repos.cash_balance_snapshots.get_latest_with_orderable_amount(
+            account_id,
+        )
+        fallback_orderable_amount = (
+            fallback_snapshot.orderable_amount if fallback_snapshot is not None else None
         )
         if fallback_orderable_amount is not None:
             effective_snapshot = type(snapshot)(

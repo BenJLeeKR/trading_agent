@@ -82,6 +82,18 @@ class PostgresCashBalanceSnapshotRepository:
         )
         return row_to_entity(row, CashBalanceSnapshotEntity) if row else None
 
+    async def get_latest_with_orderable_amount(
+        self, account_id: UUID,
+    ) -> CashBalanceSnapshotEntity | None:
+        row = await self._tx.connection.fetchrow(
+            "SELECT * FROM trading.cash_balance_snapshots "
+            "WHERE account_id = $1 AND orderable_amount IS NOT NULL "
+            "ORDER BY snapshot_at DESC "
+            "LIMIT 1",
+            account_id,
+        )
+        return row_to_entity(row, CashBalanceSnapshotEntity) if row else None
+
     async def get_by_sync_run(
         self, account_id: UUID, sync_run_id: UUID,
     ) -> CashBalanceSnapshotEntity | None:
