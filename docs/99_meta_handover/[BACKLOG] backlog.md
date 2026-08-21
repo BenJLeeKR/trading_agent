@@ -7572,3 +7572,37 @@ turn의 "Stage A-1a/A-2" backlog 항목을 해소한다.
 - **신규 backlog(운영 실측 필요)**: 배포 후 실제 EV gate blocked/pass
   사례에서 `gate_margin.margin_value` 값이 기대한 부호/크기로 쌓이는지
   실측.
+
+## FDC strict no-bypass rate limiter + 재시도 포함 shared permit 전환 구현 완료(2026-08-21 KST)
+
+상세: `docs/30_work_log/2026-08-21_fdc_strict_rate_limiter_and_retry_
+permit.md`.
+
+- `fdc_rate_limiter.py`: fail-open bypass 완전 제거 →
+  `FdcRateLimitResult(granted/queue_timeout/state_file_error)`로 재정의,
+  `DEFAULT_MAX_WAIT_SECONDS` 20.0→18.0 재계산.
+- `provider_client.py`: 재시도 루프 안에 `acquire_permit` 콜백을 삽입해
+  최초 요청 + 매 재시도가 각각 permit을 재획득하도록 전환(`fdc_rate_
+  limiter.py` import 없이 얕은 `PermitResult` 프로토콜만 공유).
+- `final_decision_composer.py`/`run_agent_subprocess.py`: `provider_
+  queue_timeout`/`provider_limiter_unavailable` reason code 신설,
+  `_build_fdc_timeout_fallback()`의 빈 `reason_codes` 결함 수정,
+  FDC 전용 `_FDC_PER_AGENT_TIMEOUT=70` 신설(EI/AR/AC는 기존 30 유지).
+- `common_types.py`/`subprocess_helpers.py`/`decision_orchestrator.py`:
+  `provider_observability` 메타데이터를 신규 테이블 없이 `agent_runs.
+  structured_output_json["__provider_observability__"]`에 저장(EI의
+  기존 `__error__` 패턴과 동일).
+- 신규/갱신 테스트 다수 PASS, 기존 회귀 없음(`test_fdc_rate_limiter.py`
+  전면 재작성, `test_provider_client.py`/`test_fdc_skip.py`/`test_
+  subprocess_helpers.py` 확장, `test_agent_subprocess.py`/`test_
+  decision_orchestrator.py` 무관 회귀 없음 확인).
+- **신규 backlog(운영 실측 필요)**: 배포 후 `provider_queue_timeout`/
+  `provider_limiter_unavailable`/`provider_rate_limit` reason_codes
+  분포, `avg_attempts`(재시도 빈도), `_FDC_PER_AGENT_TIMEOUT=70s` 확장이
+  cycle wall-clock에 미치는 영향 실측 필요(work log의 배포 후 측정
+  SQL 참고).
+- **신규 backlog(범위 판단 보류)**: `build_fallback_bundle()`
+  (subprocess 전체 90초 timeout 시 parent가 직접 구성하는 fallback,
+  `subprocess_helpers.py`)의 기존 빈 `reason_codes` 문제는 이번 턴의
+  명시적 스코프(`_build_fdc_timeout_fallback()`만) 밖이라 남아있음 —
+  다음 턴에서 필요성 재검토.

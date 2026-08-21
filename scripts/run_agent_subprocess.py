@@ -59,7 +59,12 @@ from agent_trading.services.ai_agents.subprocess_io import (
     write_agent_subprocess_output,
 )
 from agent_trading.services.ai_agents.fdc_rate_limiter import (
+    DEFAULT_MAX_WAIT_SECONDS as _FDC_MAX_WAIT_SECONDS,
     wait_for_fdc_slot,
+)
+from agent_trading.services.ai_agents.provider_client import (
+    PermitCallback,
+    PermitResult,
 )
 from agent_trading.services.ai_agents.schemas import (
     AIComplianceOutput,
@@ -95,6 +100,24 @@ from agent_trading.config.settings import _resolve_provider_model_id
 
 logger = logging.getLogger(__name__)
 _PER_AGENT_TIMEOUT = 30
+# 2026-08-21 신설(strict FDC rate limiter + retry-inclusive permit 전환).
+#
+# 배경: 기존에는 FDC rate limiter 대기가 이 30초 per-agent timeout **밖**
+# (subprocess 전체 90초 예산의 여유분)에서 단 1회만 일어났다. 이번
+# 전환으로 permit 획득이 `provider_client.py`의 재시도 루프 안으로
+# 들어가면서 최초 요청 + 매 재시도(`MAX_RETRIES=3`)마다 permit을 다시
+# 획득한다 — 즉 이 대기가 이제는 FDC 호출 자체의 timeout **예산 안에서**
+# 최대 3회 반복될 수 있으므로, 공유 30초로는 부족하다.
+#
+# 계산 근거: subprocess 전체 timeout(``DecisionAgentRunner.
+# subprocess_timeout``, 기본 90초) - EI/AR/AC 소요(수 ms, 무시 가능) -
+# 프로세스 spawn/직렬화 오버헤드 및 SIGTERM 유예 등 안전마진(약 20초)
+# = 70초. 이 70초는 `fdc_rate_limiter.DEFAULT_MAX_WAIT_SECONDS`(18.0초,
+# 최악 3회 permit 대기 기준)가 이 예산 안에 들어맞도록 역산된 값이다
+# (자세한 계산은 ``fdc_rate_limiter.py``의 ``DEFAULT_MAX_WAIT_SECONDS``
+# 주석 참고). EI/AR/AC는 재시도/permit 대기가 없으므로 기존 공유
+# ``_PER_AGENT_TIMEOUT=30``을 그대로 유지한다.
+_FDC_PER_AGENT_TIMEOUT = 70
 
 # Configure logging to stderr so parent can capture subprocess diagnostics.
 # Without this, all logger.info() calls are silently dropped.
@@ -208,6 +231,19 @@ class AgentSubprocessOutput:
     ar_skipped: bool = False
     fdc_skipped: bool = False
     skip_reason_codes: tuple[str, ...] = ()
+    # 2026-08-21 신설: strict FDC rate limiter + retry-inclusive permit
+    # 관측성 필드. 새 DB 테이블/마이그레이션 없이, 이 subprocess ↔ 부모
+    # 프로세스 간 기존 JSON round-trip 경로(``agent_runs.structured_
+    # output_json`` 등)를 그대로 재사용한다. FDC가 생략(``fdc_skipped``)
+    # 되거나 provider 미설정(Stub)이면 모두 기본값을 유지한다.
+    rate_limiter_waited_seconds: float = 0.0
+    rate_limiter_slot_acquired: bool = True
+    rate_limiter_queue_timeout: bool = False
+    rate_limiter_state_file_error: bool = False
+    provider_http_attempt_count: int = 0
+    provider_http_429_count: int = 0
+    provider_execution_seconds: float = 0.0
+    provider_final_status: str = ""
 
 
 # ---------------------------------------------------------------------------
@@ -248,10 +284,49 @@ def _safe_datetime(value: object) -> datetime | None:
     return None
 
 
+class _FdcPermitAccumulator:
+    """FDC 1회 호출(최초 요청 + 매 재시도) 동안의 permit 판정을 누적한다.
+
+    ``provider_client.py``는 이 클래스도, ``fdc_rate_limiter.py``도
+    전혀 알지 못한다 — 이 accumulator의 ``acquire`` 메서드가
+    ``PermitCallback`` 모양(``provider_client.PermitResult`` 반환)을
+    만족하는 얕은 어댑터 역할을 하며, 실제 구현(``wait_for_fdc_slot``)은
+    이 파일(최상위 호출자)에서만 안다. 여러 permit 호출의 대기 시간을
+    합산해 최종 관측성 필드로 노출한다.
+    """
+
+    def __init__(self) -> None:
+        self.total_waited_seconds = 0.0
+        self.slot_acquired = False
+        self.queue_timeout = False
+        self.state_file_error = False
+
+    async def acquire(self) -> PermitResult:
+        result = await wait_for_fdc_slot(max_wait_seconds=_FDC_MAX_WAIT_SECONDS)
+        self.total_waited_seconds += result.waited_seconds
+        if result.granted:
+            self.slot_acquired = True
+        if result.queue_timeout:
+            self.queue_timeout = True
+        if result.state_file_error:
+            self.state_file_error = True
+        denial_reason: str | None = None
+        if result.queue_timeout:
+            denial_reason = "queue_timeout"
+        elif result.state_file_error:
+            denial_reason = "state_file_error"
+        return PermitResult(
+            granted=result.granted,
+            waited_seconds=result.waited_seconds,
+            denial_reason=denial_reason,
+        )
+
+
 def _build_agent_triplet(
     *,
     provider_client: AIProviderClient | None,
     model_id: str | None,
+    acquire_permit: PermitCallback | None = None,
 ) -> tuple[
     DeterministicEventInterpretationAgent,
     DeterministicAIRiskAgent,
@@ -290,6 +365,7 @@ def _build_agent_triplet(
         FinalDecisionComposerAgent(
             provider_client=provider_client,
             model_id=model_id,
+            acquire_permit=acquire_permit,
         ),
     )
 
@@ -956,7 +1032,14 @@ def _build_fdc_timeout_fallback(
     *,
     symbol: str,
 ) -> FinalDecisionComposerOutput:
-    """FDC timeout 시 안전한 fallback output을 생성한다."""
+    """FDC timeout 시 안전한 fallback output을 생성한다.
+
+    2026-08-21 결함 수정: 이전에는 ``reason_codes``/``summary``가 모두
+    비어 있어, DB(``decision_json``/``agent_runs``)만 보면 정상 HOLD와
+    timeout fallback을 구분할 수 없었다. ``provider_timeout``을
+    reason code로 남겨 이 구분을 가능하게 한다(``decision_type="HOLD"``
+    fallback 정책 자체는 그대로 유지).
+    """
     return FinalDecisionComposerOutput(
         decision_context_id=(
             str(request.decision_context_id)
@@ -964,6 +1047,11 @@ def _build_fdc_timeout_fallback(
             else None
         ),
         symbol=symbol,
+        reason_codes=("provider_timeout",),
+        summary=(
+            f"[규칙 기반 fallback] {symbol} — FDC per-agent timeout"
+            f"({_FDC_PER_AGENT_TIMEOUT}초) 초과로 HOLD 반환."
+        ),
     )
 
 
@@ -1013,9 +1101,21 @@ async def main() -> None:
             "set" if inp.provider_base_url else "not set",
         )
         _diag("No provider client created")
+    # 2026-08-21: FDC 1회 호출(최초 요청 + 재시도 전부) 동안의 permit
+    # 판정을 누적할 accumulator. provider 미설정(Stub 경로)이면 애초에
+    # HTTP 호출이 없으므로 만들지 않는다 — Stub은 permit 대기 없이
+    # 기존 동작을 그대로 유지한다.
+    fdc_permit_accumulator = (
+        _FdcPermitAccumulator() if provider_client is not None else None
+    )
     ei_agent, ar_agent, ac_agent, fdc_agent = _build_agent_triplet(
         provider_client=provider_client,
         model_id=inp.provider_model_id,
+        acquire_permit=(
+            fdc_permit_accumulator.acquire
+            if fdc_permit_accumulator is not None
+            else None
+        ),
     )
 
     # ── 2. Run agents sequentially ─────────────────────────────────────
@@ -1141,6 +1241,17 @@ async def main() -> None:
             risk_output=risk_output,
         )
 
+        # 2026-08-21: FDC가 생략되면 provider 호출/permit 대기가 전혀
+        # 없으므로 관측성 필드는 모두 기본값(호출 없음)으로 남는다.
+        fdc_provider_http_attempt_count = 0
+        fdc_provider_http_429_count = 0
+        fdc_provider_execution_seconds = 0.0
+        fdc_provider_final_status = ""
+        fdc_rate_limiter_waited_seconds = 0.0
+        fdc_rate_limiter_slot_acquired = True
+        fdc_rate_limiter_queue_timeout = False
+        fdc_rate_limiter_state_file_error = False
+
         if skip_fdc:
             composer_output = skip_output
             # ★ FDC skip 시 degraded 플래그 설정 (full pipeline 미완료)
@@ -1168,17 +1279,13 @@ async def main() -> None:
             )
         else:
             # --- 2d. Final Decision Composer Agent ---
-            # 2026-08-18: 실제 provider 호출(FinalDecisionComposerAgent) 직전에
-            # 프로세스 간 공유 rate limiter를 통과시킨다. StubFinalDecisionComposerAgent
-            # (provider 미설정)는 네트워크 호출이 없으므로 대기시키지 않는다.
-            if provider_client is not None:
-                _diag("Waiting for FDC rate limiter slot ...")
-                rate_limit_result = await wait_for_fdc_slot()
-                _diag(
-                    f"FDC rate limiter: waited={rate_limit_result.waited_seconds:.1f}s "
-                    f"bypassed={rate_limit_result.bypassed} "
-                    f"reason={rate_limit_result.bypass_reason}"
-                )
+            # 2026-08-21 전환: rate limiter permit 획득은 더 이상 여기서
+            # 외부적으로 1회만 일어나지 않는다 — ``fdc_agent``에 주입된
+            # ``acquire_permit``(위 ``fdc_permit_accumulator.acquire``)이
+            # ``provider_client.py``의 재시도 루프 안에서 최초 요청 +
+            # 매 재시도마다 각각 호출된다. StubFinalDecisionComposerAgent
+            # (provider 미설정)는 애초에 permit 콜백을 받지 않으므로 대기가
+            # 전혀 없다.
             logger.info("Starting FinalDecisionComposerAgent.run() ...")
             _diag("Starting FinalDecisionComposerAgent.run() ...")
             request_with_ei_ar_ac = _reconstruct_request(
@@ -1190,12 +1297,12 @@ async def main() -> None:
             try:
                 composer_output = await asyncio.wait_for(
                     fdc_agent.run(request_with_ei_ar_ac),
-                    timeout=_PER_AGENT_TIMEOUT,
+                    timeout=_FDC_PER_AGENT_TIMEOUT,
                 )
             except asyncio.TimeoutError:
                 logger.warning(
                     "FinalDecisionComposerAgent timed out after %ss — using fallback output. symbol=%s decision_context_id=%s",
-                    _PER_AGENT_TIMEOUT,
+                    _FDC_PER_AGENT_TIMEOUT,
                     inp.symbol,
                     inp.decision_context_id,
                 )
@@ -1203,6 +1310,39 @@ async def main() -> None:
                     request_with_ei_ar_ac,
                     symbol=inp.symbol or event_output.symbol or "",
                 )
+
+            observation = getattr(fdc_agent, "last_provider_observation", None)
+            if observation is not None:
+                fdc_provider_http_attempt_count = observation.http_attempt_count
+                fdc_provider_http_429_count = observation.http_429_count
+                fdc_provider_execution_seconds = observation.execution_seconds
+                fdc_provider_final_status = observation.provider_final_status
+            else:
+                fdc_provider_http_attempt_count = 0
+                fdc_provider_http_429_count = 0
+                fdc_provider_execution_seconds = 0.0
+                fdc_provider_final_status = ""
+            if fdc_permit_accumulator is not None:
+                fdc_rate_limiter_waited_seconds = fdc_permit_accumulator.total_waited_seconds
+                fdc_rate_limiter_slot_acquired = fdc_permit_accumulator.slot_acquired
+                fdc_rate_limiter_queue_timeout = fdc_permit_accumulator.queue_timeout
+                fdc_rate_limiter_state_file_error = fdc_permit_accumulator.state_file_error
+            else:
+                fdc_rate_limiter_waited_seconds = 0.0
+                fdc_rate_limiter_slot_acquired = True
+                fdc_rate_limiter_queue_timeout = False
+                fdc_rate_limiter_state_file_error = False
+            _diag(
+                "FDC provider observation: "
+                f"http_attempts={fdc_provider_http_attempt_count} "
+                f"http_429={fdc_provider_http_429_count} "
+                f"exec_seconds={fdc_provider_execution_seconds:.1f} "
+                f"final_status={fdc_provider_final_status} "
+                f"limiter_waited={fdc_rate_limiter_waited_seconds:.1f}s "
+                f"slot_acquired={fdc_rate_limiter_slot_acquired} "
+                f"queue_timeout={fdc_rate_limiter_queue_timeout} "
+                f"state_file_error={fdc_rate_limiter_state_file_error}"
+            )
             _diag(f"FinalDecisionComposerAgent completed: symbol={composer_output.symbol} decision_type={composer_output.decision_type}")
             logger.info(
                 "FinalDecisionComposerAgent completed: summary_len=%s symbol=%s decision_type=%s confidence=%s",
@@ -1244,6 +1384,14 @@ async def main() -> None:
             ar_skipped=False,
             fdc_skipped=skip_fdc,
             skip_reason_codes=(skip_reason,) if skip_fdc and skip_reason else (),
+            rate_limiter_waited_seconds=fdc_rate_limiter_waited_seconds,
+            rate_limiter_slot_acquired=fdc_rate_limiter_slot_acquired,
+            rate_limiter_queue_timeout=fdc_rate_limiter_queue_timeout,
+            rate_limiter_state_file_error=fdc_rate_limiter_state_file_error,
+            provider_http_attempt_count=fdc_provider_http_attempt_count,
+            provider_http_429_count=fdc_provider_http_429_count,
+            provider_execution_seconds=fdc_provider_execution_seconds,
+            provider_final_status=fdc_provider_final_status,
         )
         _write_output(output)
         if skip_fdc:

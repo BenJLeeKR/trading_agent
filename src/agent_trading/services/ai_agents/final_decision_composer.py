@@ -34,6 +34,10 @@ from agent_trading.services.ai_agents.base import (
     AIProviderClient,
     RawProviderResponse,
 )
+from agent_trading.services.ai_agents.provider_client import (
+    PermitCallback,
+    PermitDeniedError,
+)
 from agent_trading.services.ai_agents.schemas import (
     FinalDecisionComposerOutput,
     generate_json_schema,
@@ -43,6 +47,27 @@ from agent_trading.services.source_policy import allowed_fdc_decision_types
 logger = logging.getLogger(__name__)
 
 
+@dataclasses.dataclass(slots=True, frozen=True)
+class ProviderCallObservation:
+    """FDC provider 호출 1회의 관측성 스냅샷(성공/실패 공통).
+
+    ``FinalDecisionComposerOutput``(LLM 응답 스키마)에는 절대 담지
+    않는다 — 이 필드들이 늘어나면 ``generate_json_schema()``를 통해
+    그대로 Gemini 프롬프트에 노출되기 때문이다(2026-08-21). 대신
+    ``FinalDecisionComposerAgent.last_provider_observation``으로만
+    노출하고, 호출자(``run_agent_subprocess.py``)가 이를 읽어
+    ``AgentSubprocessOutput``(내부 전용 envelope)에 옮겨 담는다.
+    """
+
+    http_attempt_count: int = 0
+    http_429_count: int = 0
+    execution_seconds: float = 0.0
+    rate_limiter_waited_seconds: float = 0.0
+    rate_limiter_queue_timeout: bool = False
+    rate_limiter_state_file_error: bool = False
+    provider_final_status: str = ""
+
+
 def _classify_provider_exception(exc: Exception) -> str:
     """예외를 fallback ``reason_codes`` 마커로 분류한다(관측성 전용).
 
@@ -50,7 +75,17 @@ def _classify_provider_exception(exc: Exception) -> str:
     저장값만으로 구분되지 않던 문제(429 재시도 소진 시 ``reason_codes``가
     항상 빈 튜플)를 고치기 위한 분류다. 이 마커는 관측 용도이며,
     ``decision_type="HOLD"`` fallback 정책 자체를 바꾸지 않는다.
+
+    2026-08-21 추가: ``PermitDeniedError``(rate limiter가 permit을
+    거부해 HTTP 요청을 아예 보내지 않은 경우)를 최우선으로 분류한다.
+    이 경우는 실제 Gemini 호출이 없었으므로 ``provider_rate_limit``
+    (실제 429)과 DB에서 명확히 구분돼야 한다.
     """
+    if isinstance(exc, PermitDeniedError):
+        return {
+            "queue_timeout": "provider_queue_timeout",
+            "state_file_error": "provider_limiter_unavailable",
+        }.get(exc.result.denial_reason or "", "provider_limiter_unavailable")
     if isinstance(exc, httpx.HTTPStatusError):
         status = exc.response.status_code
         if status == 429:
@@ -79,6 +114,9 @@ class StubFinalDecisionComposerAgent:
 
     def __init__(self, schema_version: str = "v1") -> None:
         self._schema_version = schema_version
+        # Stub은 provider 호출이 없으므로 관측값도 없다(None) — 호출자가
+        # 실제 agent와 동일한 속성 접근 경로로 안전하게 읽을 수 있게 한다.
+        self.last_provider_observation: ProviderCallObservation | None = None
 
     @property
     def agent_name(self) -> str:
@@ -151,10 +189,17 @@ class FinalDecisionComposerAgent:
         *,
         model_id: str | None = None,
         schema_version: str = "v1",
+        acquire_permit: PermitCallback | None = None,
     ) -> None:
         self._provider = provider_client
         self._model_id = model_id or _resolve_provider_model_id()
         self._schema_version = schema_version
+        # 2026-08-21: rate limiter permit 콜백 — ``None``이면 기존 동작과
+        # 100% 동일(permit 체크 없이 즉시 호출). 실제 콜백은
+        # ``run_agent_subprocess.py``가 ``fdc_rate_limiter.wait_for_fdc_slot()``
+        # 을 감싸서 주입한다(이 클래스/파일은 그 구현을 import하지 않는다).
+        self._acquire_permit = acquire_permit
+        self.last_provider_observation: ProviderCallObservation | None = None
 
     @property
     def agent_name(self) -> str:
@@ -185,6 +230,8 @@ class FinalDecisionComposerAgent:
             self._model_id,
         )
 
+        loop = asyncio.get_event_loop()
+        started_at = loop.time()
         try:
             system_prompt = self._build_system_prompt(source_type=request.source_type)
             user_prompt = self._build_user_prompt(request)
@@ -194,6 +241,13 @@ class FinalDecisionComposerAgent:
                 system_prompt=system_prompt,
                 user_prompt=user_prompt,
                 response_format=FinalDecisionComposerOutput,
+                acquire_permit=self._acquire_permit,
+            )
+            self.last_provider_observation = ProviderCallObservation(
+                http_attempt_count=raw_response.http_attempt_count,
+                http_429_count=raw_response.http_429_count,
+                execution_seconds=loop.time() - started_at,
+                provider_final_status="success",
             )
 
             result: FinalDecisionComposerOutput = raw_response.parsed  # type: ignore[assignment]
@@ -236,6 +290,18 @@ class FinalDecisionComposerAgent:
 
         except Exception as exc:
             reason_marker = _classify_provider_exception(exc)
+            permit_result = exc.result if isinstance(exc, PermitDeniedError) else None
+            self.last_provider_observation = ProviderCallObservation(
+                http_attempt_count=getattr(exc, "http_attempt_count", 0),
+                http_429_count=getattr(exc, "http_429_count", 0),
+                execution_seconds=loop.time() - started_at,
+                rate_limiter_waited_seconds=(
+                    permit_result.waited_seconds if permit_result else 0.0
+                ),
+                rate_limiter_queue_timeout=reason_marker == "provider_queue_timeout",
+                rate_limiter_state_file_error=reason_marker == "provider_limiter_unavailable",
+                provider_final_status=reason_marker,
+            )
             logger.warning(
                 "FinalDecisionComposerAgent failed — returning default HOLD output "
                 "(safe fallback). decision_context_id=%s reason=%s",

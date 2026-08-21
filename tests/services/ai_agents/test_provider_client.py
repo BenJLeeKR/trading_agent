@@ -19,6 +19,8 @@ from agent_trading.services.ai_agents.base import RawProviderResponse
 from agent_trading.services.ai_agents.provider_client import (
     MAX_RETRIES,
     OpenAICompatibleClient,
+    PermitDeniedError,
+    PermitResult,
     _coerce_nested_json_strings,
     _compute_retry_delay,
     _parse_retry_after_seconds,
@@ -523,3 +525,133 @@ class TestRetryAndDnsError:
             response=response,
         )
         assert _compute_retry_delay(0, error) == 4.0
+
+
+# ---------------------------------------------------------------------------
+# acquire_permit gating tests (2026-08-21, strict FDC rate limiter)
+# ---------------------------------------------------------------------------
+
+
+class TestAcquirePermitGating:
+    """``acquire_permit`` 콜백이 최초 요청 + 매 재시도마다 재호출되고,
+    permit 거부 시 실제 HTTP 요청이 전혀 발생하지 않음을 검증한다.
+    """
+
+    @pytest.mark.asyncio
+    async def test_permit_denied_before_first_request_sends_no_http_call(
+        self,
+    ) -> None:
+        """permit이 최초 시도에서부터 거부되면 HTTP 요청이 0번 발생해야 한다."""
+        call_count: list[int] = [0]
+
+        def handler(req: httpx.Request) -> httpx.Response:
+            call_count[0] += 1
+            raise AssertionError("permit이 거부됐는데 HTTP 요청이 발생함")
+
+        async def deny_permit() -> PermitResult:
+            return PermitResult(granted=False, waited_seconds=18.0, denial_reason="queue_timeout")
+
+        client = _make_client(httpx.MockTransport(handler))
+        with pytest.raises(PermitDeniedError) as exc_info:
+            await client.generate_structured(
+                model_id="test-model",
+                system_prompt="system",
+                user_prompt="user",
+                response_format=_FakeOutput,
+                acquire_permit=deny_permit,
+            )
+        assert call_count[0] == 0
+        assert exc_info.value.http_attempt_count == 0
+        assert exc_info.value.http_429_count == 0
+        assert exc_info.value.result.denial_reason == "queue_timeout"
+
+    @pytest.mark.asyncio
+    async def test_permit_granted_before_every_attempt_including_retries(
+        self,
+    ) -> None:
+        """429로 2회 재시도되는 경우, permit도 정확히 3회(시도당 1회씩)
+        재획득돼야 한다."""
+        http_call_count: list[int] = [0]
+        permit_call_count: list[int] = [0]
+
+        def handler(req: httpx.Request) -> httpx.Response:
+            http_call_count[0] += 1
+            if http_call_count[0] < 3:
+                return httpx.Response(429, json={"error": "rate limited"})
+            return httpx.Response(200, json={
+                "choices": [{"message": {"content": '{"symbol": "AAPL", "score": 0.85}'}}],
+            })
+
+        async def grant_permit() -> PermitResult:
+            permit_call_count[0] += 1
+            return PermitResult(granted=True, waited_seconds=0.5)
+
+        client = _make_client(httpx.MockTransport(handler))
+        result = await client.generate_structured(
+            model_id="test-model",
+            system_prompt="system",
+            user_prompt="user",
+            response_format=_FakeOutput,
+            acquire_permit=grant_permit,
+        )
+        assert http_call_count[0] == 3
+        assert permit_call_count[0] == 3
+        assert result.http_attempt_count == 3
+        assert result.http_429_count == 2
+
+    @pytest.mark.asyncio
+    async def test_permit_denied_on_retry_halts_further_http_attempts(
+        self,
+    ) -> None:
+        """첫 시도는 permit 승인 후 429를 받지만, 재시도 직전 permit이
+        거부되면 두 번째 HTTP 요청은 절대 발생하지 않아야 한다."""
+        http_call_count: list[int] = [0]
+        permit_call_count: list[int] = [0]
+
+        def handler(req: httpx.Request) -> httpx.Response:
+            http_call_count[0] += 1
+            return httpx.Response(429, json={"error": "rate limited"})
+
+        async def permit_then_deny() -> PermitResult:
+            permit_call_count[0] += 1
+            if permit_call_count[0] == 1:
+                return PermitResult(granted=True, waited_seconds=0.0)
+            return PermitResult(
+                granted=False, waited_seconds=18.0, denial_reason="queue_timeout",
+            )
+
+        client = _make_client(httpx.MockTransport(handler))
+        with pytest.raises(PermitDeniedError) as exc_info:
+            await client.generate_structured(
+                model_id="test-model",
+                system_prompt="system",
+                user_prompt="user",
+                response_format=_FakeOutput,
+                acquire_permit=permit_then_deny,
+            )
+        # 첫 HTTP 요청(429)만 발생했어야 한다 — 재시도 직전 permit 거부로
+        # 두 번째 HTTP 요청은 절대 나가지 않는다.
+        assert http_call_count[0] == 1
+        assert permit_call_count[0] == 2
+        assert exc_info.value.http_attempt_count == 1
+        assert exc_info.value.http_429_count == 1
+
+    @pytest.mark.asyncio
+    async def test_no_acquire_permit_preserves_existing_behavior(self) -> None:
+        """``acquire_permit=None``(기본값)이면 permit 체크 없이 기존과
+        100% 동일하게 즉시 호출한다(Stub/EI/AR 등 기존 호출자 호환성)."""
+        def handler(req: httpx.Request) -> httpx.Response:
+            return httpx.Response(200, json={
+                "choices": [{"message": {"content": '{"symbol": "AAPL", "score": 0.85}'}}],
+            })
+
+        client = _make_client(httpx.MockTransport(handler))
+        result = await client.generate_structured(
+            model_id="test-model",
+            system_prompt="system",
+            user_prompt="user",
+            response_format=_FakeOutput,
+        )
+        assert result.parsed.symbol == "AAPL"
+        assert result.http_attempt_count == 1
+        assert result.http_429_count == 0

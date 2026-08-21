@@ -379,6 +379,15 @@ class AgentExecutionBundle:
     # subprocess isolation 경로에서 EI 실패 시 error metadata
     # (orchestrator가 structured_output_json["__error__"] 주입에 사용)
     ei_error_metadata: dict[str, object] | None = None
+    # 2026-08-21 신설: strict FDC rate limiter + retry-inclusive permit
+    # 관측성 메타데이터(``rate_limiter_*``/``provider_*`` — EI의
+    # ``__error__`` 패턴과 동일하게, orchestrator가
+    # ``structured_output_json["__provider_observability__"]``에
+    # 주입한다). ``FinalDecisionComposerOutput`` 자체(LLM 응답 스키마)는
+    # 오염시키지 않는다. subprocess 경로에서만 채워지며, in-process 경로
+    # (``decision_agent_runner.py``)는 rate limiter 연동이 없으므로
+    # ``None``으로 남는다.
+    provider_observability: dict[str, object] | None = None
 
 
 # ---------------------------------------------------------------------------

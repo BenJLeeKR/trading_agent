@@ -346,6 +346,18 @@ def test_build_fdc_timeout_fallback_preserves_symbol_and_context() -> None:
     assert output.decision_type == "HOLD"
 
 
+def test_build_fdc_timeout_fallback_reason_codes_not_empty() -> None:
+    """2026-08-21 결함 수정: reason_codes가 더 이상 비어있으면 안 된다 —
+    비어 있으면 정상 HOLD와 timeout fallback을 DB만으로 구분할 수 없다."""
+    request = _make_request(_make_empty_context())
+
+    output = _build_fdc_timeout_fallback(request, symbol="000660")
+
+    assert output.reason_codes == ("provider_timeout",)
+    assert output.summary
+    assert "000660" in output.summary
+
+
 class TestFdcSkipRiskReject:
     """risk_opinion == "reject" → 결정론적 HOLD."""
 

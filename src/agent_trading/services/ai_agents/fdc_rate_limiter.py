@@ -25,14 +25,16 @@ concurrency.md`` 참고). 이번 모듈은 그 rollback과 함께, **실제로
 - 최근 ``window_seconds`` 이내에 기록된 호출 타임스탬프 수가
   ``max_calls`` 이상이면, 가장 오래된 타임스탬프가 윈도우를 벗어날
   때까지 짧게 대기(polling)한 뒤 재시도한다.
-- ``max_wait_seconds``를 넘도록 슬롯을 못 얻으면 — subprocess 전체
-  timeout(기본 90초) 예산을 침범하지 않도록 — 대기를 포기하고 즉시
-  통과시킨다(fail-open, 단 경고 로그를 남긴다. 조용한 bypass가 아니다).
-  이 대기는 FDC 호출 자체의 30초 per-agent timeout 블록 **앞에서**
-  별도로 일어나므로 그 30초 예산과는 별개다(``DEFAULT_MAX_WAIT_
-  SECONDS`` 상수 주석 참고).
-- 상태 파일 접근 자체가 실패하면(파일시스템 오류 등) 마찬가지로
-  경고 로그를 남기고 즉시 통과시킨다.
+- ``max_wait_seconds``를 넘도록 슬롯을 못 얻으면 — **더 이상 통과시키지
+  않는다.** ``granted=False, queue_timeout=True``를 반환하고, 호출자는
+  이 경우 절대로 실제 Gemini HTTP 요청을 보내지 않는다(2026-08-21
+  strict queue 전환 — 이전의 fail-open bypass 설계를 완전히 제거했다.
+  이 변경의 배경은 ``docs/30_work_log/2026-08-21_fdc_strict_rate_
+  limiter_and_retry_permit.md`` 참고).
+- 상태 파일 접근 자체가 실패하면(파일시스템 오류 등)도 마찬가지로
+  ``granted=False, state_file_error=True``를 반환한다 — 더 이상
+  fail-open으로 통과시키지 않는다. 호출자는 이 경우 안전하게
+  ``provider_limiter_unavailable`` fallback으로 HOLD를 반환해야 한다.
 - **import-time 부작용 없음** — 모듈을 import하는 것만으로는 파일이나
   디렉터리를 만들지 않는다. 상태 파일은 ``wait_for_fdc_slot()``을
   실제로 호출한 시점에만 lazy하게 생성된다. 이는 이 harness의
@@ -65,26 +67,28 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_MAX_CALLS_PER_WINDOW = 10
 DEFAULT_WINDOW_SECONDS = 60.0
-# 2026-08-18 조정(15.0 → 20.0): `wait_for_fdc_slot()`은
-# `scripts/run_agent_subprocess.py`에서 `asyncio.wait_for(fdc_agent.run(...),
-# timeout=_PER_AGENT_TIMEOUT)`(30초) 블록 **앞에서** 별도로 호출된다 —
-# 즉 이 대기 시간은 FDC의 30초 per-agent timeout에 포함되지 않고, 대신
-# subprocess 전체 timeout(``DecisionAgentRunner.subprocess_timeout``,
-# 기본 90초 — EI/AR/AC는 수 ms로 사실상 무시 가능)의 여유분을 쓴다.
-# 20초 + FDC 최악 소요(30초 timeout 상한) = 50초로 여전히 90초 예산 안에서
-# 충분한 여유(40초)가 남는다.
+# 2026-08-21 재계산(20.0 → 18.0, strict queue + retry-inclusive 전환).
 #
-# 실측 근거(2026-08-18 13:28~13:29 KST, 36개 종목 1개 사이클): 실제로
-# 대기 후 슬롯을 확보한 3건이 각각 13.0s/14.0s/13.0s를 기다렸다 — 기존
-# 상한(15.0s)에 바짝 붙어 있어, 조금만 더 여유를 주면 그 경계에 걸려
-# bypass됐을 호출 중 일부가 정상 대기로 전환될 가능성이 있다(반대로
-# bypass된 16건은 15.0s를 다 채우고 포기한 것이므로, 그중 실제로 몇 초를
-# 더 기다리면 슬롯을 얻었을지는 이 로그만으로는 알 수 없다 — 미확인).
-# 25초 이상으로 더 키우지 않은 이유: 관측된 성공 대기가 13~14초 구간에
-# 몰려 있어 20초로도 그 경계값을 충분히 덮고, 그 이상은 bypass되는
-# 호출들의 대기만 늘릴 뿐 추가 효과가 검증되지 않은 추측성 비용이기
-# 때문이다.
-DEFAULT_MAX_WAIT_SECONDS = 20.0
+# 구조 변화: 기존에는 이 대기가 `scripts/run_agent_subprocess.py`에서
+# FDC 30초 per-agent timeout 블록 **앞에서** 단 1회만 일어났다. 이번
+# 전환으로 permit 획득이 `provider_client.py`의 재시도 루프 **안으로**
+# 들어가면서, 최초 요청 + 매 재시도(`MAX_RETRIES=3`)마다 각각 permit을
+# 다시 획득한다 — 즉 이 대기가 이제는 FDC per-agent timeout **예산
+# 안에서** 최대 3회 반복될 수 있다.
+#
+# 예산 재계산 근거(``_FDC_PER_AGENT_TIMEOUT=70``, run_agent_subprocess.py):
+#   subprocess 전체 timeout 90초 - 그 외 오버헤드/안전마진 20초 = 70초.
+# 이 70초 안에서 최악의 경우(3회 모두 429로 재시도)를 감당해야 한다:
+#   3 x max_wait_seconds(permit 대기) + 3 x 실제 HTTP 왕복(약 3초/회 가정)
+#   + 2회 재시도 사이 backoff(RETRY_DELAY 기반, 약 1초+2초=3초)
+#   <= 70초
+#   => 3 x max_wait_seconds <= 70 - 9 - 3 = 58
+#   => max_wait_seconds <= 19.33초
+# 18.0초로 설정해 약 4초의 안전 마진을 남긴다(3x18 + 9 + 3 = 66 <= 70).
+# 큐 대기는 반드시 유한 시간 안에 종료돼야 하며(무한 대기 금지),
+# 상한 초과 시 `queue_timeout=True`로 확정 종료한다(더 이상 bypass하지
+# 않음 — 상단 모듈 docstring 참고).
+DEFAULT_MAX_WAIT_SECONDS = 18.0
 DEFAULT_POLL_INTERVAL_SECONDS = 1.0
 _STATE_FILENAME = "agent_trading_fdc_rate_limiter_state.json"
 
@@ -101,28 +105,29 @@ def default_state_path() -> str:
 
 @dataclass(slots=True, frozen=True)
 class FdcRateLimitResult:
-    """rate limiter 판정 결과(관측용).
+    """rate limiter 판정 결과(strict, no-bypass, 2026-08-21).
 
     Attributes
     ----------
-    allowed:
-        항상 ``True`` — 이 limiter는 호출을 영구히 거부하지 않는다
-        (fail-open 설계). 대기 후 허용되거나, 대기 상한/오류 시
-        bypass로 즉시 허용된다.
+    granted:
+        ``True``면 슬롯을 확보해 실제 HTTP 요청을 진행해도 된다.
+        ``False``면 절대 HTTP 요청을 보내면 안 된다 — 아래
+        ``queue_timeout``/``state_file_error`` 중 정확히 하나가
+        ``True``다.
     waited_seconds:
         실제로 대기한 시간(초). 슬롯을 즉시 확보했으면 ``0.0``.
-    bypassed:
-        ``True``이면 rate limit을 실제로 강제하지 못하고 그냥
-        통과시켰다는 뜻(대기 상한 초과 또는 상태 파일 오류).
-    bypass_reason:
-        ``bypassed=True``일 때만 설정 — ``"max_wait_exceeded"`` 또는
-        ``"file_error:<ExceptionType>"``.
+    queue_timeout:
+        ``True``면 정상적인 slot 대기 큐에서 ``max_wait_seconds``를
+        넘도록 슬롯을 못 얻어 포기했다는 뜻(``provider_queue_timeout``).
+    state_file_error:
+        ``True``면 상태 파일 접근 자체가 실패했다는 뜻
+        (``provider_limiter_unavailable``).
     """
 
-    allowed: bool
+    granted: bool
     waited_seconds: float
-    bypassed: bool
-    bypass_reason: str | None = None
+    queue_timeout: bool = False
+    state_file_error: bool = False
 
 
 def _read_and_trim_timestamps(
@@ -193,11 +198,13 @@ async def wait_for_fdc_slot(
     """FDC provider 호출 전 공유 rate limit 슬롯을 확보할 때까지 대기한다.
 
     여러 독립 프로세스가 같은 상태 파일을 파일 락으로 직렬화해
-    sliding-window 호출 횟수를 실제로 공유한다. 슬롯을 확보하지
-    못해도 이 함수는 예외를 던지지 않고 항상 ``allowed=True``인
-    결과를 반환한다(호출자가 FDC를 아예 못 부르게 막지 않음) — 다만
-    대기 상한 초과나 파일 오류 시 ``bypassed=True``로 표시하고 경고
-    로그를 남긴다.
+    sliding-window 호출 횟수를 실제로 공유한다.
+
+    2026-08-21 strict 전환: 슬롯을 확보하지 못하면(대기 상한 초과 또는
+    상태 파일 오류) 더 이상 통과시키지 않는다 — ``granted=False``를
+    반환하며, 호출자는 이 경우 반드시 실제 HTTP 요청을 생략해야 한다.
+    이 함수 자체는 무한정 기다리지 않는다 — ``max_wait_seconds``에서
+    항상 확정적으로 종료된다.
     """
     resolved_path = state_path or default_state_path()
     start = time.monotonic()
@@ -213,16 +220,15 @@ async def wait_for_fdc_slot(
             )
         except OSError as exc:
             logger.warning(
-                "FDC rate limiter: 상태 파일(%s) 접근 실패 — 제한 없이 통과시킴"
-                "(bypass). %s",
+                "FDC rate limiter: 상태 파일(%s) 접근 실패 — HTTP 요청을 "
+                "허용하지 않고 즉시 거부함(state_file_error). %s",
                 resolved_path,
                 exc,
             )
             return FdcRateLimitResult(
-                allowed=True,
+                granted=False,
                 waited_seconds=waited_total,
-                bypassed=True,
-                bypass_reason=f"file_error:{type(exc).__name__}",
+                state_file_error=True,
             )
 
         if got_slot:
@@ -234,23 +240,21 @@ async def wait_for_fdc_slot(
                     max_calls,
                     window_seconds,
                 )
-            return FdcRateLimitResult(
-                allowed=True, waited_seconds=waited_total, bypassed=False,
-            )
+            return FdcRateLimitResult(granted=True, waited_seconds=waited_total)
 
         waited_total = time.monotonic() - start
         if waited_total >= max_wait_seconds:
             logger.warning(
-                "FDC rate limiter: %.1fs 대기해도 슬롯을 못 얻어 제한 없이 "
-                "통과시킴(bypass, max_wait_seconds=%.1f 초과).",
+                "FDC rate limiter: %.1fs 대기해도 슬롯을 못 얻어 큐 대기를 "
+                "포기함(queue_timeout, max_wait_seconds=%.1f 초과) — "
+                "HTTP 요청을 보내지 않음.",
                 waited_total,
                 max_wait_seconds,
             )
             return FdcRateLimitResult(
-                allowed=True,
+                granted=False,
                 waited_seconds=waited_total,
-                bypassed=True,
-                bypass_reason="max_wait_exceeded",
+                queue_timeout=True,
             )
 
         sleep_for = min(poll_interval_seconds, max_wait_seconds - waited_total)
