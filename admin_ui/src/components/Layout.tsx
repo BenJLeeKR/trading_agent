@@ -31,11 +31,14 @@ import { cn } from "@/lib/utils";
 interface NavItem {
   icon: React.ElementType;
   label: string;
-  to: string;
+  /** `header`가 true인 항목은 링크가 아니므로 생략 가능. */
+  to?: string;
   disabled?: boolean;
-  /** "계좌" 같은 앞 항목의 하위 항목임을 시각적으로만 표시(옵션 A — 진짜 트리 아님).
-   * design/realized_pnl_screen_spec.md "배치 / 내비게이션" 절 참고. */
+  /** 부모 항목(`header: true`) 하위 항목임을 표시. */
   indent?: boolean;
+  /** 클릭/active 상태가 없는 순수 그룹 레이블. 예: "계좌" 아래
+   * "계좌잔고"/"실현손익"을 묶는 부모 행. */
+  header?: boolean;
 }
 
 interface NavSection {
@@ -59,7 +62,8 @@ const navSections: NavSection[] = [
       { icon: LineChart, label: "현재가", to: "/operations/realtime-quotes" },
       { icon: FileText, label: "주문내역", to: "/orders" },
       { icon: ListOrdered, label: "체결내역", to: "/fills" },
-      { icon: Wallet, label: "계좌", to: "/accounts" },
+      { icon: Wallet, label: "계좌", header: true },
+      { icon: CornerDownRight, label: "계좌잔고", to: "/accounts", indent: true },
       { icon: CornerDownRight, label: "실현손익", to: "/accounts/realized-pnl", indent: true },
       { icon: Brain, label: "의사결정", to: "/decisions" },
       { icon: Zap, label: "에이전트 실행", to: "/agent-runs" },
@@ -94,17 +98,22 @@ function NavSectionsList({
           </p>
           <ul className="space-y-1">
             {section.items.map((item) => {
-              const isActive = !item.disabled && (
+              const isActive = !item.header && !item.disabled && item.to !== undefined && (
                 item.to === "/"
                   ? currentPath === "/"
                   : currentPath === item.to || currentPath.startsWith(item.to + "/")
               );
               return (
                 <li key={item.label}>
-                  {item.disabled ? (
+                  {item.header ? (
+                    <div className="flex w-full items-center gap-3 rounded-lg px-3 py-[7px] text-sm font-semibold text-[#94a3b8]">
+                      <item.icon className="h-5 w-5" />
+                      {item.label}
+                    </div>
+                  ) : item.disabled ? (
                     <button
                       disabled
-                      className="flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-semibold text-[#cbd5e1] cursor-not-allowed text-left"
+                      className="flex w-full items-center gap-3 rounded-lg px-3 py-[7px] text-sm font-semibold text-[#cbd5e1] cursor-not-allowed text-left"
                     >
                       <item.icon className="h-5 w-5" />
                       {item.label}
@@ -114,11 +123,11 @@ function NavSectionsList({
                     </button>
                   ) : (
                     <NavLink
-                      to={item.to}
+                      to={item.to!}
                       end={item.to === "/"}
                       onClick={onNavigate}
                       className={cn(
-                        "flex w-full items-center gap-3 rounded-lg py-2.5 text-sm font-semibold transition-colors",
+                        "flex w-full items-center gap-3 rounded-lg py-[7px] text-sm font-semibold transition-colors",
                         item.indent ? "pl-8 pr-3" : "px-3",
                         isActive
                           ? "bg-[#f1f5f9] text-[#0f172a]"
@@ -235,7 +244,7 @@ export function Layout() {
             <li>
               <button
                 onClick={logout}
-                className="flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-semibold text-[#64748b] hover:bg-[#f8fafc] hover:text-[#0f172a] transition-colors text-left"
+                className="flex w-full items-center gap-3 rounded-lg px-3 py-[7px] text-sm font-semibold text-[#64748b] hover:bg-[#f8fafc] hover:text-[#0f172a] transition-colors text-left"
               >
                 <LogOut className="h-5 w-5" />
                 로그아웃
@@ -309,7 +318,7 @@ export function Layout() {
                     setMobileMenuOpen(false);
                     logout();
                   }}
-                  className="flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-semibold text-[#64748b] hover:bg-[#f8fafc] hover:text-[#0f172a] transition-colors text-left"
+                  className="flex w-full items-center gap-3 rounded-lg px-3 py-[7px] text-sm font-semibold text-[#64748b] hover:bg-[#f8fafc] hover:text-[#0f172a] transition-colors text-left"
                 >
                   <LogOut className="h-5 w-5" />
                   로그아웃
