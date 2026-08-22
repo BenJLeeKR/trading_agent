@@ -4027,7 +4027,9 @@
     업종 시세 API만 존재) → 자동 갱신 원안 대신 read-only staleness 감시만
     구현. `InstrumentIndexMembershipRepository.get_latest_effective_from()`
     (Postgres+in-memory) + `services/index_membership_staleness.py`
-    (`evaluate_index_membership_staleness()`, 21일 임계값). 실측
+    (`evaluate_index_membership_staleness()`, 21일 임계값 — 2026-08-22 정정:
+    당시 정책의 과거 기록이며, 2026-08-22부터 기본 정책은 달력 기준 6개월
+    초과다). 실측
     (`scripts/check_index_membership_staleness.py`): 마지막 반영
     2026-06-27, age=15일 → 정상(6일 여유). 테스트 7건 추가. **운영 대시보드
     노출까지 완료(2026-07-12)** — `GET /instruments/index-membership/

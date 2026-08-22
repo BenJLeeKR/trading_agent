@@ -26,7 +26,10 @@ import { Wifi, WifiOff, RefreshCcw, Search, X, TrendingUp, TrendingDown, Minus }
 
 const POLL_INTERVAL_MS = 3000;
 const STALE_THRESHOLD_MS = 10_000;
-const SYMBOL_PATTERN = /^\d{6}$/;
+// KRX 국내주식 단축코드: 정확히 6자리, ASCII 숫자+영문 대문자만 허용.
+// 2024-01-01부터 신규 발급분에 영문이 포함될 수 있어(예: 신주인수권),
+// 기존 숫자 6자리 코드와 함께 이 형식으로 통일한다.
+const SYMBOL_PATTERN = /^[0-9A-Z]{6}$/;
 
 /* ── helpers ── */
 
@@ -135,7 +138,8 @@ export default function RealtimeQuoteView() {
       setLoading(true);
       setBootstrapError(null);
       try {
-        const initialSymbol = initialSymbolRef.current;
+        const rawInitialSymbol = initialSymbolRef.current;
+        const initialSymbol = rawInitialSymbol ? rawInitialSymbol.trim().toUpperCase() : null;
         let data = await getRealtimeQuoteBootstrap();
 
         if (
@@ -250,9 +254,9 @@ export default function RealtimeQuoteView() {
 
   /* ── actions ── */
   const handleSubscribe = async () => {
-    const symbol = symbolInput.trim();
+    const symbol = symbolInput.trim().toUpperCase();
     if (!SYMBOL_PATTERN.test(symbol)) {
-      setInputError("종목코드는 6자리 숫자로 입력하세요 (예: 005930)");
+      setInputError("종목코드는 숫자 또는 영문 대문자를 포함한 6자리로 입력하세요 (예: 005930)");
       return;
     }
     setInputError(null);
@@ -425,8 +429,8 @@ export default function RealtimeQuoteView() {
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-[#94a3b8]" />
             <input
               type="text"
-              inputMode="numeric"
-              placeholder="종목코드 6자리 (예: 005930)"
+              inputMode="text"
+              placeholder="종목코드 6자리, 숫자/영문 대문자 (예: 005930)"
               value={symbolInput}
               onChange={(e) => {
                 setSymbolInput(e.target.value);
@@ -440,7 +444,10 @@ export default function RealtimeQuoteView() {
           </div>
           <button
             onClick={handleSubscribe}
-            disabled={atCapacity && !subscriptions.some((s) => s.symbol === symbolInput.trim())}
+            disabled={
+              atCapacity &&
+              !subscriptions.some((s) => s.symbol === symbolInput.trim().toUpperCase())
+            }
             className="shrink-0 px-4 py-1.5 text-sm font-medium text-white bg-[#3b82f6] rounded-lg hover:bg-[#2563eb] transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
             title={atCapacity ? "구독 한도(등록 건수)에 도달했습니다" : undefined}
           >

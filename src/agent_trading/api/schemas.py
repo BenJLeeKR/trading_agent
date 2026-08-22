@@ -807,12 +807,19 @@ class TradingUniversePreviewResponse(BaseModel):
 
 
 class IndexMembershipStalenessResponse(BaseModel):
-    """`GET /instruments/index-membership/staleness` 응답 (UNIV-4 read-only 감시)."""
+    """`GET /instruments/index-membership/staleness` 응답 (UNIV-4 read-only 감시).
+
+    기본 정책은 달력 기준 6개월 초과다(``threshold_months``). ``threshold_days``
+    query parameter를 명시한 운영 진단용 override 호출에서만 ``threshold_days``가
+    채워지고 ``threshold_months``는 ``None``이 된다.
+    """
 
     latest_effective_from: date | None = None
     as_of: date
     age_days: int | None = None
-    threshold_days: int
+    threshold_months: int | None = None
+    threshold_days: int | None = None
+    stale_after: date | None = None
     is_stale: bool
 
 

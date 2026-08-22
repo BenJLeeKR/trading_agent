@@ -672,7 +672,15 @@ async def get_market_overlay_funnel(
     response_model=IndexMembershipStalenessResponse,
 )
 async def get_index_membership_staleness(
-    threshold_days: int = Query(default=21, ge=1, le=365),
+    threshold_days: int | None = Query(
+        default=None,
+        ge=1,
+        le=365,
+        description=(
+            "운영 진단용 override — 지정하면 고정 일수 기준으로 판정한다. "
+            "지정하지 않으면 기본 정책(달력 기준 6개월 초과)을 사용한다."
+        ),
+    ),
     repos: RepositoryContainer = Depends(get_repos),
 ) -> IndexMembershipStalenessResponse:
     """UNIV-4: 지수 편입(index membership) 데이터 staleness 감시 (read-only).
@@ -680,6 +688,9 @@ async def get_index_membership_staleness(
     KIS에 지수 구성종목 전체 목록 API가 없어 수동 업로드 절차
     (`[RUNBOOK] index_membership_source_package_apply.md`)의 마지막 반영
     시각이 오래됐는지만 관측한다. 어떤 쓰기 작업도 하지 않는다.
+
+    기본 정책은 지수 정기 변경(상·하반기) 주기에 맞춘 "달력 기준 6개월 초과"다.
+    ``threshold_days``를 명시하면 운영 진단 목적의 고정 일수 override로 동작한다.
     """
     from agent_trading.services.index_membership_staleness import (
         evaluate_index_membership_staleness,
@@ -696,7 +707,9 @@ async def get_index_membership_staleness(
         latest_effective_from=report.latest_effective_from,
         as_of=report.as_of,
         age_days=report.age_days,
+        threshold_months=report.threshold_months,
         threshold_days=report.threshold_days,
+        stale_after=report.stale_after,
         is_stale=report.is_stale,
     )
 

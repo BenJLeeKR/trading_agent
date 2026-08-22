@@ -11203,6 +11203,9 @@ agent 설계 문서 기준으로도 순서는 다음이 맞다.
      `evaluate_index_membership_staleness()`) + 운영 대시보드 노출까지 완료
      (`GET /instruments/index-membership/staleness` + `OperationsDashboardView`
      WarningBanner). 실측: age=15일(threshold 21일) → 정상.
+     (2026-08-22 정정: 이는 당시 21일 정책의 과거 기록이며, 2026-08-22부터
+     기본 정책은 달력 기준 6개월 초과다 —
+     `docs/50_operator_guides/index_membership_update_guide.md` 참고.)
    - **다음 착수 대상**: UNIV-5(core 장기 하락 종목 후순위화) 착수 여부
      재검토 — 단, UNIV-3 관측(수일 누적) 완료 후 판단.
 0.5. **KIS 토큰 캐시 통합(appkey당 1개) (2026-07-13 신설, universe sourcing과

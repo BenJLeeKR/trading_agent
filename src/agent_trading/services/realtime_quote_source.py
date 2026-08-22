@@ -42,6 +42,7 @@ from __future__ import annotations
 
 import logging
 import math
+import re
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from enum import Enum
@@ -63,7 +64,10 @@ MAX_DAILY_PRICE_HISTORY = 30
 DEFAULT_MAX_REGISTRATIONS = 30
 REGISTRATIONS_PER_SYMBOL = 2  # 체결가 + 호가
 
-_SYMBOL_RE_LEN = 6
+# KRX 국내주식 단축코드는 2024-01-01부터 신규 발급분에 영문 대문자가 포함될 수
+# 있다(예: 신주인수권 등). 형식은 "정확히 6자리, ASCII 숫자+영문 대문자만
+# 허용"으로 통일한다 — 기존 숫자 6자리 코드는 이 패턴을 그대로 통과한다.
+_SYMBOL_PATTERN = re.compile(r"^[0-9A-Z]{6}$")
 
 
 class ConnectionState(str, Enum):
@@ -217,7 +221,7 @@ class RealtimeQuoteSource(Protocol):
         Raises
         ------
         InvalidSymbolError
-            If ``symbol`` fails 국내주식 6-digit format validation.
+            If ``symbol`` fails 국내주식 종목코드 형식 검증(``[0-9A-Z]{6}``).
         SubscriptionLimitExceededError
             If adding a *new* symbol would exceed ``max_registrations``.
         """
@@ -359,17 +363,18 @@ class InstrumentInfoResolver:
 def _validate_symbol(symbol: str) -> str:
     """Normalize + validate a 국내주식 symbol code.
 
-    Only exactly 6 digits are accepted (e.g. ``"005930"``). This screen is
-    KIS 국내주식 실시간 현재가 조회 only — no ETN (``Q`` prefix), no
-    alphabetic/mixed codes, no other market's symbol formats.
+    정확히 6자리이고 ASCII 숫자와 대문자 영문만 허용한다(``[0-9A-Z]{6}``).
+    KRX 단축코드는 2024-01-01부터 신규 발급분에 영문이 포함될 수 있어
+    (예: 신주인수권), 기존 숫자 6자리 코드와 함께 이 형식으로 통일한다.
+    입력은 앞뒤 공백 제거 후 대문자로 정규화한다.
 
     Raises ``InvalidSymbolError`` on failure.
     """
-    normalized = symbol.strip()
-    if len(normalized) != _SYMBOL_RE_LEN or not normalized.isdigit():
+    normalized = symbol.strip().upper()
+    if _SYMBOL_PATTERN.match(normalized) is None:
         raise InvalidSymbolError(
-            f"Invalid symbol code: {symbol!r} (expected exactly 6 digits, "
-            "국내주식 종목코드 only)"
+            f"Invalid symbol code: {symbol!r} (expected exactly 6 characters, "
+            "숫자 또는 영문 대문자만 허용하는 국내주식 종목코드)"
         )
     return normalized
 

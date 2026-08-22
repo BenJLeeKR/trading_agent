@@ -491,7 +491,11 @@ export interface IndexMembershipStalenessResponse {
   latest_effective_from: string | null;
   as_of: string;
   age_days: number | null;
-  threshold_days: number;
+  /** 기본 정책(달력 기준 개월) 사용 시에만 값이 있다. threshold_days override 시 null. */
+  threshold_months: number | null;
+  /** 운영 진단용 threshold_days override 사용 시에만 값이 있다. */
+  threshold_days: number | null;
+  stale_after: string | null;
   is_stale: boolean;
 }
 

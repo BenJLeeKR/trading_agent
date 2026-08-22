@@ -2143,7 +2143,8 @@ class TestIndexMembershipStaleness:
         assert response.status_code == 200
         data = response.json()
         assert data["latest_effective_from"] == recent_date.isoformat()
-        assert data["threshold_days"] == 21
+        assert data["threshold_months"] == 6
+        assert data["threshold_days"] is None
         assert data["is_stale"] is False
         assert data["age_days"] == 5
 
@@ -2184,6 +2185,7 @@ class TestIndexMembershipStaleness:
         assert response.status_code == 200
         data = response.json()
         assert data["threshold_days"] == 7
+        assert data["threshold_months"] is None
         assert data["is_stale"] is True
 
     def test_prefers_metadata_as_of_date_for_staleness(self) -> None:
@@ -2226,6 +2228,54 @@ class TestIndexMembershipStaleness:
         assert data["latest_effective_from"] == reflected_date.isoformat()
         assert data["age_days"] == 0
         assert data["is_stale"] is False
+
+    def test_default_policy_is_calendar_six_months_not_21_days(self) -> None:
+        """21일보다 오래됐어도 6개월 이내면 기본 정책상 stale이 아니다."""
+        repos = build_in_memory_repositories()
+        instrument_id = uuid4()
+        old_but_within_six_months = (
+            datetime.now(_INDEX_MEMBERSHIP_STALENESS_KST) - timedelta(days=60)
+        ).date()
+        asyncio.run(
+            repos.instrument_index_memberships.sync_current_memberships(
+                instrument_id,
+                ["KOSPI200"],
+                effective_from=old_but_within_six_months,
+            )
+        )
+
+        app = create_app(repos=repos, auth_enabled=False)
+        with TestClient(app) as client:
+            response = client.get("/instruments/index-membership/staleness")
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["threshold_months"] == 6
+        assert data["threshold_days"] is None
+        assert data["is_stale"] is False
+
+    def test_default_policy_flags_stale_past_six_months(self) -> None:
+        repos = build_in_memory_repositories()
+        instrument_id = uuid4()
+        more_than_six_months_ago = (
+            datetime.now(_INDEX_MEMBERSHIP_STALENESS_KST) - timedelta(days=200)
+        ).date()
+        asyncio.run(
+            repos.instrument_index_memberships.sync_current_memberships(
+                instrument_id,
+                ["KOSPI200"],
+                effective_from=more_than_six_months_ago,
+            )
+        )
+
+        app = create_app(repos=repos, auth_enabled=False)
+        with TestClient(app) as client:
+            response = client.get("/instruments/index-membership/staleness")
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["threshold_months"] == 6
+        assert data["is_stale"] is True
 
 
 class TestPositions:

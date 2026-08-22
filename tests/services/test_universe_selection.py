@@ -309,14 +309,38 @@ class TestLiquidityFilter:
 
     @pytest.mark.asyncio
     async def test_non_standard_symbol_excluded(self) -> None:
-        """6자리 숫자 symbol이 아니면 공통 eligibility에서 제외."""
+        """정확히 6자리(ASCII 숫자+영문 대문자)가 아니면 공통 eligibility에서 제외."""
+        repos = build_in_memory_repositories()
+        inst = _make_instrument("0088K", tick_size=Decimal("50"))
+        await repos.instruments.add(inst)
+        lf = LiquidityFilter(repos)
+        result = await lf.check("0088K", "KRX")
+        assert result.passed is False
+        assert result.fail_reason == "non_standard_symbol"
+
+    @pytest.mark.asyncio
+    async def test_alpha_containing_standard_symbol_passes_format_check(self) -> None:
+        """KRX 단축코드에 영문 대문자가 포함돼도 형식 검증은 통과한다(2024-01-01부터
+        신규 발급분에 영문이 포함될 수 있음). 우선주 이름 패턴이 아니면 그대로 승인."""
+        repos = build_in_memory_repositories()
+        inst = _make_instrument("00088K", tick_size=Decimal("50"))
+        await repos.instruments.add(inst)
+        lf = LiquidityFilter(repos)
+        result = await lf.check("00088K", "KRX")
+        assert result.passed is True
+
+    @pytest.mark.asyncio
+    async def test_alpha_containing_symbol_still_excluded_by_preferred_share_name(
+        self,
+    ) -> None:
+        """형식은 통과해도 이름이 우선주 패턴이면 여전히 preferred_share_class로 제외."""
         repos = build_in_memory_repositories()
         inst = _make_instrument("00088K", name="한화3우B", tick_size=Decimal("50"))
         await repos.instruments.add(inst)
         lf = LiquidityFilter(repos)
         result = await lf.check("00088K", "KRX")
         assert result.passed is False
-        assert result.fail_reason == "non_standard_symbol"
+        assert result.fail_reason == "preferred_share_class"
 
     @pytest.mark.asyncio
     async def test_metadata_excluded_instrument_rejected(self) -> None:
