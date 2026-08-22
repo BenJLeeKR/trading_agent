@@ -400,6 +400,10 @@ export interface TradingUniversePreviewItem {
   inclusion_reason: string;
   priority: number;
   instrument_name: string | null;
+  /** instrument_index_memberships의 활성 membership_code(예: "KOSPI200")
+   * 우선, 없으면 instruments.market_segment(예: "KOSPI")로 대체. 둘 다
+   * 없으면 null. */
+  index_group: string | null;
 }
 
 export interface TradingUniverseFreezeView {

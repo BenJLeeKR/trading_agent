@@ -29,11 +29,11 @@ function makeFreezeView(
     source_type_counts: { core: 2, market_overlay: 1, event_overlay: 1, held_position: 1 },
     inclusion_reason_counts: {},
     items: [
-      { symbol: "005930", market: "KRX", source_type: "core", inclusion_reason: "approved_core_universe", priority: 1, instrument_name: "삼성전자" },
-      { symbol: "000660", market: "KRX", source_type: "core", inclusion_reason: "approved_core_universe", priority: 2, instrument_name: null },
-      { symbol: "035420", market: "KRX", source_type: "market_overlay", inclusion_reason: "trade_strength_top10", priority: 3, instrument_name: "NAVER" },
-      { symbol: "005380", market: "KRX", source_type: "event_overlay", inclusion_reason: "high_importance_event:disclosure", priority: 4, instrument_name: "현대차" },
-      { symbol: "051910", market: "KRX", source_type: "held_position", inclusion_reason: "held_position_mandatory", priority: 5, instrument_name: "LG화학" },
+      { symbol: "005930", market: "KRX", source_type: "core", inclusion_reason: "approved_core_universe", priority: 1, instrument_name: "삼성전자", index_group: "KOSPI200" },
+      { symbol: "000660", market: "KRX", source_type: "core", inclusion_reason: "approved_core_universe", priority: 2, instrument_name: null, index_group: null },
+      { symbol: "035420", market: "KRX", source_type: "market_overlay", inclusion_reason: "trade_strength_top10", priority: 3, instrument_name: "NAVER", index_group: "KOSPI200" },
+      { symbol: "005380", market: "KRX", source_type: "event_overlay", inclusion_reason: "high_importance_event:disclosure", priority: 4, instrument_name: "현대차", index_group: "KOSPI" },
+      { symbol: "051910", market: "KRX", source_type: "held_position", inclusion_reason: "held_position_mandatory", priority: 5, instrument_name: "LG화학", index_group: "KOSPI100, KOSPI200" },
     ],
     ...overrides,
   };
@@ -139,8 +139,8 @@ describe("UniverseSelectionView — 상태 표현", () => {
         target_count: 2,
         source_type_counts: { core: 2 },
         items: [
-          { symbol: "005930", market: "KRX", source_type: "core", inclusion_reason: "approved_core_universe", priority: 1, instrument_name: "삼성전자" },
-          { symbol: "000660", market: "KRX", source_type: "core", inclusion_reason: "approved_core_universe", priority: 2, instrument_name: "SK하이닉스" },
+          { symbol: "005930", market: "KRX", source_type: "core", inclusion_reason: "approved_core_universe", priority: 1, instrument_name: "삼성전자", index_group: "KOSPI200" },
+          { symbol: "000660", market: "KRX", source_type: "core", inclusion_reason: "approved_core_universe", priority: 2, instrument_name: "SK하이닉스", index_group: "KOSPI" },
         ],
       }),
     );
@@ -237,6 +237,7 @@ describe("UniverseSelectionView — 선정 이유 한국어 표시", () => {
             inclusion_reason: "unknown_future_reason_code",
             priority: 1,
             instrument_name: "테스트종목",
+            index_group: null,
           },
         ],
       }),
@@ -258,12 +259,12 @@ describe("UniverseSelectionView — 컬럼 정렬", () => {
     const row = screen.getByText("005930").closest("tr")!;
     const cells = Array.from(row.querySelectorAll("td"));
 
-    // 컬럼 순서: 종목, 종목명, 시장, 선정 이유, 우선순위.
+    // 컬럼 순서: 종목, 종목명, 시장, 지수 구분, 선정 이유, 우선순위.
     expect(cells[0].className).toContain("text-center"); // 종목
     expect(cells[1].className).not.toContain("text-center"); // 종목명 — 좌측 유지
     expect(cells[2].className).toContain("text-center"); // 시장
-    expect(cells[3].className).not.toContain("text-center"); // 선정 이유 — 좌측 유지
-    expect(cells[4].className).toContain("text-center"); // 우선순위
+    expect(cells[4].className).not.toContain("text-center"); // 선정 이유 — 좌측 유지
+    expect(cells[5].className).toContain("text-center"); // 우선순위
   });
 
   it("기타 source_type 리스트도 동일하게 종목/시장/우선순위 가운데 정렬을 적용한다", async () => {
@@ -277,9 +278,28 @@ describe("UniverseSelectionView — 컬럼 정렬", () => {
 
     const row = screen.getByText("051910").closest("tr")!;
     const cells = Array.from(row.querySelectorAll("td"));
-    // 컬럼 순서: 종목, 종목명, 시장, source_type, 선정 이유, 우선순위.
+    // 컬럼 순서: 종목, 종목명, 시장, 지수 구분, source_type, 선정 이유, 우선순위.
     expect(cells[0].className).toContain("text-center"); // 종목
     expect(cells[2].className).toContain("text-center"); // 시장
-    expect(cells[5].className).toContain("text-center"); // 우선순위
+    expect(cells[6].className).toContain("text-center"); // 우선순위
+  });
+});
+
+describe("UniverseSelectionView — 지수 구분 컬럼", () => {
+  it("시장 바로 오른쪽에 지수 구분 컬럼이 표시되고, membership_code를 그대로 보여준다", async () => {
+    mockFetchOnce(makeFreezeView());
+
+    renderView();
+
+    await screen.findByText("core (2건)");
+    const headers = screen.getAllByRole("columnheader").map((el) => el.textContent);
+    const marketIdx = headers.indexOf("시장");
+    expect(headers[marketIdx + 1]).toBe("지수 구분");
+
+    expect(screen.getAllByText("KOSPI200").length).toBeGreaterThan(0);
+    // 000660 행은 index_group이 null이라 —로 표시된다(freeze 없음/0건과 무관한
+    // 별개의 "값 없음" 표기).
+    const row000660 = screen.getByText("000660").closest("tr")!;
+    expect(row000660.textContent).toContain("—");
   });
 });

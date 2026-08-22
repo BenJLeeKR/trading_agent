@@ -117,6 +117,12 @@ const itemColumns: Column<TradingUniversePreviewItem>[] = [
   },
   { key: "market", header: "시장", width: "70px", align: "center" },
   {
+    key: "index_group",
+    header: "지수 구분",
+    width: "110px",
+    render: (row) => row.index_group ?? "—",
+  },
+  {
     key: "inclusion_reason",
     header: "선정 이유",
     render: (row) => formatInclusionReason(row.inclusion_reason),
@@ -134,6 +140,12 @@ const otherItemColumns: Column<TradingUniversePreviewItem>[] = [
     render: (row) => row.instrument_name ?? "—",
   },
   { key: "market", header: "시장", width: "70px", align: "center" },
+  {
+    key: "index_group",
+    header: "지수 구분",
+    width: "110px",
+    render: (row) => row.index_group ?? "—",
+  },
   {
     key: "source_type",
     header: "source_type",
