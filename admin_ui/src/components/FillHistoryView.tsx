@@ -86,6 +86,7 @@ export default function FillHistoryView() {
     {
       key: "symbol",
       header: "종목",
+      align: "center",
       render: (row) => (
         <button
           type="button"
@@ -112,12 +113,13 @@ export default function FillHistoryView() {
     {
       key: "side",
       header: "매매",
+      align: "center",
       render: (row) => <StatusBadge variant={row.side === "buy" ? "error" : "info"}>{row.side === "buy" ? "BUY" : "SELL"}</StatusBadge>,
     },
-    { key: "broker_native_order_id", header: "ODNO", render: (row) => <span className="font-mono">{row.broker_native_order_id}</span> },
-    { key: "broker_fill_id", header: "체결번호", render: (row) => row.broker_fill_id ?? "-" },
-    { key: "ordered_quantity", header: "주문수량", align: "right", render: (row) => row.ordered_quantity ?? "-" },
-    { key: "filled_quantity", header: "체결수량", align: "right", render: (row) => row.filled_quantity },
+    { key: "broker_native_order_id", header: "ODNO", align: "center", render: (row) => <span className="font-mono">{row.broker_native_order_id}</span> },
+    { key: "broker_fill_id", header: "체결번호", align: "center", render: (row) => row.broker_fill_id ?? "-" },
+    { key: "ordered_quantity", header: "주문수량", align: "center", render: (row) => row.ordered_quantity ?? "-" },
+    { key: "filled_quantity", header: "체결수량", align: "center", render: (row) => row.filled_quantity },
     { key: "fill_price", header: "체결가격", align: "right", render: (row) => formatNumber(row.fill_price) },
     {
       key: "fill_amount",
@@ -125,9 +127,9 @@ export default function FillHistoryView() {
       align: "right",
       render: (row) => formatNumber(row.filled_quantity * row.fill_price),
     },
-    { key: "order_status_code", header: "주문상태", render: (row) => row.order_status_code ?? "-" },
-    { key: "order_time", header: "주문시각", render: (row) => formatHms(row.order_time) },
-    { key: "fill_time", header: "체결시각", render: (row) => formatHms(row.fill_time) },
+    { key: "order_status_code", header: "주문상태", align: "center", render: (row) => row.order_status_code ?? "-" },
+    { key: "order_time", header: "주문시각", align: "center", render: (row) => formatHms(row.order_time) },
+    { key: "fill_time", header: "체결시각", align: "center", render: (row) => formatHms(row.fill_time) },
   ];
 
   return (

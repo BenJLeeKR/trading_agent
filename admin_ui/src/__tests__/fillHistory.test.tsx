@@ -195,4 +195,34 @@ describe("FillHistoryView", () => {
       "/operations/realtime-quotes?symbol=005930",
     );
   });
+
+  it("종목/매매/ODNO/체결번호/주문수량/체결수량/주문상태/주문시각/체결시각 컬럼이 가운데 정렬로 표시된다", async () => {
+    vi.spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce({ ok: true, status: 200, json: async () => fillHistoryFixture } as Response)
+      .mockResolvedValueOnce({ ok: true, status: 200, json: async () => fillSyncSummaryFixture } as Response)
+      .mockResolvedValueOnce({ ok: true, status: 200, json: async () => fillSyncRunsFixture } as Response);
+
+    renderView();
+
+    await waitFor(() => {
+      expect(screen.getByText("005930")).toBeInTheDocument();
+    });
+
+    const row = screen.getByText("005930").closest("tr")!;
+    const cells = Array.from(row.querySelectorAll("td"));
+    // 컬럼 순서: 계좌, 종목, 종목명, 매매, ODNO, 체결번호, 주문수량, 체결수량,
+    // 체결가격, 체결금액, 주문상태, 주문시각, 체결시각.
+    expect(cells[1].className).toContain("text-center"); // 종목
+    expect(cells[3].className).toContain("text-center"); // 매매
+    expect(cells[4].className).toContain("text-center"); // ODNO
+    expect(cells[5].className).toContain("text-center"); // 체결번호
+    expect(cells[6].className).toContain("text-center"); // 주문수량
+    expect(cells[7].className).toContain("text-center"); // 체결수량
+    expect(cells[10].className).toContain("text-center"); // 주문상태
+    expect(cells[11].className).toContain("text-center"); // 주문시각
+    expect(cells[12].className).toContain("text-center"); // 체결시각
+    // 체결가격/체결금액은 이번 요청 범위 밖 — 우측 정렬 유지 확인.
+    expect(cells[8].className).toContain("text-right"); // 체결가격
+    expect(cells[9].className).toContain("text-right"); // 체결금액
+  });
 });
