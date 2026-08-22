@@ -1673,6 +1673,134 @@ class TestInstruments:
         assert items_by_symbol["005930"]["instrument_name"] == "Samsung Electronics"
         assert items_by_symbol["035420"]["instrument_name"] == "NAVER"
 
+    def test_get_trading_universe_freeze_summary_index_group_prefers_membership_over_segment(
+        self,
+    ) -> None:
+        """index_group은 instrument_index_memberships의 활성(effective_to
+        IS NULL) membership_code를 우선 쓰고, 활성 편입이 없으면
+        instruments.market_segment로 대체해야 한다. 편입이 여러 개면 콤마로
+        합쳐서 보여주고(정보 누락 없이), 둘 다 없으면 None이어야 한다."""
+        repos = build_in_memory_repositories()
+        now = datetime.now(timezone.utc)
+        business_date = now.astimezone(timezone(timedelta(hours=9))).date()
+
+        inst_with_membership = InstrumentEntity(
+            instrument_id=uuid4(),
+            symbol="005930",
+            market_code="KRX",
+            asset_class="KR_STOCK",
+            currency="KRW",
+            name="Samsung Electronics",
+            is_active=True,
+            market_segment="KOSPI",
+        )
+        inst_with_multi_membership = InstrumentEntity(
+            instrument_id=uuid4(),
+            symbol="035420",
+            market_code="KRX",
+            asset_class="KR_STOCK",
+            currency="KRW",
+            name="NAVER",
+            is_active=True,
+            market_segment="KOSDAQ",
+        )
+        inst_segment_only = InstrumentEntity(
+            instrument_id=uuid4(),
+            symbol="000660",
+            market_code="KRX",
+            asset_class="KR_STOCK",
+            currency="KRW",
+            name="SK Hynix",
+            is_active=True,
+            market_segment="KOSDAQ",
+        )
+        inst_neither = InstrumentEntity(
+            instrument_id=uuid4(),
+            symbol="999999",
+            market_code="KRX",
+            asset_class="KR_STOCK",
+            currency="KRW",
+            name="Unknown",
+            is_active=True,
+            market_segment=None,
+        )
+        for inst in (
+            inst_with_membership,
+            inst_with_multi_membership,
+            inst_segment_only,
+            inst_neither,
+        ):
+            asyncio.run(repos.instruments.add(inst))
+
+        asyncio.run(
+            repos.instrument_index_memberships.sync_current_memberships(
+                inst_with_membership.instrument_id,
+                ["KOSPI200"],
+                effective_from=business_date,
+            )
+        )
+        asyncio.run(
+            repos.instrument_index_memberships.sync_current_memberships(
+                inst_with_multi_membership.instrument_id,
+                ["KOSDAQ150", "KOSDAQ50"],
+                effective_from=business_date,
+            )
+        )
+        # inst_segment_only/inst_neither에는 활성 편입을 추가하지 않는다.
+
+        freeze_run_id = uuid4()
+        asyncio.run(
+            repos.universe_freeze_runs.add(
+                UniverseFreezeRunEntity(
+                    universe_freeze_run_id=freeze_run_id,
+                    business_date=business_date,
+                    freeze_purpose="decision_loop_intraday",
+                    freeze_sequence=1,
+                    frozen_at=now,
+                    selection_version="decision_loop_intraday.freeze.v1",
+                    target_count=4,
+                    status="materialized",
+                )
+            )
+        )
+        asyncio.run(
+            repos.universe_freeze_run_items.add_many(
+                tuple(
+                    UniverseFreezeRunItemEntity(
+                        universe_freeze_run_item_id=uuid4(),
+                        universe_freeze_run_id=freeze_run_id,
+                        instrument_id=inst.instrument_id,
+                        symbol=inst.symbol,
+                        market_code="KRX",
+                        source_type="core",
+                        inclusion_reason="approved_core_universe",
+                        rank=i,
+                        cap_bucket="core",
+                    )
+                    for i, inst in enumerate(
+                        (
+                            inst_with_membership,
+                            inst_with_multi_membership,
+                            inst_segment_only,
+                            inst_neither,
+                        ),
+                        start=1,
+                    )
+                )
+            )
+        )
+
+        app = create_app(repos=repos, auth_enabled=False)
+        with TestClient(app) as client:
+            response = client.get("/instruments/trading-universe/freeze-summary")
+
+        assert response.status_code == 200
+        items_by_symbol = {item["symbol"]: item for item in response.json()["items"]}
+        assert items_by_symbol["005930"]["index_group"] == "KOSPI200"
+        assert items_by_symbol["035420"]["index_group"] == "KOSDAQ150, KOSDAQ50"
+        assert items_by_symbol["000660"]["index_group"] == "KOSDAQ"
+        assert items_by_symbol["999999"]["index_group"] is None
+
     def test_get_trading_universe_freeze_summary_instrument_name_missing_is_none(
         self,
     ) -> None:

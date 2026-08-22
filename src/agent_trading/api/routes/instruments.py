@@ -97,6 +97,23 @@ async def _build_active_intraday_freeze_view(
     # 동일 — positions.py::list_positions 참고).
     instrument_ids = {item.instrument_id for item in freeze_items}
     instruments_by_id = await repos.instruments.get_many(instrument_ids)
+    # index_group: instrument_index_memberships(활성 편입, effective_to IS
+    # NULL)의 membership_code(예: KOSPI200)를 우선 쓰고, 활성 편입이 하나도
+    # 없으면 instruments.market_segment(예: KOSPI/KOSDAQ)로 대체한다.
+    # 종목별 순차 조회 대신 list_active_by_instruments() 1회로 배치 조회한다
+    # (services/universe_selection.py::_prime_membership_cache와 동일 관례).
+    memberships_by_id = await repos.instrument_index_memberships.list_active_by_instruments(
+        instrument_ids
+    )
+
+    def _resolve_index_group(instrument_id: UUID) -> str | None:
+        memberships = memberships_by_id.get(instrument_id)
+        if memberships:
+            codes = sorted({m.membership_code for m in memberships})
+            return ", ".join(codes)
+        instrument = instruments_by_id.get(instrument_id)
+        return instrument.market_segment if instrument is not None else None
+
     items = [
         TradingUniversePreviewItem(
             symbol=item.symbol,
@@ -109,6 +126,7 @@ async def _build_active_intraday_freeze_view(
                 if item.instrument_id in instruments_by_id
                 else None
             ),
+            index_group=_resolve_index_group(item.instrument_id),
         )
         for item in freeze_items
     ]
