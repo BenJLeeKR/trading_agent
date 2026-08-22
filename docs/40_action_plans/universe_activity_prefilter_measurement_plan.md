@@ -388,7 +388,7 @@
 
 초기 코드 조사는 "core는 정적 Python allowlist 하나로만 결정된다"는 인상을 줬으나, **직접 재확인한 결과 이는 부정확하다.** 최근 10영업일 실측에서 반복 차단된 core 종목(`000810`/`001800`/`081660`/`021240`/`042700`/`402340`/`329180`/`196170`/`055550`/`090430`/`316140`/`004370`/`009240`/`008930`/`111770`/`023530`/`000240`/`003490`/`138040`) 중 `000810`/`001450`/`402340`/`329180`/`196170`/`055550`/`003490`/`138040` 등 절반가량만 `APPROVED_CORE_UNIVERSE_SYMBOLS`에 실제로 포함되어 있고, `001800`/`081660`/`021240`/`111770`/`042700`/`023530`/`316140`/`004370`/`009240`/`008930`/`090430`/`000240`은 이 목록에 없다 — 즉 **이들은 (b) 지수 편입(index membership) 경로로 core에 편입되고 있을 가능성이 높다.**
 
-이 경로를 추가로 확인한 결과: `instrument_index_memberships` 테이블은 자동 스케줄러가 아니라 **수동 업로드 스크립트**(`scripts/import_instrument_index_membership_seed.py`, `scripts/sync_kis_instrument_master.py`)를 통해서만 갱신된다. `src/agent_trading/services/index_membership_staleness.py`의 docstring이 명시하듯("KIS에 지수 구성종목 전체 목록 API가 확인되지 않아 자동 갱신 파이프라인 대신 ... 읽기 전용으로 감시만 한다. 주문 경로/게이트 로직에는 어떤 영향도 주지 않는다"), staleness 감시는 존재하지만 **관측 전용**이고 실제 게이트/선정 로직에 반영되지 않는다(기본 staleness 임계값은 21일).
+이 경로를 추가로 확인한 결과: `instrument_index_memberships` 테이블은 자동 스케줄러가 아니라 **수동 업로드 스크립트**(`scripts/import_instrument_index_membership_seed.py`, `scripts/sync_kis_instrument_master.py`)를 통해서만 갱신된다. `src/agent_trading/services/index_membership_staleness.py`의 docstring이 명시하듯("KIS에 지수 구성종목 전체 목록 API가 확인되지 않아 자동 갱신 파이프라인 대신 ... 읽기 전용으로 감시만 한다. 주문 경로/게이트 로직에는 어떤 영향도 주지 않는다"), staleness 감시는 존재하지만 **관측 전용**이고 실제 게이트/선정 로직에 반영되지 않는다(기본 staleness 임계값은 조사 당시 21일이었으나, 2026-08-22부터 달력 기준 6개월 초과로 변경됐다 — `docs/50_operator_guides/index_membership_update_guide.md` 참고).
 
 **정정된 결론**: core 선정은 하나의 정적 소스가 아니라 **정적 Python allowlist + 수동 갱신되는 DB 인덱스 편입 테이블, 두 개의 사실상 정적인 소스**로 구성된다. 두 경로 모두 활동성과 무관하고, 자동 갱신/decay 메커니즘이 없다는 점에서 핵심 결론("선정 앞단이 activity와 완전히 독립적이고 반영구적으로 유지된다")은 오히려 더 강하게 뒷받침된다 — 다만 "정적 allowlist 하나가 원인"이라는 단순화된 설명은 부정확했다.
 
@@ -400,7 +400,7 @@
 - 정렬(우선순위) 조정: 신호 점수 기반 랭킹 + freshness 계층(FRESH/STALE/MISSING) — 포함 여부가 아니라 순서만 바꿈
 - 활동성 기반 BUY 차단: `deterministic_trigger_engine._assess_buy_eligibility()`의 3개 임계값(평균거래량/평균거래대금/상대활동성)
 - 하루 단위 universe freeze 재사용(`business_date` 스코프, 매일 재생성)
-- 인덱스 편입 데이터 staleness **관측**(21일 임계값, 게이트에 영향 없음)
+- 인덱스 편입 데이터 staleness **관측**(기본 임계값: 달력 기준 6개월 초과, 게이트에 영향 없음. 2026-08-22 이전에는 21일이었음)
 
 **존재하지 않는 규칙**
 - core 심볼에 대한 TTL/decay/자동 만료 — 없음

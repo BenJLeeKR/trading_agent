@@ -231,12 +231,13 @@ async def get_daily_price(
     WS 구독/등록 budget을 소비하지 않는다(순수 REST 조회).
     """
     try:
-        bars = await source.get_daily_price(symbol, count=MAX_DAILY_PRICE_HISTORY)
+        normalized = _validate_symbol(symbol)
+        bars = await source.get_daily_price(normalized, count=MAX_DAILY_PRICE_HISTORY)
     except InvalidSymbolError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
     return RealtimeQuoteDailyPriceResponse(
-        symbol=symbol.strip(),
+        symbol=normalized,
         bars=[
             RealtimeQuoteDailyPriceItem(
                 date=b.date,

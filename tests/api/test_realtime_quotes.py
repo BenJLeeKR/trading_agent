@@ -223,6 +223,24 @@ class TestDailyPrice:
         resp = client.get("/realtime-quotes/daily-price")
         assert resp.status_code == 422
 
+    def test_lowercase_alpha_containing_symbol_normalizes_in_response(
+        self, client: TestClient
+    ) -> None:
+        """요청·조회·응답 종목코드가 모두 동일한 대문자 정규화 값을 써야 한다."""
+        resp = client.get("/realtime-quotes/daily-price", params={"symbol": "0126z0"})
+        assert resp.status_code == 200, resp.text
+        data = resp.json()
+        assert data["symbol"] == "0126Z0"
+        assert len(data["bars"]) == 30
+
+    def test_numeric_symbol_response_unaffected_by_normalization(
+        self, client: TestClient
+    ) -> None:
+        """기존 숫자 코드는 정규화 전후로 동일하게 응답한다(호환성 유지)."""
+        resp = client.get("/realtime-quotes/daily-price", params={"symbol": "005930"})
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["symbol"] == "005930"
+
 
 class TestStream:
     """``GET /realtime-quotes/stream`` — Phase 4 SSE push relay.

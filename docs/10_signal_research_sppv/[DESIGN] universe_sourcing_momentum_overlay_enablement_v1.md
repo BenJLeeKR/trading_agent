@@ -205,6 +205,13 @@ seed pool 전원이 F5에서 탈락해 `added_count=0`이 된다. 이 스킵은 
 운영 대시보드(프론트엔드) 노출은 이번 턴 범위 밖 — 백엔드 조회/판단 로직만
 구현하고 다음 턴 대상으로 남긴다.
 
+> **2026-08-22 정정**: 위 21일 임계값은 2026-07-12 당시의 초기 설계·실측
+> 기록이다. 기본 정책은 2026-08-22부터 "활성 membership의 최신 `as_of_date`가
+> 달력 기준 6개월을 초과한 다음 날부터 오래됨"으로 변경됐다(지수 정기 변경이
+> 상반기·하반기 주기가 기본이라 21일은 과도한 경고를 유발했다). 최신 정책은
+> [`docs/50_operator_guides/index_membership_update_guide.md`](../50_operator_guides/index_membership_update_guide.md)를
+> 따른다. 위 문단의 21일 관련 서술은 당시 기록으로 그대로 둔다.
+
 ### 2.1-fix — UNIV-1-fix 범위 조사 결과 (2026-07-12)
 
 freeze materialize 시각(`INTRADAY_START=08:50`)과 F5(누적거래대금) 필터
@@ -333,6 +340,9 @@ fallback 추가**: 근거 있는 대안이나, 현재 market_overlay pre-pool �
   - [ ] **지수 구성종목 자동 갱신 (보류, 영구)**: KIS API 부재로 원안(§2.3
         본문) 자체가 불가 — 수동 업로드 절차(RUNBOOK) 유지, staleness
         감시로 영구 대체 확정.
+  - **2026-08-22 정정**: 위 "threshold 21일"은 2026-07-12 당시의 완료
+    기록이다. 기본 정책은 2026-08-22부터 달력 기준 6개월 초과로 변경됐다
+    (`docs/50_operator_guides/index_membership_update_guide.md` 참고).
 - [ ] **UNIV-5 (P4)**: core 장기 하락 종목 사이클 내 후순위화 — UNIV-3 관측
       후 착수 여부만 재판단. — **다음 우선순위**
 
