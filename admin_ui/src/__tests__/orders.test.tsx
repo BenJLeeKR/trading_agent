@@ -73,6 +73,36 @@ describe("OrdersView with order data", () => {
     expect(screen.getAllByText("매매")[0]).toBeInTheDocument();
     expect(screen.getAllByText("상태")[0]).toBeInTheDocument();
   });
+
+  it("종목/매매/수량/주문유형/상태/시각 컬럼이 가운데 정렬로 표시된다", async () => {
+    mockFetchOnce(mockOrders);
+
+    render(
+      <MemoryRouter>
+        <OrdersView />
+      </MemoryRouter>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("주문")).toBeInTheDocument();
+    });
+    mockFetchOnce(mockOrders);
+    setFixtureOrderDate();
+
+    await waitFor(() => {
+      expect(screen.getByText("AAPL")).toBeInTheDocument();
+    });
+
+    const row = screen.getByText("AAPL").closest("tr")!;
+    const cells = Array.from(row.querySelectorAll("td"));
+    // 컬럼 순서: 주문 ID, 종목, 종목명, 매매, 수량, 주문유형, 체결가격, 체결금액, 상태, 시각.
+    expect(cells[1].className).toContain("text-center"); // 종목
+    expect(cells[3].className).toContain("text-center"); // 매매
+    expect(cells[4].className).toContain("text-center"); // 수량
+    expect(cells[5].className).toContain("text-center"); // 주문유형
+    expect(cells[8].className).toContain("text-center"); // 상태
+    expect(cells[9].className).toContain("text-center"); // 시각
+  });
 });
 
 /* ───────────────────────────────────────────
