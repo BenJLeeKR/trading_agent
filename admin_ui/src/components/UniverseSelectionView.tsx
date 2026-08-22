@@ -112,7 +112,7 @@ const itemColumns: Column<TradingUniversePreviewItem>[] = [
   {
     key: "instrument_name",
     header: "종목명",
-    width: "140px",
+    width: "200px",
     render: (row) => row.instrument_name ?? "—",
   },
   { key: "market", header: "시장", width: "70px", align: "center" },
@@ -130,7 +130,7 @@ const otherItemColumns: Column<TradingUniversePreviewItem>[] = [
   {
     key: "instrument_name",
     header: "종목명",
-    width: "140px",
+    width: "200px",
     render: (row) => row.instrument_name ?? "—",
   },
   { key: "market", header: "시장", width: "70px", align: "center" },
