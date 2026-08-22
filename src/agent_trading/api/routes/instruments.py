@@ -5,10 +5,12 @@ from datetime import date, datetime, timedelta, timezone
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from pydantic import ValidationError
 
 from agent_trading.api.deps import get_db, get_kis_client, get_repos
 from agent_trading.api.schemas import (
     IndexMembershipStalenessResponse,
+    InclusionDetail,
     InstrumentDetail,
     InstrumentMappingConsistencySummaryResponse,
     InstrumentMappingGapItem,
@@ -57,6 +59,45 @@ def _parse_manual_symbols(raw: str | None) -> tuple[tuple[str, str], ...]:
     return tuple(parsed)
 
 
+def _inclusion_detail_from_event_detail(event_detail: object | None) -> InclusionDetail | None:
+    """``SelectedSymbol.event_detail``(event_overlay 상세 근거)을 API 응답
+    필드로 그대로 옮긴다 — 다른 source_type은 ``event_detail``이 항상
+    ``None``이라 자동으로 상세 근거가 붙지 않는다."""
+    if event_detail is None:
+        return None
+    return InclusionDetail(
+        headline=getattr(event_detail, "headline", None),
+        severity=getattr(event_detail, "severity", None),
+        published_at=getattr(event_detail, "published_at", None),
+        event_type=getattr(event_detail, "event_type", None),
+    )
+
+
+def _inclusion_detail_from_metadata_json(
+    metadata_json: dict[str, object] | None,
+) -> InclusionDetail | None:
+    """freeze item의 ``metadata_json``에서 상세 근거를 복원한다.
+
+    과거 freeze item은 이 키가 없거나(``{}``) 형식이 다를 수 있다 — 파싱에
+    실패해도 예외를 올리지 않고 ``None``을 반환해 기본 `선정 이유` 표시가
+    깨지지 않게 한다.
+    """
+    if not metadata_json:
+        return None
+    raw = metadata_json.get("event_detail")
+    if not isinstance(raw, dict):
+        return None
+    try:
+        return InclusionDetail(
+            headline=raw.get("headline"),
+            severity=raw.get("severity"),
+            published_at=raw.get("published_at"),
+            event_type=raw.get("event_type"),
+        )
+    except ValidationError:
+        return None
+
+
 def _build_preview_items_from_selected(selected: list) -> list[TradingUniversePreviewItem]:
     return [
         TradingUniversePreviewItem(
@@ -65,6 +106,9 @@ def _build_preview_items_from_selected(selected: list) -> list[TradingUniversePr
             source_type=item.source_type.value,
             inclusion_reason=item.inclusion_reason,
             priority=item.priority,
+            inclusion_detail=_inclusion_detail_from_event_detail(
+                getattr(item, "event_detail", None)
+            ),
         )
         for item in selected
     ]
@@ -127,6 +171,7 @@ async def _build_active_intraday_freeze_view(
                 else None
             ),
             index_group=_resolve_index_group(item.instrument_id),
+            inclusion_detail=_inclusion_detail_from_metadata_json(item.metadata_json),
         )
         for item in freeze_items
     ]

@@ -729,6 +729,24 @@ class InstrumentMappingConsistencySummaryResponse(BaseModel):
     unmapped_snapshot_position_symbols: list[InstrumentMappingGapItem]
 
 
+class InclusionDetail(BaseModel):
+    """`선정 이유`(inclusion_reason)의 상세 근거.
+
+    1차 범위: event_overlay(뉴스/공시)로 선정된 종목만 값이 채워진다.
+    과거 freeze item이나 event_overlay가 아닌 종목은 이 필드 전체가
+    ``null``이다 — 없는 근거를 지어내지 않는다.
+    """
+
+    headline: str | None = None
+    """뉴스/공시 제목."""
+    severity: str | None = None
+    """이벤트 심각도/중요도(예: ``"high"``)."""
+    published_at: datetime | None = None
+    """이벤트 발행 시각."""
+    event_type: str | None = None
+    """정규화된 이벤트 종류(``inclusion_reason`` 접미사와 동일한 값)."""
+
+
 class TradingUniversePreviewItem(BaseModel):
     """A single selected symbol from the current trading universe preview."""
 
@@ -739,6 +757,7 @@ class TradingUniversePreviewItem(BaseModel):
     priority: int
     instrument_name: str | None = None
     index_group: str | None = None
+    inclusion_detail: InclusionDetail | None = None
 
 
 class TradingUniverseFreezeView(BaseModel):

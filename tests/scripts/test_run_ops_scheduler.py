@@ -30,6 +30,7 @@ from scripts.run_ops_scheduler import (
     SchedulerState,
     _BUDGET_CONSUMING_STATUSES,
     _build_dsn,
+    _build_freeze_item_metadata,
     _build_tasks,
     _close_session_provider,
     _combine,
@@ -79,6 +80,7 @@ from agent_trading.domain.entities import (
     UniverseFreezeRunItemEntity,
 )
 from agent_trading.repositories.bootstrap import build_in_memory_repositories
+from agent_trading.services.universe_selection_types import EventInclusionDetail
 from agent_trading.brokers.koreainvestment.market_state_client import MarketPhaseCode
 from agent_trading.services.market_session import (
     FallbackSessionProvider,
@@ -2467,6 +2469,52 @@ class TestIntradayDecisionLoopPersistence:
         ]
 
 
+class TestBuildFreezeItemMetadata:
+    """`_build_freeze_item_metadata` — freeze item metadata_json 구성 규칙.
+
+    1차 범위(event_overlay 상세 근거)만 채우고, 다른 source_type이나
+    event_detail이 없는 경우는 항상 빈 dict를 유지해야 한다(과거 동작과
+    동일 — 근거 없는 상세를 만들어내지 않는다).
+    """
+
+    def test_event_overlay_item_metadata_carries_event_detail(self) -> None:
+        published_at = datetime(2026, 8, 22, 9, 10, 0, tzinfo=timezone.utc)
+        item = MagicMock(
+            event_detail=EventInclusionDetail(
+                headline="삼성전자 대규모 공급 계약 발표",
+                severity="high",
+                published_at=published_at,
+                event_type="disclosure_material",
+            )
+        )
+
+        metadata = _build_freeze_item_metadata(item)
+
+        assert metadata == {
+            "event_detail": {
+                "headline": "삼성전자 대규모 공급 계약 발표",
+                "severity": "high",
+                "published_at": published_at.isoformat(),
+                "event_type": "disclosure_material",
+            }
+        }
+        # json.dumps로 실제 저장 가능한 값인지도 함께 확인한다(postgres 저장 경로).
+        json.dumps(metadata)
+
+    def test_non_event_overlay_item_metadata_is_empty(self) -> None:
+        """event_detail이 없는(core/held_position 등) 종목은 빈 dict."""
+        item = MagicMock(spec=["symbol", "market", "source_type", "inclusion_reason"])
+
+        assert _build_freeze_item_metadata(item) == {}
+
+    def test_loosely_mocked_event_detail_is_ignored(self) -> None:
+        """느슨한 MagicMock의 자동 속성(event_detail)은 실제 근거가 아니므로
+        무시해야 한다 — EventInclusionDetail 인스턴스만 신뢰한다."""
+        item = MagicMock()  # item.event_detail도 자동으로 MagicMock이 됨
+
+        assert _build_freeze_item_metadata(item) == {}
+
+
 class TestDecisionLoopIntradayFreeze:
     """장중 decision loop intraday freeze materialization/reuse."""
 
@@ -2603,6 +2651,121 @@ class TestDecisionLoopIntradayFreeze:
         assert latest.selection_params_json["resolved_run_date"] == run_date.isoformat()
         assert latest.selection_params_json["universe_anchor"]["source"] == "live_compose"
         assert state.intraday_universe_freeze_done is True
+
+    @pytest.mark.asyncio
+    async def test_materializes_intraday_freeze_stores_event_overlay_detail_only(self) -> None:
+        """event_overlay 종목의 freeze item에만 metadata_json 상세 근거가
+        저장되고, core 종목은 그대로 빈 dict로 유지되는지 확인한다."""
+        repos = build_in_memory_repositories()
+        run_date = date(2026, 6, 24)
+        state = SchedulerState(run_date=run_date)
+        await repos.instruments.add(
+            InstrumentEntity(
+                instrument_id=uuid4(),
+                symbol="005930",
+                market_code="KRX",
+                asset_class="KR_STOCK",
+                currency="KRW",
+                name="삼성전자",
+                is_active=True,
+                tick_size=Decimal("50"),
+                metadata={"core_universe": True, "market_segment": "KOSPI"},
+            )
+        )
+        await repos.instruments.add(
+            InstrumentEntity(
+                instrument_id=uuid4(),
+                symbol="000660",
+                market_code="KRX",
+                asset_class="KR_STOCK",
+                currency="KRW",
+                name="SK하이닉스",
+                is_active=True,
+                tick_size=Decimal("50"),
+                metadata={"core_universe": True, "market_segment": "KOSPI"},
+            )
+        )
+
+        from contextlib import asynccontextmanager
+
+        @asynccontextmanager
+        async def _mock_postgres_runtime(run_migrations: bool = False):
+            yield {"repositories": repos}
+
+        published_at = datetime(2026, 6, 24, 8, 0, 0, tzinfo=KST)
+
+        async def _fake_load_trading_universe_with_anchor():
+            return (
+                (
+                    MagicMock(
+                        symbol="005930",
+                        market="KRX",
+                        source_type="event_overlay",
+                        inclusion_reason="high_importance_event:disclosure_material",
+                        event_detail=EventInclusionDetail(
+                            headline="삼성전자 대규모 공급 계약 발표",
+                            severity="high",
+                            published_at=published_at,
+                            event_type="disclosure_material",
+                        ),
+                    ),
+                    MagicMock(
+                        symbol="000660",
+                        market="KRX",
+                        source_type="core",
+                        inclusion_reason="approved_core_universe",
+                        event_detail=None,
+                    ),
+                ),
+                MagicMock(
+                    source="live_compose",
+                    universe_freeze_run_id=None,
+                    freeze_purpose=DEFAULT_DECISION_LOOP_INTRADAY_FREEZE_PURPOSE,
+                    freeze_reused=False,
+                    business_date="2026-06-24",
+                ),
+            )
+
+        class _FrozenDateTime(datetime):
+            @classmethod
+            def now(cls, tz=None):
+                base = datetime(2026, 6, 24, 8, 50, 0, tzinfo=KST)
+                if tz is None:
+                    return base.replace(tzinfo=None)
+                return base.astimezone(tz)
+
+        with (
+            patch("scripts.run_ops_scheduler.postgres_runtime", new=_mock_postgres_runtime),
+            patch(
+                "scripts.run_decision_loop._load_trading_universe_with_anchor",
+                new=_fake_load_trading_universe_with_anchor,
+            ),
+            patch("scripts.run_ops_scheduler.datetime", _FrozenDateTime),
+        ):
+            await _ensure_decision_loop_intraday_freeze(state)
+
+        latest = await repos.universe_freeze_runs.get_latest(
+            run_date,
+            DEFAULT_DECISION_LOOP_INTRADAY_FREEZE_PURPOSE,
+        )
+        assert latest is not None
+        items = await repos.universe_freeze_run_items.list_by_run(
+            latest.universe_freeze_run_id
+        )
+        items_by_symbol = {item.symbol: item for item in items}
+
+        event_item = items_by_symbol["005930"]
+        assert event_item.metadata_json == {
+            "event_detail": {
+                "headline": "삼성전자 대규모 공급 계약 발표",
+                "severity": "high",
+                "published_at": published_at.isoformat(),
+                "event_type": "disclosure_material",
+            }
+        }
+
+        core_item = items_by_symbol["000660"]
+        assert core_item.metadata_json == {}
 
     @pytest.mark.asyncio
     async def test_materializes_intraday_freeze_with_duplicate_symbols_deduped(self) -> None:

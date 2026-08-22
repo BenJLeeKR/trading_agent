@@ -614,6 +614,42 @@ class TestUniverseSelectionServiceCompose:
         assert event[0].inclusion_reason == "high_importance_event:disclosure_material"
 
     @pytest.mark.asyncio
+    async def test_event_overlay_carries_event_detail(self) -> None:
+        """event_overlay로 선정된 종목은 headline/severity/published_at/
+        event_type이 담긴 event_detail을 그대로 가진다 — 유니버스 선정 현황
+        화면의 "상세 근거" 표시를 위한 값이다."""
+        repos = build_in_memory_repositories()
+        await repos.instruments.add(_make_instrument("005930"))
+        await repos.external_events.add(_make_event("005930", severity="high"))
+
+        svc = UniverseSelectionService(repos)
+        ctx = CompositionContext(account_id=FALLBACK_ACCOUNT_ID, since=NOW)
+        result = await svc.compose(ctx)
+
+        selected = next(s for s in result if s.symbol == "005930")
+        assert selected.event_detail is not None
+        assert selected.event_detail.headline == "Test event for 005930"
+        assert selected.event_detail.severity == "high"
+        assert selected.event_detail.published_at == NOW
+        assert selected.event_detail.event_type == "disclosure_material"
+
+    @pytest.mark.asyncio
+    async def test_non_event_overlay_symbols_have_no_event_detail(self) -> None:
+        """event_overlay가 아닌 종목(core/held_position)에는 event_detail이
+        절대 채워지지 않는다 — 없는 선정 근거를 지어내지 않기 위함."""
+        repos = build_in_memory_repositories()
+        await repos.instruments.add(_make_instrument("005930"))
+        await repos.instruments.add(_make_instrument("000660"))
+
+        svc = UniverseSelectionService(repos)
+        ctx = CompositionContext(account_id=FALLBACK_ACCOUNT_ID, since=NOW)
+        result = await svc.compose(ctx)
+
+        core_symbols = [s for s in result if s.source_type == SourceType.CORE]
+        assert core_symbols
+        assert all(s.event_detail is None for s in core_symbols)
+
+    @pytest.mark.asyncio
     async def test_medium_severity_management_issue_promoted(self) -> None:
         """management_issue는 medium severity여도 overlay 대상이다."""
         repos = build_in_memory_repositories()

@@ -29,11 +29,11 @@ function makeFreezeView(
     source_type_counts: { core: 2, market_overlay: 1, event_overlay: 1, held_position: 1 },
     inclusion_reason_counts: {},
     items: [
-      { symbol: "005930", market: "KRX", source_type: "core", inclusion_reason: "approved_core_universe", priority: 1, instrument_name: "삼성전자", index_group: "KOSPI200" },
-      { symbol: "000660", market: "KRX", source_type: "core", inclusion_reason: "approved_core_universe", priority: 2, instrument_name: null, index_group: null },
-      { symbol: "035420", market: "KRX", source_type: "market_overlay", inclusion_reason: "trade_strength_top10", priority: 3, instrument_name: "NAVER", index_group: "KOSPI200" },
-      { symbol: "005380", market: "KRX", source_type: "event_overlay", inclusion_reason: "high_importance_event:disclosure", priority: 4, instrument_name: "현대차", index_group: "KOSPI" },
-      { symbol: "051910", market: "KRX", source_type: "held_position", inclusion_reason: "held_position_mandatory", priority: 5, instrument_name: "LG화학", index_group: "KOSPI100, KOSPI200" },
+      { symbol: "005930", market: "KRX", source_type: "core", inclusion_reason: "approved_core_universe", priority: 1, instrument_name: "삼성전자", index_group: "KOSPI200", inclusion_detail: null },
+      { symbol: "000660", market: "KRX", source_type: "core", inclusion_reason: "approved_core_universe", priority: 2, instrument_name: null, index_group: null, inclusion_detail: null },
+      { symbol: "035420", market: "KRX", source_type: "market_overlay", inclusion_reason: "trade_strength_top10", priority: 3, instrument_name: "NAVER", index_group: "KOSPI200", inclusion_detail: null },
+      { symbol: "005380", market: "KRX", source_type: "event_overlay", inclusion_reason: "high_importance_event:disclosure", priority: 4, instrument_name: "현대차", index_group: "KOSPI", inclusion_detail: null },
+      { symbol: "051910", market: "KRX", source_type: "held_position", inclusion_reason: "held_position_mandatory", priority: 5, instrument_name: "LG화학", index_group: "KOSPI100, KOSPI200", inclusion_detail: null },
     ],
     ...overrides,
   };
@@ -139,8 +139,8 @@ describe("UniverseSelectionView — 상태 표현", () => {
         target_count: 2,
         source_type_counts: { core: 2 },
         items: [
-          { symbol: "005930", market: "KRX", source_type: "core", inclusion_reason: "approved_core_universe", priority: 1, instrument_name: "삼성전자", index_group: "KOSPI200" },
-          { symbol: "000660", market: "KRX", source_type: "core", inclusion_reason: "approved_core_universe", priority: 2, instrument_name: "SK하이닉스", index_group: "KOSPI" },
+          { symbol: "005930", market: "KRX", source_type: "core", inclusion_reason: "approved_core_universe", priority: 1, instrument_name: "삼성전자", index_group: "KOSPI200", inclusion_detail: null },
+          { symbol: "000660", market: "KRX", source_type: "core", inclusion_reason: "approved_core_universe", priority: 2, instrument_name: "SK하이닉스", index_group: "KOSPI", inclusion_detail: null },
         ],
       }),
     );
@@ -238,6 +238,7 @@ describe("UniverseSelectionView — 선정 이유 한국어 표시", () => {
             priority: 1,
             instrument_name: "테스트종목",
             index_group: null,
+            inclusion_detail: null,
           },
         ],
       }),
@@ -246,6 +247,79 @@ describe("UniverseSelectionView — 선정 이유 한국어 표시", () => {
     renderView();
 
     await screen.findByText("미분류 사유(unknown_future_reason_code)");
+  });
+});
+
+describe("UniverseSelectionView — event_overlay 상세 근거(inclusion_detail) 표시", () => {
+  it("상세 근거가 있으면 '선정 이유' 아래에 뉴스 제목 · 중요도 · 발행 시각이 함께 표시된다", async () => {
+    mockFetchOnce(
+      makeFreezeView({
+        items: [
+          {
+            symbol: "005380",
+            market: "KRX",
+            source_type: "event_overlay",
+            inclusion_reason: "high_importance_event:disclosure",
+            priority: 1,
+            instrument_name: "현대차",
+            index_group: "KOSPI",
+            inclusion_detail: {
+              headline: "삼성전자 대규모 공급 계약 발표",
+              severity: "high",
+              published_at: "2026-08-22T00:10:00Z",
+              event_type: "disclosure_material",
+            },
+          },
+        ],
+      }),
+    );
+
+    renderView();
+
+    // 기본 '선정 이유'는 그대로 유지된다.
+    await screen.findByText("고중요도 이벤트(high_importance_event:disclosure)");
+    // 상세 근거는 "상세: 제목 · 중요도 라벨 · KST 시각" 형태로 보인다.
+    expect(
+      screen.getByText("상세: 삼성전자 대규모 공급 계약 발표 · 중요도 높음 · 2026-08-22 09:10"),
+    ).toBeInTheDocument();
+  });
+
+  it("상세 근거가 null이면 '상세:' 문구가 전혀 표시되지 않는다(기본 선정 이유만 표시)", async () => {
+    mockFetchOnce(makeFreezeView());
+
+    renderView();
+
+    await screen.findByText("core (2건)");
+    // makeFreezeView() 기본 fixture는 모든 항목의 inclusion_detail이 null이다.
+    expect(screen.queryByText(/^상세:/)).not.toBeInTheDocument();
+  });
+
+  it("headline만 있고 severity/published_at이 없으면 있는 값만 이어붙인다", async () => {
+    mockFetchOnce(
+      makeFreezeView({
+        items: [
+          {
+            symbol: "005380",
+            market: "KRX",
+            source_type: "event_overlay",
+            inclusion_reason: "high_importance_event:disclosure",
+            priority: 1,
+            instrument_name: "현대차",
+            index_group: "KOSPI",
+            inclusion_detail: {
+              headline: "현대차 리콜 공시",
+              severity: null,
+              published_at: null,
+              event_type: "disclosure_material",
+            },
+          },
+        ],
+      }),
+    );
+
+    renderView();
+
+    await screen.findByText("상세: 현대차 리콜 공시");
   });
 });
 
