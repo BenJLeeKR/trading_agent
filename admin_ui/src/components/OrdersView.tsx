@@ -100,7 +100,7 @@ export default function OrdersView() {
     { key: "order_request_id", header: "주문 ID", width: "100px", render: (r: OrderSummary) => (
       <code className="text-xs">{r.order_request_id.slice(0, 8)}…</code>
     )},
-    { key: "symbol", header: "종목", width: "80px", render: (r: OrderSummary) => (
+    { key: "symbol", header: "종목", width: "80px", align: "center", render: (r: OrderSummary) => (
       r.symbol ? (
         <button
           type="button"
@@ -120,16 +120,16 @@ export default function OrdersView() {
     { key: "instrument_name", header: "종목명", width: "180px", render: (r: OrderSummary) => (
       <span className="block max-w-[180px] truncate text-sm text-[#334155]" title={r.instrument_name ?? undefined}>{r.instrument_name || "—"}</span>
     )},
-    { key: "side", header: "매매", width: "80px", render: (r: OrderSummary) => (
+    { key: "side", header: "매매", width: "80px", align: "center", render: (r: OrderSummary) => (
       <StatusBadge variant={r.side.toLowerCase() === "buy" ? "success" : "error"}>{getEnumLabel(fieldMap, "side", r.side)}</StatusBadge>
     )},
-    { key: "requested_quantity", header: "수량", width: "90px", align: "right" },
-    { key: "order_type", header: "주문유형", width: "100px", render: (r: OrderSummary) => (
+    { key: "requested_quantity", header: "수량", width: "90px", align: "center" },
+    { key: "order_type", header: "주문유형", width: "100px", align: "center", render: (r: OrderSummary) => (
       <span className="text-sm text-[#334155]">{getEnumLabel(fieldMap, "order_type", r.order_type)}</span>
     )},
     { key: "avg_fill_price", header: "체결가격", width: "110px", align: "right", render: (r: OrderSummary) => formatNumber(r.avg_fill_price) },
     { key: "fill_amount", header: "체결금액", width: "130px", align: "right", render: (r: OrderSummary) => formatNumber(r.fill_amount) },
-    { key: "status", header: "상태", width: "110px", render: (r: OrderSummary) => {
+    { key: "status", header: "상태", width: "110px", align: "center", render: (r: OrderSummary) => {
       const variants: Record<string, "success" | "warning" | "error" | "info" | "neutral"> = {
         filled: "success",
         submitted: "info",
@@ -149,7 +149,7 @@ export default function OrdersView() {
       };
       return <StatusBadge variant={variants[r.status] || "info"}>{getEnumLabel(fieldMap, "order_status", r.status)}</StatusBadge>;
     }},
-    { key: "created_at", header: "시각", width: "170px", render: (r: OrderSummary) => formatKstDateTime(r.created_at) },
+    { key: "created_at", header: "시각", width: "170px", align: "center", render: (r: OrderSummary) => formatKstDateTime(r.created_at) },
   ];
 
   if (loading) return <LoadingSpinner />;
