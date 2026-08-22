@@ -22,9 +22,7 @@ import {
   getLatestOperationsDay,
   getRecentFailures,
   getFailureSummary,
-  getOrderDailySummary,
   getBuyBlockSummary,
-  getActiveIntradayFreezeSummary,
   getIndexMembershipStaleness,
 } from "../api/client";
 import type {
@@ -44,8 +42,6 @@ import type {
   OperationsDayStatusResponse,
   RecentFailureItem,
   FailureSummary,
-  OrderDailySummary,
-  TradingUniverseFreezeView,
   IndexMembershipStalenessResponse,
 } from "../types/api";
 import { deriveAlerts } from "../lib/alerts";
@@ -95,23 +91,27 @@ interface CompactAlertItem {
   description: string;
 }
 
-interface DashboardData {
+/**
+ * 1단계(핵심) 병렬 호출만으로 채워지는 최소 데이터 — 화면 shell과 상단 카드
+ * 대부분이 이 데이터에만 의존한다. 계좌 상태(계좌→스냅샷)/snapshot-sync-runs/
+ * buy-block-summary/최근 제출 실패는 각자 독립 effect로 분리되어 이 데이터를
+ * 기다리지 않는다(단, 계좌 상태는 여기 포함된 clients 목록이 있어야 시작할
+ * 수 있어서 core 완료 직후 별도로 시작된다).
+ */
+interface CoreData {
   clients: ClientDetail[];
+  // GET /clients 자체가 실패했는지 여부. clients가 빈 배열이라는 사실만으로는
+  // "클라이언트가 실제로 0개"인지 "조회 자체가 실패해 빈 배열로 대체됐는지"를
+  // 구분할 수 없어, 계좌 상태 effect가 "계좌 없음"(empty)과 "조회 실패"(error)를
+  // 헷갈리지 않도록 별도로 표시한다.
+  clientsFetchFailed: boolean;
   health: HealthResponse | null;
   readyz: Record<string, string> | null;
   reconSummary: ReconciliationSummary | null;
   reconRuns: ReconciliationRunSummary[];
   orders: OrderSummary[];
-  todayOrders: OrderSummary[];
-  accounts: AccountSummary[];
-  positionsMap: Map<string, PositionSnapshotView[]>;
-  cashMap: Map<string, CashBalanceSnapshotView | null>;
-  snapshotSyncRuns: SnapshotSyncRunSummary[];
   sessionData: SchedulerStatusResponse | null;
   operationsDayData: OperationsDayStatusResponse | null;
-  todayOrderSummary: OrderDailySummary | null;
-  activeIntradayFreeze: TradingUniverseFreezeView | null;
-  indexMembershipStaleness: IndexMembershipStalenessResponse | null;
 }
 
 /* ── Helpers ── */
@@ -323,222 +323,305 @@ const reconColumns: Column<PendingRecon>[] = [
 /* ── Component ── */
 export default function OperationsDashboardView() {
   const navigate = useNavigate();
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+
+  // ── 여러 독립 fetch가 공유하는 에러 배너용 목록 ──
   const [apiErrors, setApiErrors] = useState<ApiErrorEntry[]>([]);
-  const [data, setData] = useState<DashboardData | null>(null);
+  const addApiError = (apiName: string, err: unknown) => {
+    setApiErrors((prev) => [...prev, { apiName, message: String(err) }]);
+  };
+
+  // ── 1단계(core): 화면 shell + 상단 카드 대부분에 필요한 최소 데이터 ──
+  const [coreLoading, setCoreLoading] = useState(true);
+  const [coreFetchError, setCoreFetchError] = useState<string | null>(null);
+  const [coreData, setCoreData] = useState<CoreData | null>(null);
+
+  // ── 계좌 상태(계좌 목록 → 계좌 스냅샷) — core와 독립된 자체 loading/error ──
+  const [accountStatusLoading, setAccountStatusLoading] = useState(true);
+  const [accounts, setAccounts] = useState<AccountSummary[]>([]);
+  const [positionsMap, setPositionsMap] = useState<Map<string, PositionSnapshotView[]>>(new Map());
+  const [cashMap, setCashMap] = useState<Map<string, CashBalanceSnapshotView | null>>(new Map());
+  // 계좌 목록 자체를 하나도 못 가져왔거나, 가져온 계좌 전부의 스냅샷 조회가
+  // 실패한 경우(전체 실패) — "0건/정상"처럼 보이지 않도록 별도로 구분한다.
+  const [accountStatusFatalError, setAccountStatusFatalError] = useState<string | null>(null);
+  // 계좌 스냅샷 중 일부만 실패한 경우(부분 실패) 건수.
+  const [accountStatusFailedCount, setAccountStatusFailedCount] = useState(0);
+
+  // ── snapshot-sync-runs — 계좌 fan-out과 무관, 독립적으로 fetch ──
+  const [snapshotSyncRuns, setSnapshotSyncRuns] = useState<SnapshotSyncRunSummary[]>([]);
+  const [snapshotSyncLoading, setSnapshotSyncLoading] = useState(true);
+  const [snapshotSyncError, setSnapshotSyncError] = useState<string | null>(null);
+
+  // ── UNIV-4: 지수 편입 staleness — 경고 배너 전용, 독립적으로 fetch ──
+  const [indexMembershipStaleness, setIndexMembershipStaleness] =
+    useState<IndexMembershipStalenessResponse | null>(null);
+
+  // ── 오늘 BUY 차단 ──
   const [buyBlockSummary, setBuyBlockSummary] = useState<BuyBlockSummary | null>(null);
-  const [buyBlockSummaryLoading, setBuyBlockSummaryLoading] = useState(false);
+  const [buyBlockSummaryLoading, setBuyBlockSummaryLoading] = useState(true);
+  const [buyBlockSummaryError, setBuyBlockSummaryError] = useState<string | null>(null);
+
+  // ── 최근 제출 실패 ──
   const [failureSummary, setFailureSummary] = useState<FailureSummary | null>(null);
-  const [failureSummaryLoading, setFailureSummaryLoading] = useState(false);
+  const [failureSummaryLoading, setFailureSummaryLoading] = useState(true);
   const [recentFailures, setRecentFailures] = useState<RecentFailureItem[]>([]);
-  const [failuresLoading, setFailuresLoading] = useState(false);
+  const [failuresLoading, setFailuresLoading] = useState(true);
   const [failuresError, setFailuresError] = useState<string | null>(null);
 
-  const fetchAll = async () => {
-    setLoading(true);
-    setError(null);
-    const errors: ApiErrorEntry[] = [];
-    const addError = (apiName: string, err: unknown) => {
-      errors.push({ apiName, message: String(err) });
-    };
+  // 1단계: health/readyz/reconciliation-summary/orders(오늘)/clients/session/
+  // operations-day 7개는 서로 데이터 의존성이 없어 Promise.all로 동시에
+  // 부르고, 이 7개만 끝나면 화면 shell과 상단 카드 대부분을 그린다.
+  // 계좌 상태/snapshot-sync-runs/buy-block-summary/최근 제출 실패는 각자
+  // 독립된 effect로 분리해 이 1단계 완료를 기다리지 않는다 — 예전에는
+  // 이들이 계좌 스냅샷 fan-out 뒤에 순차로 묶여 있어(서로 의존성이 없는데도)
+  // 화면 전체 loading을 불필요하게 늘렸다.
+  const fetchCore = async () => {
+    setCoreLoading(true);
+    setCoreFetchError(null);
+    try {
+      let clientsFetchFailed = false;
+      const [health, readyz, reconSummary, orders, clients, sessionData, operationsDayData] =
+        await Promise.all([
+          getHealth().catch((e) => {
+            addApiError("GET /health", e);
+            return null;
+          }),
+          getReadyz().catch((e) => {
+            addApiError("GET /readyz", e);
+            return null;
+          }),
+          getReconciliationSummary().catch((e) => {
+            addApiError("GET /reconciliation/summary", e);
+            return null;
+          }),
+          // "오늘의 운영 현황" 대시보드이므로 이 화면이 쓰는 주문 목록(최근
+          // 5건 요약 등)은 애초에 오늘 것만 필요하다 — date 필터 없이 부르면
+          // 전체 이력을 스캔해 today 필터보다 눈에 띄게 느렸다(실측: 무필터
+          // ~19-25ms vs date=today ~3ms).
+          getOrders(undefined, undefined, getKstTodayString()).catch((e) => {
+            addApiError("GET /orders?date=today", e);
+            return [] as OrderSummary[];
+          }),
+          getClients().catch((e) => {
+            addApiError("GET /clients", e);
+            clientsFetchFailed = true;
+            return [] as ClientDetail[];
+          }),
+          getLatestMarketSession().catch((e) => {
+            addApiError("GET /market-sessions/latest", e);
+            return null;
+          }),
+          getLatestOperationsDay().catch((e) => {
+            addApiError("GET /market-sessions/operations-day/latest", e);
+            return null;
+          }),
+        ]);
 
-    const healthPromise = getHealth().catch((e) => {
-      addError("GET /health", e);
-      return null;
-    });
-    const readyzPromise = getReadyz().catch((e) => {
-      addError("GET /readyz", e);
-      return null;
-    });
-    const reconSummaryPromise = getReconciliationSummary().catch((e) => {
-      addError("GET /reconciliation/summary", e);
-      return null;
-    });
-    // "오늘의 운영 현황" 대시보드이므로 이 화면이 쓰는 주문 목록(최근 5건 요약,
-    // 거부 건수 등)은 애초에 오늘 것만 필요하다 — date 필터 없이 부르면 전체
-    // 이력(최근 100건, 전체 기간)을 스캔해 today 필터보다 눈에 띄게 느렸고
-    // (실측: 무필터 ~19-25ms vs date=today ~3ms), 게다가 아래 두 호출이
-    // 사실상 같은 데이터를 두 번 부르는 중복 요청이었다. 하나로 합친다.
-    const ordersPromise = getOrders(undefined, undefined, getKstTodayString()).catch((e) => {
-      addError("GET /orders?date=today", e);
-      return [];
-    });
-    const todayOrderSummaryPromise = getOrderDailySummary().catch((e) => {
-      addError("GET /orders/daily-summary", e);
-      return null;
-    });
-    const buyBlockSummaryPromise = getBuyBlockSummary().catch((e) => {
-      addError("GET /orders/buy-block-summary", e);
-      return null;
-    });
-    const clientsPromise = getClients().catch((e) => {
-      addError("GET /clients", e);
-      return [] as ClientDetail[];
-    });
+      // ── Reconciliation runs (summary의 recentActiveIssues — active-only) ──
+      // NOTE: 별도 getReconciliationRuns API 호출 대신 이미 fetch된 summary
+      //       응답의 recentActiveIssues를 사용한다(백엔드에서 active-only로
+      //       필터링됨).
+      const reconRuns: ReconciliationRunSummary[] = (reconSummary?.recentActiveIssues ?? []).slice(0, 5);
 
-    // ── Session status fetch ──
-    const sessionPromise = getLatestMarketSession().catch((e) => {
-      addError("GET /market-sessions/latest", e);
-      return null;
-    });
-    const operationsDayPromise = getLatestOperationsDay().catch((e) => {
-      addError("GET /market-sessions/operations-day/latest", e);
-      return null;
-    });
-
-    // 오늘 이미 얼려둔(freeze) 유니버스 요약 — 계좌 정보가 필요 없어서(freeze view는
-    // 계좌 무관) 계좌 fan-out을 기다릴 필요 없이 다른 API들과 함께 바로 부른다.
-    // "freeze / live 비교" 카드를 없애면서 라이브 재계산이 필요 없어졌다(과거엔
-    // getTradingUniversePreview()가 계좌 fan-out 이후에만 부를 수 있었고, 그 안에서
-    // 유니버스 선정 알고리즘 전체를 재계산해서 0.7~1.0초가 걸렸었다).
-    const activeIntradayFreezePromise = getActiveIntradayFreezeSummary().catch((e) => {
-      addError("GET /instruments/trading-universe/freeze-summary", e);
-      return null;
-    });
-
-    const [health, readyz, reconSummary, orders, todayOrderSummary, buyBlockSummaryData, clients, sessionData, operationsDayData, activeIntradayFreeze] = await Promise.all([
-      healthPromise,
-      readyzPromise,
-      reconSummaryPromise,
-      ordersPromise,
-      todayOrderSummaryPromise,
-      buyBlockSummaryPromise,
-      clientsPromise,
-      sessionPromise,
-      operationsDayPromise,
-      activeIntradayFreezePromise,
-    ]);
-
-    // ── Accounts per client ──
-    let accounts: AccountSummary[] = [];
-    if (clients.length > 0) {
-      const results = await Promise.allSettled(
-        clients.map((c) => getAccounts(c.client_id))
-      );
-      for (const r of results) {
-        if (r.status === "fulfilled") accounts.push(...r.value);
-      }
-      if (results.some((r) => r.status === "rejected")) {
-        addError("GET /accounts", "일부 클라이언트 계좌 조회 실패");
-      }
+      setCoreData({
+        clients,
+        clientsFetchFailed,
+        health,
+        readyz,
+        reconSummary: reconSummary as ReconciliationSummary | null,
+        reconRuns,
+        orders,
+        sessionData: sessionData as SchedulerStatusResponse | null,
+        operationsDayData: operationsDayData as OperationsDayStatusResponse | null,
+      });
+    } finally {
+      setCoreLoading(false);
     }
+  };
 
-    // ── Account snapshots per account ──
-    const positionsMap = new Map<string, PositionSnapshotView[]>();
-    const cashMap = new Map<string, CashBalanceSnapshotView | null>();
-    if (accounts.length > 0) {
-      const accountSnapshotResults = await Promise.allSettled(
-        accounts.map((a) =>
+  // 계좌 상태(계좌 목록 → 계좌 스냅샷)는 core의 clients 결과가 있어야
+  // 시작할 수 있지만, 이 조회 자체는 core의 나머지 6개 API나 화면 shell
+  // 렌더링을 기다리게 만들지 않는다 — 별도 loading/error state로 "계좌
+  // 상태" 영역과 "운영 경고" 카드에만 반영된다.
+  const fetchAccountStatus = async (clients: ClientDetail[], clientsFetchFailed: boolean) => {
+    setAccountStatusLoading(true);
+    setAccountStatusFatalError(null);
+    setAccountStatusFailedCount(0);
+    try {
+      if (clients.length === 0) {
+        setAccounts([]);
+        setPositionsMap(new Map());
+        setCashMap(new Map());
+        // clients가 빈 배열인 이유가 "클라이언트가 실제로 0개"인지 "GET
+        // /clients 자체가 실패해 빈 배열로 대체됐는지"를 구분한다 — 후자를
+        // "계좌 없음"(empty)으로 보여주면 API 실패가 정상 데이터처럼 보인다.
+        if (clientsFetchFailed) {
+          setAccountStatusFatalError("계좌 목록을 불러오지 못했습니다");
+        }
+        return;
+      }
+
+      const clientResults = await Promise.allSettled(
+        clients.map((c) => getAccounts(c.client_id)),
+      );
+      const nextAccounts: AccountSummary[] = [];
+      let clientFailureCount = 0;
+      clientResults.forEach((r) => {
+        if (r.status === "fulfilled") nextAccounts.push(...r.value);
+        else clientFailureCount += 1;
+      });
+      if (clientFailureCount > 0) {
+        addApiError("GET /accounts", "일부 클라이언트 계좌 조회 실패");
+      }
+      setAccounts(nextAccounts);
+
+      if (nextAccounts.length === 0) {
+        setPositionsMap(new Map());
+        setCashMap(new Map());
+        if (clientFailureCount > 0 && clientFailureCount === clients.length) {
+          setAccountStatusFatalError("계좌 목록을 불러오지 못했습니다");
+        }
+        return;
+      }
+
+      const snapshotResults = await Promise.allSettled(
+        nextAccounts.map((a) =>
           getAccountSnapshots(a.account_id).then((snapshot) => ({
             accountId: a.account_id,
             positions: snapshot.positions,
             cash: snapshot.cash_balance,
-          }))
-        )
+          })),
+        ),
       );
-      accountSnapshotResults.forEach((r) => {
+      const nextPositionsMap = new Map<string, PositionSnapshotView[]>();
+      const nextCashMap = new Map<string, CashBalanceSnapshotView | null>();
+      let snapshotFailureCount = 0;
+      snapshotResults.forEach((r) => {
         if (r.status === "fulfilled") {
-          positionsMap.set(r.value.accountId, r.value.positions);
-          cashMap.set(r.value.accountId, r.value.cash);
+          nextPositionsMap.set(r.value.accountId, r.value.positions);
+          nextCashMap.set(r.value.accountId, r.value.cash);
         } else {
-          addError(
-            "GET /account-snapshots/latest",
-            "일부 계좌 스냅샷 조회 실패",
-          );
+          snapshotFailureCount += 1;
         }
       });
+      if (snapshotFailureCount > 0) {
+        addApiError("GET /account-snapshots/latest", "일부 계좌 스냅샷 조회 실패");
+      }
+      setPositionsMap(nextPositionsMap);
+      setCashMap(nextCashMap);
+      setAccountStatusFailedCount(snapshotFailureCount);
+      if (snapshotFailureCount === nextAccounts.length) {
+        setAccountStatusFatalError("모든 계좌의 스냅샷 조회에 실패했습니다");
+      }
+    } finally {
+      setAccountStatusLoading(false);
     }
+  };
 
-    // ── UNIV-4: 지수 편입 데이터 staleness 감시 (read-only, 계좌 무관) ──
-    const indexMembershipStalenessPromise = getIndexMembershipStaleness().catch((e) => {
-      addError("GET /instruments/index-membership/staleness", e);
-      return null;
-    });
+  const fetchSnapshotSyncRuns = async () => {
+    setSnapshotSyncLoading(true);
+    setSnapshotSyncError(null);
+    try {
+      const runs = await getSnapshotSyncRuns(10);
+      setSnapshotSyncRuns(runs);
+    } catch (e) {
+      setSnapshotSyncError(String(e));
+      addApiError("GET /snapshot-sync-runs", "스냅샷 동기화 이력 조회 실패");
+    } finally {
+      setSnapshotSyncLoading(false);
+    }
+  };
 
-    // ── Reconciliation runs (from summary's recentActiveIssues — active-only data) ──
-    // NOTE: 별도 getReconciliationRuns API 호출 대신 이미 fetch된 summary 응답의
-    //       recentActiveIssues를 사용. 이 필드는 백엔드에서 active-only로 필터링됨.
-    const reconRuns: ReconciliationRunSummary[] = (reconSummary?.recentActiveIssues ?? []).slice(0, 5);
+  const fetchIndexMembershipStaleness = async () => {
+    try {
+      const result = await getIndexMembershipStaleness();
+      setIndexMembershipStaleness(result);
+    } catch (e) {
+      addApiError("GET /instruments/index-membership/staleness", e);
+    }
+  };
 
-    // ── snapshot-sync-runs / universe preview / recent-failures / failure-summary는
-    // 서로 데이터 의존성이 없다(계좌 fan-out에만 의존) — 순차 await 대신 동시에
-    // fire하고 한 번에 기다린다. 개별 실패가 나머지를 막지 않도록 각자
-    // .catch()로 안전한 기본값을 반환한다(Promise.all이 reject하지 않게 함).
+  const fetchBuyBlockSummary = async () => {
+    setBuyBlockSummaryLoading(true);
+    setBuyBlockSummaryError(null);
+    try {
+      const result = await getBuyBlockSummary();
+      setBuyBlockSummary(result);
+    } catch (e) {
+      setBuyBlockSummaryError(String(e));
+      addApiError("GET /orders/buy-block-summary", e);
+    } finally {
+      setBuyBlockSummaryLoading(false);
+    }
+  };
+
+  const fetchFailures = async () => {
     setFailuresLoading(true);
     setFailureSummaryLoading(true);
-
-    let recentFailuresError: string | null = null;
-    const snapshotSyncRunsPromise = getSnapshotSyncRuns(10).catch(() => {
-      addError("GET /snapshot-sync-runs", "스냅샷 동기화 이력 조회 실패");
-      return [] as SnapshotSyncRunSummary[];
-    });
-    const recentFailuresPromise = getRecentFailures(5, getKstTodayString()).catch((e) => {
-      recentFailuresError = String(e);
-      return [] as RecentFailureItem[];
-    });
-    const failureSummaryPromise = getFailureSummary().catch(() => null);
-
-    const [snapshotSyncRuns, indexMembershipStaleness, failuresData, summaryData] =
-      await Promise.all([
-        snapshotSyncRunsPromise,
-        indexMembershipStalenessPromise,
-        recentFailuresPromise,
-        failureSummaryPromise,
+    setFailuresError(null);
+    try {
+      const [failuresData, summaryData] = await Promise.all([
+        getRecentFailures(5, getKstTodayString()).catch((e) => {
+          setFailuresError(String(e));
+          return [] as RecentFailureItem[];
+        }),
+        getFailureSummary().catch((e) => {
+          addApiError("GET /orders/failure-summary", e);
+          return null;
+        }),
       ]);
-
-    setRecentFailures(failuresData);
-    setFailuresError(recentFailuresError);
-    setFailuresLoading(false);
-
-    setFailureSummary(summaryData);
-    setFailureSummaryLoading(false);
-
-    setBuyBlockSummaryLoading(true);
-    setBuyBlockSummary(buyBlockSummaryData);
-    setBuyBlockSummaryLoading(false);
-
-    setApiErrors(errors);
-    setData({
-      clients,
-      health,
-      readyz,
-      reconSummary: reconSummary as ReconciliationSummary | null,
-      reconRuns,
-      orders,
-      todayOrders: orders,
-      accounts,
-      positionsMap,
-      cashMap,
-      snapshotSyncRuns,
-      sessionData: sessionData as SchedulerStatusResponse | null,
-      operationsDayData: operationsDayData as OperationsDayStatusResponse | null,
-      todayOrderSummary: todayOrderSummary as OrderDailySummary | null,
-      activeIntradayFreeze,
-      indexMembershipStaleness,
-    });
-    setLoading(false);
+      setRecentFailures(failuresData);
+      setFailureSummary(summaryData);
+    } finally {
+      setFailuresLoading(false);
+      setFailureSummaryLoading(false);
+    }
   };
 
   useEffect(() => {
-    fetchAll();
+    fetchCore();
   }, []);
+  useEffect(() => {
+    fetchSnapshotSyncRuns();
+  }, []);
+  useEffect(() => {
+    fetchIndexMembershipStaleness();
+  }, []);
+  useEffect(() => {
+    fetchBuyBlockSummary();
+  }, []);
+  useEffect(() => {
+    fetchFailures();
+  }, []);
+  // 계좌 상태는 core의 clients 결과가 준비된 직후에만 시작한다(core 전체
+  // 완료를 기다리는 게 아니라, coreData가 채워지는 시점에 바로 뒤이어).
+  useEffect(() => {
+    if (!coreData) return;
+    fetchAccountStatus(coreData.clients, coreData.clientsFetchFailed);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [coreData]);
 
-  const derived = useMemo(() => {
-    if (!data) return null;
+  const refetchAll = () => {
+    setApiErrors([]);
+    fetchCore();
+    fetchSnapshotSyncRuns();
+    fetchIndexMembershipStaleness();
+    fetchBuyBlockSummary();
+    fetchFailures();
+    // fetchAccountStatus는 coreData가 갱신되면 위 useEffect가 다시 실행한다.
+  };
 
+  /* ── 계좌 상태 파생값(총자산/가용 현금/현재 포지션) ── */
+  const accountDerived = useMemo(() => {
     // ── Position dedup: instrument_id 기준 최신 snapshot (AccountsView와 동일 기준) ──
     const latestPositionMap = new Map<string, PositionSnapshotView>();
-    for (const positions of data.positionsMap.values()) {
+    for (const positions of positionsMap.values()) {
       for (const p of positions) {
         const existing = latestPositionMap.get(p.instrument_id);
-        // instrument_id 기준 최신 snapshot_at 유지 (AccountsView와 동일)
         if (!existing || p.snapshot_at > existing.snapshot_at) {
           latestPositionMap.set(p.instrument_id, p);
         }
       }
     }
-    // quantity > 0인 포지션만 카운트
     const totalPositions = Array.from(latestPositionMap.values()).filter(
       (p) => (p.quantity ?? 0) > 0
     ).length;
@@ -546,7 +629,14 @@ export default function OperationsDashboardView() {
     // ── Cash balance: orderable_amount 우선, fallback available_cash ──
     let totalAvailableCash = 0;
     let cashUsedFallback = false;
-    for (const cash of data.cashMap.values()) {
+    // ── 총자산: cash_balance.total_asset 합산. 이 필드는 KIS output2의
+    //    tot_evlu_amt(총평가금액)를 그대로 담는 optional 필드라(types/api.ts
+    //    CashBalanceSnapshotView 참고), 특정 스냅샷에는 값이 없을 수 있다 —
+    //    그 경우 0으로 조용히 합산하지 않고 "미확인 계좌 수"로 별도 집계해
+    //    합계가 실제보다 적어 보이는 착시를 방지한다.
+    let totalAssetSum = 0;
+    let totalAssetMissingCount = 0;
+    for (const cash of cashMap.values()) {
       if (cash) {
         const val = cash.orderable_amount ?? cash.available_cash;
         if (val !== null && val !== undefined) {
@@ -555,102 +645,60 @@ export default function OperationsDashboardView() {
         if (cash.orderable_amount === null || cash.orderable_amount === undefined) {
           cashUsedFallback = true;
         }
+        if (cash.total_asset !== null && cash.total_asset !== undefined) {
+          totalAssetSum += cash.total_asset;
+        } else {
+          totalAssetMissingCount += 1;
+        }
       }
     }
 
-    const pendingSubmitCount = data.todayOrderSummary?.pending_submit_count ?? 0;
-    const filledCount = data.todayOrderSummary?.filled_count ?? 0;
-    const submittedCount = data.todayOrderSummary?.submitted_count ?? 0;
-    const rejectedCount = data.orders.filter(
-      (o) => o.status === "rejected"
-    ).length;
-
-    const incompleteReconCount = data.reconSummary?.incomplete_recon_count ?? 0;
-    const activeLocksCount = data.reconSummary?.active_locks_count ?? 0;
-    const activeIssueCount = data.reconSummary?.activeIssueCount ?? 0;
-    const historicalFailedCount = data.reconSummary?.historicalFailedCount ?? 0;
-
     // Snapshot freshness: position/cash snapshot_at 최신값 (reconciliation run 아님)
     let latestSnapshotAt: string | null = null;
-    for (const positions of data.positionsMap.values()) {
+    for (const positions of positionsMap.values()) {
       for (const p of positions) {
-        if (
-          p.snapshot_at &&
-          (!latestSnapshotAt || p.snapshot_at > latestSnapshotAt)
-        ) {
+        if (p.snapshot_at && (!latestSnapshotAt || p.snapshot_at > latestSnapshotAt)) {
           latestSnapshotAt = p.snapshot_at;
         }
       }
     }
-    for (const cash of data.cashMap.values()) {
-      if (
-        cash?.snapshot_at &&
-        (!latestSnapshotAt || cash.snapshot_at > latestSnapshotAt)
-      ) {
+    for (const cash of cashMap.values()) {
+      if (cash?.snapshot_at && (!latestSnapshotAt || cash.snapshot_at > latestSnapshotAt)) {
         latestSnapshotAt = cash.snapshot_at;
       }
     }
 
-    // Ready state
-    const readyzOk =
-      data.readyz &&
-      Object.values(data.readyz).every((v) => v === "ok");
-
-    // ── Snapshot sync run status (primary indicator) ──
-    const latestSyncRun = data.snapshotSyncRuns.length > 0 ? data.snapshotSyncRuns[0] : null;
-
-    // ── Alert count (shared deriveAlerts 사용) ──
-    // Dashboard가 가진 데이터로 AlertRuleInput 구성
-    const alertInput = {
-      health: data.health,
-      healthError: apiErrors.some((e) => e.apiName === "GET /health"),
-      orders: data.orders,
-      ordersError: apiErrors.some((e) => e.apiName === "GET /orders"),
-      reconSummary: data.reconSummary ? {
-        active_locks_count: data.reconSummary.active_locks_count,
-        incomplete_recon_count: data.reconSummary.incomplete_recon_count,
-        activeIssueCount: data.reconSummary.activeIssueCount,
-        historicalFailedCount: data.reconSummary.historicalFailedCount,
-      } : null,
-      reconSummaryError: apiErrors.some((e) => e.apiName === "GET /reconciliation/summary"),
-      agentRuns: [],
-      agentRunsError: false,
-      positionsCount: totalPositions,
-      positionsError: apiErrors.some((e) => e.apiName === "GET /positions"),
-      snapshotSyncRun: latestSyncRun,
-      snapshotSyncError: apiErrors.some((e) => e.apiName === "GET /snapshot-sync-runs"),
-      latestPositionSnapshotAt: latestSnapshotAt,
-      latestCashSnapshotAt: latestSnapshotAt,
-      schedulerHealth: data.health?.scheduler ?? null,
-      sessionData: data.sessionData ?? null,
-      apiErrors,
+    return {
+      totalPositions,
+      totalAvailableCash,
+      cashUsedFallback,
+      totalAssetSum,
+      totalAssetMissingCount,
+      latestSnapshotAt,
     };
-    const alertItems = deriveAlerts(alertInput);
-    const urgentCount = alertItems.filter((a) => a.level === "긴급" && a.status === "OPEN").length;
-    const cautionCount = alertItems.filter((a) => a.level === "주의" && a.status === "OPEN").length;
+  }, [positionsMap, cashMap]);
 
-    // ── Recent alert items for compact section C (긴급+주의 only, max 5) ──
-    const recentAlertItems: CompactAlertItem[] = alertItems
-      .filter((a) => (a.level === "긴급" || a.level === "주의") && a.status === "OPEN")
-      .slice(0, 5)
-      .map((a) => ({
-        id: a.id,
-        level: a.level as "긴급" | "주의",
-        levelVariant: a.level === "긴급" ? "error" as const : "warning" as const,
-        title: a.title,
-        description: a.description,
-      }));
+  /* ── core 파생값(스케줄러/세션/정합성 등) ── */
+  const coreDerived = useMemo(() => {
+    if (!coreData) return null;
 
-    // ── Session status derived ──
-    const session = data.sessionData?.data;
-    const operationsDay = data.operationsDayData?.data;
-    const operationsDayHealthy = data.operationsDayData?.healthy ?? false;
-    const operationsDayStaleSeconds = data.operationsDayData?.stale_seconds;
-    const sessionHealthy = data.sessionData?.healthy ?? false;
-    const sessionStaleSeconds = data.sessionData?.stale_seconds;
-    const sessionFetchError = apiErrors.find(e => e.apiName === "GET /market-sessions/latest");
+    const incompleteReconCount = coreData.reconSummary?.incomplete_recon_count ?? 0;
+    const activeLocksCount = coreData.reconSummary?.active_locks_count ?? 0;
+    const activeIssueCount = coreData.reconSummary?.activeIssueCount ?? 0;
+    const historicalFailedCount = coreData.reconSummary?.historicalFailedCount ?? 0;
+
+    const readyzOk =
+      coreData.readyz && Object.values(coreData.readyz).every((v) => v === "ok");
+
+    const session = coreData.sessionData?.data;
+    const operationsDay = coreData.operationsDayData?.data;
+    const operationsDayHealthy = coreData.operationsDayData?.healthy ?? false;
+    const operationsDayStaleSeconds = coreData.operationsDayData?.stale_seconds;
+    const sessionHealthy = coreData.sessionData?.healthy ?? false;
+    const sessionStaleSeconds = coreData.sessionData?.stale_seconds;
+    const sessionFetchError = apiErrors.find((e) => e.apiName === "GET /market-sessions/latest");
     const operationsDayFetchError = apiErrors.find(
-      (e) => e.apiName === "GET /market-sessions/operations-day/latest"
+      (e) => e.apiName === "GET /market-sessions/operations-day/latest",
     );
     const schedulerState = getSchedulerStatus(
       operationsDay ?? null,
@@ -663,75 +711,93 @@ export default function OperationsDashboardView() {
       !!sessionFetchError,
       sessionFetchError?.message ?? null,
     );
-    const phaseVariant: 'success' | 'warning' | 'error' | 'info' | 'neutral' =
-      session?.market_phase === 'OPEN' ? 'success' :
-      session?.market_phase === 'PRE_MARKET' ? 'warning' :
-      session?.market_phase === 'CLOSING' ? 'warning' :
-      session?.market_phase === 'AFTER_HOURS' ? 'info' :
-      session?.market_phase === 'HALT' ? 'error' : 'neutral';
+    const phaseVariant: "success" | "warning" | "error" | "info" | "neutral" =
+      session?.market_phase === "OPEN" ? "success" :
+      session?.market_phase === "PRE_MARKET" ? "warning" :
+      session?.market_phase === "CLOSING" ? "warning" :
+      session?.market_phase === "AFTER_HOURS" ? "info" :
+      session?.market_phase === "HALT" ? "error" : "neutral";
 
     return {
-      totalPositions,
-      totalAvailableCash,
-      cashUsedFallback,
-      latestSnapshotAt,
-      todayOrderSummary: data.todayOrderSummary,
-      pendingSubmitCount,
-      filledCount,
-      submittedCount,
-      rejectedCount,
       incompleteReconCount,
       activeLocksCount,
       activeIssueCount,
       historicalFailedCount,
       readyzOk,
-      latestSyncRun,
-      urgentCount,
-      cautionCount,
-      recentAlertItems,
       session,
-      sessionData: data.sessionData,
-      operationsDayData: data.operationsDayData,
       sessionHealthy,
       sessionStaleSeconds,
       phaseVariant,
       schedulerState,
-      indexMembershipStaleness: data.indexMembershipStaleness,
     };
-  }, [data, apiErrors]);
+  }, [coreData, apiErrors]);
 
-  /* ── Deprecated: legacy detailed sections (feature flag SHOW_DASHBOARD_SECTIONS 복원 시 사용)
-  const recentEvents: RecentEvent[] = useMemo(() => {
-    if (!data) return [];
-    return data.orders.slice(0, 10).map((o) => ({
-      id: o.order_request_id,
-      time: o.created_at ?? "-",
-      type: o.side ?? "-",
-      description: `${o.symbol ?? "-"} ${o.requested_quantity ?? 0}주`,
-      symbol: o.symbol ?? "-",
-      status: o.status === "filled" ? "SUCCESS" : o.status === "rejected" ? "FAIL" : "PENDING",
-    }));
-  }, [data]);
+  // ── "운영 경고"는 계좌 상태(포지션 수/최신 snapshot_at)와 snapshot-sync-runs
+  //    상태까지 반영해야 정확하다 — 둘 중 하나라도 아직 로딩 중이면 "0건/정상"
+  //    으로 착시를 주지 않도록 alertsReady가 true가 될 때까지 집계하지 않는다.
+  const alertsReady = !!coreData && !accountStatusLoading && !snapshotSyncLoading;
+  const alertsDerived = useMemo(() => {
+    if (!alertsReady || !coreData) return null;
 
-  const pendingRecons: PendingRecon[] = useMemo(() => {
-    if (!data) return [];
-    return data.orders
-      .filter((o) => o.status === "reconcile_required")
-      .map((r) => ({
-        id: r.order_request_id,
-        type: "주문-브로커 불일치",
-        account: r.account_id ?? "-",
-        createdAt: r.created_at ?? "-",
+    const latestSyncRun = snapshotSyncRuns.length > 0 ? snapshotSyncRuns[0] : null;
+
+    const alertInput = {
+      health: coreData.health,
+      healthError: apiErrors.some((e) => e.apiName === "GET /health"),
+      orders: coreData.orders,
+      ordersError: apiErrors.some((e) => e.apiName === "GET /orders"),
+      reconSummary: coreData.reconSummary
+        ? {
+            active_locks_count: coreData.reconSummary.active_locks_count,
+            incomplete_recon_count: coreData.reconSummary.incomplete_recon_count,
+            activeIssueCount: coreData.reconSummary.activeIssueCount,
+            historicalFailedCount: coreData.reconSummary.historicalFailedCount,
+          }
+        : null,
+      reconSummaryError: apiErrors.some((e) => e.apiName === "GET /reconciliation/summary"),
+      agentRuns: [],
+      agentRunsError: false,
+      positionsCount: accountDerived.totalPositions,
+      positionsError: !!accountStatusFatalError,
+      snapshotSyncRun: latestSyncRun,
+      snapshotSyncError: !!snapshotSyncError,
+      latestPositionSnapshotAt: accountDerived.latestSnapshotAt,
+      latestCashSnapshotAt: accountDerived.latestSnapshotAt,
+      schedulerHealth: coreData.health?.scheduler ?? null,
+      sessionData: coreData.sessionData ?? null,
+      apiErrors,
+    };
+    const alertItems = deriveAlerts(alertInput);
+    const urgentCount = alertItems.filter((a) => a.level === "긴급" && a.status === "OPEN").length;
+    const cautionCount = alertItems.filter((a) => a.level === "주의" && a.status === "OPEN").length;
+    const recentAlertItems: CompactAlertItem[] = alertItems
+      .filter((a) => (a.level === "긴급" || a.level === "주의") && a.status === "OPEN")
+      .slice(0, 5)
+      .map((a) => ({
+        id: a.id,
+        level: a.level as "긴급" | "주의",
+        levelVariant: a.level === "긴급" ? ("error" as const) : ("warning" as const),
+        title: a.title,
+        description: a.description,
       }));
-  }, [data]);
-  ── */
+
+    return { urgentCount, cautionCount, recentAlertItems };
+  }, [
+    alertsReady,
+    coreData,
+    apiErrors,
+    accountDerived,
+    accountStatusFatalError,
+    snapshotSyncRuns,
+    snapshotSyncError,
+  ]);
 
   /* ── Compact summary data (for SHOW_DASHBOARD_RECENT_SUMMARIES) ── */
 
   // Section A: 최근 주문/제출 내역 (created_at 내림차순 정렬 후 5개)
   const compactOrders: CompactOrderItem[] = useMemo(() => {
-    if (!data) return [];
-    return [...data.orders]
+    if (!coreData) return [];
+    return [...coreData.orders]
       .sort((a, b) => new Date(b.created_at ?? 0).getTime() - new Date(a.created_at ?? 0).getTime())
       .slice(0, 5)
       .map((o) => {
@@ -775,12 +841,12 @@ export default function OperationsDashboardView() {
           statusVariant,
         };
       });
-  }, [data]);
+  }, [coreData]);
 
   // Section B: 최근 정합성 점검 (started_at 내림차순 정렬 후 5개)
   const compactReconciliationRuns: CompactReconciliationItem[] = useMemo(() => {
-    if (!data) return [];
-    return [...data.reconRuns]
+    if (!coreData) return [];
+    return [...coreData.reconRuns]
       .sort((a, b) => new Date(b.started_at ?? 0).getTime() - new Date(a.started_at ?? 0).getTime())
       .slice(0, 5)
       .map((r) => {
@@ -812,17 +878,17 @@ export default function OperationsDashboardView() {
           completedAt: r.completed_at,
         };
       });
-  }, [data]);
+  }, [coreData]);
 
-  /* ── Loading / Error ── */
-  if (loading) return <LoadingSpinner text="운영 데이터 로딩 중..." />;
+  /* ── Loading / Error (core만 화면 shell을 막는다) ── */
+  if (coreLoading) return <LoadingSpinner text="운영 데이터 로딩 중..." />;
 
-  if (error) {
+  if (coreFetchError) {
     return (
       <div className="p-6 space-y-4">
-        <ErrorBanner message={error} onDismiss={() => setError(null)} />
+        <ErrorBanner message={coreFetchError} onDismiss={() => setCoreFetchError(null)} />
         <button
-          onClick={fetchAll}
+          onClick={refetchAll}
           className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-white bg-[#3b82f6] rounded-lg hover:bg-[#2563eb] transition-colors"
         >
           <RefreshCw className="h-4 w-4" />
@@ -832,7 +898,7 @@ export default function OperationsDashboardView() {
     );
   }
 
-  if (!data || !derived) {
+  if (!coreData || !coreDerived) {
     return (
       <div className="p-6">
         <ErrorBanner message="데이터를 불러오지 못했습니다" onDismiss={() => {}} />
@@ -840,13 +906,13 @@ export default function OperationsDashboardView() {
     );
   }
 
-  const d = derived;
+  const d = coreDerived;
 
   /* ── StatusCard helpers ── */
-  const apiStatus = data.health?.status === "ok" ? "정상" : "미연동";
-  const apiStatusVariant = data.health?.status === "ok" ? "healthy" as const : "error" as const;
+  const apiStatus = coreData.health?.status === "ok" ? "정상" : "미연동";
+  const apiStatusVariant = coreData.health?.status === "ok" ? "healthy" as const : "error" as const;
 
-  const dbStatus = data.health?.database === "connected" || data.health?.database === "ok"
+  const dbStatus = coreData.health?.database === "connected" || coreData.health?.database === "ok"
     ? "연결됨"
     : "미연동";
   const dbStatusVariant = dbStatus === "연결됨" ? "healthy" as const : "error" as const;
@@ -855,21 +921,29 @@ export default function OperationsDashboardView() {
   const readyzVariant = d.readyzOk ? "healthy" as const : "error" as const;
 
   // ── Snapshot sync StatusCard: sync run status primary, snapshot_at secondary ──
-  const syncRun = d.latestSyncRun;
+  // snapshot-sync-runs는 계좌 fan-out과 무관한 독립 fetch라, 이 카드는
+  // snapshotSyncLoading 동안만 "로딩 중"이고 core 전체를 기다리지 않는다.
+  const latestSyncRun = snapshotSyncRuns.length > 0 ? snapshotSyncRuns[0] : null;
   let snapshotStatus: string;
   let snapshotVariant: "healthy" | "warning" | "error" | "neutral";
   let snapshotSubtitle: string;
 
-  if (!syncRun) {
-    // No run exists
+  if (snapshotSyncLoading) {
+    snapshotStatus = "로딩 중...";
+    snapshotVariant = "neutral";
+    snapshotSubtitle = "스냅샷 동기화 이력을 불러오는 중...";
+  } else if (snapshotSyncError) {
+    snapshotStatus = "오류";
+    snapshotVariant = "error";
+    snapshotSubtitle = `API 오류: ${snapshotSyncError}`;
+  } else if (!latestSyncRun) {
     snapshotStatus = "스냅샷 없음";
     snapshotVariant = "error";
-    snapshotSubtitle = d.latestSnapshotAt
-      ? `포지션/현금 snapshot_at: ${formatKstElapsed(d.latestSnapshotAt)}`
+    snapshotSubtitle = accountDerived.latestSnapshotAt
+      ? `포지션/현금 snapshot_at: ${formatKstElapsed(accountDerived.latestSnapshotAt)}`
       : "동기화 이력 없음";
   } else {
-    // Sync run exists — use status as primary indicator
-    switch (syncRun.status) {
+    switch (latestSyncRun.status) {
       case "completed":
         snapshotStatus = "정상";
         snapshotVariant = "healthy";
@@ -883,17 +957,15 @@ export default function OperationsDashboardView() {
         snapshotVariant = "error";
         break;
       default:
-        snapshotStatus = syncRun.status;
+        snapshotStatus = latestSyncRun.status;
         snapshotVariant = "warning";
     }
-    // Secondary: position/cash snapshot_at freshness
-    const snapshotTimeStr = d.latestSnapshotAt
-      ? `snapshot_at: ${formatKstElapsed(d.latestSnapshotAt)}`
+    const snapshotTimeStr = accountDerived.latestSnapshotAt
+      ? `snapshot_at: ${formatKstElapsed(accountDerived.latestSnapshotAt)}`
       : "snapshot 데이터 없음";
 
-    // Budget fallback / after-hours skip summary from summary_json
     let budgetLabel = "";
-    const sj = syncRun.summary_json;
+    const sj = latestSyncRun.summary_json;
     if (sj) {
       const parts = formatSnapshotBudgetParts(
         parseSnapshotBudgetCounters(sj as Record<string, number>),
@@ -903,7 +975,7 @@ export default function OperationsDashboardView() {
       }
     }
 
-    snapshotSubtitle = `${snapshotTimeStr} (${syncRun.succeeded_accounts}/${syncRun.total_accounts} 계좌 성공${budgetLabel})`;
+    snapshotSubtitle = `${snapshotTimeStr} (${latestSyncRun.succeeded_accounts}/${latestSyncRun.total_accounts} 계좌 성공${budgetLabel})`;
   }
 
   const reconStatus = d.activeIssueCount > 0 || d.activeLocksCount > 0
@@ -913,33 +985,14 @@ export default function OperationsDashboardView() {
     ? "warning" as const
     : "healthy" as const;
 
-  const orderCount = data.todayOrderSummary?.total_count ?? 0;
+  // ── 운영 경고 카드 값 ──
+  const alertsLoading = !alertsReady;
+  const alertStatusVariant: "error" | "warning" | "healthy" | "neutral" = alertsLoading
+    ? "neutral"
+    : (alertsDerived!.urgentCount > 0 ? "error" : alertsDerived!.cautionCount > 0 ? "warning" : "healthy");
 
-  // Alert count status
-  const alertStatusVariant: "error" | "warning" | "healthy" =
-    d.urgentCount > 0 ? "error" : d.cautionCount > 0 ? "warning" : "healthy";
-
-  // 2026-07-14: "freeze / live 비교" 카드를 없애면서 라이브 재계산
-  // (getTradingUniversePreview → market_overlay_diagnostics/comparison)이
-  // 더 이상 필요 없어졌다 — activeIntradayFreeze는 이제 DB의 freeze 결과만
-  // 가볍게 조회하는 getActiveIntradayFreezeSummary() 응답을 그대로 쓴다.
-  const activeIntradayFreeze = data.activeIntradayFreeze;
-  const freezeItems = activeIntradayFreeze?.items ?? [];
-  const todayBuyOrders = data.todayOrders.filter((order) => order.side === "buy");
-  const latestTodayBuyOrderBySymbol = new Map<string, OrderSummary>();
-  todayBuyOrders.forEach((order) => {
-    const symbol = order.symbol ?? "";
-    if (!symbol) return;
-    const existing = latestTodayBuyOrderBySymbol.get(symbol);
-    const orderTime = new Date(order.created_at ?? 0).getTime();
-    const existingTime = new Date(existing?.created_at ?? 0).getTime();
-    if (!existing || orderTime >= existingTime) {
-      latestTodayBuyOrderBySymbol.set(symbol, order);
-    }
-  });
-  const freezeBuyOrderCount = freezeItems.reduce((count, item) => {
-    return latestTodayBuyOrderBySymbol.has(item.symbol) ? count + 1 : count;
-  }, 0);
+  // ── 계좌 상태 영역 표시 문구 ──
+  const accountStatusHasData = accounts.length > 0 || cashMap.size > 0 || positionsMap.size > 0;
 
   return (
     <div className="p-6 space-y-6">
@@ -967,14 +1020,14 @@ export default function OperationsDashboardView() {
         />
       )}
 
-      {/* Warning Banner — UNIV-4: 지수 편입 데이터 staleness (read-only 감시) */}
-      {d.indexMembershipStaleness?.is_stale && (
+      {/* Warning Banner — UNIV-4: 지수 편입 데이터 staleness (read-only 감시, 독립 fetch) */}
+      {indexMembershipStaleness?.is_stale && (
         <WarningBanner
           variant="warning"
           title="지수 편입(index membership) 데이터가 오래되었습니다"
           message={
-            d.indexMembershipStaleness.latest_effective_from
-              ? `마지막 반영: ${d.indexMembershipStaleness.latest_effective_from} (경과 ${d.indexMembershipStaleness.age_days}일, 기준 ${d.indexMembershipStaleness.threshold_days}일). [RUNBOOK] index_membership_source_package_apply.md 절차로 갱신하세요.`
+            indexMembershipStaleness.latest_effective_from
+              ? `마지막 반영: ${indexMembershipStaleness.latest_effective_from} (경과 ${indexMembershipStaleness.age_days}일, 기준 ${indexMembershipStaleness.threshold_days}일). [RUNBOOK] index_membership_source_package_apply.md 절차로 갱신하세요.`
               : "지수 편입 데이터가 전혀 없습니다. [RUNBOOK] index_membership_source_package_apply.md 절차로 초기 반영하세요."
           }
         />
@@ -992,9 +1045,9 @@ export default function OperationsDashboardView() {
         </div>
       )}
 
-      {/* Status Summary Cards */}
+      {/* Status Summary Cards — 6개만 남긴다(오늘 주문 제출/현재 포지션/
+          가용 현금은 아래 "계좌 상태" 영역으로 이동하거나 제거) */}
       <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 2xl:grid-cols-6 gap-4">
-        {/* ── 항상 표시되는 핵심 카드 (7개) ── */}
         <StatusCard title="Ready 상태" value={readyzStatus} status={readyzVariant} subtitle="출처: GET /readyz" />
         <StatusCard
           title="Scheduler Status"
@@ -1010,54 +1063,8 @@ export default function OperationsDashboardView() {
           subtitle={snapshotSubtitle}
         />
         <StatusCard
-          title="오늘 주문 제출"
-          value={`${orderCount}건`}
-          status="neutral"
-          subtitle={`출처: GET /orders/daily-summary (체결 ${d.filledCount} / 제출됨 ${d.submittedCount} / 제출대기 ${d.pendingSubmitCount})`}
-        />
-        <StatusCard
-          title="오늘 BUY 차단"
-          value={
-            buyBlockSummary
-              ? `${buyBlockSummary.blocked_count}건`
-              : buyBlockSummaryLoading
-                ? "로딩 중..."
-                : "N/A"
-          }
-          status={
-            buyBlockSummary
-              ? buyBlockSummary.blocked_count > 0
-                ? "warning"
-                : "neutral"
-              : "neutral"
-          }
-          subtitle=""
-        />
-        <StatusCard
-          title="현재 포지션"
-          value={`${d.totalPositions}종목`}
-          status="neutral"
-          subtitle={
-            d.totalPositions > 0
-              ? "출처: /positions (최신 스냅샷 기준, quantity>0)"
-              : "포지션 없음"
-          }
-        />
-        <StatusCard
-          title="가용 현금"
-          value={d.totalAvailableCash > 0 ? formatKrw(d.totalAvailableCash) : "N/A"}
-          status="neutral"
-          subtitle={
-            d.totalAvailableCash > 0
-              ? d.cashUsedFallback
-                ? "출처: /cash-balance (orderable_amount 없음, available_cash fallback)"
-                : "출처: /cash-balance (orderable_amount 합계)"
-              : "데이터 없음"
-          }
-        />
-        <StatusCard
           title="운영 경고"
-          value={`긴급 ${d.urgentCount} / 주의 ${d.cautionCount}`}
+          value={alertsLoading ? "집계 중..." : `긴급 ${alertsDerived!.urgentCount} / 주의 ${alertsDerived!.cautionCount}`}
           status={alertStatusVariant}
           subtitle={
             <button
@@ -1067,6 +1074,28 @@ export default function OperationsDashboardView() {
               운영 경고 보기 →
             </button>
           }
+        />
+        <StatusCard
+          title="오늘 BUY 차단"
+          value={
+            buyBlockSummaryLoading
+              ? "로딩 중..."
+              : buyBlockSummaryError
+                ? "오류"
+                : buyBlockSummary
+                  ? `${buyBlockSummary.blocked_count}건`
+                  : "N/A"
+          }
+          status={
+            buyBlockSummaryError
+              ? "error"
+              : buyBlockSummary
+                ? buyBlockSummary.blocked_count > 0
+                  ? "warning"
+                  : "neutral"
+                : "neutral"
+          }
+          subtitle={buyBlockSummaryError ? `API 오류: ${buyBlockSummaryError}` : ""}
         />
 
         {/* 최근 제출 실패 */}
@@ -1203,6 +1232,72 @@ export default function OperationsDashboardView() {
         )}
       </div>
 
+      {/* ── 계좌 상태 영역 (총자산/가용 현금/현재 포지션) ──
+          계좌 목록→계좌 스냅샷 fan-out은 core와 독립적으로 진행되므로,
+          이 영역만 자체 loading/부분 실패/전체 실패 상태를 표시한다. */}
+      <div className="space-y-3">
+        <h2 className="text-lg font-semibold text-[#0f172a]">계좌 상태</h2>
+        <Panel>
+          {accountStatusLoading ? (
+            <p className="text-sm text-[#64748b]">계좌 상태를 불러오는 중...</p>
+          ) : accountStatusFatalError ? (
+            <p className="text-sm text-[#991b1b]">
+              {accountStatusFatalError} — 계좌/스냅샷 API 응답을 확인하세요.
+            </p>
+          ) : (
+            <>
+              {accountStatusFailedCount > 0 && (
+                <p className="text-xs text-[#b91c1c] mb-3">
+                  일부 계좌({accountStatusFailedCount}개) 스냅샷 조회 실패 — 아래 수치는 조회에 성공한 계좌만 반영합니다.
+                </p>
+              )}
+              {!accountStatusHasData ? (
+                <p className="text-sm text-[#64748b]">조회된 계좌가 없습니다.</p>
+              ) : (
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                  <StatusCard
+                    title="총자산"
+                    value={
+                      accountDerived.totalAssetSum > 0 || accountDerived.totalAssetMissingCount === 0
+                        ? formatKrw(accountDerived.totalAssetSum)
+                        : "N/A"
+                    }
+                    status="neutral"
+                    subtitle={
+                      accountDerived.totalAssetMissingCount > 0
+                        ? `총자산 필드 없는 계좌 ${accountDerived.totalAssetMissingCount}건 제외 합계 (출처: cash_balance.total_asset)`
+                        : "출처: cash_balance.total_asset 합계"
+                    }
+                  />
+                  <StatusCard
+                    title="가용 현금"
+                    value={d && accountDerived.totalAvailableCash > 0 ? formatKrw(accountDerived.totalAvailableCash) : "N/A"}
+                    status="neutral"
+                    subtitle={
+                      accountDerived.totalAvailableCash > 0
+                        ? accountDerived.cashUsedFallback
+                          ? "출처: /cash-balance (orderable_amount 없음, available_cash fallback)"
+                          : "출처: /cash-balance (orderable_amount 합계)"
+                        : "데이터 없음"
+                    }
+                  />
+                  <StatusCard
+                    title="현재 포지션"
+                    value={`${accountDerived.totalPositions}종목`}
+                    status="neutral"
+                    subtitle={
+                      accountDerived.totalPositions > 0
+                        ? "출처: /positions (최신 스냅샷 기준, quantity>0)"
+                        : "포지션 없음"
+                    }
+                  />
+                </div>
+              )}
+            </>
+          )}
+        </Panel>
+      </div>
+
       {/* Recent Summaries Sections (feature flag) */}
       {SHOW_DASHBOARD_RECENT_SUMMARIES && (
         <div className="space-y-6">
@@ -1285,7 +1380,9 @@ export default function OperationsDashboardView() {
             />
           </div>
 
-          {/* ── Section C: 최근 운영 경고 ── */}
+          {/* ── Section C: 최근 운영 경고 ──
+              alertsReady가 false인 동안은 "운영 경고 없음"(빈 데이터)처럼
+              보이지 않도록 별도 안내 문구를 보여준다. */}
           <div className="space-y-3">
             <div className="flex items-center justify-between">
               <h2 className="text-lg font-semibold text-[#0f172a]">최근 운영 경고</h2>
@@ -1297,53 +1394,28 @@ export default function OperationsDashboardView() {
                 <ArrowRight className="h-4 w-4" />
               </button>
             </div>
-            <DataTable
-              columns={[
-                {
-                  key: "level",
-                  header: "수준",
-                  width: "60px",
-                  render: (row: CompactAlertItem) => (
-                    <StatusBadge variant={row.levelVariant}>{row.level}</StatusBadge>
-                  ),
-                },
-                { key: "title", header: "제목" },
-                { key: "description", header: "설명" },
-              ]}
-              data={d.recentAlertItems}
-              idKey="id"
-              compact
-              emptyMessage="운영 경고 없음"
-            />
-          </div>
-
-          {/* ── Section D: 오늘 매수 주문 전환 ──
-              2026-08-22: "Universe Selection / Market Overlay" 섹션(유니버스
-              선정 종목 리스트)은 별도 화면(/operations/universe-selection,
-              "유니버스 선정 현황")으로 분리했다. 이 카드는 유니버스 목록이
-              아니라 "오늘 freeze 종목이 실제 매수 주문으로 전환된 건수"라는
-              운영 요약 지표라서 대시보드에 그대로 남긴다 — 이 카드에 필요한
-              getActiveIntradayFreezeSummary() 호출/계산(activeIntradayFreeze,
-              freezeItems, freezeBuyOrderCount, todayBuyOrders)은 그대로
-              유지했다. */}
-          <div className="space-y-3">
-            <Panel
-              title="오늘 매수 주문 전환"
-              subtitle="active intraday freeze 종목 기준"
-            >
-              <div className="grid grid-cols-1 xl:grid-cols-2 gap-3 mb-5">
-                <div className="rounded-lg border border-[#e2e8f0] bg-[#f8fafc] px-4 py-3">
-                  <p className="text-xs text-[#64748b]">오늘 매수 주문 전환</p>
-                  <p className="mt-1 text-lg font-semibold text-[#0f172a]">
-                    {freezeBuyOrderCount}건
-                  </p>
-                  <p className="text-xs text-[#94a3b8]">
-                    today buy orders {todayBuyOrders.length}건 중 freeze 종목 기준
-                    (frozen {activeIntradayFreeze?.frozen_at ? formatKstDateTime(activeIntradayFreeze.frozen_at) : "—"})
-                  </p>
-                </div>
-              </div>
-            </Panel>
+            {alertsLoading ? (
+              <p className="text-sm text-[#64748b]">운영 경고를 집계하는 중...</p>
+            ) : (
+              <DataTable
+                columns={[
+                  {
+                    key: "level",
+                    header: "수준",
+                    width: "60px",
+                    render: (row: CompactAlertItem) => (
+                      <StatusBadge variant={row.levelVariant}>{row.level}</StatusBadge>
+                    ),
+                  },
+                  { key: "title", header: "제목" },
+                  { key: "description", header: "설명" },
+                ]}
+                data={alertsDerived!.recentAlertItems}
+                idKey="id"
+                compact
+                emptyMessage="운영 경고 없음"
+              />
+            )}
           </div>
         </div>
       )}
