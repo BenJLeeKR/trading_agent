@@ -8,7 +8,8 @@ import { LoadingSpinner } from "./common/LoadingSpinner";
 import { ErrorBanner } from "./common/ErrorBanner";
 import { ArrowRight, RefreshCw } from "lucide-react";
 import { Link, useNavigate } from "react-router-dom";
-import { formatKrw, formatKstDateTime, formatKstElapsed, getKstTodayString } from "../lib/utils";
+import { formatKrw, formatKstDateTime, formatKstElapsed, getKstTodayString, toNumeric } from "../lib/utils";
+import { REALIZED_PNL_CUMULATIVE_START_DATE } from "./AccountsView";
 import {
   getHealth,
   getReadyz,
@@ -122,15 +123,7 @@ function formatPercent(val: number | null | undefined): string {
   return `${prefix}${val.toFixed(2)}%`;
 }
 
-/** RealizedPnlView.tsx의 기본 기간(최근 1개월)과 동일한 계산 — 화면 간
- * "총손익" 기준을 다르게 만들지 않기 위해 그대로 옮겨왔다. */
-function kstDateMonthsAgo(months: number): string {
-  const d = new Date();
-  d.setMonth(d.getMonth() - months);
-  return getKstTodayString(d);
-}
-
-/** RealizedPnlView.tsx의 pnlClass/formatSignedKrw와 동일한 표시 규칙. */
+/** RealizedPnlView.tsx/AccountsView.tsx의 pnlClass/formatSignedKrw와 동일한 표시 규칙. */
 function formatSignedKrw(val: number): string {
   return `${val >= 0 ? "+" : ""}${formatKrw(val)}`;
 }
@@ -360,15 +353,17 @@ export default function OperationsDashboardView() {
   // 계좌 스냅샷 중 일부만 실패한 경우(부분 실패) 건수.
   const [accountStatusFailedCount, setAccountStatusFailedCount] = useState(0);
 
-  // ── 총손익(실현손익 합계, 최근 1개월~오늘 KST) — 계좌 스냅샷(포지션/현금)
-  // fan-out과는 별개의 API(`/performance/realized-pnl/summary`)라 fire-and-
-  // forget으로 병행 실행한다. accountStatusLoading을 기다리지 않는다.
-  const [realizedPnlNetSum, setRealizedPnlNetSum] = useState<number | null>(null);
+  // ── 총손익 — AccountsView.tsx "계좌 상세"의 총손익 카드와 정의를 그대로
+  // 맞춘다: 계좌별 (미실현 손익 + 실현손익 누적[REALIZED_PNL_CUMULATIVE_
+  // START_DATE~오늘] − 현재 포지션 매수 수수료 합계)를 계좌별로 계산한 뒤
+  // 전체 계좌에 대해 합산한다. 미실현 손익/매수 수수료는 이미 계좌 상태
+  // fan-out(positionsMap/cashMap)에서 받아온 데이터를 그대로 재사용하므로
+  // 추가 API 호출이 필요 없다 — 실현손익 누적만 별도 API
+  // (`/performance/realized-pnl/summary`)로 계좌별 fire-and-forget 병행
+  // 조회한다(accountStatusLoading을 기다리지 않는다).
+  // 계좌별 실현손익 누적(성공한 계좌만 담김 — 실패한 계좌는 key 자체가 없음).
+  const [realizedPnlByAccount, setRealizedPnlByAccount] = useState<Map<string, number>>(new Map());
   const [realizedPnlLoading, setRealizedPnlLoading] = useState(true);
-  // 계좌가 있는데 전부 조회 실패한 경우 — "0원"처럼 보이지 않도록 구분.
-  const [realizedPnlAllFailed, setRealizedPnlAllFailed] = useState(false);
-  // 일부 계좌만 실패한 경우(부분 실패) 건수 — 이 경우 합계는 성공한 계좌만 반영.
-  const [realizedPnlFailedCount, setRealizedPnlFailedCount] = useState(0);
 
   // ── snapshot-sync-runs — 계좌 fan-out과 무관, 독립적으로 fetch ──
   const [snapshotSyncRuns, setSnapshotSyncRuns] = useState<SnapshotSyncRunSummary[]>([]);
@@ -472,35 +467,32 @@ export default function OperationsDashboardView() {
   // 시점과 무관하게 자체 loading/error로 표시된다.
   const fetchRealizedPnlTotal = async (accountsList: AccountSummary[]) => {
     setRealizedPnlLoading(true);
-    setRealizedPnlAllFailed(false);
-    setRealizedPnlFailedCount(0);
     try {
       if (accountsList.length === 0) {
-        setRealizedPnlNetSum(null);
+        setRealizedPnlByAccount(new Map());
         return;
       }
-      // RealizedPnlView.tsx 기본값과 동일: 최근 1개월 ~ 오늘(KST).
-      const startDate = kstDateMonthsAgo(1);
+      // AccountsView.tsx "계좌 상세" 총손익 카드와 동일한 누적 시작일.
+      const startDate = REALIZED_PNL_CUMULATIVE_START_DATE;
       const endDate = getKstTodayString();
       const results = await Promise.allSettled(
-        accountsList.map((a) => getRealizedPnlSummary(a.account_id, { startDate, endDate })),
+        accountsList.map((a) =>
+          getRealizedPnlSummary(a.account_id, { startDate, endDate }).then((r) => ({
+            accountId: a.account_id,
+            netSum: toNumeric(r.realized_pnl_net_sum),
+          })),
+        ),
       );
-      let sum = 0;
+      const nextMap = new Map<string, number>();
       let failedCount = 0;
       results.forEach((r) => {
-        if (r.status === "fulfilled") sum += r.value.realized_pnl_net_sum;
+        if (r.status === "fulfilled") nextMap.set(r.value.accountId, r.value.netSum);
         else failedCount += 1;
       });
       if (failedCount > 0) {
         addApiError("GET /performance/realized-pnl/summary", "일부 계좌 실현손익 조회 실패");
       }
-      setRealizedPnlFailedCount(failedCount);
-      if (failedCount === accountsList.length) {
-        setRealizedPnlAllFailed(true);
-        setRealizedPnlNetSum(null);
-      } else {
-        setRealizedPnlNetSum(sum);
-      }
+      setRealizedPnlByAccount(nextMap);
     } finally {
       setRealizedPnlLoading(false);
     }
@@ -743,6 +735,38 @@ export default function OperationsDashboardView() {
       latestSnapshotAt,
     };
   }, [positionsMap, cashMap]);
+
+  // ── 총손익 — AccountsView.tsx "계좌 상세" 총손익 카드와 동일한 정의를
+  // 계좌별로 계산해 합산한다: 미실현 손익(cash_balance.total_unrealized_pnl
+  // 우선, 없으면 포지션 unrealized_pnl 합) + 실현손익 누적
+  // (realizedPnlByAccount) − 현재 포지션 매수 수수료 합계
+  // (remaining_buy_fee_pool). 실현손익 조회에 실패한 계좌는 map에 key가
+  // 없으므로 계산에서 제외한다(부분 실패 시 성공한 계좌만 반영).
+  const totalPnlDerived = useMemo(() => {
+    let sum = 0;
+    let includedCount = 0;
+    for (const [accountId, realizedSum] of realizedPnlByAccount.entries()) {
+      const positions = positionsMap.get(accountId) ?? [];
+      const latestPositionMap = new Map<string, PositionSnapshotView>();
+      for (const p of positions) {
+        if ((p.quantity ?? 0) <= 0) continue;
+        const existing = latestPositionMap.get(p.instrument_id);
+        if (!existing || p.snapshot_at > existing.snapshot_at) {
+          latestPositionMap.set(p.instrument_id, p);
+        }
+      }
+      const latestPositions = Array.from(latestPositionMap.values());
+      const cash = cashMap.get(accountId);
+      const unrealizedPnl =
+        cash?.total_unrealized_pnl != null
+          ? cash.total_unrealized_pnl
+          : latestPositions.reduce((s, p) => s + (p.unrealized_pnl ?? 0), 0);
+      const feePool = latestPositions.reduce((s, p) => s + (p.remaining_buy_fee_pool ?? 0), 0);
+      sum += unrealizedPnl + realizedSum - feePool;
+      includedCount += 1;
+    }
+    return { sum, includedCount };
+  }, [realizedPnlByAccount, positionsMap, cashMap]);
 
   /* ── core 파생값(스케줄러/세션/정합성 등) ── */
   const coreDerived = useMemo(() => {
@@ -1357,48 +1381,58 @@ export default function OperationsDashboardView() {
                         : "포지션 없음"
                     }
                   />
-                  {/* 총손익 — RealizedPnlView.tsx와 동일 기간(최근 1개월~오늘 KST)
-                      기준. 계좌 스냅샷 fan-out과 무관한 독립 fetch라 자체
-                      loading/전체 실패/부분 실패 상태를 따로 표시한다. */}
-                  <StatusCard
-                    title="총손익"
-                    value={
-                      realizedPnlLoading
-                        ? "조회 중..."
-                        : realizedPnlAllFailed
-                          ? "조회 실패"
-                          : formatSignedKrw(realizedPnlNetSum ?? 0)
-                    }
-                    // RealizedPnlView.tsx의 pnlClass(양수 초록/음수 빨강)와 동일하게
-                    // healthy(초록)/error(빨강)를 그대로 맞춘다 — "조회 실패"와는
-                    // value 텍스트("조회 실패" vs 실제 금액)와 badgeLabel("오류" vs
-                    // "손실")로 구분되므로 같은 빨강이어도 헷갈리지 않는다.
-                    status={
-                      realizedPnlAllFailed
-                        ? "error"
-                        : realizedPnlLoading
-                          ? "neutral"
-                          : (realizedPnlNetSum ?? 0) >= 0
-                            ? "healthy"
-                            : "error"
-                    }
-                    badgeLabel={
-                      realizedPnlAllFailed
-                        ? undefined
-                        : realizedPnlLoading
-                          ? undefined
-                          : (realizedPnlNetSum ?? 0) >= 0
-                            ? "이익"
-                            : "손실"
-                    }
-                    subtitle={
-                      realizedPnlAllFailed
-                        ? "모든 계좌 조회 실패"
-                        : realizedPnlFailedCount > 0
-                          ? `최근 1개월 기준(계좌 ${realizedPnlFailedCount}개 조회 실패, 성공한 계좌만 반영) · 출처: realized-pnl summary`
-                          : "최근 1개월 기준 · 출처: realized-pnl summary"
-                    }
-                  />
+                  {/* 총손익 — AccountsView.tsx "계좌 상세" 총손익 카드와 동일한
+                      정의(미실현 + 실현손익 누적 − 매수 수수료 pool)를 계좌별로
+                      계산해 합산한다. 실현손익 누적만 별도 fetch라 계좌 스냅샷
+                      fan-out과는 별개로 자체 loading/전체 실패/부분 실패 상태를
+                      따로 표시한다. */}
+                  {(() => {
+                    const totalPnlLoading = realizedPnlLoading || accountStatusLoading;
+                    const totalPnlAllFailed =
+                      !totalPnlLoading && accounts.length > 0 && totalPnlDerived.includedCount === 0;
+                    const totalPnlFailedCount = accounts.length - totalPnlDerived.includedCount;
+                    return (
+                      <StatusCard
+                        title="총손익"
+                        value={
+                          totalPnlLoading
+                            ? "조회 중..."
+                            : totalPnlAllFailed
+                              ? "조회 실패"
+                              : formatSignedKrw(totalPnlDerived.sum)
+                        }
+                        // RealizedPnlView.tsx/AccountsView.tsx의 pnlClass(양수 초록/음수
+                        // 빨강)와 동일하게 healthy(초록)/error(빨강)를 맞춘다 —
+                        // "조회 실패"와는 value 텍스트와 badgeLabel("오류" 없음 vs
+                        // "손실")로 구분되므로 같은 빨강이어도 헷갈리지 않는다.
+                        status={
+                          totalPnlLoading
+                            ? "neutral"
+                            : totalPnlAllFailed
+                              ? "error"
+                              : totalPnlDerived.sum >= 0
+                                ? "healthy"
+                                : "error"
+                        }
+                        badgeLabel={
+                          totalPnlLoading || totalPnlAllFailed
+                            ? undefined
+                            : totalPnlDerived.sum >= 0
+                              ? "이익"
+                              : "손실"
+                        }
+                        subtitle={
+                          totalPnlLoading
+                            ? "출처: realized-pnl summary"
+                            : totalPnlAllFailed
+                              ? "모든 계좌 조회 실패"
+                              : totalPnlFailedCount > 0
+                                ? `${REALIZED_PNL_CUMULATIVE_START_DATE}~오늘 누적(계좌 ${totalPnlFailedCount}개 조회 실패, 성공한 계좌만 반영) · 출처: realized-pnl summary`
+                                : `${REALIZED_PNL_CUMULATIVE_START_DATE}~오늘 누적 · 출처: realized-pnl summary`
+                        }
+                      />
+                    );
+                  })()}
                 </div>
               )}
             </>
