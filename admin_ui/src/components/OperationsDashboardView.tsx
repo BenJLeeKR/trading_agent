@@ -24,6 +24,7 @@ import {
   getFailureSummary,
   getBuyBlockSummary,
   getIndexMembershipStaleness,
+  getRealizedPnlSummary,
 } from "../api/client";
 import type {
   BuyBlockSummary,
@@ -119,6 +120,19 @@ function formatPercent(val: number | null | undefined): string {
   if (val == null) return "N/A";
   const prefix = val >= 0 ? "+" : "";
   return `${prefix}${val.toFixed(2)}%`;
+}
+
+/** RealizedPnlView.tsx의 기본 기간(최근 1개월)과 동일한 계산 — 화면 간
+ * "총손익" 기준을 다르게 만들지 않기 위해 그대로 옮겨왔다. */
+function kstDateMonthsAgo(months: number): string {
+  const d = new Date();
+  d.setMonth(d.getMonth() - months);
+  return getKstTodayString(d);
+}
+
+/** RealizedPnlView.tsx의 pnlClass/formatSignedKrw와 동일한 표시 규칙. */
+function formatSignedKrw(val: number): string {
+  return `${val >= 0 ? "+" : ""}${formatKrw(val)}`;
 }
 
 /* ── Scheduler Status Types & Helper ── */
@@ -346,6 +360,16 @@ export default function OperationsDashboardView() {
   // 계좌 스냅샷 중 일부만 실패한 경우(부분 실패) 건수.
   const [accountStatusFailedCount, setAccountStatusFailedCount] = useState(0);
 
+  // ── 총손익(실현손익 합계, 최근 1개월~오늘 KST) — 계좌 스냅샷(포지션/현금)
+  // fan-out과는 별개의 API(`/performance/realized-pnl/summary`)라 fire-and-
+  // forget으로 병행 실행한다. accountStatusLoading을 기다리지 않는다.
+  const [realizedPnlNetSum, setRealizedPnlNetSum] = useState<number | null>(null);
+  const [realizedPnlLoading, setRealizedPnlLoading] = useState(true);
+  // 계좌가 있는데 전부 조회 실패한 경우 — "0원"처럼 보이지 않도록 구분.
+  const [realizedPnlAllFailed, setRealizedPnlAllFailed] = useState(false);
+  // 일부 계좌만 실패한 경우(부분 실패) 건수 — 이 경우 합계는 성공한 계좌만 반영.
+  const [realizedPnlFailedCount, setRealizedPnlFailedCount] = useState(0);
+
   // ── snapshot-sync-runs — 계좌 fan-out과 무관, 독립적으로 fetch ──
   const [snapshotSyncRuns, setSnapshotSyncRuns] = useState<SnapshotSyncRunSummary[]>([]);
   const [snapshotSyncLoading, setSnapshotSyncLoading] = useState(true);
@@ -442,6 +466,46 @@ export default function OperationsDashboardView() {
   // 시작할 수 있지만, 이 조회 자체는 core의 나머지 6개 API나 화면 shell
   // 렌더링을 기다리게 만들지 않는다 — 별도 loading/error state로 "계좌
   // 상태" 영역과 "운영 경고" 카드에만 반영된다.
+  // 총손익(실현손익 합계)은 계좌 스냅샷(포지션/현금) fan-out과 데이터
+  // 의존성이 없는 별도 API라, fetchAccountStatus 안에서 await하지 않고
+  // fire-and-forget으로 병행 실행한다 — accountStatusLoading이 끝나는
+  // 시점과 무관하게 자체 loading/error로 표시된다.
+  const fetchRealizedPnlTotal = async (accountsList: AccountSummary[]) => {
+    setRealizedPnlLoading(true);
+    setRealizedPnlAllFailed(false);
+    setRealizedPnlFailedCount(0);
+    try {
+      if (accountsList.length === 0) {
+        setRealizedPnlNetSum(null);
+        return;
+      }
+      // RealizedPnlView.tsx 기본값과 동일: 최근 1개월 ~ 오늘(KST).
+      const startDate = kstDateMonthsAgo(1);
+      const endDate = getKstTodayString();
+      const results = await Promise.allSettled(
+        accountsList.map((a) => getRealizedPnlSummary(a.account_id, { startDate, endDate })),
+      );
+      let sum = 0;
+      let failedCount = 0;
+      results.forEach((r) => {
+        if (r.status === "fulfilled") sum += r.value.realized_pnl_net_sum;
+        else failedCount += 1;
+      });
+      if (failedCount > 0) {
+        addApiError("GET /performance/realized-pnl/summary", "일부 계좌 실현손익 조회 실패");
+      }
+      setRealizedPnlFailedCount(failedCount);
+      if (failedCount === accountsList.length) {
+        setRealizedPnlAllFailed(true);
+        setRealizedPnlNetSum(null);
+      } else {
+        setRealizedPnlNetSum(sum);
+      }
+    } finally {
+      setRealizedPnlLoading(false);
+    }
+  };
+
   const fetchAccountStatus = async (clients: ClientDetail[], clientsFetchFailed: boolean) => {
     setAccountStatusLoading(true);
     setAccountStatusFatalError(null);
@@ -451,6 +515,7 @@ export default function OperationsDashboardView() {
         setAccounts([]);
         setPositionsMap(new Map());
         setCashMap(new Map());
+        fetchRealizedPnlTotal([]);
         // clients가 빈 배열인 이유가 "클라이언트가 실제로 0개"인지 "GET
         // /clients 자체가 실패해 빈 배열로 대체됐는지"를 구분한다 — 후자를
         // "계좌 없음"(empty)으로 보여주면 API 실패가 정상 데이터처럼 보인다.
@@ -473,6 +538,7 @@ export default function OperationsDashboardView() {
         addApiError("GET /accounts", "일부 클라이언트 계좌 조회 실패");
       }
       setAccounts(nextAccounts);
+      fetchRealizedPnlTotal(nextAccounts);
 
       if (nextAccounts.length === 0) {
         setPositionsMap(new Map());
@@ -1254,7 +1320,7 @@ export default function OperationsDashboardView() {
               {!accountStatusHasData ? (
                 <p className="text-sm text-[#64748b]">조회된 계좌가 없습니다.</p>
               ) : (
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
                   <StatusCard
                     title="총자산"
                     value={
@@ -1289,6 +1355,48 @@ export default function OperationsDashboardView() {
                       accountDerived.totalPositions > 0
                         ? "출처: /positions (최신 스냅샷 기준, quantity>0)"
                         : "포지션 없음"
+                    }
+                  />
+                  {/* 총손익 — RealizedPnlView.tsx와 동일 기간(최근 1개월~오늘 KST)
+                      기준. 계좌 스냅샷 fan-out과 무관한 독립 fetch라 자체
+                      loading/전체 실패/부분 실패 상태를 따로 표시한다. */}
+                  <StatusCard
+                    title="총손익"
+                    value={
+                      realizedPnlLoading
+                        ? "조회 중..."
+                        : realizedPnlAllFailed
+                          ? "조회 실패"
+                          : formatSignedKrw(realizedPnlNetSum ?? 0)
+                    }
+                    // RealizedPnlView.tsx의 pnlClass(양수 초록/음수 빨강)와 동일하게
+                    // healthy(초록)/error(빨강)를 그대로 맞춘다 — "조회 실패"와는
+                    // value 텍스트("조회 실패" vs 실제 금액)와 badgeLabel("오류" vs
+                    // "손실")로 구분되므로 같은 빨강이어도 헷갈리지 않는다.
+                    status={
+                      realizedPnlAllFailed
+                        ? "error"
+                        : realizedPnlLoading
+                          ? "neutral"
+                          : (realizedPnlNetSum ?? 0) >= 0
+                            ? "healthy"
+                            : "error"
+                    }
+                    badgeLabel={
+                      realizedPnlAllFailed
+                        ? undefined
+                        : realizedPnlLoading
+                          ? undefined
+                          : (realizedPnlNetSum ?? 0) >= 0
+                            ? "이익"
+                            : "손실"
+                    }
+                    subtitle={
+                      realizedPnlAllFailed
+                        ? "모든 계좌 조회 실패"
+                        : realizedPnlFailedCount > 0
+                          ? `최근 1개월 기준(계좌 ${realizedPnlFailedCount}개 조회 실패, 성공한 계좌만 반영) · 출처: realized-pnl summary`
+                          : "최근 1개월 기준 · 출처: realized-pnl summary"
                     }
                   />
                 </div>

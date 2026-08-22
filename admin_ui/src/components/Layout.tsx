@@ -40,6 +40,10 @@ interface NavItem {
   /** 클릭/active 상태가 없는 순수 그룹 레이블. 예: "계좌" 아래
    * "계좌잔고"/"실현손익"을 묶는 부모 행. */
   header?: boolean;
+  /** true면 `currentPath === to`일 때만 active — 하위 경로는 포함하지 않는다.
+   * "계좌잔고"(`/accounts`)처럼 자신의 경로가 다른 메뉴 항목("실현손익",
+   * `/accounts/realized-pnl`)의 prefix가 되어 동시에 active되는 경우에 쓴다. */
+  exact?: boolean;
 }
 
 interface NavSection {
@@ -65,7 +69,7 @@ const navSections: NavSection[] = [
       { icon: FileText, label: "주문내역", to: "/orders" },
       { icon: ListOrdered, label: "체결내역", to: "/fills" },
       { icon: Wallet, label: "계좌", header: true },
-      { icon: CornerDownRight, label: "계좌잔고", to: "/accounts", indent: true },
+      { icon: CornerDownRight, label: "계좌잔고", to: "/accounts", indent: true, exact: true },
       { icon: CornerDownRight, label: "실현손익", to: "/accounts/realized-pnl", indent: true },
       { icon: Brain, label: "의사결정", to: "/decisions" },
       { icon: Zap, label: "에이전트 실행", to: "/agent-runs" },
@@ -103,7 +107,9 @@ function NavSectionsList({
               const isActive = !item.header && !item.disabled && item.to !== undefined && (
                 item.to === "/"
                   ? currentPath === "/"
-                  : currentPath === item.to || currentPath.startsWith(item.to + "/")
+                  : item.exact
+                    ? currentPath === item.to
+                    : currentPath === item.to || currentPath.startsWith(item.to + "/")
               );
               return (
                 <li key={item.label}>
@@ -126,7 +132,7 @@ function NavSectionsList({
                   ) : (
                     <NavLink
                       to={item.to!}
-                      end={item.to === "/"}
+                      end={item.to === "/" || item.exact}
                       onClick={onNavigate}
                       className={cn(
                         "flex w-full items-center gap-3 rounded-lg py-[7px] text-sm font-semibold transition-colors",

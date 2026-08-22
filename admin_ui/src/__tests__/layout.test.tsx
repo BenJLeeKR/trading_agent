@@ -87,6 +87,51 @@ describe("Layout navigation order", () => {
 });
 
 /* ───────────────────────────────────────────
+ * Scenario 1b: "계좌잔고"/"실현손익" active 상태 — /accounts는
+ * /accounts/realized-pnl의 prefix라서 과거엔 둘 다 동시에 active됐다.
+ * ─────────────────────────────────────────── */
+const ACTIVE_CLASS = "bg-[#f1f5f9]";
+
+function renderLayoutAt(path: string) {
+  return render(
+    <MemoryRouter initialEntries={[path]}>
+      <AuthProvider>
+        <Routes>
+          <Route element={<Layout />}>
+            <Route path="/accounts" element={<div>Accounts Page</div>} />
+            <Route path="/accounts/realized-pnl" element={<div>Realized PnL Page</div>} />
+          </Route>
+        </Routes>
+      </AuthProvider>
+    </MemoryRouter>,
+  );
+}
+
+describe("Layout navigation active state — 계좌잔고/실현손익", () => {
+  it("/accounts에서는 계좌잔고만 active되고 실현손익은 active되지 않는다", () => {
+    setStoredToken(VALID_TOKEN);
+    renderLayoutAt("/accounts");
+
+    const accountsLink = screen.getByText("계좌잔고").closest("a")!;
+    const realizedPnlLink = screen.getByText("실현손익").closest("a")!;
+
+    expect(accountsLink.className).toContain(ACTIVE_CLASS);
+    expect(realizedPnlLink.className).not.toContain(ACTIVE_CLASS);
+  });
+
+  it("/accounts/realized-pnl에서는 실현손익만 active되고 계좌잔고는 active되지 않는다", () => {
+    setStoredToken(VALID_TOKEN);
+    renderLayoutAt("/accounts/realized-pnl");
+
+    const accountsLink = screen.getByText("계좌잔고").closest("a")!;
+    const realizedPnlLink = screen.getByText("실현손익").closest("a")!;
+
+    expect(realizedPnlLink.className).toContain(ACTIVE_CLASS);
+    expect(accountsLink.className).not.toContain(ACTIVE_CLASS);
+  });
+});
+
+/* ───────────────────────────────────────────
  * Scenario 2: Read-only badge 표시 (token 유무 관계없이 항상)
  * ─────────────────────────────────────────── */
 describe("Layout read-only badge", () => {

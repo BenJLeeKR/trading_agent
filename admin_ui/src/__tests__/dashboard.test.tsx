@@ -569,6 +569,29 @@ function accountSnapshotFor(accountId: string) {
   return { positions: [], cash_balance: mockCashBalanceNull };
 }
 
+/** account_id별 realized-pnl summary(총손익) — 계좌 3개 합계가 +85,000이 되도록 구성. */
+function realizedPnlSummaryFor(accountId: string) {
+  const netByAccount: Record<string, number> = {
+    [mockAccounts[0].account_id]: 100000,
+    [mockAccounts[1].account_id]: -20000,
+    [mockAccounts[2].account_id]: 5000,
+  };
+  return {
+    account_id: accountId,
+    instrument_id: null,
+    start_date: "2026-07-22",
+    end_date: "2026-08-22",
+    realized_pnl_net_sum: netByAccount[accountId] ?? 0,
+    sell_event_count: 1,
+    buy_amount_sum: 0,
+    sell_amount_sum: 0,
+    fee_tax_sum: 0,
+    allocated_buy_fee_sum: 0,
+    recompute_pending_count: 0,
+    by_instrument: [],
+  };
+}
+
 /**
  * OperationsDashboardView가 쓰는 API 전부를 기본값으로 mock한다. 이제
  * fetchAll() 하나가 아니라 독립된 여러 effect(core/계좌 상태/snapshot-sync/
@@ -593,6 +616,9 @@ function mockOpsDashboardCommon() {
   vi.spyOn(apiClient, "getBuyBlockSummary").mockResolvedValue(mockBuyBlockSummary);
   vi.spyOn(apiClient, "getRecentFailures").mockResolvedValue([]);
   vi.spyOn(apiClient, "getFailureSummary").mockResolvedValue(mockFailureSummaryEmpty);
+  vi.spyOn(apiClient, "getRealizedPnlSummary").mockImplementation(
+    async (accountId: string) => realizedPnlSummaryFor(accountId) as never,
+  );
 }
 
 function renderOpsDashboard() {
@@ -834,5 +860,89 @@ describe("OperationsDashboardView — 계좌 상태 부분/전체 실패", () =>
     await waitFor(() => {
       expect(screen.getByText(/계좌 목록을 불러오지 못했습니다/)).toBeInTheDocument();
     });
+  });
+});
+
+describe("OperationsDashboardView — 총손익(실현손익) 카드", () => {
+  it("대시보드 첫 화면은 realized-pnl summary 응답을 기다리지 않는다", async () => {
+    mockOpsDashboardCommon();
+    // realized-pnl summary를 영원히 pending 상태로 묶어도 core 완료만으로
+    // 화면 shell(상단 카드)이 렌더링돼야 한다.
+    vi.spyOn(apiClient, "getRealizedPnlSummary").mockReturnValue(new Promise(() => {}));
+
+    renderOpsDashboard();
+
+    await screen.findByText("Ready 상태");
+    expect(screen.getByText("Scheduler Status")).toBeInTheDocument();
+  });
+
+  it("계좌 상태 영역에 총손익 카드가 표시되고 여러 계좌 합계(성공한 계좌만)가 반영된다", async () => {
+    mockOpsDashboardCommon();
+
+    renderOpsDashboard();
+
+    await screen.findByText("계좌 상태");
+    await screen.findByText("총손익");
+    // 100,000 - 20,000 + 5,000 = +85,000원
+    await waitFor(() => {
+      expect(screen.getByText("+85,000원")).toBeInTheDocument();
+    });
+    expect(screen.getByText("최근 1개월 기준 · 출처: realized-pnl summary")).toBeInTheDocument();
+  });
+
+  it("realized-pnl summary API가 전부 실패하면 '조회 실패'로 표시되고 0원처럼 보이지 않는다", async () => {
+    mockOpsDashboardCommon();
+    vi.spyOn(apiClient, "getRealizedPnlSummary").mockRejectedValue(new Error("Network error"));
+
+    renderOpsDashboard();
+
+    await screen.findByText("총손익");
+    await waitFor(() => {
+      expect(screen.getByText("조회 실패")).toBeInTheDocument();
+    });
+    expect(screen.getByText("모든 계좌 조회 실패")).toBeInTheDocument();
+    expect(screen.queryByText("+0원")).not.toBeInTheDocument();
+    expect(screen.queryByText("0원")).not.toBeInTheDocument();
+  });
+
+  it("일부 계좌만 realized-pnl summary 조회에 실패하면 성공한 계좌 합계와 부분 실패 안내가 함께 표시된다", async () => {
+    mockOpsDashboardCommon();
+    vi.spyOn(apiClient, "getRealizedPnlSummary").mockImplementation(async (accountId: string) => {
+      if (accountId === mockAccounts[1].account_id) {
+        throw new Error("Network error");
+      }
+      return realizedPnlSummaryFor(accountId) as never;
+    });
+
+    renderOpsDashboard();
+
+    await screen.findByText("총손익");
+    // Live 계좌(-20,000)가 실패했으므로 성공한 두 계좌(100,000 + 5,000)만 반영 = +105,000원
+    await waitFor(() => {
+      expect(screen.getByText("+105,000원")).toBeInTheDocument();
+    });
+    expect(
+      screen.getByText(/계좌 1개 조회 실패, 성공한 계좌만 반영/),
+    ).toBeInTheDocument();
+  });
+
+  it("대시보드는 realized-pnl의 daily/events/recompute-queue API를 호출하지 않는다", async () => {
+    mockOpsDashboardCommon();
+    const dailySpy = vi.spyOn(apiClient, "getRealizedPnlDaily");
+    const dailySummarySpy = vi.spyOn(apiClient, "getRealizedPnlDailySummary");
+    const eventsSpy = vi.spyOn(apiClient, "getRealizedPnlEvents");
+    const recomputeQueueSpy = vi.spyOn(apiClient, "getRealizedPnlRecomputeQueue");
+
+    renderOpsDashboard();
+
+    await screen.findByText("총손익");
+    await waitFor(() => {
+      expect(screen.getByText("+85,000원")).toBeInTheDocument();
+    });
+
+    expect(dailySpy).not.toHaveBeenCalled();
+    expect(dailySummarySpy).not.toHaveBeenCalled();
+    expect(eventsSpy).not.toHaveBeenCalled();
+    expect(recomputeQueueSpy).not.toHaveBeenCalled();
   });
 });
