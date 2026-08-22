@@ -925,8 +925,6 @@ export default function OperationsDashboardView() {
   // 가볍게 조회하는 getActiveIntradayFreezeSummary() 응답을 그대로 쓴다.
   const activeIntradayFreeze = data.activeIntradayFreeze;
   const freezeItems = activeIntradayFreeze?.items ?? [];
-  const freezeMarketOverlayCount = activeIntradayFreeze?.source_type_counts?.market_overlay ?? 0;
-  const freezeEventOverlayCount = activeIntradayFreeze?.source_type_counts?.event_overlay ?? 0;
   const todayBuyOrders = data.todayOrders.filter((order) => order.side === "buy");
   const latestTodayBuyOrderBySymbol = new Map<string, OrderSummary>();
   todayBuyOrders.forEach((order) => {
@@ -1319,39 +1317,21 @@ export default function OperationsDashboardView() {
             />
           </div>
 
-          {/* ── Section D: Universe Selection / Market Overlay ──
-              2026-07-14: "freeze / live 비교" 카드 제거 — 라이브 유니버스
-              재계산(getTradingUniversePreview, 실측 0.7~1.0초 오버헤드) 없이
-              오늘 freeze 결과만 가볍게 조회(getActiveIntradayFreezeSummary)해서
-              표시한다. 계좌 무관이라 "preview 계좌" 표시도 함께 제거. */}
+          {/* ── Section D: 오늘 매수 주문 전환 ──
+              2026-08-22: "Universe Selection / Market Overlay" 섹션(유니버스
+              선정 종목 리스트)은 별도 화면(/operations/universe-selection,
+              "유니버스 선정 현황")으로 분리했다. 이 카드는 유니버스 목록이
+              아니라 "오늘 freeze 종목이 실제 매수 주문으로 전환된 건수"라는
+              운영 요약 지표라서 대시보드에 그대로 남긴다 — 이 카드에 필요한
+              getActiveIntradayFreezeSummary() 호출/계산(activeIntradayFreeze,
+              freezeItems, freezeBuyOrderCount, todayBuyOrders)은 그대로
+              유지했다. */}
           <div className="space-y-3">
-            <h2 className="text-lg font-semibold text-[#0f172a]">Universe Selection / Market Overlay</h2>
             <Panel
-              title="오늘 유니버스 freeze 기준"
-              subtitle="active intraday freeze + today orders"
+              title="오늘 매수 주문 전환"
+              subtitle="active intraday freeze 종목 기준"
             >
-              <div className="grid grid-cols-2 xl:grid-cols-4 gap-3 mb-5">
-                <div className="rounded-lg border border-[#e2e8f0] bg-[#f8fafc] px-4 py-3">
-                  <p className="text-xs text-[#64748b]">오늘 freeze 편입</p>
-                  <p className="mt-1 text-lg font-semibold text-[#0f172a]">
-                    {activeIntradayFreeze?.target_count ?? 0}건
-                  </p>
-                  <p className="text-xs text-[#94a3b8]">
-                    frozen {activeIntradayFreeze?.frozen_at ? formatKstDateTime(activeIntradayFreeze.frozen_at) : "—"}
-                  </p>
-                </div>
-                <div className="rounded-lg border border-[#e2e8f0] bg-[#f8fafc] px-4 py-3">
-                  <p className="text-xs text-[#64748b]">freeze 내 market_overlay</p>
-                  <p className="mt-1 text-lg font-semibold text-[#0f172a]">
-                    {freezeMarketOverlayCount}건
-                  </p>
-                </div>
-                <div className="rounded-lg border border-[#e2e8f0] bg-[#f8fafc] px-4 py-3">
-                  <p className="text-xs text-[#64748b]">freeze 내 event_overlay</p>
-                  <p className="mt-1 text-lg font-semibold text-[#0f172a]">
-                    {freezeEventOverlayCount}건
-                  </p>
-                </div>
+              <div className="grid grid-cols-1 xl:grid-cols-2 gap-3 mb-5">
                 <div className="rounded-lg border border-[#e2e8f0] bg-[#f8fafc] px-4 py-3">
                   <p className="text-xs text-[#64748b]">오늘 매수 주문 전환</p>
                   <p className="mt-1 text-lg font-semibold text-[#0f172a]">
@@ -1359,6 +1339,7 @@ export default function OperationsDashboardView() {
                   </p>
                   <p className="text-xs text-[#94a3b8]">
                     today buy orders {todayBuyOrders.length}건 중 freeze 종목 기준
+                    (frozen {activeIntradayFreeze?.frozen_at ? formatKstDateTime(activeIntradayFreeze.frozen_at) : "—"})
                   </p>
                 </div>
               </div>

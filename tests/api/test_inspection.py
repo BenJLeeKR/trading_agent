@@ -1677,6 +1677,119 @@ class TestInstruments:
         assert response.status_code == 200
         assert response.json() is None
 
+    def test_get_trading_universe_freeze_summary_with_business_date_param(self) -> None:
+        """``business_date`` 쿼리 파라미터를 지정하면 오늘이 아니라 해당 날짜의
+        freeze run을 조회해야 한다(날짜별 "유니버스 선정 현황" 화면의 핵심 동작)."""
+        repos = build_in_memory_repositories()
+        now = datetime.now(timezone.utc)
+        today = now.astimezone(timezone(timedelta(hours=9))).date()
+        yesterday = today - timedelta(days=1)
+
+        inst = InstrumentEntity(
+            instrument_id=uuid4(),
+            symbol="005930",
+            market_code="KRX",
+            asset_class="KR_STOCK",
+            currency="KRW",
+            name="Samsung Electronics",
+            is_active=True,
+            metadata={"market_segment": "KOSPI"},
+        )
+        asyncio.run(repos.instruments.add(inst))
+
+        # 오늘 freeze run(3건)과 어제 freeze run(1건)을 둘 다 만들어, business_date로
+        # 정확히 그 날짜의 run만 골라오는지(오늘 것이 잘못 섞이지 않는지) 확인한다.
+        today_run_id = uuid4()
+        yesterday_run_id = uuid4()
+        asyncio.run(
+            repos.universe_freeze_runs.add(
+                UniverseFreezeRunEntity(
+                    universe_freeze_run_id=today_run_id,
+                    business_date=today,
+                    freeze_purpose="decision_loop_intraday",
+                    freeze_sequence=1,
+                    frozen_at=now,
+                    selection_version="decision_loop_intraday.freeze.v1",
+                    target_count=3,
+                    status="materialized",
+                )
+            )
+        )
+        asyncio.run(
+            repos.universe_freeze_runs.add(
+                UniverseFreezeRunEntity(
+                    universe_freeze_run_id=yesterday_run_id,
+                    business_date=yesterday,
+                    freeze_purpose="decision_loop_intraday",
+                    freeze_sequence=1,
+                    frozen_at=now - timedelta(days=1),
+                    selection_version="decision_loop_intraday.freeze.v1",
+                    target_count=1,
+                    status="materialized",
+                )
+            )
+        )
+        asyncio.run(
+            repos.universe_freeze_run_items.add_many(
+                (
+                    UniverseFreezeRunItemEntity(
+                        universe_freeze_run_item_id=uuid4(),
+                        universe_freeze_run_id=yesterday_run_id,
+                        instrument_id=inst.instrument_id,
+                        symbol="005930",
+                        market_code="KRX",
+                        source_type="core",
+                        inclusion_reason="approved_core_universe",
+                        rank=1,
+                        cap_bucket="core",
+                    ),
+                ),
+            )
+        )
+
+        app = create_app(repos=repos, auth_enabled=False)
+        with TestClient(app) as client:
+            response = client.get(
+                "/instruments/trading-universe/freeze-summary",
+                params={"business_date": yesterday.isoformat()},
+            )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data is not None
+        assert data["business_date"] == yesterday.isoformat()
+        assert data["target_count"] == 1
+        assert data["source_type_counts"] == {"core": 1}
+
+    def test_get_trading_universe_freeze_summary_business_date_no_freeze_returns_null(
+        self,
+    ) -> None:
+        """freeze run이 없는 날짜를 ``business_date``로 지정하면 200 + null이어야
+        한다(에러도, 오늘 데이터로 대체되는 것도 아니다)."""
+        repos = build_in_memory_repositories()
+        app = create_app(repos=repos, auth_enabled=False)
+        with TestClient(app) as client:
+            response = client.get(
+                "/instruments/trading-universe/freeze-summary",
+                params={"business_date": "2020-01-01"},
+            )
+
+        assert response.status_code == 200
+        assert response.json() is None
+
+    def test_get_trading_universe_freeze_summary_invalid_business_date_is_4xx(self) -> None:
+        """형식이 잘못된 ``business_date``는 조용히 무시하지 않고 4xx로 실패해야
+        한다(빈 데이터로 눙치지 않는다)."""
+        repos = build_in_memory_repositories()
+        app = create_app(repos=repos, auth_enabled=False)
+        with TestClient(app) as client:
+            response = client.get(
+                "/instruments/trading-universe/freeze-summary",
+                params={"business_date": "not-a-date"},
+            )
+
+        assert 400 <= response.status_code < 500
+
     def test_get_trading_universe_coverage_summary(self) -> None:
         """``GET /instruments/trading-universe/coverage-summary`` returns source coverage."""
         mock_conn = AsyncMock()

@@ -1,7 +1,7 @@
 """Instrument inspection endpoints."""
 
 from collections import Counter
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
@@ -72,10 +72,11 @@ def _build_preview_items_from_selected(selected: list) -> list[TradingUniversePr
 
 async def _build_active_intraday_freeze_view(
     repos: RepositoryContainer,
+    business_date: date | None = None,
 ) -> TradingUniverseFreezeView | None:
-    business_date = datetime.now(timezone.utc).astimezone(_KST).date()
+    resolved_business_date = business_date or datetime.now(timezone.utc).astimezone(_KST).date()
     freeze_run = await repos.universe_freeze_runs.get_latest(
-        business_date,
+        resolved_business_date,
         _DECISION_LOOP_INTRADAY_FREEZE_PURPOSE,
     )
     if freeze_run is None:
@@ -138,9 +139,13 @@ def _build_intraday_freeze_comparison(
     response_model=TradingUniverseFreezeView | None,
 )
 async def get_trading_universe_freeze_summary(
+    business_date: date | None = Query(
+        None,
+        description="조회할 business_date(YYYY-MM-DD). 생략하면 KST 오늘 날짜를 사용한다.",
+    ),
     repos: RepositoryContainer = Depends(get_repos),
 ) -> TradingUniverseFreezeView | None:
-    """오늘 이미 얼려둔(freeze) 유니버스 요약 — 라이브 재계산을 하지 않는다.
+    """지정한(또는 오늘) 날짜에 이미 얼려둔(freeze) 유니버스 요약 — 라이브 재계산을 하지 않는다.
 
     2026-07-14: 운영 대시보드의 "Universe Selection / Market Overlay" 카드가
     기존 ``GET /instruments/trading-universe/preview``를 호출하고 있었는데,
@@ -150,12 +155,18 @@ async def get_trading_universe_freeze_summary(
     .compose_with_diagnostics()`` — Core Universe 2,767건 스캔 등, 실측
     0.7~1.0초)을 같이 수행했다. "freeze / live 비교" 카드를 없애기로 하면서,
     이 라이브 재계산이 더 이상 필요 없어졌다 — 이 엔드포인트는
-    ``universe_freeze_runs``/``universe_freeze_run_items`` 테이블을 오늘
-    날짜로 조회만 하고 끝난다(계좌 정보도 필요 없음 — freeze view는 계좌
-    무관). 기존 ``/instruments/trading-universe/preview``는 라이브 진단이
-    필요한 다른 용도를 위해 그대로 남겨둔다.
+    ``universe_freeze_runs``/``universe_freeze_run_items`` 테이블을 조회만
+    하고 끝난다(계좌 정보도 필요 없음 — freeze view는 계좌 무관). 기존
+    ``/instruments/trading-universe/preview``는 라이브 진단이 필요한 다른
+    용도를 위해 그대로 남겨둔다.
+
+    2026-08-22: "유니버스 선정 현황" 화면(날짜별 조회)을 위해 선택적
+    ``business_date`` 쿼리 파라미터를 추가했다. 생략 시 기존과 동일하게
+    KST 오늘로 동작해 하위 호환을 유지한다. ``freeze_purpose``는 현재
+    ``_DECISION_LOOP_INTRADAY_FREEZE_PURPOSE`` 하나만 하드코딩되어 있으며,
+    이 파라미터는 이번 범위에서 다루지 않는다.
     """
-    return await _build_active_intraday_freeze_view(repos)
+    return await _build_active_intraday_freeze_view(repos, business_date)
 
 
 @router.get(
