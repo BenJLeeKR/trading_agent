@@ -4,6 +4,7 @@ import { describe, expect, it, afterEach, vi, beforeEach } from "vitest";
 import Dashboard from "../components/Dashboard";
 import OperationsDashboardView from "../components/OperationsDashboardView";
 import { setStoredToken, clearStoredToken } from "../api/client";
+import * as apiClient from "../api/client";
 import {
   mockFetchOnce,
   mockFetchNetworkError,
@@ -410,8 +411,22 @@ describe("Dashboard reconciliation StatusCard", () => {
   });
 });
 
+
 /* ───────────────────────────────────────────
- * OperationsDashboardView — 최근 제출 실패 StatusCard
+ * OperationsDashboardView — 로딩 구조 재배치(4단계 순차 → 독립 effect) 검증
+ *
+ * 2026-08-22: fetchAll() 하나가 core(health/readyz/reconciliation/summary/
+ * orders/clients/session/operations-day) → 계좌 fan-out → snapshot-sync-runs
+ * 등 보조 API까지 순차로 묶여 있던 구조를, core 완료만으로 화면 shell을
+ * 그리고 계좌 상태/snapshot-sync-runs/buy-block-summary/최근 제출 실패는
+ * 각자 독립된 effect로 분리했다. 이 파일의 mock은 이제 호출 "순서"가 아니라
+ * "어떤 API가 어떤 값으로 응답하는가"만 지정한다(vi.spyOn(apiClient, ...) —
+ * 순서 의존적인 fetch 큐 방식은 독립 effect 구조와 맞지 않는다).
+ *
+ * "Universe Selection / Market Overlay" 카드에서 쓰던 backend 호출
+ * (coverage-summary, market-overlay-funnel, trade-decisions, session-events)
+ * 는 이미 예전에 제거됐고, 이번에 "오늘 매수 주문 전환" 카드 자체와
+ * freeze-summary(getActiveIntradayFreezeSummary) 호출도 완전히 제거했다.
  * ─────────────────────────────────────────── */
 
 /** Mock health response for OperationsDashboardView */
@@ -495,7 +510,7 @@ const mockRecentFailures = [
   },
 ];
 
-/** Mock failure summary with data (1h/24h mixed) */
+/** Mock failure summary with data (오늘 2건) */
 const mockFailureSummary = {
   last_1h_count: 1,
   last_24h_count: 3,
@@ -525,15 +540,6 @@ const mockFailureSummaryEmpty = {
   failure_rate_pct_today: 0.0,
 };
 
-const mockTodayOrderSummary = {
-  date: "2026-05-30",
-  timezone: "Asia/Seoul",
-  total_count: 2,
-  filled_count: 1,
-  pending_submit_count: 0,
-  submitted_count: 0,
-};
-
 const mockBuyBlockSummary = {
   date: "2026-05-30",
   timezone: "Asia/Seoul",
@@ -544,188 +550,192 @@ const mockBuyBlockSummary = {
   exception_count: 0,
 };
 
-// getActiveIntradayFreezeSummary()의 실제 응답 shape(TradingUniverseFreezeView).
-// "유니버스 선정 현황" 화면 분리 이전에는 이 값이 getTradingUniversePreview()
-// 응답의 active_intraday_freeze 필드로 왔었으나, 그 API는 더 이상 대시보드에서
-// 호출되지 않는다(§ 2026-07-14 freeze/live 비교 카드 제거) — 이제 이 값은
-// GET /instruments/trading-universe/freeze-summary가 직접 반환하는 최상위 값이다.
-const mockActiveIntradayFreeze = {
-  universe_freeze_run_id: "freeze-001",
-  freeze_purpose: "decision_loop_intraday",
-  business_date: "2026-05-30",
-  frozen_at: "2026-05-30T05:20:00Z",
-  selection_version: "intraday_freeze_v1",
-  target_count: 3,
-  source_type_counts: {
-    core: 2,
-    market_overlay: 1,
-  },
-  inclusion_reason_counts: {
-    core_universe: 2,
-    trade_strength: 1,
-  },
-  items: [
-    {
-      symbol: "001740",
-      market: "KRX",
-      source_type: "market_overlay",
-      inclusion_reason: "trade_strength",
-      priority: 1,
-    },
-  ],
+const mockIndexMembershipStalenessOk = {
+  latest_effective_from: "2026-06-27",
+  as_of: "2026-07-12",
+  age_days: 15,
+  threshold_days: 21,
+  is_stale: false,
 };
 
-/**
- * Helper: mock all fetch calls required by OperationsDashboardView.fetchAll()
- * before the final getRecentFailures(5) and getFailureSummary() calls.
- *
- * 화면에서 "Universe Selection / Market Overlay"의 freeze 상세/overlay 진단/
- * Session Events 섹션을 제거하면서, 그 UI에서만 쓰이던 백엔드 호출(coverage-summary,
- * market-overlay-funnel, trade-decisions, session-events)도 함께 제거했다 —
- * 죽은 데이터를 계속 fetch할 이유가 없다.
- *
- * 2026-08-22: 이 헬퍼는 실제 fetchAll() 호출 순서와 어긋나 있었다 — GET /orders를
- * 두 번(중복) mock하면서 이후 모든 항목이 한 칸씩 밀렸고, freeze-summary
- * (getActiveIntradayFreezeSummary) mock이 아예 빠져 있었으며, 더 이상 호출되지
- * 않는 universe preview mock이 뒤에 남아 있었다. 이 세 가지를 함께 고쳐 실제
- * 호출 순서와 다시 맞췄다(이 파일의 여러 테스트가 이 헬퍼를 공유하므로, 어긋난
- * 채로는 어떤 테스트도 실제 응답 매핑을 신뢰할 수 없었다).
- *
- * Call order (18 total):
- *   1-10: Promise.all [health, readyz, recon, orders(date=today, 1회만),
- *                      daily-summary, buy-block-summary, clients, session,
- *                      operations-day, freeze-summary]
- *   11:    getAccounts(clientId)
- *   12-14: getAccountSnapshots(3 accounts)
- *   15:    getIndexMembershipStaleness() — UNIV-4, 계좌 무관 read-only 감시
- *   16:    getSnapshotSyncRuns(10)
- *   17:    getRecentFailures(5) — caller provides this mock
- *   18:    getFailureSummary() — caller provides this mock
- */
-function mockOpsDashboardCommon() {
-  // 1-10: Parallel batch
-  mockFetchOnce(mockOpsHealth);              // 1. GET /health
-  mockFetchOnce(mockReadyz);                 // 2. GET /health/readyz
-  mockFetchOnce(mockReconciliationSummary);  // 3. GET /reconciliation/summary
-  mockFetchOnce(mockOrders);                 // 4. GET /orders?date=today (병합되어 1회만 호출됨)
-  mockFetchOnce(mockTodayOrderSummary);      // 5. GET /orders/daily-summary
-  mockFetchOnce(mockBuyBlockSummary);        // 6. GET /orders/buy-block-summary
-  mockFetchOnce(mockClients);                // 7. GET /clients
-  mockFetchOnce(mockSessionResponse);        // 8. GET /market-sessions/latest
-  mockFetchOnce(mockOperationsDayResponse);  // 9. GET /market-sessions/operations-day/latest
-  mockFetchOnce(mockActiveIntradayFreeze);   // 10. GET /instruments/trading-universe/freeze-summary
-
-  // 11. getAccounts
-  mockFetchOnce(mockAccounts);
-
-  // 12-14. getAccountSnapshots (3 accounts)
-  mockFetchOnce({ positions: mockPositions, cash_balance: mockCashBalance });
-  mockFetchOnce({ positions: mockPositionsForLocked, cash_balance: mockCashBalanceForLocked });
-  mockFetchOnce({ positions: [], cash_balance: mockCashBalanceNull });
-
-  // 15. getIndexMembershipStaleness (UNIV-4, 정상 상태로 고정 — 배너 미노출)
-  mockFetchOnce({
-    latest_effective_from: "2026-06-27",
-    as_of: "2026-07-12",
-    age_days: 15,
-    threshold_days: 21,
-    is_stale: false,
-  });
-  // 16. getSnapshotSyncRuns
-  mockFetchOnce([]);
+/** account_id별 계좌 스냅샷 — 계좌 3개(Paper/Live/Locked) 기준. */
+function accountSnapshotFor(accountId: string) {
+  if (accountId === mockAccounts[0].account_id) {
+    return { positions: mockPositions, cash_balance: mockCashBalance };
+  }
+  if (accountId === mockAccounts[2].account_id) {
+    return { positions: mockPositionsForLocked, cash_balance: mockCashBalanceForLocked };
+  }
+  return { positions: [], cash_balance: mockCashBalanceNull };
 }
 
-describe("OperationsDashboardView — universe selection 섹션 제거 후 오늘 매수 주문 전환 카드", () => {
-  it("Universe Selection / Market Overlay 섹션은 사라지고, 오늘 매수 주문 전환 카드는 남아 있다", async () => {
+/**
+ * OperationsDashboardView가 쓰는 API 전부를 기본값으로 mock한다. 이제
+ * fetchAll() 하나가 아니라 독립된 여러 effect(core/계좌 상태/snapshot-sync/
+ * buy-block-summary/최근 제출 실패)가 각자 fetch하므로, 호출 "순서"가 아니라
+ * "함수별 응답"만 지정하면 된다. 개별 테스트는 필요한 함수만 다시
+ * spyOn해서 덮어쓸 수 있다.
+ */
+function mockOpsDashboardCommon() {
+  vi.spyOn(apiClient, "getHealth").mockResolvedValue(mockOpsHealth);
+  vi.spyOn(apiClient, "getReadyz").mockResolvedValue(mockReadyz);
+  vi.spyOn(apiClient, "getReconciliationSummary").mockResolvedValue(mockReconciliationSummary);
+  vi.spyOn(apiClient, "getOrders").mockResolvedValue(mockOrders);
+  vi.spyOn(apiClient, "getClients").mockResolvedValue(mockClients);
+  vi.spyOn(apiClient, "getLatestMarketSession").mockResolvedValue(mockSessionResponse as never);
+  vi.spyOn(apiClient, "getLatestOperationsDay").mockResolvedValue(mockOperationsDayResponse as never);
+  vi.spyOn(apiClient, "getAccounts").mockResolvedValue(mockAccounts);
+  vi.spyOn(apiClient, "getAccountSnapshots").mockImplementation(
+    async (accountId: string) => accountSnapshotFor(accountId) as never,
+  );
+  vi.spyOn(apiClient, "getSnapshotSyncRuns").mockResolvedValue([]);
+  vi.spyOn(apiClient, "getIndexMembershipStaleness").mockResolvedValue(mockIndexMembershipStalenessOk);
+  vi.spyOn(apiClient, "getBuyBlockSummary").mockResolvedValue(mockBuyBlockSummary);
+  vi.spyOn(apiClient, "getRecentFailures").mockResolvedValue([]);
+  vi.spyOn(apiClient, "getFailureSummary").mockResolvedValue(mockFailureSummaryEmpty);
+}
+
+function renderOpsDashboard() {
+  return render(
+    <MemoryRouter>
+      <OperationsDashboardView />
+    </MemoryRouter>,
+  );
+}
+
+describe("OperationsDashboardView — 상단 카드 구성", () => {
+  it("상단 요약 카드에는 지정된 6개 항목만 남고, 제거된 카드는 보이지 않는다", async () => {
     mockOpsDashboardCommon();
-    mockFetchOnce([]);
-    mockFetchOnce(mockFailureSummaryEmpty);
 
-    render(
-      <MemoryRouter>
-        <OperationsDashboardView />
-      </MemoryRouter>,
-    );
+    renderOpsDashboard();
 
-    // "오늘 매수 주문 전환" 카드는 유니버스 목록이 아니라 매수 전환 운영 지표라서
-    // 유지된다 — 이 값이 나타나는 것으로 화면이 정상 렌더링됐음을 먼저 확인한다.
-    // Panel 제목과 카드 라벨이 같은 문구를 쓰므로 2곳 이상 나타난다.
-    await screen.findAllByText("오늘 매수 주문 전환");
+    await screen.findByText("Ready 상태");
+    expect(screen.getByText("Scheduler Status")).toBeInTheDocument();
+    expect(screen.getByText("마지막 스냅샷 동기화")).toBeInTheDocument();
+    expect(screen.getByText("운영 경고")).toBeInTheDocument();
+    expect(screen.getByText("오늘 BUY 차단")).toBeInTheDocument();
+    expect(await screen.findByText("최근 제출 실패")).toBeInTheDocument();
 
-    // "유니버스 선정 현황" 화면으로 분리되면서 사라져야 하는 것들.
+    // 상단 카드에서 제거된 항목들 — "오늘 주문 제출"은 삭제, "가용 현금"/
+    // "현재 포지션"은 계좌 상태 영역으로 이동했으므로 상단 카드 타이틀로는
+    // 더 이상 나타나지 않는다("계좌 상태" 섹션 안에는 별도로 나타난다).
+    expect(screen.queryByText("오늘 주문 제출")).not.toBeInTheDocument();
+  });
+
+  it("계좌 상태 영역에 총자산/가용 현금/현재 포지션이 표시된다", async () => {
+    mockOpsDashboardCommon();
+
+    renderOpsDashboard();
+
+    await screen.findByText("계좌 상태");
+    await screen.findByText("총자산");
+    expect(screen.getByText("가용 현금")).toBeInTheDocument();
+    expect(screen.getByText("현재 포지션")).toBeInTheDocument();
+    // 가용 현금 합계(45,000 + 900,000) — 기존 계좌 카드와 동일한 계산 로직 유지 확인.
+    expect(screen.getByText("945,000원")).toBeInTheDocument();
+  });
+
+  it("오늘 매수 주문 전환 영역은 완전히 제거됐다", async () => {
+    mockOpsDashboardCommon();
+
+    renderOpsDashboard();
+
+    await screen.findByText("Ready 상태");
+    expect(screen.queryByText("오늘 매수 주문 전환")).not.toBeInTheDocument();
     expect(screen.queryByText("Universe Selection / Market Overlay")).not.toBeInTheDocument();
-    expect(screen.queryByText("오늘 유니버스 freeze 기준")).not.toBeInTheDocument();
-    expect(screen.queryByText("오늘 freeze 편입")).not.toBeInTheDocument();
-    expect(screen.queryByText("freeze 내 market_overlay")).not.toBeInTheDocument();
-    expect(screen.queryByText("freeze 내 event_overlay")).not.toBeInTheDocument();
+  });
+
+  it("freeze-summary API는 더 이상 호출되지 않는다", async () => {
+    mockOpsDashboardCommon();
+    const freezeSpy = vi.spyOn(apiClient, "getActiveIntradayFreezeSummary");
+
+    renderOpsDashboard();
+
+    await screen.findByText("계좌 상태");
+    await screen.findByText("총자산");
+    expect(freezeSpy).not.toHaveBeenCalled();
+  });
+});
+
+describe("OperationsDashboardView — 로딩 게이트 축소", () => {
+  it("core(7개 API)만 끝나면 화면 shell과 상단 카드를 그린다 — 보조 API가 아직 응답하지 않아도 된다", async () => {
+    mockOpsDashboardCommon();
+    // buy-block-summary/최근 제출 실패/snapshot-sync-runs를 영원히 pending
+    // 상태로 묶어둔다 — 그런데도 화면 shell(상단 카드 타이틀들)은 렌더링돼야
+    // core 완료만으로 loading이 풀린다는 것이 증명된다.
+    vi.spyOn(apiClient, "getBuyBlockSummary").mockReturnValue(new Promise(() => {}));
+    vi.spyOn(apiClient, "getFailureSummary").mockReturnValue(new Promise(() => {}));
+    vi.spyOn(apiClient, "getRecentFailures").mockReturnValue(new Promise(() => {}));
+    vi.spyOn(apiClient, "getSnapshotSyncRuns").mockReturnValue(new Promise(() => {}));
+
+    renderOpsDashboard();
+
+    await screen.findByText("Ready 상태");
+    // 아직 응답하지 않은 카드들은 "로딩 중"으로 남아 있다(화면 전체가 막힌 게 아님).
+    expect(screen.getByText("마지막 스냅샷 동기화").closest("div")).toBeTruthy();
+    const buyBlockLoading = screen.getAllByText("로딩 중...");
+    expect(buyBlockLoading.length).toBeGreaterThan(0);
+  });
+});
+
+describe("OperationsDashboardView — 최근 제출 실패 상태 표현", () => {
+  it("최근 제출 실패 API 실패가 전체 대시보드 로딩 실패로 번지지 않는다", async () => {
+    mockOpsDashboardCommon();
+    vi.spyOn(apiClient, "getRecentFailures").mockRejectedValue(new Error("Network error"));
+    vi.spyOn(apiClient, "getFailureSummary").mockRejectedValue(new Error("Network error"));
+
+    renderOpsDashboard();
+
+    // core는 정상 응답이므로 화면 shell 자체는 정상적으로 그려진다(에러
+    // 화면으로 전체가 대체되지 않음).
+    await screen.findByText("Ready 상태");
+    await screen.findByText("계좌 상태");
+
+    // "최근 제출 실패" 카드만 오류로 표시된다.
+    await waitFor(() => {
+      expect(screen.getAllByText("오류").length).toBeGreaterThan(0);
+    });
+    expect(screen.getByText(/API 오류: Error: Network error/)).toBeInTheDocument();
   });
 
   it("renders recent submission failures card with data", async () => {
     mockOpsDashboardCommon();
-    // 17. getRecentFailures(5) returns mockRecentFailures
-    mockFetchOnce(mockRecentFailures);
-    // 18. getFailureSummary() returns aggregated counts
-    mockFetchOnce(mockFailureSummary);
+    vi.spyOn(apiClient, "getRecentFailures").mockResolvedValue(mockRecentFailures as never);
+    vi.spyOn(apiClient, "getFailureSummary").mockResolvedValue(mockFailureSummary as never);
 
-    render(
-      <MemoryRouter>
-        <OperationsDashboardView />
-      </MemoryRouter>,
-    );
+    renderOpsDashboard();
 
-    // Wait for aggregated failureSummary value to appear (async)
     await screen.findByText("오늘 2건");
     expect(screen.getByText("Scheduler Status")).toBeInTheDocument();
     expect(screen.getAllByText("운영중").length).toBeGreaterThanOrEqual(1);
     expect(screen.getByText(/OPEN \| 제출 2 \/ HP매도 1 \/ cycles 14/)).toBeInTheDocument();
-    expect(screen.getByText("945,000원")).toBeInTheDocument();
-    expect(screen.getByText("출처: /cash-balance (orderable_amount 합계)")).toBeInTheDocument();
-    expect(screen.getByText("오늘 주문 제출")).toBeInTheDocument();
-    expect(screen.getByText("2건")).toBeInTheDocument();
     expect(screen.getByText("오늘 BUY 차단")).toBeInTheDocument();
     expect(screen.getAllByText("1건").length).toBeGreaterThanOrEqual(1);
-    expect(screen.queryByText(/BUY 주문 12 \/ 제출시도 2 \| 거절 1 · 예외 0/)).not.toBeInTheDocument();
 
     expect(screen.getByText(/실패율: 50% \(오늘\) \| 거절 1건 · 예외 1건/)).toBeInTheDocument();
 
-    // Should show failure items with symbols (AAPL also appears in orders table)
     const symbols = screen.getAllByText("AAPL");
     expect(symbols.length).toBeGreaterThanOrEqual(1);
     const tslaSymbols = screen.getAllByText("TSLA");
     expect(tslaSymbols.length).toBeGreaterThanOrEqual(1);
 
-    // Should show outcome badges
     expect(screen.getByText("Rejected")).toBeInTheDocument();
     expect(screen.getByText("Exception")).toBeInTheDocument();
-
-    // Should show error types
     expect(screen.getByText("INVALID_QUANTITY")).toBeInTheDocument();
     expect(screen.getByText("TIMEOUT")).toBeInTheDocument();
-
-    // Should show raw_code prefix (monospace [CODE] format)
     expect(screen.getByText("[2011]")).toBeInTheDocument();
-
-    // Should show raw_message inline preview (truncated if needed)
     expect(screen.getByText(/주문 수량이 1주 미만입니다/)).toBeInTheDocument();
 
-    // Should render title attribute for tooltip (full raw_message text)
     const errorTypeSpan = screen.getByText(/INVALID_QUANTITY/).closest('span');
     expect(errorTypeSpan).toHaveAttribute('title', '주문 수량이 1주 미만입니다.');
 
-    // Should render link to all failed orders
     expect(screen.getByText("모든 실패 주문 보기 →")).toBeInTheDocument();
-
-    // Should show direct "제출 이력 보기" links to submission attempts
     const submissionLinks = screen.getAllByText("제출 이력 보기 →");
-    expect(submissionLinks.length).toBe(2); // 2 failure items
-
-    // Verify first link goes to correct URL
+    expect(submissionLinks.length).toBe(2);
     expect(submissionLinks[0].closest('a')).toHaveAttribute(
       'href',
       '/orders/fail-001/submission-attempts'
     );
-
-    // Verify second link
     expect(submissionLinks[1].closest('a')).toHaveAttribute(
       'href',
       '/orders/fail-002/submission-attempts'
@@ -734,76 +744,27 @@ describe("OperationsDashboardView — universe selection 섹션 제거 후 오�
 
   it("renders empty state when no failures", async () => {
     mockOpsDashboardCommon();
-    // 17. getRecentFailures(5) returns empty array
-    mockFetchOnce([]);
-    // 18. getFailureSummary() returns empty aggregated counts
-    mockFetchOnce(mockFailureSummaryEmpty);
 
-    render(
-      <MemoryRouter>
-        <OperationsDashboardView />
-      </MemoryRouter>,
-    );
+    renderOpsDashboard();
 
-    // Wait for aggregated failureSummary value to appear (async)
     await screen.findByText("오늘 0건");
-
     expect(screen.getByText(/실패율: 0% \(오늘\) \| 거절 0건 · 예외 0건/)).toBeInTheDocument();
-  });
-
-  it("handles fetch error gracefully", async () => {
-    mockOpsDashboardCommon();
-    // 17. getRecentFailures(5) fails with network error
-    mockFetchNetworkError();
-    // 18. getFailureSummary() also fails
-    mockFetchNetworkError();
-
-    render(
-      <MemoryRouter>
-        <OperationsDashboardView />
-      </MemoryRouter>,
-    );
-
-    await waitFor(() => {
-      expect(screen.getByText("최근 제출 실패")).toBeInTheDocument();
-    });
-
-    // Should show error state (value is "오류", which also appears in other cards)
-    const errorValues = screen.getAllByText("오류");
-    expect(errorValues.length).toBeGreaterThanOrEqual(1);
-
-    // Should show error message in subtitle area (contains "Error:" from API error)
-    expect(screen.getByText(/API 오류/)).toBeInTheDocument();
   });
 
   it("renders failure summary with zero failures — neutral status", async () => {
     mockOpsDashboardCommon();
-    // 17. getRecentFailures(5) returns empty
-    mockFetchOnce([]);
-    // 18. getFailureSummary() returns zero counts
-    mockFetchOnce(mockFailureSummaryEmpty);
 
-    render(
-      <MemoryRouter>
-        <OperationsDashboardView />
-      </MemoryRouter>,
-    );
+    renderOpsDashboard();
 
-    // Wait for aggregated failureSummary value to appear (async)
     await screen.findByText("오늘 0건");
-
     expect(screen.getByText(/실패율: 0% \(오늘\) \| 거절 0건 · 예외 0건/)).toBeInTheDocument();
-
-    // 개별 실패 목록은 보이지 않아야 함
     expect(screen.queryByText("Rejected")).not.toBeInTheDocument();
   });
 
   it("renders failure summary with 1h errors — error status", async () => {
     mockOpsDashboardCommon();
-    // 17. getRecentFailures(5) returns recent failures
-    mockFetchOnce(mockRecentFailures);
-    // 18. getFailureSummary() returns data with 1h count > 0
-    mockFetchOnce({
+    vi.spyOn(apiClient, "getRecentFailures").mockResolvedValue(mockRecentFailures as never);
+    vi.spyOn(apiClient, "getFailureSummary").mockResolvedValue({
       last_1h_count: 2,
       last_24h_count: 5,
       rejected_count: 3,
@@ -815,19 +776,63 @@ describe("OperationsDashboardView — universe selection 섹션 제거 후 오�
       exception_count_today: 2,
       total_submissions_today: 8,
       failure_rate_pct_today: 50.0,
-    });
+    } as never);
 
-    render(
-      <MemoryRouter>
-        <OperationsDashboardView />
-      </MemoryRouter>,
-    );
+    renderOpsDashboard();
 
-    // Wait for aggregated failureSummary value to appear (async)
     await screen.findByText("오늘 4건");
-
     expect(screen.getByText(/실패율: 50% \(오늘\) \| 거절 2건 · 예외 2건/)).toBeInTheDocument();
     expect(screen.getByText("Rejected")).toBeInTheDocument();
     expect(screen.getByText("Exception")).toBeInTheDocument();
+  });
+});
+
+describe("OperationsDashboardView — 오늘 BUY 차단 상태 표현", () => {
+  it("BUY 차단 API 실패는 오류로 표시되고 0건처럼 보이지 않는다", async () => {
+    mockOpsDashboardCommon();
+    vi.spyOn(apiClient, "getBuyBlockSummary").mockRejectedValue(new Error("Network error"));
+
+    renderOpsDashboard();
+
+    await screen.findByText("오늘 BUY 차단");
+    await waitFor(() => {
+      expect(screen.getByText(/API 오류: Error: Network error/)).toBeInTheDocument();
+    });
+    // "0건"이 아니라 명시적 오류 문구여야 한다.
+    const buyBlockCard = screen.getByText("오늘 BUY 차단").closest("div")!.parentElement!;
+    expect(buyBlockCard.textContent).not.toContain("0건");
+  });
+});
+
+describe("OperationsDashboardView — 계좌 상태 부분/전체 실패", () => {
+  it("계좌 스냅샷 일부 실패는 계좌 상태 영역에서 부분 실패로 표시된다(성공한 계좌만 반영)", async () => {
+    mockOpsDashboardCommon();
+    vi.spyOn(apiClient, "getAccountSnapshots").mockImplementation(async (accountId: string) => {
+      if (accountId === mockAccounts[1].account_id) {
+        throw new Error("스냅샷 조회 실패");
+      }
+      return accountSnapshotFor(accountId) as never;
+    });
+
+    renderOpsDashboard();
+
+    await screen.findByText("계좌 상태");
+    await waitFor(() => {
+      expect(screen.getByText(/일부 계좌\(1개\) 스냅샷 조회 실패/)).toBeInTheDocument();
+    });
+    // 성공한 계좌(a1) 기준 총자산/포지션은 여전히 표시된다("0건"으로 뭉개지지 않음).
+    expect(screen.getByText("총자산")).toBeInTheDocument();
+  });
+
+  it("계좌 목록 자체를 못 가져오면(클라이언트 조회 실패) 전체 실패로 명확히 표시된다", async () => {
+    mockOpsDashboardCommon();
+    vi.spyOn(apiClient, "getClients").mockRejectedValue(new Error("Network error"));
+
+    renderOpsDashboard();
+
+    await screen.findByText("계좌 상태");
+    await waitFor(() => {
+      expect(screen.getByText(/계좌 목록을 불러오지 못했습니다/)).toBeInTheDocument();
+    });
   });
 });
