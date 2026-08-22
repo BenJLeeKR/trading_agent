@@ -1672,6 +1672,186 @@ class TestInstruments:
         items_by_symbol = {item["symbol"]: item for item in data["items"]}
         assert items_by_symbol["005930"]["instrument_name"] == "Samsung Electronics"
         assert items_by_symbol["035420"]["instrument_name"] == "NAVER"
+        # 상세 근거(metadata_json)를 넣지 않은 과거 형태의 freeze item — 화면이
+        # 깨지지 않고 inclusion_detail이 null로 내려가야 한다.
+        assert items_by_symbol["005930"]["inclusion_detail"] is None
+        assert items_by_symbol["035420"]["inclusion_detail"] is None
+
+    def test_get_trading_universe_freeze_summary_event_overlay_includes_inclusion_detail(
+        self,
+    ) -> None:
+        """event_overlay 종목은 metadata_json에 저장된 뉴스/이벤트 상세 근거가
+        API 응답의 inclusion_detail로 내려가야 한다."""
+        repos = build_in_memory_repositories()
+        now = datetime.now(timezone.utc)
+
+        event_inst = InstrumentEntity(
+            instrument_id=uuid4(),
+            symbol="005930",
+            market_code="KRX",
+            asset_class="KR_STOCK",
+            currency="KRW",
+            name="Samsung Electronics",
+            is_active=True,
+            metadata={"market_segment": "KOSPI"},
+        )
+        core_inst = InstrumentEntity(
+            instrument_id=uuid4(),
+            symbol="035420",
+            market_code="KRX",
+            asset_class="KR_STOCK",
+            currency="KRW",
+            name="NAVER",
+            is_active=True,
+            metadata={"market_segment": "KOSPI"},
+        )
+        for inst in (event_inst, core_inst):
+            asyncio.run(repos.instruments.add(inst))
+
+        business_date = now.astimezone(timezone(timedelta(hours=9))).date()
+        freeze_run_id = uuid4()
+        asyncio.run(
+            repos.universe_freeze_runs.add(
+                UniverseFreezeRunEntity(
+                    universe_freeze_run_id=freeze_run_id,
+                    business_date=business_date,
+                    freeze_purpose="decision_loop_intraday",
+                    freeze_sequence=1,
+                    frozen_at=now,
+                    selection_version="decision_loop_intraday.freeze.v1",
+                    target_count=2,
+                    status="materialized",
+                )
+            )
+        )
+        published_at = datetime(2026, 8, 22, 0, 10, 0, tzinfo=timezone.utc)
+        asyncio.run(
+            repos.universe_freeze_run_items.add_many(
+                (
+                    UniverseFreezeRunItemEntity(
+                        universe_freeze_run_item_id=uuid4(),
+                        universe_freeze_run_id=freeze_run_id,
+                        instrument_id=event_inst.instrument_id,
+                        symbol="005930",
+                        market_code="KRX",
+                        source_type="event_overlay",
+                        inclusion_reason="high_importance_event:disclosure_material",
+                        rank=1,
+                        cap_bucket="event_overlay",
+                        metadata_json={
+                            "event_detail": {
+                                "headline": "삼성전자 대규모 공급 계약 발표",
+                                "severity": "high",
+                                "published_at": published_at.isoformat(),
+                                "event_type": "disclosure_material",
+                            }
+                        },
+                    ),
+                    # 과거 형태(metadata_json이 비어있는) core 종목도 같은 응답에
+                    # 함께 있어야 하며, 여기에는 상세 근거가 잘못 붙으면 안 된다.
+                    UniverseFreezeRunItemEntity(
+                        universe_freeze_run_item_id=uuid4(),
+                        universe_freeze_run_id=freeze_run_id,
+                        instrument_id=core_inst.instrument_id,
+                        symbol="035420",
+                        market_code="KRX",
+                        source_type="core",
+                        inclusion_reason="approved_core_universe",
+                        rank=2,
+                        cap_bucket="core",
+                    ),
+                )
+            )
+        )
+
+        app = create_app(repos=repos, auth_enabled=False)
+        with TestClient(app) as client:
+            response = client.get("/instruments/trading-universe/freeze-summary")
+
+        assert response.status_code == 200
+        items_by_symbol = {item["symbol"]: item for item in response.json()["items"]}
+
+        event_detail = items_by_symbol["005930"]["inclusion_detail"]
+        assert event_detail is not None
+        assert event_detail["headline"] == "삼성전자 대규모 공급 계약 발표"
+        assert event_detail["severity"] == "high"
+        assert event_detail["event_type"] == "disclosure_material"
+        # 기본 `선정 이유`(inclusion_reason)는 그대로 유지되어야 한다.
+        assert items_by_symbol["005930"]["inclusion_reason"] == (
+            "high_importance_event:disclosure_material"
+        )
+
+        # event_overlay가 아닌 종목에는 상세 근거가 붙지 않는다.
+        assert items_by_symbol["035420"]["inclusion_detail"] is None
+
+    def test_get_trading_universe_freeze_summary_malformed_metadata_does_not_crash(
+        self,
+    ) -> None:
+        """metadata_json 형식이 예상과 다른 손상 데이터라도 API가 500으로
+        죽지 않고 inclusion_detail만 null로 내려가야 한다."""
+        repos = build_in_memory_repositories()
+        now = datetime.now(timezone.utc)
+
+        inst = InstrumentEntity(
+            instrument_id=uuid4(),
+            symbol="005930",
+            market_code="KRX",
+            asset_class="KR_STOCK",
+            currency="KRW",
+            name="Samsung Electronics",
+            is_active=True,
+            metadata={"market_segment": "KOSPI"},
+        )
+        asyncio.run(repos.instruments.add(inst))
+
+        business_date = now.astimezone(timezone(timedelta(hours=9))).date()
+        freeze_run_id = uuid4()
+        asyncio.run(
+            repos.universe_freeze_runs.add(
+                UniverseFreezeRunEntity(
+                    universe_freeze_run_id=freeze_run_id,
+                    business_date=business_date,
+                    freeze_purpose="decision_loop_intraday",
+                    freeze_sequence=1,
+                    frozen_at=now,
+                    selection_version="decision_loop_intraday.freeze.v1",
+                    target_count=1,
+                    status="materialized",
+                )
+            )
+        )
+        asyncio.run(
+            repos.universe_freeze_run_items.add_many(
+                (
+                    UniverseFreezeRunItemEntity(
+                        universe_freeze_run_item_id=uuid4(),
+                        universe_freeze_run_id=freeze_run_id,
+                        instrument_id=inst.instrument_id,
+                        symbol="005930",
+                        market_code="KRX",
+                        source_type="event_overlay",
+                        inclusion_reason="high_importance_event:disclosure_material",
+                        rank=1,
+                        cap_bucket="event_overlay",
+                        # 손상/예상 밖 형식 — event_detail이 dict가 아니거나
+                        # 필드 타입이 잘못됨.
+                        metadata_json={"event_detail": "not-a-dict"},
+                    ),
+                )
+            )
+        )
+
+        app = create_app(repos=repos, auth_enabled=False)
+        with TestClient(app) as client:
+            response = client.get("/instruments/trading-universe/freeze-summary")
+
+        assert response.status_code == 200
+        items_by_symbol = {item["symbol"]: item for item in response.json()["items"]}
+        assert items_by_symbol["005930"]["inclusion_detail"] is None
+        # 기본 선정 이유는 여전히 정상적으로 보여야 한다.
+        assert items_by_symbol["005930"]["inclusion_reason"] == (
+            "high_importance_event:disclosure_material"
+        )
 
     def test_get_trading_universe_freeze_summary_index_group_prefers_membership_over_segment(
         self,

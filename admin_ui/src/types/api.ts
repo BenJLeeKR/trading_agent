@@ -393,6 +393,22 @@ export interface MarketOverlayDiagnosticsView {
   added_count: number;
 }
 
+/**
+ * `선정 이유`(inclusion_reason)의 상세 근거. 1차 범위: event_overlay(뉴스/공시)
+ * 로 선정된 종목만 값이 채워진다. 과거 freeze item이나 event_overlay가 아닌
+ * 종목은 이 필드 전체가 null이다 — 없는 근거를 프론트가 지어내지 않는다.
+ */
+export interface InclusionDetail {
+  /** 뉴스/공시 제목. */
+  headline: string | null;
+  /** 이벤트 심각도/중요도(예: "high"). */
+  severity: string | null;
+  /** 이벤트 발행 시각(ISO). */
+  published_at: string | null;
+  /** 정규화된 이벤트 종류(inclusion_reason 접미사와 동일한 값). */
+  event_type: string | null;
+}
+
 export interface TradingUniversePreviewItem {
   symbol: string;
   market: string;
@@ -404,6 +420,7 @@ export interface TradingUniversePreviewItem {
    * 우선, 없으면 instruments.market_segment(예: "KOSPI")로 대체. 둘 다
    * 없으면 null. */
   index_group: string | null;
+  inclusion_detail: InclusionDetail | null;
 }
 
 export interface TradingUniverseFreezeView {

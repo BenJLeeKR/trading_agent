@@ -12,7 +12,11 @@ import {
   ApiResponseError,
   UnauthorizedError,
 } from "../api/client";
-import type { TradingUniverseFreezeView, TradingUniversePreviewItem } from "../types/api";
+import type {
+  InclusionDetail,
+  TradingUniverseFreezeView,
+  TradingUniversePreviewItem,
+} from "../types/api";
 
 /**
  * 유니버스 선정 현황 — core / market_overlay / event_overlay 선정 종목을
@@ -107,6 +111,56 @@ function formatInclusionReason(code: string): string {
   return `미분류 사유(${code})`;
 }
 
+/** severity 원본 값 → 업무담당자용 한국어 라벨. 모르는 값은 원본 그대로
+ * "중요도 {원본값}" 형태로 보여준다(임의 해석하지 않는다). */
+const SEVERITY_LABELS: Record<string, string> = {
+  high: "중요도 높음",
+  medium: "중요도 중간",
+  low: "중요도 낮음",
+};
+
+function formatSeverity(severity: string): string {
+  return SEVERITY_LABELS[severity] ?? `중요도 ${severity}`;
+}
+
+/**
+ * event_overlay 상세 근거를 "상세: 뉴스 제목 · 중요도 높음 · 2026-08-22 09:10"
+ * 형태의 한 줄 문구로 만든다. headline/severity/published_at 중 실제로 값이
+ * 있는 항목만 이어붙이고, 셋 다 없으면 null(표시하지 않음) — 없는 근거를
+ * 지어내지 않는다.
+ */
+function formatInclusionDetail(detail: InclusionDetail): string | null {
+  const parts: string[] = [];
+  if (detail.headline) parts.push(detail.headline);
+  if (detail.severity) parts.push(formatSeverity(detail.severity));
+  if (detail.published_at) parts.push(formatKstDateTime(detail.published_at));
+  if (parts.length === 0) return null;
+  return `상세: ${parts.join(" · ")}`;
+}
+
+/**
+ * `선정 이유` 셀 — 기본 문구는 그대로 유지하고, 상세 근거(inclusion_detail)가
+ * 있는 경우에만 그 아래 작은 보조 문구를 추가한다. 표를 복잡하게 만들지
+ * 않기 위해 한 줄로 줄이고(truncate), 전체 문구는 title 속성(브라우저 기본
+ * tooltip)으로 hover 시 보여준다.
+ */
+function InclusionReasonCell({ row }: { row: TradingUniversePreviewItem }) {
+  const detailText = row.inclusion_detail ? formatInclusionDetail(row.inclusion_detail) : null;
+  return (
+    <div>
+      <div>{formatInclusionReason(row.inclusion_reason)}</div>
+      {detailText && (
+        <div
+          className="text-[11px] text-[#64748b] mt-0.5 truncate max-w-[320px]"
+          title={detailText}
+        >
+          {detailText}
+        </div>
+      )}
+    </div>
+  );
+}
+
 const itemColumns: Column<TradingUniversePreviewItem>[] = [
   { key: "symbol", header: "종목", width: "90px", align: "center" },
   {
@@ -125,7 +179,7 @@ const itemColumns: Column<TradingUniversePreviewItem>[] = [
   {
     key: "inclusion_reason",
     header: "선정 이유",
-    render: (row) => formatInclusionReason(row.inclusion_reason),
+    render: (row) => <InclusionReasonCell row={row} />,
   },
   { key: "priority", header: "우선순위", width: "90px", align: "center" },
 ];
@@ -155,7 +209,7 @@ const otherItemColumns: Column<TradingUniversePreviewItem>[] = [
   {
     key: "inclusion_reason",
     header: "선정 이유",
-    render: (row) => formatInclusionReason(row.inclusion_reason),
+    render: (row) => <InclusionReasonCell row={row} />,
   },
   { key: "priority", header: "우선순위", width: "90px", align: "center" },
 ];

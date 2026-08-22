@@ -59,6 +59,7 @@ from agent_trading.services.universe_selection_types import (
     INCLUSION_REASON_VOLUME_SURGE,
     CompositionContext,
     CoreActivityDemotionShadowSignal,
+    EventInclusionDetail,
     LiquidityFilterResult,
     MarketDataSnapshot,
     MarketOverlayDiagnostics,
@@ -988,6 +989,7 @@ class UniverseSelectionService:
         source_type: SourceType,
         inclusion_reason: str,
         instrument: object | None = None,
+        event_detail: EventInclusionDetail | None = None,
     ) -> SelectedSymbol:
         resolved_instrument = instrument
         if resolved_instrument is None:
@@ -1010,6 +1012,7 @@ class UniverseSelectionService:
             market_segment=market_segment,
             index_memberships=normalize_index_memberships(memberships),
             primary_index_membership=derive_primary_index_membership(memberships),
+            event_detail=event_detail,
         )
 
     async def _list_active_kr_equity_instruments(self) -> list[object]:
@@ -1413,6 +1416,15 @@ class UniverseSelectionService:
             ):
                 continue
 
+            # 화면(유니버스 선정 현황)에 "어떤 뉴스/공시 때문에 선정됐는지"를
+            # 보여주기 위해, 선정 당시 이미 조회한 이벤트의 headline/severity/
+            # published_at을 그대로 옮겨 담는다 — 여기서 새로 만들어내지 않는다.
+            event_detail = EventInclusionDetail(
+                headline=getattr(event, "headline", None),
+                severity=getattr(event, "severity", None),
+                published_at=getattr(event, "published_at", None),
+                event_type=normalized_event_type,
+            )
             self._upsert_with_priority(
                 seen,
                 await self._build_selected_symbol(
@@ -1422,6 +1434,7 @@ class UniverseSelectionService:
                     inclusion_reason=(
                         f"{INCLUSION_REASON_EVENT}:{normalized_event_type}"
                     ),
+                    event_detail=event_detail,
                 ),
             )
 

@@ -80,6 +80,7 @@ from agent_trading.domain.entities import (
     UniverseFreezeRunItemEntity,
 )
 from agent_trading.runtime.bootstrap import postgres_runtime
+from agent_trading.services.universe_selection_types import EventInclusionDetail
 from agent_trading.services.held_position_policy import (
     is_held_position_sell_path,
 )
@@ -329,6 +330,29 @@ def _parse_hhmm(value: str) -> dtime:
 def _combine(run_date: date, clock: dtime) -> datetime:
     """Return a timezone-aware KST datetime for ``run_date`` + ``clock``."""
     return datetime.combine(run_date, clock, tzinfo=KST)
+
+
+def _build_freeze_item_metadata(item: object) -> dict[str, object]:
+    """freeze item의 ``metadata_json``을 만든다.
+
+    1차 범위: event_overlay(뉴스/공시)로 선정된 종목의 상세 근거
+    (``SelectedSymbol.event_detail``)만 옮겨 담는다. 다른 source_type은
+    이전과 동일하게 빈 dict를 유지한다 — 없는 근거를 만들어내지 않는다.
+    ``event_detail``의 ``published_at``은 ``datetime``이라 JSON 직렬화를
+    위해 ISO 문자열로 변환한다.
+    """
+    event_detail = getattr(item, "event_detail", None)
+    if not isinstance(event_detail, EventInclusionDetail):
+        return {}
+    published_at = getattr(event_detail, "published_at", None)
+    return {
+        "event_detail": {
+            "headline": event_detail.headline,
+            "severity": event_detail.severity,
+            "published_at": published_at.isoformat() if published_at else None,
+            "event_type": event_detail.event_type,
+        }
+    }
 
 
 def _resolve_intraday_freeze_run_date(run_date: date) -> date:
@@ -2826,7 +2850,7 @@ async def _ensure_decision_loop_intraday_freeze(
                     inclusion_reason=item.inclusion_reason,
                     rank=rank,
                     cap_bucket=item.source_type,
-                    metadata_json={},
+                    metadata_json=_build_freeze_item_metadata(item),
                 )
             )
 

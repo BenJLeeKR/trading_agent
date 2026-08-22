@@ -110,6 +110,25 @@ CORE_SIGNAL_TIER_DEMOTED = 3
 
 
 @dataclass(slots=True, frozen=True)
+class EventInclusionDetail:
+    """event_overlay(뉴스/공시 이벤트)로 선정된 종목의 상세 근거.
+
+    선정 당시(``_add_event_overlay``) 이미 조회한 ``ExternalEventEntity``의
+    값만 그대로 옮겨 담는다 — 여기서 새로 추측하거나 생성하는 값은 없다.
+    본문 요약(``body_summary``)은 길거나 민감할 수 있어 1차 범위에서 제외한다.
+    """
+
+    headline: str | None = None
+    """뉴스/공시 제목(``ExternalEventEntity.headline``)."""
+    severity: str | None = None
+    """이벤트 심각도(``ExternalEventEntity.severity``, 예: ``"high"``)."""
+    published_at: datetime | None = None
+    """이벤트 발행 시각(``ExternalEventEntity.published_at``)."""
+    event_type: str | None = None
+    """정규화된 이벤트 종류(``inclusion_reason`` 접미사와 동일한 값)."""
+
+
+@dataclass(slots=True, frozen=True)
 class SelectedSymbol:
     """A single symbol selected for the trading universe.
 
@@ -125,6 +144,9 @@ class SelectedSymbol:
         Human-readable / machine-readable reason string.
         Examples: ``"approved_core_universe"``, ``"held_position_mandatory"``,
         ``"high_importance_event:disclosure"``, ``"volume_surge_top10"``.
+    event_detail : EventInclusionDetail | None
+        ``source_type == EVENT_OVERLAY``일 때만 채워지는 상세 근거. 다른
+        source_type에는 절대 채우지 않는다(선정 근거를 지어내지 않기 위함).
     """
 
     symbol: str
@@ -134,6 +156,7 @@ class SelectedSymbol:
     market_segment: str | None = None
     index_memberships: tuple[str, ...] = ()
     primary_index_membership: str | None = None
+    event_detail: EventInclusionDetail | None = None
 
     @property
     def priority(self) -> int:
