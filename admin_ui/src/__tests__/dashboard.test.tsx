@@ -555,7 +555,9 @@ const mockIndexMembershipStalenessOk = {
   latest_effective_from: "2026-06-27",
   as_of: "2026-07-12",
   age_days: 15,
-  threshold_days: 21,
+  threshold_months: 6,
+  threshold_days: null,
+  stale_after: "2026-12-27",
   is_stale: false,
 };
 

@@ -73,7 +73,10 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 _KST = ZoneInfo("Asia/Seoul")
 
-_STANDARD_KRX_SYMBOL_PATTERN = re.compile(r"^\d{6}$")
+# KRX 국내주식 단축코드는 2024-01-01부터 신규 발급분에 영문 대문자가 포함될
+# 수 있다(예: 신주인수권). 형식은 "정확히 6자리, ASCII 숫자+영문 대문자만
+# 허용"으로 통일한다 — 기존 숫자 6자리 코드는 이 패턴을 그대로 통과한다.
+_STANDARD_KRX_SYMBOL_PATTERN = re.compile(r"^[0-9A-Z]{6}$")
 _SUPPORTED_KR_EQUITY_MARKETS: frozenset[str] = frozenset({
     "KRX",
     "KOSPI",
@@ -522,7 +525,7 @@ def _normalize_asset_class(asset_class: str | None) -> str:
 
 
 def _is_standard_krx_symbol(symbol: str) -> bool:
-    return _STANDARD_KRX_SYMBOL_PATTERN.match(str(symbol or "").strip()) is not None
+    return _STANDARD_KRX_SYMBOL_PATTERN.match(str(symbol or "").strip().upper()) is not None
 
 
 def _normalize_market_code(market: str | None) -> str:

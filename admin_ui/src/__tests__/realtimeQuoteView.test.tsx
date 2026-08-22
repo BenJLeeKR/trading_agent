@@ -263,13 +263,39 @@ describe("RealtimeQuoteView symbol code validation", () => {
       expect(screen.getByText("실시간 현재가")).toBeInTheDocument();
     });
 
-    const input = screen.getByPlaceholderText("종목코드 6자리 (예: 005930)");
-    await user.type(input, "12A45");
+    const input = screen.getByPlaceholderText("종목코드 6자리, 숫자/영문 대문자 (예: 005930)");
+    await user.type(input, "12A4");
     await user.click(screen.getByText("종목 추가"));
 
     expect(
-      screen.getByText("종목코드는 6자리 숫자로 입력하세요 (예: 005930)")
+      screen.getByText("종목코드는 숫자 또는 영문 대문자를 포함한 6자리로 입력하세요 (예: 005930)")
     ).toBeInTheDocument();
+  });
+
+  it("accepts a 6-character symbol that includes an uppercase letter", async () => {
+    mockFetchOnce(emptyBootstrap);
+    const user = userEvent.setup();
+
+    render(
+      <MemoryRouter>
+        <RealtimeQuoteView />
+      </MemoryRouter>
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("실시간 현재가")).toBeInTheDocument();
+    });
+
+    mockFetchOnce(subscriptionsResponse([{ symbol: "0126Z0", name: "종목0126Z0", market: "KOSPI" }]));
+    mockFetchStreamOnce([streamEventFor("0126Z0", "종목0126Z0", "KOSPI")]);
+
+    const input = screen.getByPlaceholderText("종목코드 6자리, 숫자/영문 대문자 (예: 005930)");
+    await user.type(input, "0126z0");
+    await user.click(screen.getByText("종목 추가"));
+
+    await waitFor(() => {
+      expect(screen.getAllByText("종목0126Z0").length).toBeGreaterThan(0);
+    });
   });
 });
 
@@ -293,7 +319,7 @@ describe("RealtimeQuoteView subscribe flow", () => {
     mockFetchOnce(subscriptionsResponse([{ symbol: "005930", name: "삼성전자", market: "KOSPI" }]));
     mockFetchStreamOnce([streamEventFor("005930", "삼성전자", "KOSPI")]);
 
-    const input = screen.getByPlaceholderText("종목코드 6자리 (예: 005930)");
+    const input = screen.getByPlaceholderText("종목코드 6자리, 숫자/영문 대문자 (예: 005930)");
     await user.type(input, "005930");
     await user.click(screen.getByText("종목 추가"));
 
@@ -323,7 +349,7 @@ describe("RealtimeQuoteView subscribe flow", () => {
     const fetchSpy = vi.spyOn(globalThis, "fetch");
     const callCountBefore = fetchSpy.mock.calls.length;
 
-    const input = screen.getByPlaceholderText("종목코드 6자리 (예: 005930)");
+    const input = screen.getByPlaceholderText("종목코드 6자리, 숫자/영문 대문자 (예: 005930)");
     await user.type(input, "005930");
     await user.click(screen.getByText("종목 추가"));
 

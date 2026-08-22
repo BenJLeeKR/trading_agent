@@ -51,6 +51,7 @@ from agent_trading.services.realtime_quote_source import (
     QuoteSnapshot,
     RealtimeQuoteSource,
     SubscriptionLimitExceededError,
+    _validate_symbol,
 )
 
 router = APIRouter(prefix="/realtime-quotes", tags=["realtime-quotes"])
@@ -220,7 +221,9 @@ async def get_snapshot(
 
 @router.get("/daily-price", response_model=RealtimeQuoteDailyPriceResponse)
 async def get_daily_price(
-    symbol: str = Query(..., description="6자리 종목코드, 예: '005930'"),
+    symbol: str = Query(
+        ..., description="숫자 또는 영문 대문자를 포함할 수 있는 6자리 종목코드, 예: '005930'"
+    ),
     source: RealtimeQuoteSource = Depends(get_realtime_quote_source),
 ) -> RealtimeQuoteDailyPriceResponse:
     """일자별 시세('일별' 탭) — 구독 여부와 무관한 REST 1회 조회.
@@ -275,7 +278,9 @@ async def _sse_event_stream(
 
 @router.get("/stream")
 async def stream_quote(
-    symbol: str = Query(..., description="6자리 종목코드, 예: '005930'"),
+    symbol: str = Query(
+        ..., description="숫자 또는 영문 대문자를 포함할 수 있는 6자리 종목코드, 예: '005930'"
+    ),
     broadcaster: QuoteBroadcaster = Depends(get_realtime_quote_broadcaster),
 ) -> StreamingResponse:
     """Phase 4 push relay — SSE stream of ``BroadcastEvent`` for one symbol.
@@ -290,11 +295,10 @@ async def stream_quote(
     실제 KIS WS 구독은 여전히 기존 ``POST /realtime-quotes/subscriptions``로만
     관리한다(Phase 1-3 contract 그대로).
     """
-    normalized = symbol.strip()
-    if len(normalized) != 6 or not normalized.isdigit():
-        raise HTTPException(
-            status_code=422, detail="symbol must be exactly 6 digits (국내주식 종목코드)"
-        )
+    try:
+        normalized = _validate_symbol(symbol)
+    except InvalidSymbolError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
     return StreamingResponse(
         _sse_event_stream(broadcaster, normalized),
         media_type="text/event-stream",

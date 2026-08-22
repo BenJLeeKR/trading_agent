@@ -326,6 +326,15 @@ class TestSubscribe:
         ws = _fake_ws(connected_source)
         assert ws.subscribe_calls == []
 
+    async def test_subscribe_accepts_alpha_containing_symbol(
+        self, connected_source: KisRealtimeQuoteSource
+    ) -> None:
+        """KRX 단축코드에 영문 대문자가 포함된 경우도 실제 KIS-backed 경로에서 통과한다."""
+        await connected_source.subscribe("0126z0")
+        ws = _fake_ws(connected_source)
+        assert ("H0STCNT0", "0126Z0") in ws.subscribe_calls
+        assert connected_source.list_subscriptions() == ["0126Z0"]
+
     async def test_subscribe_beyond_capacity_raises_without_calling_ws(
         self, connected_source: KisRealtimeQuoteSource
     ) -> None:

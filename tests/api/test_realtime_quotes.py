@@ -105,10 +105,11 @@ class TestSubscribe:
         resp = client.post("/realtime-quotes/subscriptions", json={"symbols": ["ABC"]})
         assert resp.status_code == 422, resp.text
 
-    def test_subscribe_etn_prefix_returns_422(self, client: TestClient) -> None:
-        """ETN codes (``Q`` prefix) are out of scope for this 국내주식 screen."""
+    def test_subscribe_alpha_containing_code_returns_201(self, client: TestClient) -> None:
+        """KRX 단축코드에 영문 대문자가 포함돼도(2024-01-01부터 신규 발급분) 통과한다."""
         resp = client.post("/realtime-quotes/subscriptions", json={"symbols": ["Q00001"]})
-        assert resp.status_code == 422, resp.text
+        assert resp.status_code == 201, resp.text
+        assert "Q00001" in [s["symbol"] for s in resp.json()["subscriptions"]]
 
     def test_subscribe_wrong_length_returns_422(self, client: TestClient) -> None:
         resp = client.post("/realtime-quotes/subscriptions", json={"symbols": ["12345"]})
@@ -283,6 +284,15 @@ class TestStream:
     def test_invalid_symbol_returns_422(self, client: TestClient) -> None:
         resp = client.get("/realtime-quotes/stream", params={"symbol": "ABC"})
         assert resp.status_code == 422
+
+    async def test_alpha_containing_symbol_normalizes_and_streams(self) -> None:
+        """소문자로 들어온 영문 포함 6자리 코드도 대문자로 정규화돼 스트림이 열린다."""
+        app = create_app(auth_enabled=False)
+        async with app.router.lifespan_context(app):
+            broadcaster = app.state.realtime_quote_broadcaster
+            response = await stream_quote(symbol="0126z0", broadcaster=broadcaster)
+            assert response.status_code == 200
+            await response.body_iterator.aclose()
 
     async def test_generator_close_cleans_up_broadcaster_subscription(self) -> None:
         app = create_app(auth_enabled=False)

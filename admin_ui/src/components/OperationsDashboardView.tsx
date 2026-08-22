@@ -1117,7 +1117,11 @@ export default function OperationsDashboardView() {
           title="지수 편입(index membership) 데이터가 오래되었습니다"
           message={
             indexMembershipStaleness.latest_effective_from
-              ? `마지막 반영: ${indexMembershipStaleness.latest_effective_from} (경과 ${indexMembershipStaleness.age_days}일, 기준 ${indexMembershipStaleness.threshold_days}일). [RUNBOOK] index_membership_source_package_apply.md 절차로 갱신하세요.`
+              ? `마지막 반영: ${indexMembershipStaleness.latest_effective_from} (경과 ${indexMembershipStaleness.age_days}일, 기준 ${
+                  indexMembershipStaleness.threshold_days != null
+                    ? `${indexMembershipStaleness.threshold_days}일 override`
+                    : `${indexMembershipStaleness.threshold_months ?? 6}개월`
+                }). [RUNBOOK] index_membership_source_package_apply.md 절차로 갱신하세요.`
               : "지수 편입 데이터가 전혀 없습니다. [RUNBOOK] index_membership_source_package_apply.md 절차로 초기 반영하세요."
           }
         />

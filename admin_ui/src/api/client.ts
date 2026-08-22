@@ -491,10 +491,12 @@ export async function getMarketOverlayFunnel(
 }
 
 export async function getIndexMembershipStaleness(
-  thresholdDays = 21,
+  /** 운영 진단용 override — 지정하지 않으면 백엔드 기본 정책(달력 기준 6개월 초과)을 쓴다. */
+  thresholdDays?: number,
 ): Promise<import("../types/api").IndexMembershipStalenessResponse> {
+  const query = thresholdDays !== undefined ? `?threshold_days=${thresholdDays}` : "";
   return request<import("../types/api").IndexMembershipStalenessResponse>(
-    `/instruments/index-membership/staleness?threshold_days=${thresholdDays}`
+    `/instruments/index-membership/staleness${query}`
   );
 }
 

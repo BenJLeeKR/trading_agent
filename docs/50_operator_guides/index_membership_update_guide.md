@@ -13,9 +13,15 @@
 - 비대상: 주문 제출, BUY 차단, 보유 종목 처리, 기존 freeze 기록의 소급 변경
 
 운영 대시보드의 "지수 편입(index membership) 데이터가 오래되었습니다" 경고는
-활성 편입 데이터의 가장 최신 `as_of_date`를 기준으로 계산한다. 기본 기준은 21일이며,
-경고 자체는 관측 전용이다. 다만 오래된 구성종목 목록이 이후 유니버스 선정에 계속
-사용될 수 있으므로, 원천 기준일이 갱신되면 이 절차로 반영한다.
+활성 편입 데이터의 가장 최신 `as_of_date`를 기준으로 계산한다. 기본 기준은
+**달력 기준 6개월 초과**다(2026-08-22 변경 — 지수 정기 변경은 상반기·하반기
+기준이 기본 주기이므로, 과거 21일 고정 임계값은 운영 주기와 맞지 않았다).
+경고 자체는 관측 전용이다. 다만 오래된 구성종목 목록이 이후 유니버스 선정에
+계속 사용될 수 있으므로, 원천 기준일이 갱신되면 이 절차로 반영한다.
+
+`GET /instruments/index-membership/staleness`의 `threshold_days` query
+parameter는 운영 진단용 override로만 남아있다. 지정하면 고정 일수 기준으로
+판정하고, 지정하지 않으면 기본 정책(달력 기준 6개월)을 사용한다.
 
 관련 원본 런북은
 [`docs/10_signal_research_sppv/[RUNBOOK] index_membership_source_package_apply.md`](../10_signal_research_sppv/[RUNBOOK]%20index_membership_source_package_apply.md)다.
@@ -219,7 +225,7 @@ bash scripts/harness/docker_compose_env.sh exec app \
 1. 명령 출력에서 `apply: True`와 `updated_symbol_count`를 확인한다.
 2. `deactivated_membership_symbol_count`가 편출 종목 수와 대체로 맞는지 확인한다.
 3. 운영 대시보드를 새로고침한다.
-   - `as_of_date`가 최신 기준일이면 21일 초과 경고가 사라져야 한다.
+   - `as_of_date`가 최신 기준일이면 6개월 초과 경고가 사라져야 한다.
    - 경고의 날짜는 DB의 활성 행 metadata `as_of_date`를 우선 사용한다.
 4. 다음 유니버스 freeze 생성 이후, 새 지수 편입 정보가 후보 판정에 반영되는지 확인한다.
 5. 문제가 발견되면 즉시 원천 CSV와 manifest를 보존하고, 임의 DB 수정 대신

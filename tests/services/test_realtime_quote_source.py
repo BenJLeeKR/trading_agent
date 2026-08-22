@@ -48,24 +48,46 @@ class TestSubscribe:
         await source.subscribe(" 005930 ")
         assert source.list_subscriptions() == ["005930"]
 
-    async def test_subscribe_rejects_etn_prefix(self, source: InMemoryMockQuoteSource) -> None:
-        """ETN codes (``Q`` prefix) are out of scope for this 국내주식 screen."""
-        with pytest.raises(InvalidSymbolError):
-            await source.subscribe("Q00001")
+    async def test_subscribe_accepts_alpha_containing_code(
+        self, source: InMemoryMockQuoteSource
+    ) -> None:
+        """KRX 단축코드는 2024-01-01부터 영문 대문자를 포함할 수 있다(예: 신주인수권류).
+
+        형식 검증은 charset/length만 보므로 6자리 영문+숫자 조합은 정상 통과한다
+        (과거에는 ``Q00001`` 형태를 ETN 전용으로 간주해 거부했으나, 이는 charset
+        기준으로는 구분할 수 없는 판단이라 형식 검증에서 더 이상 배제하지 않는다)."""
+        await source.subscribe("Q00001")
+        assert source.list_subscriptions() == ["Q00001"]
+
+    async def test_subscribe_accepts_mixed_alnum(self, source: InMemoryMockQuoteSource) -> None:
+        await source.subscribe("00593A")
+        assert source.list_subscriptions() == ["00593A"]
+
+    async def test_subscribe_normalizes_lowercase_to_uppercase(
+        self, source: InMemoryMockQuoteSource
+    ) -> None:
+        await source.subscribe("00593a")
+        assert source.list_subscriptions() == ["00593A"]
 
     async def test_subscribe_invalid_symbol_raises(self, source: InMemoryMockQuoteSource) -> None:
         with pytest.raises(InvalidSymbolError):
             await source.subscribe("ABC")
-
-    async def test_subscribe_rejects_mixed_alnum(self, source: InMemoryMockQuoteSource) -> None:
-        with pytest.raises(InvalidSymbolError):
-            await source.subscribe("00593A")
 
     async def test_subscribe_rejects_wrong_length(self, source: InMemoryMockQuoteSource) -> None:
         with pytest.raises(InvalidSymbolError):
             await source.subscribe("12345")
         with pytest.raises(InvalidSymbolError):
             await source.subscribe("1234567")
+
+    async def test_subscribe_rejects_special_characters(
+        self, source: InMemoryMockQuoteSource
+    ) -> None:
+        with pytest.raises(InvalidSymbolError):
+            await source.subscribe("00593-")
+
+    async def test_subscribe_rejects_hangul(self, source: InMemoryMockQuoteSource) -> None:
+        with pytest.raises(InvalidSymbolError):
+            await source.subscribe("삼성전자")
 
     async def test_subscribe_beyond_capacity_raises(self, source: InMemoryMockQuoteSource) -> None:
         for i in range(15):
