@@ -54,6 +54,39 @@ describe("Layout navigation", () => {
 });
 
 /* ───────────────────────────────────────────
+ * Scenario 1b: "운영 모니터링" 하위 메뉴 순서
+ * ─────────────────────────────────────────── */
+describe("Layout navigation order", () => {
+  it("운영 모니터링 메뉴가 운영 대시보드 → 유니버스 선정 → 주문 추적 → 운영 경고 → 정합성 점검 순서로 표시된다", () => {
+    setStoredToken(VALID_TOKEN);
+
+    render(
+      <MemoryRouter initialEntries={["/"]}>
+        <AuthProvider>
+          <Routes>
+            <Route element={<Layout />}>
+              <Route path="/" element={<div>Page Content</div>} />
+            </Route>
+          </Routes>
+        </AuthProvider>
+      </MemoryRouter>,
+    );
+
+    const sectionTitle = screen.getByText("운영 모니터링");
+    const list = sectionTitle.closest("div")!.querySelector("ul")!;
+    const itemLabels = Array.from(list.querySelectorAll("li")).map((li) => li.textContent);
+
+    expect(itemLabels).toEqual([
+      "운영 대시보드",
+      "유니버스 선정",
+      "주문 추적",
+      "운영 경고",
+      "정합성 점검",
+    ]);
+  });
+});
+
+/* ───────────────────────────────────────────
  * Scenario 2: Read-only badge 표시 (token 유무 관계없이 항상)
  * ─────────────────────────────────────────── */
 describe("Layout read-only badge", () => {

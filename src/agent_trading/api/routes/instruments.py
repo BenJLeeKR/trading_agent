@@ -89,6 +89,14 @@ async def _build_active_intraday_freeze_view(
 
     source_type_counts = Counter(item.source_type for item in freeze_items)
     inclusion_reason_counts = Counter(item.inclusion_reason for item in freeze_items)
+
+    # 종목명은 universe_freeze_run_items 테이블에 저장되지 않으므로(symbol/
+    # market_code만 있음) instruments 테이블에서 조회해야 한다. 종목별로
+    # 순차 조회하면 freeze item 수만큼 N+1이 생기므로, instrument_id를 모아
+    # get_many() 1회로 배치 조회한다(instruments.py의 다른 배치 조회 관례와
+    # 동일 — positions.py::list_positions 참고).
+    instrument_ids = {item.instrument_id for item in freeze_items}
+    instruments_by_id = await repos.instruments.get_many(instrument_ids)
     items = [
         TradingUniversePreviewItem(
             symbol=item.symbol,
@@ -96,6 +104,11 @@ async def _build_active_intraday_freeze_view(
             source_type=item.source_type,
             inclusion_reason=item.inclusion_reason,
             priority=int(item.rank or 0),
+            instrument_name=(
+                instruments_by_id[item.instrument_id].name
+                if item.instrument_id in instruments_by_id
+                else None
+            ),
         )
         for item in freeze_items
     ]

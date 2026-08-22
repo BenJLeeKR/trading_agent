@@ -52,10 +52,10 @@ const navSections: NavSection[] = [
     title: "운영 모니터링",
     items: [
       { icon: Activity, label: "운영 대시보드", to: "/" },
-      { icon: AlertCircle, label: "운영 경고", to: "/operations/alerts" },
-      { icon: Search, label: "주문 추적", to: "/operations/orders" },
-      { icon: RefreshCcw, label: "정합성 점검", to: "/reconciliation" },
       { icon: Layers, label: "유니버스 선정", to: "/operations/universe-selection" },
+      { icon: Search, label: "주문 추적", to: "/operations/orders" },
+      { icon: AlertCircle, label: "운영 경고", to: "/operations/alerts" },
+      { icon: RefreshCcw, label: "정합성 점검", to: "/reconciliation" },
     ],
   },
   {

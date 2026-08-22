@@ -1667,6 +1667,63 @@ class TestInstruments:
         assert "active_intraday_freeze_comparison" not in data
         assert "market_overlay_diagnostics" not in data
 
+        # instrument_name — universe_freeze_run_items 테이블 자체에는 종목명이
+        # 없으므로, instruments.get_many() 배치 조회로 채워져야 한다.
+        items_by_symbol = {item["symbol"]: item for item in data["items"]}
+        assert items_by_symbol["005930"]["instrument_name"] == "Samsung Electronics"
+        assert items_by_symbol["035420"]["instrument_name"] == "NAVER"
+
+    def test_get_trading_universe_freeze_summary_instrument_name_missing_is_none(
+        self,
+    ) -> None:
+        """instruments 테이블에 없는 instrument_id의 freeze item은
+        instrument_name이 조용히 다른 값으로 채워지지 않고 ``None``이어야
+        한다(symbol을 종목명처럼 대신 채우지 않는다)."""
+        repos = build_in_memory_repositories()
+        now = datetime.now(timezone.utc)
+        business_date = now.astimezone(timezone(timedelta(hours=9))).date()
+        freeze_run_id = uuid4()
+        asyncio.run(
+            repos.universe_freeze_runs.add(
+                UniverseFreezeRunEntity(
+                    universe_freeze_run_id=freeze_run_id,
+                    business_date=business_date,
+                    freeze_purpose="decision_loop_intraday",
+                    freeze_sequence=1,
+                    frozen_at=now,
+                    selection_version="decision_loop_intraday.freeze.v1",
+                    target_count=1,
+                    status="materialized",
+                )
+            )
+        )
+        asyncio.run(
+            repos.universe_freeze_run_items.add_many(
+                (
+                    UniverseFreezeRunItemEntity(
+                        universe_freeze_run_item_id=uuid4(),
+                        universe_freeze_run_id=freeze_run_id,
+                        instrument_id=uuid4(),  # instruments 테이블에 추가하지 않음
+                        symbol="999999",
+                        market_code="KRX",
+                        source_type="core",
+                        inclusion_reason="approved_core_universe",
+                        rank=1,
+                        cap_bucket="core",
+                    ),
+                ),
+            )
+        )
+
+        app = create_app(repos=repos, auth_enabled=False)
+        with TestClient(app) as client:
+            response = client.get("/instruments/trading-universe/freeze-summary")
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["items"][0]["symbol"] == "999999"
+        assert data["items"][0]["instrument_name"] is None
+
     def test_get_trading_universe_freeze_summary_returns_null_when_no_freeze_run(self) -> None:
         """오늘 freeze run이 없으면 200 + null을 반환해야 한다(에러 아님)."""
         repos = build_in_memory_repositories()

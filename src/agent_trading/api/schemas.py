@@ -737,6 +737,7 @@ class TradingUniversePreviewItem(BaseModel):
     source_type: str
     inclusion_reason: str
     priority: int
+    instrument_name: str | None = None
 
 
 class TradingUniverseFreezeView(BaseModel):

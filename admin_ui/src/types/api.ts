@@ -399,6 +399,7 @@ export interface TradingUniversePreviewItem {
   source_type: string;
   inclusion_reason: string;
   priority: number;
+  instrument_name: string | null;
 }
 
 export interface TradingUniverseFreezeView {
