@@ -451,20 +451,25 @@ export async function getTradingUniversePreview(
 }
 
 /**
- * 오늘 이미 얼려둔(freeze) 유니버스 요약만 가져온다 — 라이브 재계산 없음.
+ * 이미 얼려둔(freeze) 유니버스 요약만 가져온다 — 라이브 재계산 없음.
  *
  * 2026-07-14: 운영 대시보드는 원래 ``getTradingUniversePreview()``를 썼는데,
  * 그 API는 "freeze vs live 비교" 카드를 위해 유니버스 선정 알고리즘 전체를
  * 그 순간 다시 계산하는 무거운 작업(실측 0.7~1.0초)을 매번 같이 수행했다.
  * "freeze / live 비교" 카드를 없애면서 그 무거운 재계산이 필요 없어졌으므로,
- * DB에서 오늘 freeze 결과만 가볍게 읽어오는 이 엔드포인트로 교체한다. 계좌
+ * DB에서 freeze 결과만 가볍게 읽어오는 이 엔드포인트로 교체한다. 계좌
  * 정보도 필요 없다(freeze view는 계좌 무관).
+ *
+ * 2026-08-22: "유니버스 선정 현황" 화면(날짜별 조회)을 위해 ``businessDate``
+ * (YYYY-MM-DD)를 옵션 인자로 받는다. 생략하면 기존과 동일하게 KST 오늘을
+ * 조회한다(하위 호환).
  */
-export async function getActiveIntradayFreezeSummary(): Promise<
-  import("../types/api").TradingUniverseFreezeView | null
-> {
+export async function getActiveIntradayFreezeSummary(
+  businessDate?: string,
+): Promise<import("../types/api").TradingUniverseFreezeView | null> {
+  const query = businessDate ? `?business_date=${encodeURIComponent(businessDate)}` : "";
   return request<import("../types/api").TradingUniverseFreezeView | null>(
-    "/instruments/trading-universe/freeze-summary"
+    `/instruments/trading-universe/freeze-summary${query}`
   );
 }
 

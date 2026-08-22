@@ -544,74 +544,35 @@ const mockBuyBlockSummary = {
   exception_count: 0,
 };
 
-const mockTradingUniversePreview = {
-  account_id: "a1",
-  lookback_hours: 24,
-  max_cap: 30,
-  exclude_held_from_cap: true,
-  market_overlay_cap: 5,
-  pre_pool_size: 50,
-  kis_env: "real",
-  total_count: 12,
+// getActiveIntradayFreezeSummary()의 실제 응답 shape(TradingUniverseFreezeView).
+// "유니버스 선정 현황" 화면 분리 이전에는 이 값이 getTradingUniversePreview()
+// 응답의 active_intraday_freeze 필드로 왔었으나, 그 API는 더 이상 대시보드에서
+// 호출되지 않는다(§ 2026-07-14 freeze/live 비교 카드 제거) — 이제 이 값은
+// GET /instruments/trading-universe/freeze-summary가 직접 반환하는 최상위 값이다.
+const mockActiveIntradayFreeze = {
+  universe_freeze_run_id: "freeze-001",
+  freeze_purpose: "decision_loop_intraday",
+  business_date: "2026-05-30",
+  frozen_at: "2026-05-30T05:20:00Z",
+  selection_version: "intraday_freeze_v1",
+  target_count: 3,
   source_type_counts: {
-    held_position: 2,
-    event_overlay: 1,
-    market_overlay: 3,
-    core: 6,
+    core: 2,
+    market_overlay: 1,
   },
   inclusion_reason_counts: {
-    held_position_mandatory: 2,
-    "event_overlay:disclosure": 1,
-    trade_strength: 2,
-    volume_surge: 1,
-    core_universe: 6,
+    core_universe: 2,
+    trade_strength: 1,
   },
-  market_overlay_diagnostics: {
-    enabled: true,
-    skipped_reason: null,
-    seed_pool_source: "disclosures",
-    effective_pre_pool_size: 50,
-    pre_pool_candidate_count: 50,
-    quotes_requested_count: 50,
-    quotes_received_count: 42,
-    filtered_out_count: 11,
-    scored_candidate_count: 31,
-    added_count: 3,
-  },
-  items: [],
-  active_intraday_freeze: {
-    universe_freeze_run_id: "freeze-001",
-    freeze_purpose: "decision_loop_intraday",
-    business_date: "2026-05-30",
-    frozen_at: "2026-05-30T05:20:00Z",
-    selection_version: "intraday_freeze_v1",
-    target_count: 3,
-    source_type_counts: {
-      core: 2,
-      market_overlay: 1,
+  items: [
+    {
+      symbol: "001740",
+      market: "KRX",
+      source_type: "market_overlay",
+      inclusion_reason: "trade_strength",
+      priority: 1,
     },
-    inclusion_reason_counts: {
-      core_universe: 2,
-      trade_strength: 1,
-    },
-    items: [
-      {
-        symbol: "001740",
-        market: "KRX",
-        source_type: "market_overlay",
-        inclusion_reason: "trade_strength",
-        priority: 1,
-      },
-    ],
-  },
-  active_intraday_freeze_comparison: {
-    exact_match: true,
-    live_total_count: 3,
-    freeze_total_count: 3,
-    common_symbol_count: 3,
-    live_only_symbols: [],
-    freeze_only_symbols: [],
-  },
+  ],
 };
 
 /**
@@ -623,29 +584,36 @@ const mockTradingUniversePreview = {
  * market-overlay-funnel, trade-decisions, session-events)도 함께 제거했다 —
  * 죽은 데이터를 계속 fetch할 이유가 없다.
  *
- * Call order (23 total):
- *   1-9: Promise.all [health, readyz, recon, orders, todayOrders, daily-summary,
- *                     buy-block-summary, clients, session, operations-day]
- *   10:   getAccounts(clientId)
- *   11-13: getAccountSnapshots(3 accounts)
- *   14:   universe preview (계좌 의존 — accounts 이후에만 fire 가능)
- *   15:   getIndexMembershipStaleness() — UNIV-4, 계좌 무관 read-only 감시
- *   16:   getSnapshotSyncRuns(10)
- *   17:   getRecentFailures(5) — caller provides this mock
- *   18:   getFailureSummary() — caller provides this mock
+ * 2026-08-22: 이 헬퍼는 실제 fetchAll() 호출 순서와 어긋나 있었다 — GET /orders를
+ * 두 번(중복) mock하면서 이후 모든 항목이 한 칸씩 밀렸고, freeze-summary
+ * (getActiveIntradayFreezeSummary) mock이 아예 빠져 있었으며, 더 이상 호출되지
+ * 않는 universe preview mock이 뒤에 남아 있었다. 이 세 가지를 함께 고쳐 실제
+ * 호출 순서와 다시 맞췄다(이 파일의 여러 테스트가 이 헬퍼를 공유하므로, 어긋난
+ * 채로는 어떤 테스트도 실제 응답 매핑을 신뢰할 수 없었다).
+ *
+ * Call order (18 total):
+ *   1-10: Promise.all [health, readyz, recon, orders(date=today, 1회만),
+ *                      daily-summary, buy-block-summary, clients, session,
+ *                      operations-day, freeze-summary]
+ *   11:    getAccounts(clientId)
+ *   12-14: getAccountSnapshots(3 accounts)
+ *   15:    getIndexMembershipStaleness() — UNIV-4, 계좌 무관 read-only 감시
+ *   16:    getSnapshotSyncRuns(10)
+ *   17:    getRecentFailures(5) — caller provides this mock
+ *   18:    getFailureSummary() — caller provides this mock
  */
 function mockOpsDashboardCommon() {
-  // 1-9: Parallel batch
-  mockFetchOnce(mockOpsHealth);            // 1. GET /health
-  mockFetchOnce(mockReadyz);               // 2. GET /health/readyz
-  mockFetchOnce(mockReconciliationSummary); // 3. GET /reconciliation/summary
-  mockFetchOnce(mockOrders);               // 4. GET /orders
-  mockFetchOnce(mockOrders);               // 5. GET /orders?date=today
-  mockFetchOnce(mockTodayOrderSummary);    // 6. GET /orders/daily-summary
-  mockFetchOnce(mockBuyBlockSummary);      // 7. GET /orders/buy-block-summary
-  mockFetchOnce(mockClients);              // 8. GET /clients
-  mockFetchOnce(mockSessionResponse);      // 9. GET /market-sessions/latest
-  mockFetchOnce(mockOperationsDayResponse);// 10. GET /market-sessions/operations-day/latest
+  // 1-10: Parallel batch
+  mockFetchOnce(mockOpsHealth);              // 1. GET /health
+  mockFetchOnce(mockReadyz);                 // 2. GET /health/readyz
+  mockFetchOnce(mockReconciliationSummary);  // 3. GET /reconciliation/summary
+  mockFetchOnce(mockOrders);                 // 4. GET /orders?date=today (병합되어 1회만 호출됨)
+  mockFetchOnce(mockTodayOrderSummary);      // 5. GET /orders/daily-summary
+  mockFetchOnce(mockBuyBlockSummary);        // 6. GET /orders/buy-block-summary
+  mockFetchOnce(mockClients);                // 7. GET /clients
+  mockFetchOnce(mockSessionResponse);        // 8. GET /market-sessions/latest
+  mockFetchOnce(mockOperationsDayResponse);  // 9. GET /market-sessions/operations-day/latest
+  mockFetchOnce(mockActiveIntradayFreeze);   // 10. GET /instruments/trading-universe/freeze-summary
 
   // 11. getAccounts
   mockFetchOnce(mockAccounts);
@@ -655,9 +623,7 @@ function mockOpsDashboardCommon() {
   mockFetchOnce({ positions: mockPositionsForLocked, cash_balance: mockCashBalanceForLocked });
   mockFetchOnce({ positions: [], cash_balance: mockCashBalanceNull });
 
-  // 15. universe preview (계좌 의존이라 계좌 조회 이후에만 fire)
-  mockFetchOnce(mockTradingUniversePreview);
-  // 16. getIndexMembershipStaleness (UNIV-4, 정상 상태로 고정 — 배너 미노출)
+  // 15. getIndexMembershipStaleness (UNIV-4, 정상 상태로 고정 — 배너 미노출)
   mockFetchOnce({
     latest_effective_from: "2026-06-27",
     as_of: "2026-07-12",
@@ -665,12 +631,12 @@ function mockOpsDashboardCommon() {
     threshold_days: 21,
     is_stale: false,
   });
-  // 17. getSnapshotSyncRuns
+  // 16. getSnapshotSyncRuns
   mockFetchOnce([]);
 }
 
-describe("OperationsDashboardView — recent failures", () => {
-  it("renders universe selection / market overlay panel", async () => {
+describe("OperationsDashboardView — universe selection 섹션 제거 후 오늘 매수 주문 전환 카드", () => {
+  it("Universe Selection / Market Overlay 섹션은 사라지고, 오늘 매수 주문 전환 카드는 남아 있다", async () => {
     mockOpsDashboardCommon();
     mockFetchOnce([]);
     mockFetchOnce(mockFailureSummaryEmpty);
@@ -681,16 +647,17 @@ describe("OperationsDashboardView — recent failures", () => {
       </MemoryRouter>,
     );
 
-    await screen.findByText("Universe Selection / Market Overlay");
-    expect(screen.getByText("오늘 유니버스 freeze 기준")).toBeInTheDocument();
-    expect(screen.getByText("오늘 freeze 편입")).toBeInTheDocument();
-    expect(screen.getByText("3건")).toBeInTheDocument();
-    expect(screen.getByText("일치")).toBeInTheDocument();
-    // freeze 상세 테이블 / overlay 진단 / Session Events는 속도 개선을 위해
-    // 화면에서 제거되었으므로 더 이상 렌더링되지 않는다.
-    expect(screen.queryByText("freeze 기준 요약")).not.toBeInTheDocument();
-    expect(screen.queryByText("Overlay 진단")).not.toBeInTheDocument();
-    expect(screen.queryByText("Session Events")).not.toBeInTheDocument();
+    // "오늘 매수 주문 전환" 카드는 유니버스 목록이 아니라 매수 전환 운영 지표라서
+    // 유지된다 — 이 값이 나타나는 것으로 화면이 정상 렌더링됐음을 먼저 확인한다.
+    // Panel 제목과 카드 라벨이 같은 문구를 쓰므로 2곳 이상 나타난다.
+    await screen.findAllByText("오늘 매수 주문 전환");
+
+    // "유니버스 선정 현황" 화면으로 분리되면서 사라져야 하는 것들.
+    expect(screen.queryByText("Universe Selection / Market Overlay")).not.toBeInTheDocument();
+    expect(screen.queryByText("오늘 유니버스 freeze 기준")).not.toBeInTheDocument();
+    expect(screen.queryByText("오늘 freeze 편입")).not.toBeInTheDocument();
+    expect(screen.queryByText("freeze 내 market_overlay")).not.toBeInTheDocument();
+    expect(screen.queryByText("freeze 내 event_overlay")).not.toBeInTheDocument();
   });
 
   it("renders recent submission failures card with data", async () => {
