@@ -3,6 +3,7 @@ import { MemoryRouter } from "react-router-dom";
 import { describe, expect, it, afterEach, vi, beforeEach } from "vitest";
 import Dashboard from "../components/Dashboard";
 import OperationsDashboardView from "../components/OperationsDashboardView";
+import { REALIZED_PNL_CUMULATIVE_START_DATE } from "../components/AccountsView";
 import { setStoredToken, clearStoredToken } from "../api/client";
 import * as apiClient from "../api/client";
 import {
@@ -569,12 +570,18 @@ function accountSnapshotFor(accountId: string) {
   return { positions: [], cash_balance: mockCashBalanceNull };
 }
 
-/** account_id별 realized-pnl summary(총손익) — 계좌 3개 합계가 +85,000이 되도록 구성. */
+/**
+ * account_id별 realized-pnl summary(실현손익 누적) — 총손익 카드는
+ * OperationsDashboardView.tsx에서 이 값에 계좌별 미실현 손익(mockPositions
+ * 기준 a1=800, a3=100, a2=0)을 더하고 매수 수수료 pool(전부 0)을 빼서
+ * 합산하므로, 계좌별 (실현손익 누적 = 원하는 총손익 − 미실현 손익)로
+ * 역산해 각 계좌의 총손익이 100,000/-20,000/5,000이 되도록 맞춘다.
+ */
 function realizedPnlSummaryFor(accountId: string) {
   const netByAccount: Record<string, number> = {
-    [mockAccounts[0].account_id]: 100000,
+    [mockAccounts[0].account_id]: 100000 - 800,
     [mockAccounts[1].account_id]: -20000,
-    [mockAccounts[2].account_id]: 5000,
+    [mockAccounts[2].account_id]: 5000 - 100,
   };
   return {
     account_id: accountId,
@@ -887,7 +894,9 @@ describe("OperationsDashboardView — 총손익(실현손익) 카드", () => {
     await waitFor(() => {
       expect(screen.getByText("+85,000원")).toBeInTheDocument();
     });
-    expect(screen.getByText("최근 1개월 기준 · 출처: realized-pnl summary")).toBeInTheDocument();
+    expect(
+      screen.getByText(`${REALIZED_PNL_CUMULATIVE_START_DATE}~오늘 누적 · 출처: realized-pnl summary`),
+    ).toBeInTheDocument();
   });
 
   it("realized-pnl summary API가 전부 실패하면 '조회 실패'로 표시되고 0원처럼 보이지 않는다", async () => {
@@ -924,6 +933,23 @@ describe("OperationsDashboardView — 총손익(실현손익) 카드", () => {
     expect(
       screen.getByText(/계좌 1개 조회 실패, 성공한 계좌만 반영/),
     ).toBeInTheDocument();
+  });
+
+  it("realized_pnl_net_sum이 문자열(Decimal 직렬화)로 와도 숫자로 합산된다", async () => {
+    mockOpsDashboardCommon();
+    // 백엔드 Decimal 필드는 JSON에서 문자열로 직렬화될 수 있다 — toNumeric()
+    // 없이 그대로 "+="하면 문자열 이어붙이기가 되어 합계가 깨진다.
+    vi.spyOn(apiClient, "getRealizedPnlSummary").mockImplementation(async (accountId: string) => {
+      const summary = realizedPnlSummaryFor(accountId);
+      return { ...summary, realized_pnl_net_sum: String(summary.realized_pnl_net_sum) } as never;
+    });
+
+    renderOpsDashboard();
+
+    await screen.findByText("총손익");
+    await waitFor(() => {
+      expect(screen.getByText("+85,000원")).toBeInTheDocument();
+    });
   });
 
   it("대시보드는 realized-pnl의 daily/events/recompute-queue API를 호출하지 않는다", async () => {

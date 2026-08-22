@@ -52,7 +52,10 @@ function maskAccountNumber(ref: string | null | undefined): string {
  * "총손익" 카드의 실현손익 누적 시작일(KST). 계좌 생성일 등 다른 기준이 아니라
  * 사용자 지정 고정 시작일이다 — 그 이전 실현손익은 이 카드에 반영되지 않는다.
  */
-const REALIZED_PNL_CUMULATIVE_START_DATE = "2026-08-01";
+// OperationsDashboardView.tsx의 "총손익" 카드도 이 계좌 상세 "총손익"과
+// 정의(미실현 + 실현 누적 − 매수 수수료 pool)와 기준일을 그대로 맞춰야 해서
+// export한다 — 두 화면이 각자 값을 따로 정의하면 다시 어긋날 수 있다.
+export const REALIZED_PNL_CUMULATIVE_START_DATE = "2026-08-01";
 
 /**
  * 미실현 손익율(%) = (미실현 손익 − 매수 수수료) / 매입원가 × 100.
