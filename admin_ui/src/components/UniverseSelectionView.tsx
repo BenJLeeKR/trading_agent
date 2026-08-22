@@ -64,25 +64,88 @@ function otherItems(items: TradingUniversePreviewItem[]): TradingUniversePreview
   return items.filter((item) => !KNOWN_BUCKETS.includes(item.source_type as KnownBucket));
 }
 
+/**
+ * inclusion_reason 한국어 해설 매핑.
+ *
+ * 근거: src/agent_trading/services/universe_selection_types.py의
+ * INCLUSION_REASON_* 상수, src/agent_trading/services/universe_selection.py의
+ * _categorize_market_reason()이 실제로 반환하는 값들만 매핑했다 — 코드에서
+ * 확인되지 않은 값은 임의로 해석하지 않는다.
+ */
+const KNOWN_INCLUSION_REASON_LABELS: Record<string, string> = {
+  approved_core_universe: "핵심 유니버스 편입",
+  held_position_mandatory: "보유 종목(필수 편입)",
+  manual_watchlist: "수동 관심종목",
+  volume_surge_top10: "거래량 급증",
+  trade_strength_top10: "체결강도 상위",
+  near_high_breakout: "신고가 근접 돌파",
+  price_volume_breakout: "가격·거래량 동반 돌파",
+};
+
+/**
+ * `reconciliation_required`/`high_importance_event`는 콜론(:) 뒤에 세부
+ * 값이 붙는 동적 코드다(예: `reconciliation_required:blocking_lock`,
+ * `high_importance_event:disclosure`) — universe_selection.py의
+ * INCLUSION_REASON_RECONCILIATION/INCLUSION_REASON_EVENT 사용부 참고.
+ * 접두사만으로 매핑하고, 원본 전체 문자열은 그대로 보존해 보여준다.
+ */
+const KNOWN_INCLUSION_REASON_PREFIX_LABELS: Record<string, string> = {
+  reconciliation_required: "정합성 확인 필요",
+  high_importance_event: "고중요도 이벤트",
+};
+
+/** "한국어 해설(원본 코드)" 형태로 변환. 모르는 값은 "미분류 사유(원본 코드)"로,
+ * 원본 코드는 항상 보존한다(백엔드 의미를 임의로 지어내지 않는다). */
+function formatInclusionReason(code: string): string {
+  const direct = KNOWN_INCLUSION_REASON_LABELS[code];
+  if (direct) return `${direct}(${code})`;
+
+  const prefix = code.split(":")[0];
+  const prefixLabel = KNOWN_INCLUSION_REASON_PREFIX_LABELS[prefix];
+  if (prefixLabel) return `${prefixLabel}(${code})`;
+
+  return `미분류 사유(${code})`;
+}
+
 const itemColumns: Column<TradingUniversePreviewItem>[] = [
-  { key: "symbol", header: "종목", width: "100px" },
-  { key: "market", header: "시장", width: "80px" },
-  { key: "inclusion_reason", header: "선정 이유" },
-  { key: "priority", header: "우선순위", width: "90px", align: "right" },
+  { key: "symbol", header: "종목", width: "90px", align: "center" },
+  {
+    key: "instrument_name",
+    header: "종목명",
+    width: "140px",
+    render: (row) => row.instrument_name ?? "—",
+  },
+  { key: "market", header: "시장", width: "70px", align: "center" },
+  {
+    key: "inclusion_reason",
+    header: "선정 이유",
+    render: (row) => formatInclusionReason(row.inclusion_reason),
+  },
+  { key: "priority", header: "우선순위", width: "90px", align: "center" },
 ];
 
 /** "기타" 리스트는 원본 source_type을 프론트가 임의 해석하지 않고 그대로 보여준다. */
 const otherItemColumns: Column<TradingUniversePreviewItem>[] = [
-  { key: "symbol", header: "종목", width: "100px" },
-  { key: "market", header: "시장", width: "80px" },
+  { key: "symbol", header: "종목", width: "90px", align: "center" },
+  {
+    key: "instrument_name",
+    header: "종목명",
+    width: "140px",
+    render: (row) => row.instrument_name ?? "—",
+  },
+  { key: "market", header: "시장", width: "70px", align: "center" },
   {
     key: "source_type",
     header: "source_type",
     width: "160px",
     render: (row) => <StatusBadge variant="neutral">{row.source_type}</StatusBadge>,
   },
-  { key: "inclusion_reason", header: "선정 이유" },
-  { key: "priority", header: "우선순위", width: "90px", align: "right" },
+  {
+    key: "inclusion_reason",
+    header: "선정 이유",
+    render: (row) => formatInclusionReason(row.inclusion_reason),
+  },
+  { key: "priority", header: "우선순위", width: "90px", align: "center" },
 ];
 
 export default function UniverseSelectionView() {
