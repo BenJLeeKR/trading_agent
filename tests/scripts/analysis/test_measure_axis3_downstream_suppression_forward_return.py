@@ -9,12 +9,21 @@ from __future__ import annotations
 
 from datetime import date, datetime, timedelta, timezone
 
+import pytest
+
 from scripts.analysis.measure_axis3_downstream_suppression_forward_return import (
+    BUY_RAW_SQL,
+    CLOSE_SQL,
     KNOWN_NON_PRIMARY_STATUSES,
     PRIMARY_STATUSES,
     build_close_index,
+    build_reproducibility_metadata,
     classify_and_dedupe,
     compute_forward_return,
+    fetch_close_series,
+    fetch_population,
+    main,
+    parse_as_of_at,
     run_analysis,
 )
 
@@ -46,13 +55,40 @@ def _raw_row(
     }
 
 
-def _close_row(instrument_id: str, trade_date: date, close_price: float, price_source: str) -> dict:
+def _close_row(
+    instrument_id: str,
+    trade_date: date,
+    close_price: float,
+    price_source: str,
+    snapshot_at: datetime | None = None,
+    created_at: datetime | None = None,
+    row_id: str | None = None,
+) -> dict:
     return {
         "instrument_id": instrument_id,
         "trade_date": trade_date,
         "close_price": close_price,
         "price_source": price_source,
+        "snapshot_at": snapshot_at,
+        "created_at": created_at,
+        "row_id": row_id,
     }
+
+
+class _FakeFetchConn:
+    """``conn.fetch(sql, *args)``만 기록하는 DB-free fake connection.
+
+    ``fetch_population``/``fetch_close_series``에 같은 as-of 값이 실제로
+    전달되는지, SQL 파라미터 순서가 계약과 일치하는지를 실제 DB 없이
+    검증하기 위한 최소 구현이다.
+    """
+
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, tuple]] = []
+
+    async def fetch(self, sql: str, *args):
+        self.calls.append((sql, args))
+        return []
 
 
 class TestClassifyAndDedupe:
@@ -117,7 +153,7 @@ class TestComputeForwardReturn:
             _close_row("i1", mon, 105.0, "kis_stock_basic_info"),
             _close_row("i1", tue, 106.0, "kis_stock_basic_info"),
         ]
-        idx = build_close_index(close_rows)
+        idx, _ = build_close_index(close_rows)
         r1 = compute_forward_return(idx, "i1", fri, 1)
         assert r1.exclusion_reason is None
         assert r1.target_trade_date == mon.isoformat()
@@ -127,14 +163,16 @@ class TestComputeForwardReturn:
         assert r2.target_trade_date == tue.isoformat()
 
     def test_missing_decision_close_is_price_source_missing_not_zero(self):
-        idx = build_close_index([_close_row("i1", date(2026, 8, 10), 100.0, "kis_stock_basic_info")])
+        idx, _ = build_close_index(
+            [_close_row("i1", date(2026, 8, 10), 100.0, "kis_stock_basic_info")]
+        )
         r = compute_forward_return(idx, "i1", date(2026, 8, 7), 1)
         assert r.exclusion_reason == "price_source_missing"
         assert r.return_pct is None
         assert r.decision_close is None
 
     def test_horizon_not_yet_arrived_is_not_zero_return(self):
-        idx = build_close_index(
+        idx, _ = build_close_index(
             [
                 _close_row("i1", date(2026, 8, 7), 100.0, "kis_stock_basic_info"),
                 _close_row("i1", date(2026, 8, 10), 101.0, "kis_stock_basic_info"),
@@ -148,7 +186,7 @@ class TestComputeForwardReturn:
         assert r.decision_close == 100.0
 
     def test_fallback_price_source_used_only_when_primary_absent(self):
-        idx = build_close_index(
+        idx, _ = build_close_index(
             [
                 _close_row("i1", date(2026, 8, 7), 100.0, "kis_stock_basic_info"),
                 _close_row("i1", date(2026, 8, 10), 999.0, "signal_feature_snapshots_derived"),
@@ -216,3 +254,217 @@ class TestRunAnalysisPopulationSelection:
         # 둘 다 실제 수익률로 잡히면 안 된다.
         assert downgraded_summary["n_with_return"] == 0
         assert matched_summary["n_with_return"] == 0
+
+
+class TestParseAsOfAt:
+    def test_timezone_aware_iso8601_parsed_correctly(self):
+        dt = parse_as_of_at("2026-08-24T12:20:00+09:00")
+        assert dt.tzinfo is not None
+        assert dt.utcoffset() == timedelta(hours=9)
+        assert dt.hour == 12 and dt.minute == 20
+
+    def test_naive_timestamp_without_timezone_is_rejected(self):
+        with pytest.raises(ValueError, match="timezone"):
+            parse_as_of_at("2026-08-24T12:20:00")
+
+    def test_malformed_timestamp_is_rejected(self):
+        with pytest.raises(ValueError):
+            parse_as_of_at("not-a-timestamp")
+
+
+class TestEndDateAfterAsOfAtIsRejected:
+    @pytest.mark.asyncio
+    async def test_end_date_later_than_as_of_at_exits_with_error(self):
+        with pytest.raises(SystemExit):
+            await main(
+                [
+                    "--start-date",
+                    "2026-08-01",
+                    "--end-date",
+                    "2026-08-30",
+                    "--as-of-at",
+                    "2026-08-24T12:20:00+09:00",
+                ]
+            )
+
+    @pytest.mark.asyncio
+    async def test_naive_as_of_at_exits_with_error_before_any_db_call(self):
+        with pytest.raises(SystemExit):
+            await main(
+                [
+                    "--start-date",
+                    "2026-08-01",
+                    "--end-date",
+                    "2026-08-20",
+                    "--as-of-at",
+                    "2026-08-24T12:20:00",  # timezone 없음
+                ]
+            )
+
+    @pytest.mark.asyncio
+    async def test_as_of_at_and_as_of_date_together_exits_with_error(self):
+        with pytest.raises(SystemExit):
+            await main(
+                [
+                    "--start-date",
+                    "2026-08-01",
+                    "--end-date",
+                    "2026-08-20",
+                    "--as-of-at",
+                    "2026-08-24T12:20:00+09:00",
+                    "--as-of-date",
+                    "2026-08-24",
+                ]
+            )
+
+
+class TestSameAsOfPropagatedToPopulationAndPriceQueries:
+    @pytest.mark.asyncio
+    async def test_fetch_population_and_fetch_close_series_receive_same_as_of_at(self):
+        as_of_at = datetime(2026, 8, 24, 12, 20, 0, tzinfo=KST)
+        conn = _FakeFetchConn()
+
+        await fetch_population(conn, date(2026, 8, 1), date(2026, 8, 20), as_of_at)
+        await fetch_close_series(conn, as_of_at, date(2026, 8, 24))
+
+        population_sql, population_args = conn.calls[0]
+        close_sql, close_args = conn.calls[1]
+
+        assert population_sql == BUY_RAW_SQL
+        assert population_args[2] is as_of_at
+        assert close_sql == CLOSE_SQL
+        assert close_args[0] is as_of_at
+
+    def test_close_sql_filters_on_created_at_not_only_trade_date_label(self):
+        # availability cutoff는 created_at(적재 시각) 기준이어야 한다 —
+        # clpr_chng_dt/trade_date 라벨만으로 제한하면 backfill된 과거
+        # 라벨이 as-of 판정을 왜곡할 수 있다.
+        assert "created_at <= $1" in CLOSE_SQL
+        assert "trade_date <= $2" in CLOSE_SQL
+
+    def test_buy_raw_sql_filters_decision_created_at_on_as_of_at(self):
+        assert "td.created_at <= $3" in BUY_RAW_SQL
+
+
+class TestPriceDuplicateHandling:
+    def test_identical_duplicate_prices_are_collapsed_to_one_bar(self):
+        rows = [
+            _close_row("i1", date(2026, 8, 7), 100.0, "kis_stock_basic_info", row_id="a"),
+            _close_row("i1", date(2026, 8, 7), 100.0, "kis_stock_basic_info", row_id="b"),
+        ]
+        idx, stats = build_close_index(rows)
+        assert len(idx["i1"]) == 1
+        assert idx["i1"][0].close_price == 100.0
+        assert stats["duplicate_units_detected"] == 1
+        assert stats["duplicate_rows_same_price_collapsed"] == 1
+        assert stats["duplicate_rows_conflicting_price_resolved"] == 0
+
+    def test_conflicting_duplicate_prices_resolved_by_latest_snapshot_at(self):
+        older = _close_row(
+            "i1",
+            date(2026, 8, 7),
+            100.0,
+            "kis_stock_basic_info",
+            snapshot_at=datetime(2026, 8, 7, 5, 5, tzinfo=KST),
+            row_id="old",
+        )
+        newer = _close_row(
+            "i1",
+            date(2026, 8, 7),
+            101.0,
+            "kis_stock_basic_info",
+            snapshot_at=datetime(2026, 8, 7, 18, 0, tzinfo=KST),
+            row_id="new",
+        )
+        idx, stats = build_close_index([older, newer])
+        assert len(idx["i1"]) == 1
+        assert idx["i1"][0].close_price == 101.0  # 더 최신 snapshot_at이 이김
+        assert stats["duplicate_rows_conflicting_price_resolved"] == 1
+        assert stats["by_price_source"]["kis_stock_basic_info"]["conflict_resolved"] == 1
+        assert stats["conflict_examples"][0]["chosen_close_price"] == 101.0
+        assert stats["conflict_examples"][0]["dropped_close_prices"] == [100.0]
+
+    def test_tie_break_falls_through_to_created_at_then_row_id(self):
+        # snapshot_at이 같으면 created_at, 그것도 같으면 row_id로 끝맺는다.
+        same_snapshot = datetime(2026, 8, 7, 5, 5, tzinfo=KST)
+        row_a = _close_row(
+            "i1",
+            date(2026, 8, 7),
+            100.0,
+            "kis_stock_basic_info",
+            snapshot_at=same_snapshot,
+            created_at=datetime(2026, 8, 7, 5, 6, tzinfo=KST),
+            row_id="a",
+        )
+        row_b = _close_row(
+            "i1",
+            date(2026, 8, 7),
+            102.0,
+            "kis_stock_basic_info",
+            snapshot_at=same_snapshot,
+            created_at=datetime(2026, 8, 7, 5, 7, tzinfo=KST),
+            row_id="b",
+        )
+        idx, stats = build_close_index([row_a, row_b])
+        assert idx["i1"][0].close_price == 102.0  # 더 최신 created_at이 이김
+
+    def test_duplicate_does_not_double_count_trading_day_for_forward_return(self):
+        # 같은 (종목, 거래일)에 중복이 있어도 T+1은 그 날을 두 번이 아니라
+        # 한 번만 센 뒤 다음 실제 거래일로 넘어가야 한다.
+        rows = [
+            _close_row("i1", date(2026, 8, 7), 100.0, "kis_stock_basic_info", row_id="a"),
+            _close_row("i1", date(2026, 8, 7), 100.0, "kis_stock_basic_info", row_id="b"),
+            _close_row("i1", date(2026, 8, 10), 105.0, "kis_stock_basic_info", row_id="c"),
+        ]
+        idx, _ = build_close_index(rows)
+        r = compute_forward_return(idx, "i1", date(2026, 8, 7), 1)
+        assert r.exclusion_reason is None
+        assert r.target_trade_date == date(2026, 8, 10).isoformat()
+        assert r.return_pct == round((105.0 / 100.0 - 1.0) * 100.0, 4)
+
+    def test_no_duplicates_reports_zero_counts(self):
+        rows = [_close_row("i1", date(2026, 8, 7), 100.0, "kis_stock_basic_info", row_id="a")]
+        _, stats = build_close_index(rows)
+        assert stats["duplicate_units_detected"] == 0
+        assert stats["duplicate_rows_same_price_collapsed"] == 0
+        assert stats["duplicate_rows_conflicting_price_resolved"] == 0
+        assert stats["conflict_examples"] == []
+
+
+class TestReproducibilityMetadataAndOutputStructure:
+    def test_metadata_includes_as_of_at_kst_and_cutoff_rule(self):
+        metadata = build_reproducibility_metadata(
+            query_executed_at_kst="2026-08-24T13:00:00+09:00",
+            start_date=date(2026, 6, 18),
+            end_date=date(2026, 8, 21),
+            as_of_at=datetime(2026, 8, 24, 12, 20, 0, tzinfo=KST),
+            as_of_precision="exact_timestamp",
+            horizons=[1, 5, 20],
+            script_git_sha="deadbeef",
+        )
+        assert metadata["as_of_at_kst"] == "2026-08-24T12:20:00+09:00"
+        assert metadata["as_of_precision"] == "exact_timestamp"
+        assert "created_at" in metadata["price_availability_cutoff_rule"]
+        assert "look_ahead_caveat" in metadata
+        assert "historical_snapshot_note" in metadata
+        assert "as_of_date_legacy_warning" not in metadata
+
+    def test_legacy_precision_adds_explicit_warning(self):
+        metadata = build_reproducibility_metadata(
+            query_executed_at_kst="2026-08-24T13:00:00+09:00",
+            start_date=date(2026, 6, 18),
+            end_date=date(2026, 8, 21),
+            as_of_at=datetime(2026, 8, 24, 23, 59, 59, tzinfo=KST),
+            as_of_precision="date_end_of_day_kst_legacy",
+            horizons=[1],
+            script_git_sha=None,
+        )
+        assert "as_of_date_legacy_warning" in metadata
+
+    def test_run_analysis_output_includes_duplicate_handling_block(self):
+        d1 = date(2026, 8, 7)
+        raw_rows = [_raw_row("i1", "007340", d1, "matched", 9)]
+        close_rows = [_close_row("i1", d1, 100.0, "kis_stock_basic_info", row_id="a")]
+        result = run_analysis(raw_rows, close_rows, horizons=[1])
+        assert "price_duplicate_handling" in result
+        assert "duplicate_rows_conflicting_price_resolved" in result["price_duplicate_handling"]

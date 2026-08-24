@@ -12111,3 +12111,29 @@ execution_attempts/사후분석 SQL) 보존을 동시에 만족하는지** 코�
 - **다음 우선순위**: (1) 신호 재설계 후보 탐색(축 1을 통과할 새
   신호 찾기), (2) 이 도구로 축 3 표본을 계속 누적 관측(§16.6
   조건 충족 여부를 주기적으로 재확인). Stage B는 계속 보류.
+
+## `SPPV-3` 축 3 재현 분석 도구 재현성 보강(PR #341 후속 커밋, 2026-08-24 KST) — **완료, 계약 v2로 전환**
+
+상세: `docs/40_action_plans/post_sppv3_policy_evaluation_design_
+2026-08-20.md` "18. `SPPV-3` 축 3 재현 분석 도구 재현성 보강".
+
+- `--as-of-at`(timezone 포함 ISO8601)을 표준 옵션으로 추가 — 앞으로
+  실행 예시는 이것만 쓴다. timezone 없는 입력은 명시적으로 거부.
+  `--as-of-date`는 저정밀 호환 옵션으로 남기고 메타데이터에 경고를
+  표시. `--end-date`가 as-of보다 미래면 명확한 입력 오류로 중단.
+- 가격 소스 availability cutoff를 `created_at`(실제 적재 시각)
+  기준으로 바꿈(과거엔 `clpr_chng_dt` 라벨만 썼는데, 이 라벨은
+  backfill로 사후에 채워질 수 있어 재현성을 보장하지 못했다).
+- 가격 소스별 (종목, 거래일) 중복을 `DISTINCT ON` + 결정론적
+  tie-break(snapshot_at→created_at→PK)로 SQL·Python 양쪽에서
+  방어. `DEDUPE_CONTRACT_VERSION`을 `axis3-dedupe-v2`로 승격.
+- 신규 테스트 17건 추가(총 29건, DB 미사용) 전부 PASS. 관련
+  `accept` 계열 전부 PASS.
+- 실제 운영 DB read-only 재실행(2026-08-24 13:05 KST,
+  `--as-of-at`): population/제외 건수/가격 소스 사용/horizon별
+  수치 전부 이전 v1 실행과 동일 — 중복이 0건이라 v2 보강이 이번
+  데이터셋의 실측값을 바꾸지 않았음을 확인(방어 로직이 정상 동작함,
+  버그 수정이 아니라 재현성 보증 강화).
+- **완료 확정** — population/dedupe 정의/Stage B 보류 판정은
+  이번 턴에서 변경하지 않았다. 앞으로 이 도구를 재실행할 때는
+  `--as-of-at`만 표준으로 쓴다.

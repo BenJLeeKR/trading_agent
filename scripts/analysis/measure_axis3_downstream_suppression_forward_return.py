@@ -47,6 +47,44 @@ deterministic 레이어에서 ``BUY_CANDIDATE``였던 종목이 downstream에서
   표본이 충분하지 않으면(현재 항상 그렇다) 정책별 성과 결론을 내리지
   않는다 — 분포만 보고한다.
 
+재현성 보강(v2, 2026-08-24 후속 턴)
+------------------------------------
+초판(v1)은 "같은 입력 기간 + 같은 as-of면 같은 결과"를 완전히 보장하지
+못했다 — 이번 턴에 다음 세 가지를 보강했다(``DEDUPE_CONTRACT_VERSION``을
+``axis3-dedupe-v2``로 올림):
+
+1. **``--as-of-at``(timezone 포함 ISO8601 timestamp)**: 날짜 단위
+   ``--as-of-date``는 같은 날 나중에 재실행하면 그날 오후에 새로 생긴
+   decision까지 포함될 수 있어 정밀 재현이 안 됐다. ``--as-of-at``은
+   정확한 시각까지 고정한다. timezone 없는 입력은 거부한다(명시적 KST
+   해석으로 조용히 넘어가지 않음). ``--as-of-date``는 "그 KST 날짜
+   23:59:59.999999로 확장되는 저정밀 호환 옵션"으로 유지하되 결과
+   메타데이터의 ``as_of_precision``에 ``date_end_of_day_kst_legacy``로
+   표시한다. 앞으로 표준 실행 예시는 ``--as-of-at``만 쓴다.
+2. **가격 소스 availability cutoff**: 기존에는 가격 SQL이
+   ``clpr_chng_dt``(그 종가가 가리키는 거래일 라벨)만으로 as-of를
+   제한했다 — 이 라벨은 나중에 backfill로 채워질 수 있어, "그 as-of
+   시점에 DB가 실제로 그 값을 갖고 있었는가"를 보장하지 않는다.
+   ``instrument_status_snapshots``/``signal_feature_snapshots`` 둘 다
+   ``created_at``(행이 실제로 DB에 적재된 시각)을 authoritative cutoff로
+   쓴다 — ``snapshot_at``(업무적 스냅샷 시각, 이 파이프라인에서는 매일
+   05:05 KST 배치 라벨)은 라벨/정렬 용도로만 쓰고 cutoff에는 쓰지
+   않는다(배치가 늦게 돌면 ``snapshot_at``이 실제 적재 시각보다 앞설 수
+   있어 cutoff로 쓰면 look-ahead가 생긴다). 이 cutoff는 장중 결정에
+   결정일 종가를 쓰는 기존의 약한 look-ahead 한계와는 **다른 층**이다 —
+   전자는 "DB가 그 시점에 이 값을 알고 있었는가"이고, 후자는 "그 값
+   자체가 결정 시각 이후의 정보를 담고 있는가"다.
+3. **가격 중복/충돌 선택 규칙**: 1차/대체 소스 각각에서 (instrument_id,
+   trade_date)당 정확히 한 행만 SQL의 ``DISTINCT ON``으로 선택한다 —
+   ``snapshot_at`` 내림차순, 동률이면 ``created_at`` 내림차순, 마지막
+   동률은 PK(``*_snapshot_id``) 내림차순. ``build_close_index()``에도
+   같은 규칙의 방어 로직을 넣어, 이 함수가 SQL 밖에서 직접 호출돼도
+   동일 (종목, 거래일)의 서로 다른 가격이 조용히 섞이지 않는다 — 가격이
+   같으면 "중복 병합", 다르면 "충돌 해소"로 구분해 건수를 반환한다.
+
+과거 v1(2026-08-24 12:20 KST) 실행 결과는 historical snapshot으로
+유지한다 — v2 실행 결과와 그대로 병합하지 않는다.
+
 DB는 read-only transaction(``conn.transaction(readonly=True)``) 안에서
 SELECT/CTE만 실행한다. ``CREATE TEMP TABLE``/``CREATE TABLE``/쓰기 SQL은
 전혀 만들지 않는다. 외부 API·KIS 호출 없음, 컨테이너 재기동 없음.
@@ -76,8 +114,9 @@ load_dotenv(str(_REPO_ROOT / ".env"))
 from agent_trading.db.connection import close_pool, create_pool, get_pool  # noqa: E402
 
 KST = timezone(timedelta(hours=9))
+_MIN_SENTINEL_KST = datetime.min.replace(tzinfo=KST)
 
-DEDUPE_CONTRACT_VERSION = "axis3-dedupe-v1"
+DEDUPE_CONTRACT_VERSION = "axis3-dedupe-v2"
 
 # 주 population에 속하지 않는 alignment_status와, 그것이 왜 buy-intent
 # population에서 제외되는지(§16.4). ``suppressed``/``upgraded``/
@@ -113,40 +152,76 @@ BUY_RAW_SQL = """
 """
 
 # 1차 소스(kis_stock_basic_info) + 대체 소스(signal_feature_snapshots 파생)
-# 종가 시계열. 대체 소스는 1차 소스가 없는 (instrument, trade_date)에만
-# 채택한다(NOT EXISTS). as_of 이후 시점의 가격은 조회하지 않는다 —
-# 재현성(같은 as-of면 같은 결과)과 look-ahead 방지를 함께 만족한다.
+# 종가 시계열.
+#
+# availability cutoff: ``created_at``(행이 실제로 DB에 적재된 시각, $1)을
+# 쓴다 — ``snapshot_at``(업무적 스냅샷 라벨, 이 파이프라인에서는 매일
+# 05:05 KST 배치 시각)은 배치가 늦게 돌면 실제 적재 시각보다 앞설 수 있어
+# cutoff로 쓰면 look-ahead가 생긴다. ``trade_date <= $2``는 "그 종가가
+# 가리키는 거래일 자체가 as-of 이후일 수 없다"는 상식적 안전장치로 별도
+# 유지한다(두 필터는 서로 다른 목적 — 하나는 "언제 알았는가", 하나는
+# "무엇에 대한 값인가").
+#
+# 종목·거래일당 정확히 한 행: ``DISTINCT ON (instrument_id, trade_date)``
+# + ``snapshot_at DESC, created_at DESC, row_id DESC``로 결정론적으로
+# 하나만 남긴다(동일 (종목, 거래일)에 중복 snapshot이 존재해도 T+N
+# 거래일 순서가 중복 계산되지 않도록).
+#
+# 대체 소스는 1차 소스가 없는 (instrument, trade_date)에만 채택한다
+# (NOT EXISTS).
 CLOSE_SQL = """
-    WITH primary_close AS (
-        SELECT DISTINCT
-            instrument_id,
-            to_date(raw_payload_json ->> 'clpr_chng_dt', 'YYYYMMDD') AS trade_date,
-            (raw_payload_json ->> 'thdt_clpr')::numeric AS close_price,
-            'kis_stock_basic_info' AS price_source
-        FROM trading.instrument_status_snapshots
-        WHERE source_type = 'kis_stock_basic_info'
-          AND raw_payload_json ->> 'clpr_chng_dt' IS NOT NULL
-          AND raw_payload_json ->> 'clpr_chng_dt' <> ''
-          AND to_date(raw_payload_json ->> 'clpr_chng_dt', 'YYYYMMDD') <= $1
+    WITH primary_dedup AS (
+        SELECT DISTINCT ON (instrument_id, trade_date)
+            instrument_id, trade_date, close_price, price_source,
+            snapshot_at, created_at, row_id
+        FROM (
+            SELECT
+                instrument_id,
+                to_date(raw_payload_json ->> 'clpr_chng_dt', 'YYYYMMDD') AS trade_date,
+                (raw_payload_json ->> 'thdt_clpr')::numeric AS close_price,
+                'kis_stock_basic_info' AS price_source,
+                snapshot_at,
+                created_at,
+                instrument_status_snapshot_id AS row_id
+            FROM trading.instrument_status_snapshots
+            WHERE source_type = 'kis_stock_basic_info'
+              AND raw_payload_json ->> 'clpr_chng_dt' IS NOT NULL
+              AND raw_payload_json ->> 'clpr_chng_dt' <> ''
+              AND created_at <= $1
+        ) p
+        WHERE trade_date <= $2
+        ORDER BY instrument_id, trade_date, snapshot_at DESC, created_at DESC, row_id DESC
     ),
-    fallback_close AS (
-        SELECT
-            instrument_id,
-            (snapshot_at AT TIME ZONE 'Asia/Seoul')::date AS trade_date,
-            (sma_20 * (1 + price_vs_sma_20_pct / 100.0)) AS close_price,
-            'signal_feature_snapshots_derived' AS price_source
-        FROM trading.signal_feature_snapshots
-        WHERE timeframe = '1d'
-          AND sma_20 IS NOT NULL
-          AND price_vs_sma_20_pct IS NOT NULL
-          AND (snapshot_at AT TIME ZONE 'Asia/Seoul')::date <= $1
+    fallback_dedup AS (
+        SELECT DISTINCT ON (instrument_id, trade_date)
+            instrument_id, trade_date, close_price, price_source,
+            snapshot_at, created_at, row_id
+        FROM (
+            SELECT
+                instrument_id,
+                (snapshot_at AT TIME ZONE 'Asia/Seoul')::date AS trade_date,
+                (sma_20 * (1 + price_vs_sma_20_pct / 100.0)) AS close_price,
+                'signal_feature_snapshots_derived' AS price_source,
+                snapshot_at,
+                created_at,
+                signal_feature_snapshot_id AS row_id
+            FROM trading.signal_feature_snapshots
+            WHERE timeframe = '1d'
+              AND sma_20 IS NOT NULL
+              AND price_vs_sma_20_pct IS NOT NULL
+              AND created_at <= $1
+        ) f
+        WHERE trade_date <= $2
+        ORDER BY instrument_id, trade_date, snapshot_at DESC, created_at DESC, row_id DESC
     )
-    SELECT instrument_id, trade_date, close_price, price_source FROM primary_close
+    SELECT instrument_id, trade_date, close_price, price_source, snapshot_at, created_at, row_id
+    FROM primary_dedup
     UNION ALL
-    SELECT f.instrument_id, f.trade_date, f.close_price, f.price_source
-    FROM fallback_close f
+    SELECT f.instrument_id, f.trade_date, f.close_price, f.price_source,
+           f.snapshot_at, f.created_at, f.row_id
+    FROM fallback_dedup f
     WHERE NOT EXISTS (
-        SELECT 1 FROM primary_close p
+        SELECT 1 FROM primary_dedup p
         WHERE p.instrument_id = f.instrument_id AND p.trade_date = f.trade_date
     )
 """
@@ -223,27 +298,99 @@ class CloseBar:
     price_source: str
 
 
+def _duplicate_tie_break_key(row: dict[str, Any]) -> tuple[datetime, datetime, str]:
+    """중복 가격 행 중 하나를 결정론적으로 고르기 위한 정렬 키.
+
+    최신 ``snapshot_at`` 우선, 동률이면 최신 ``created_at``, 마지막
+    동률은 PK(``row_id``) 문자열 비교로 끝맺는다. SQL이 이미
+    ``DISTINCT ON``으로 이 규칙을 적용하므로 정상 경로에서는 이 함수가
+    실제로 갈라야 할 동률을 만날 일이 거의 없다 — 이 함수는 SQL을
+    거치지 않고 ``build_close_index()``가 직접 호출되는 경로(단위
+    테스트, 향후 다른 호출자)에 대한 방어선이다.
+    """
+    return (
+        row.get("snapshot_at") or _MIN_SENTINEL_KST,
+        row.get("created_at") or _MIN_SENTINEL_KST,
+        str(row.get("row_id") or ""),
+    )
+
+
 def build_close_index(
     close_rows: Sequence[dict[str, Any]],
-) -> dict[str, list[CloseBar]]:
+) -> tuple[dict[str, list[CloseBar]], dict[str, Any]]:
     """instrument_id별로 거래일 오름차순 정렬된 종가 리스트를 만든다.
 
     이 리스트에서의 "위치"가 곧 "실제 거래일 순서"다 — 달력일이 아니라
     가격 소스에 실제로 존재하는 거래일만 카운트하므로 주말/휴장일이
     자동으로 skip된다.
+
+    같은 (instrument_id, trade_date)에 행이 두 개 이상 들어오면(SQL이
+    이미 ``DISTINCT ON``으로 이걸 막지만, 이 함수는 그 보장에만
+    의존하지 않는다) 조용히 두 번 넣지 않는다 — 가격이 전부 같으면
+    "중복 병합", 하나라도 다르면 ``_duplicate_tie_break_key``로 결정론적
+    선택 후 "충돌 해소"로 집계한다. 반환하는 두 번째 값이 그 집계다.
     """
-    by_instrument: dict[str, list[CloseBar]] = defaultdict(list)
+    grouped: dict[tuple[str, date], list[dict[str, Any]]] = defaultdict(list)
     for r in close_rows:
-        by_instrument[r["instrument_id"]].append(
+        grouped[(r["instrument_id"], r["trade_date"])].append(r)
+
+    by_instrument: dict[str, list[CloseBar]] = defaultdict(list)
+    duplicate_units_detected = 0
+    same_price_collapsed = 0
+    conflict_resolved = 0
+    by_source: dict[str, dict[str, int]] = defaultdict(
+        lambda: {"same_price_collapsed": 0, "conflict_resolved": 0}
+    )
+    conflict_examples: list[dict[str, Any]] = []
+
+    for (instrument_id, trade_date), group in grouped.items():
+        if len(group) == 1:
+            chosen = group[0]
+        else:
+            duplicate_units_detected += 1
+            distinct_prices = {round(float(r["close_price"]), 8) for r in group}
+            source_label = group[0].get("price_source") or "unknown"
+            if len(distinct_prices) == 1:
+                chosen = group[0]
+                same_price_collapsed += len(group) - 1
+                by_source[source_label]["same_price_collapsed"] += len(group) - 1
+            else:
+                ranked = sorted(group, key=_duplicate_tie_break_key, reverse=True)
+                chosen = ranked[0]
+                conflict_resolved += len(group) - 1
+                by_source[source_label]["conflict_resolved"] += len(group) - 1
+                if len(conflict_examples) < 5:
+                    chosen_price = round(float(chosen["close_price"]), 8)
+                    conflict_examples.append(
+                        {
+                            "instrument_id": instrument_id,
+                            "trade_date": trade_date.isoformat(),
+                            "chosen_close_price": chosen_price,
+                            "dropped_close_prices": sorted(
+                                distinct_prices - {chosen_price}
+                            ),
+                        }
+                    )
+
+        by_instrument[instrument_id].append(
             CloseBar(
-                trade_date=r["trade_date"],
-                close_price=float(r["close_price"]),
-                price_source=r["price_source"],
+                trade_date=trade_date,
+                close_price=float(chosen["close_price"]),
+                price_source=chosen["price_source"],
             )
         )
+
     for bars in by_instrument.values():
         bars.sort(key=lambda b: b.trade_date)
-    return dict(by_instrument)
+
+    duplicate_stats = {
+        "duplicate_units_detected": duplicate_units_detected,
+        "duplicate_rows_same_price_collapsed": same_price_collapsed,
+        "duplicate_rows_conflicting_price_resolved": conflict_resolved,
+        "by_price_source": dict(by_source),
+        "conflict_examples": conflict_examples,
+    }
+    return dict(by_instrument), duplicate_stats
 
 
 @dataclass
@@ -412,19 +559,42 @@ def _resolve_script_git_sha() -> str | None:
         )
         sha = out.stdout.strip()
         return sha or None
-    except Exception:
+    except (OSError, subprocess.SubprocessError):
         return None
 
 
+def parse_as_of_at(value: str) -> datetime:
+    """``--as-of-at``을 timezone-aware ``datetime``으로 파싱한다.
+
+    timezone 정보가 없는 입력은 거부한다 — 조용히 KST로 해석하지 않고
+    호출자가 명시적으로 오프셋을 붙이게 강제해, "이 timestamp가 정확히
+    어느 순간을 가리키는지"에 대한 모호함을 원천적으로 없앤다.
+    """
+    try:
+        parsed = datetime.fromisoformat(value)
+    except ValueError as exc:
+        raise ValueError(
+            f"--as-of-at 형식이 올바르지 않습니다(ISO8601 필요): {value!r}"
+        ) from exc
+    if parsed.tzinfo is None:
+        raise ValueError(
+            "--as-of-at은 timezone 정보가 있는 ISO8601 timestamp여야 합니다"
+            f"(예: 2026-08-24T12:20:00+09:00). timezone 없는 입력은 거부합니다: {value!r}"
+        )
+    return parsed
+
+
 async def fetch_population(
-    conn: Any, start_date: date, end_date: date, as_of_ts: datetime
+    conn: Any, start_date: date, end_date: date, as_of_at: datetime
 ) -> list[dict[str, Any]]:
-    rows = await conn.fetch(BUY_RAW_SQL, start_date, end_date, as_of_ts)
+    rows = await conn.fetch(BUY_RAW_SQL, start_date, end_date, as_of_at)
     return [dict(r) for r in rows]
 
 
-async def fetch_close_series(conn: Any, as_of_date: date) -> list[dict[str, Any]]:
-    rows = await conn.fetch(CLOSE_SQL, as_of_date)
+async def fetch_close_series(
+    conn: Any, as_of_at: datetime, as_of_kst_date: date
+) -> list[dict[str, Any]]:
+    rows = await conn.fetch(CLOSE_SQL, as_of_at, as_of_kst_date)
     return [dict(r) for r in rows]
 
 
@@ -439,7 +609,7 @@ def run_analysis(
     forward-return/집계 로직 전체를 검증할 수 있게 한다.
     """
     units = classify_and_dedupe(raw_rows)
-    close_index = build_close_index(close_rows)
+    close_index, price_duplicate_handling = build_close_index(close_rows)
 
     exclusion_counts: Counter[str] = Counter()
     for status in KNOWN_NON_PRIMARY_STATUSES:
@@ -513,9 +683,76 @@ def run_analysis(
         ),
         "exclusion_counts": dict(exclusion_counts),
         "price_source_usage_counts": dict(price_source_usage),
+        "price_duplicate_handling": price_duplicate_handling,
         "horizon_summaries": horizon_summaries,
         "units": unit_records,
     }
+
+
+def build_reproducibility_metadata(
+    *,
+    query_executed_at_kst: str,
+    start_date: date,
+    end_date: date,
+    as_of_at: datetime,
+    as_of_precision: str,
+    horizons: list[int],
+    script_git_sha: str | None,
+) -> dict[str, Any]:
+    """결과 JSON의 ``reproducibility_metadata`` 블록을 순수하게 구성한다.
+
+    DB I/O와 분리해 두어, "같은 입력이면 같은 메타데이터가 나오는가"를
+    DB 없이도 단위 테스트할 수 있게 한다.
+    """
+    as_of_at_kst = as_of_at.astimezone(KST)
+    metadata: dict[str, Any] = {
+        "query_executed_at_kst": query_executed_at_kst,
+        "input_date_range": {"start": start_date.isoformat(), "end": end_date.isoformat()},
+        "as_of_at_kst": as_of_at_kst.isoformat(),
+        "as_of_precision": as_of_precision,
+        "horizons": horizons,
+        "dedupe_contract_version": DEDUPE_CONTRACT_VERSION,
+        "script_git_sha": script_git_sha,
+        "price_availability_cutoff_rule": (
+            "가격 소스(instrument_status_snapshots/signal_feature_snapshots) "
+            "둘 다 created_at(행이 실제로 DB에 적재된 시각) <= as_of_at을 "
+            "availability cutoff로 쓴다 — snapshot_at(업무적 스냅샷 라벨, "
+            "이 파이프라인에서는 매일 05:05 KST 배치 시각)은 배치가 늦게 "
+            "돌면 실제 적재 시각보다 앞설 수 있어 cutoff로는 쓰지 않는다. "
+            "trade_date <= as_of_at의 KST 날짜라는 별도의 상식적 안전장치도 "
+            "함께 적용한다(그 종가가 가리키는 거래일 자체가 미래일 수 없다)."
+        ),
+        "look_ahead_caveat": (
+            "가상 진입가는 결정일 KST 종가를 근사로 쓴다 — 결정이 그날 "
+            "장중에 이뤄졌다면 결정 이후의 장중 변동이 일부 포함되는 "
+            "약한 look-ahead가 있다(장중 tick 데이터 부재로 제거 불가). "
+            "이는 price_availability_cutoff_rule과는 다른 층의 한계다 — "
+            "cutoff는 'DB가 그 시점에 이 값을 알고 있었는가', 이 한계는 "
+            "'그 값 자체가 결정 시각 이후 정보를 담고 있는가'다."
+        ),
+        "historical_snapshot_note": (
+            "2026-08-24 11:51 KST(ad hoc SQL, PR #340) 및 2026-08-24 12:20 "
+            "KST(이 도구의 v1, --as-of-date 기반, PR #341)의 결과는 모두 "
+            "historical snapshot으로 유지한다 — 이후 재현성 보강(v2, "
+            "--as-of-at/가격 availability cutoff/중복 선택 규칙 도입)이 "
+            "적용된 실행 결과와 그대로 병합하지 않는다. 표본 누적/as-of "
+            "정밀도/가격 소스 정규화 규칙 차이로 수치가 달라질 수 있다."
+        ),
+        "policy_conclusion_caveat": (
+            "이 스크립트의 출력은 관측 지표다. 표본이 §16.6 기준(risk_on "
+            "downgraded 15~20건 이상, 국면 다양성 1건 이상 등)을 충족하기 "
+            "전까지 이 결과만으로 정책/threshold/gate를 변경하지 않는다. "
+            "SPPV-3 축 1 Hold 확정에 따라 Stage B는 계속 보류다."
+        ),
+    }
+    if as_of_precision == "date_end_of_day_kst_legacy":
+        metadata["as_of_date_legacy_warning"] = (
+            "--as-of-date는 저정밀 호환 옵션이다 — 그 KST 날짜의 "
+            "23:59:59.999999로 확장돼, 같은 날 다른 시각에 재실행하면 "
+            "그 사이 새로 생긴 decision까지 포함될 수 있다. 정확한 재현이 "
+            "필요하면 --as-of-at을 쓸 것."
+        )
+    return metadata
 
 
 async def main(argv: Sequence[str] | None = None) -> int:
@@ -528,12 +765,21 @@ async def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--start-date", required=True, help="population 시작일(YYYY-MM-DD, KST)")
     parser.add_argument("--end-date", required=True, help="population 종료일(YYYY-MM-DD, KST)")
     parser.add_argument(
+        "--as-of-at",
+        default=None,
+        help=(
+            "[표준] 평가 기준 시각 — timezone 포함 ISO8601"
+            "(예: 2026-08-24T12:20:00+09:00). timezone 없는 입력은 거부한다. "
+            "생략하면 실행 시각의 KST 현재 시각을 쓴다."
+        ),
+    )
+    parser.add_argument(
         "--as-of-date",
         default=None,
         help=(
-            "평가 기준일(YYYY-MM-DD, KST). 이 날짜 이후의 가격/결정 데이터는 "
-            "조회하지 않는다(재현성 + look-ahead 방지). 생략하면 실행 시각의 "
-            "KST 날짜를 쓴다."
+            "[저정밀·호환용] 평가 기준일(YYYY-MM-DD, KST) — 그 날 "
+            "23:59:59.999999 KST로 확장된다. --as-of-at과 동시에 쓸 수 "
+            "없다. 정확한 재현이 필요하면 --as-of-at을 쓸 것."
         ),
     )
     parser.add_argument(
@@ -544,13 +790,34 @@ async def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--output-json", default=None, help="결과 JSON 저장 경로(선택)")
     args = parser.parse_args(argv)
 
+    if args.as_of_at and args.as_of_date:
+        parser.error("--as-of-at과 --as-of-date를 동시에 지정할 수 없습니다.")
+
     start_date = datetime.strptime(args.start_date, "%Y-%m-%d").date()
     end_date = datetime.strptime(args.end_date, "%Y-%m-%d").date()
-    if args.as_of_date:
-        as_of_date = datetime.strptime(args.as_of_date, "%Y-%m-%d").date()
+
+    if args.as_of_at:
+        try:
+            as_of_at = parse_as_of_at(args.as_of_at)
+        except ValueError as exc:
+            parser.error(str(exc))
+            return 2  # pragma: no cover - parser.error()가 항상 먼저 종료함
+        as_of_precision = "exact_timestamp"
+    elif args.as_of_date:
+        as_of_date_legacy = datetime.strptime(args.as_of_date, "%Y-%m-%d").date()
+        as_of_at = datetime.combine(as_of_date_legacy, datetime.max.time(), tzinfo=KST)
+        as_of_precision = "date_end_of_day_kst_legacy"
     else:
-        as_of_date = datetime.now(tz=KST).date()
-    as_of_ts = datetime.combine(as_of_date, datetime.max.time(), tzinfo=KST)
+        as_of_at = datetime.now(tz=KST)
+        as_of_precision = "exact_timestamp"
+
+    as_of_kst_date = as_of_at.astimezone(KST).date()
+    if end_date > as_of_kst_date:
+        parser.error(
+            f"--end-date({end_date.isoformat()})가 as-of 시각의 KST 날짜"
+            f"({as_of_kst_date.isoformat()})보다 미래일 수 없습니다."
+        )
+
     horizons = [int(h.strip()) for h in args.horizons.split(",") if h.strip()]
 
     query_executed_at_kst = datetime.now(tz=KST).isoformat()
@@ -560,40 +827,23 @@ async def main(argv: Sequence[str] | None = None) -> int:
         pool = await get_pool()
         async with pool.acquire() as conn:
             async with conn.transaction(readonly=True):
-                raw_rows = await fetch_population(conn, start_date, end_date, as_of_ts)
-                close_rows = await fetch_close_series(conn, as_of_date)
+                raw_rows = await fetch_population(conn, start_date, end_date, as_of_at)
+                close_rows = await fetch_close_series(conn, as_of_at, as_of_kst_date)
     finally:
         await close_pool()
 
     analysis = run_analysis(raw_rows, close_rows, horizons)
 
     result = {
-        "reproducibility_metadata": {
-            "query_executed_at_kst": query_executed_at_kst,
-            "input_date_range": {"start": start_date.isoformat(), "end": end_date.isoformat()},
-            "as_of_date": as_of_date.isoformat(),
-            "horizons": horizons,
-            "dedupe_contract_version": DEDUPE_CONTRACT_VERSION,
-            "script_git_sha": _resolve_script_git_sha(),
-            "look_ahead_caveat": (
-                "가상 진입가는 결정일 KST 종가를 근사로 쓴다 — 결정이 그날 "
-                "장중에 이뤄졌다면 결정 이후의 장중 변동이 일부 포함되는 "
-                "약한 look-ahead가 있다(장중 tick 데이터 부재로 제거 불가)."
-            ),
-            "historical_snapshot_note": (
-                "2026-08-24 11:51 KST에 수행된 축 3 최초 실측 보고"
-                "(post_sppv3_policy_evaluation_design_2026-08-20.md §16.5)는 "
-                "이 도구 도입 이전의 ad hoc 조회 결과이며 historical snapshot "
-                "으로만 취급한다 — 이 스크립트의 새 실행 결과와 그대로 병합하지 "
-                "않는다. 표본 누적/as-of 시점/규약 미세 차이로 수치가 달라질 수 "
-                "있다."
-            ),
-            "policy_conclusion_caveat": (
-                "이 스크립트의 출력은 관측 지표다. 표본이 §16.6 기준(risk_on "
-                "downgraded 15~20건 이상, 국면 다양성 1건 이상 등)을 충족하기 "
-                "전까지 이 결과만으로 정책/threshold/gate를 변경하지 않는다."
-            ),
-        },
+        "reproducibility_metadata": build_reproducibility_metadata(
+            query_executed_at_kst=query_executed_at_kst,
+            start_date=start_date,
+            end_date=end_date,
+            as_of_at=as_of_at,
+            as_of_precision=as_of_precision,
+            horizons=horizons,
+            script_git_sha=_resolve_script_git_sha(),
+        ),
         **analysis,
     }
 
@@ -608,6 +858,8 @@ async def main(argv: Sequence[str] | None = None) -> int:
     print(json.dumps(result["exclusion_counts"], ensure_ascii=False, indent=2))
     print("\n=== 가격 소스 사용 건수 ===")
     print(json.dumps(result["price_source_usage_counts"], ensure_ascii=False, indent=2))
+    print("\n=== 가격 중복/충돌 처리 ===")
+    print(json.dumps(result["price_duplicate_handling"], ensure_ascii=False, indent=2))
     print("\n=== horizon별 요약 ===")
     for s in result["horizon_summaries"]:
         print(

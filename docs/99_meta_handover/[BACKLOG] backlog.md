@@ -7812,3 +7812,25 @@ MAP]`의 같은 제목 항목.
   아직 아니다(§16.6 표본 조건 충족 전까지 관측 도구로만 사용).
 - **다음 순서**: 신호 재설계 후보 탐색 + 이 도구로 축 3 표본
   누적 관측을 병행한다. Stage B는 계속 보류.
+
+## `SPPV-3` 축 3 재현 분석 도구 재현성 보강(PR #341 후속 커밋, 2026-08-24 KST) — **완료**
+
+상세: `docs/40_action_plans/post_sppv3_policy_evaluation_design_
+2026-08-20.md` "18. `SPPV-3` 축 3 재현 분석 도구 재현성 보강",
+`[PRIORITY_MAP]`의 같은 제목 항목.
+
+- `--as-of-at`(timezone 필수 ISO8601) 표준 옵션 추가, `--as-of-date`
+  는 저정밀 호환용으로 유지·경고. `end-date > as-of` 입력 오류
+  처리. 가격 availability cutoff를 라벨(`clpr_chng_dt`)이 아니라
+  실제 적재 시각(`created_at`)으로 교체. 가격 중복/충돌을
+  `DISTINCT ON` + 결정론적 tie-break로 SQL·Python 양쪽에서 방어.
+  계약 버전 `axis3-dedupe-v2`.
+- 신규 테스트 17건(총 29건) 전부 PASS, 관련 `accept` 계열 전부
+  PASS. `_resolve_script_git_sha()`의 broad exception을
+  `OSError`/`subprocess.SubprocessError`로 좁힘.
+- 실제 운영 DB read-only 재실행 결과가 v1과 완전히 동일(중복 0건
+  확인) — 재현성 보강이 버그 수정이 아니라 보증 강화였음을
+  실측으로 확인.
+- **완료 확정**. population/dedupe 정의/Stage B 보류 판정 무변경.
+- **다음 순서**: 이 도구(`--as-of-at` 표준)로 축 3 표본 누적 관측을
+  계속하고, 신호 재설계 후보 탐색을 병행한다.
