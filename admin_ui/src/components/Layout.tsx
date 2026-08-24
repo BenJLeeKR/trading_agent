@@ -10,7 +10,6 @@ import {
   Brain,
   Building2,
   Server,
-  ShieldCheck,
   LogOut,
   Activity,
   Zap,
@@ -23,6 +22,7 @@ import {
   Bot,
   CornerDownRight,
   Layers,
+  KeyRound,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -76,11 +76,21 @@ const navSections: NavSection[] = [
     ],
   },
   {
+    // PR #336 설계 문서(docs/08_frontend_design/2026-08-24_admin_settings_
+    // navigation_design.md) §3.2 — "예약됨 > 관리"(비활성 placeholder)를
+    // 이 "설정" 섹션으로 대체한다. 이번 단계에서는 "권한 확인"만 활성화하고,
+    // "수수료·세금 정책"/"리스크 한도"는 후속 PR에서 추가한다(메뉴 수를
+    // 최소로 유지하기 위해 아직 비활성 항목으로도 미리 넣지 않는다).
+    title: "설정",
+    items: [
+      { icon: KeyRound, label: "권한 확인", to: "/settings/access" },
+    ],
+  },
+  {
     title: "예약됨",
     items: [
       { icon: Building2, label: "브로커", to: "#", disabled: true },
       { icon: Server, label: "시스템", to: "#", disabled: true },
-      { icon: ShieldCheck, label: "관리", to: "#", disabled: true },
     ],
   },
 ];

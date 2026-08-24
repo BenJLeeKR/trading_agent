@@ -3,6 +3,15 @@
  * Based on src/agent_trading/api/schemas.py
  * ─────────────────────────────────────────── */
 
+/**
+ * `GET /auth/me` — 현재 Bearer 토큰의 role. 사용자별 계정 정보가 아니다 —
+ * 이 배포는 프로세스 시작 시 설정된 토큰 1개 + 고정 role 1개로 동작한다.
+ */
+export interface AuthMeResponse {
+  role: "viewer" | "admin";
+  auth_enabled: boolean;
+}
+
 export interface HealthResponse {
   status: string;
   version: string;

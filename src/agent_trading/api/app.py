@@ -189,6 +189,10 @@ def create_app(
         # Configure security module at startup
         configure_security(token=auth_token, role=auth_role)
 
+        # GET /auth/me가 배포 자체의 인증 강제 여부를 그대로 보여주기 위해
+        # 저장한다(요청이 인증을 통과했다는 사실과는 별개의 정적 설정값).
+        _app.state.auth_enabled = auth_enabled
+
         # Store broker adapter for /broker-capacity inspection endpoint
         _app.state.broker_adapter = broker_adapter
 
@@ -458,6 +462,13 @@ def create_app(
     )
 
     protected_routers.append(config_versions_router)
+
+    # Phase 10 — GET /auth/me (현재 토큰의 role 조회; route가 자체
+    # require_viewer를 갖고 있어 router 등록 여부와 무관하게 항상
+    # 유효한 토큰을 요구한다 — auth.py 모듈 docstring 참고)
+    from agent_trading.api.routes.auth import router as auth_router
+
+    protected_routers.append(auth_router)
 
     if auth_enabled:
         for router in protected_routers:
