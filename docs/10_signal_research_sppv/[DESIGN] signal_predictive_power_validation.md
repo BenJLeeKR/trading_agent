@@ -9743,3 +9743,138 @@ DB/캐시/운영 설정/컨테이너는 이번 정정에서 전혀 건드리지 
    가까운 형태의 진짜 out-of-sample 검증이다.
 4. 이 재검증도 §36.3의 Go/Watch/Hold/No-Go 기준을 그대로 적용하며,
    완화하지 않는다.
+
+## 38. 후보 B/C 계산 구현(2026-08-24 KST 후속, 코드 구현)
+
+§36.2에서 동결한 후보 B(`overnight_intraday_split_momentum_v1`)와
+C(`low_volatility_rank_20d`)를 실제로 계산하는 연구용 read-only
+스크립트를 구현했다. **이 절은 계산 구현만 다룬다 — 결과를 보고
+Go/Watch/Hold/No-Go 판정을 내리지 않는다.** 후보 A(`regime_switch_
+v1`)의 기존 구현·R3b 트랙은 전혀 건드리지 않았다.
+
+### 38.1 파일 위치 선택
+
+`scripts/validate_signal_predictive_power_v11_candidate_bc_freeze.py`
+(신규 파일)를 택했다 — 기존 v2/v4의 순수 집계 함수(Newey-West,
+Spearman IC, cross-sectional IC, quintile spread)는 **import해서
+그대로 재사용**하고, 그 파일들의 신호 계산·상수·산출 JSON은 전혀
+수정하지 않았다. 공용 함수를 그 파일들에서 추출해 옮기는 리팩터링
+안도 검토했으나, import 경로 변경이 과거 실행 스크립트(v5~v10)의
+동작에 영향을 줄 위험이 있어 "신규 버전 스크립트 생성"을 택했다 —
+이 선택 이유 자체가 §36.1이 요구한 두 방식 중 더 안전한 쪽이다.
+
+### 38.2 §36.2 동결안과의 일치 여부
+
+- **후보 B**: `overnight_ret_Nd = Σ ln(open_t/close_{t-1})`,
+  `intraday_ret_Nd = Σ ln(close_t/open_t)`(N=5 고정)를 정확히
+  구현했다(`compute_overnight_intraday_split_momentum()`). 두 값은
+  합치거나 가중 평균하지 않고 각각 독립 신호로 IC/forward-return을
+  집계한다(`overnight_ret_5d`/`intraday_ret_5d` 별도 컬럼).
+  `divergence = overnight − intraday`는 별도 컬럼(`divergence_5d`)
+  으로만 기록하고, 어떤 집계·판정 함수에도 신호로 넣지 않았다 —
+  §36.2의 "보조 진단값으로만 기록, 별도 후보·사후 선택 기준으로
+  쓰지 않는다"는 제약을 그대로 지켰다.
+- **후보 C**: `volatility_20d_pct`(운영 `signal_backbone.py`의
+  기존 point-in-time 계산을 그대로 재사용)를 거래일별로 모아
+  오름차순(낮은 변동성 우선) 순위를 매기고 `relative_strength_
+  rank_1m`(v10, §22.1)과 동일한 `idx/(n-1)*2-1` 스케일링 공식을
+  방향만 반전해 적용했다 — "낮은 변동성일수록 높은 신호값"이라는
+  §36.2 계약을 그대로 만족한다.
+
+### 38.3 데이터 누수(look-ahead) 방지 방식
+
+- 모든 계산은 거래일 인덱스 `t`에서 `bars[0..t]`까지만 읽는다.
+  후보 B는 `bars[t-n : t+1]`(윈도 안에서만 슬라이스)만 접근하고,
+  후보 C/국면 라벨은 v2/v4와 동일하게 `window = bars[:t+1]`을
+  `build_signal_snapshot()`에 넘긴다 — 이 함수 자체가 기존 운영
+  코드(`signal_backbone.py`)가 실제로 쓰는 point-in-time 경로다.
+- 단위 테스트
+  `test_no_lookahead_future_bars_do_not_affect_signal_at_t`가
+  `t` 이후 bar 값을 극단적으로 바꿔도(`999.0`→`1.0`) `t` 시점
+  후보 B 결과가 완전히 동일함을 직접 증명한다.
+- 후보 A(`regime_switch_v1`)와 마찬가지로 KODEX 200(069500) 국면
+  라벨은 벤치마크 단독 스냅샷에만 적용해(§12.2 이후 표준), 개별
+  종목의 자기 신호로 국면을 매기는 §12.1의 자기참조 오류를
+  재발시키지 않았다(`main()`이 `symbol == BENCHMARK_SYMBOL`을
+  건너뛴다).
+
+### 38.4 결측·예외 처리(임의 보정 없음)
+
+- `overnight_ret_Nd`/`intraday_ret_Nd` 계산 전용으로 **엄격한 bar
+  로더**(`load_strict_bars()`)를 새로 뒀다 — 기존 v2의 `_rows_to_
+  bars()`는 시가가 없으면 조용히 종가로 대체하는데(`open_ = ... or
+  close`), 이는 §36.2의 "open<=0/결측을 임의 보정하지 말 것" 계약과
+  맞지 않아 재사용하지 않았다.
+- 결측 사유는 정확히 두 층으로 분리해 집계한다:
+  - **로드 단계**(`load_strict_bars`): `close_missing_or_
+    nonpositive`(그 거래일 자체를 시퀀스에서 제외 — point-in-time
+    시퀀스에 종가 없는 날을 넣을 수 없다), `open_missing_or_
+    nonpositive`(그 거래일은 시퀀스에 남되 `open_valid=False`로
+    표시).
+  - **계산 단계**(`compute_overnight_intraday_split_momentum`):
+    `lookback_insufficient`(t-n<0), `close_missing_or_nonpositive_
+    in_window`, `open_missing_or_nonpositive_in_window` — 전부
+    수익률을 0으로 채우지 않고 `exclusion_reason`으로만 반환한다.
+- 후보 C(`volatility_20d_pct`)가 계산 불가면(`build_signal_
+  snapshot` 예외) `candidate_c_signal_snapshot_failed`로 집계하고
+  그 종목-일은 순위 계산에서 자동 제외된다(`rank_low_volatility_
+  cross_sectional`의 `missing_symbol_count`).
+- 순위 동점 처리: 동점 평균 순위를 쓰지 않는다 — Python 안정 정렬
+  (stable sort)로 입력 심볼 순서(항상 정렬된 리스트로 호출)를
+  그대로 보존해 각자 별도 순위를 매긴다. 이 규칙은 결과 JSON의
+  `daily_rank_metadata_sample`에 `tie_break_rule` 문자열로 항상
+  기록된다.
+
+### 38.5 결과 기록 위치(향후 실행 결과를 어디에 남길지)
+
+- 스크립트 산출 JSON: `logs/signal_ic_sppv3_candidate_bc_freeze_
+  2026-07-14.json`(cache as-of 날짜가 파일명에 고정 — 기존 v2~v10의
+  `logs/signal_ic_sppv2_XX_..._2026-07-14.json` 명명 관례를 그대로
+  따름). `logs/`는 `.gitignore` 대상이라 이 파일 자체는 커밋하지
+  않는다(기존 관례와 동일).
+- **판정 기록 위치**: 다음 턴에서 이 JSON을 근거로 Go/Watch/Hold/
+  No-Go 판정을 내릴 때는, 이 문서의 다음 절(§39 예정)에 §36.2/§37과
+  같은 append-only 형식으로 기록한다. `[PRIORITY_MAP]`/`[BACKLOG]`
+  에도 그 판정 결과를 반영한다.
+- **cache 갱신 후 진짜 OOS 재실행 결과**는 §37.4의 조건이 충족된
+  뒤, 이 스크립트를 **수식 변경 없이 그대로** 재실행한 산출물이며,
+  이번 실행(§38.6)과 별도 historical snapshot으로 구분해 기록한다
+  (병합하지 않음, §37의 원칙 계승).
+
+### 38.6 실제 read-only 1회 실행(2026-08-24 13:56 KST)
+
+dev validation container(`bash scripts/harness/docker_dev_exec.sh
+python3 scripts/validate_signal_predictive_power_v11_candidate_bc_
+freeze.py`, `network_mode=none`)에서 1회 실행했다 — 컨테이너
+재기동·cache 갱신·외부 호출 없음.
+
+- 87종목(벤치마크 069500 제외) 사용, 653거래일(2023-10-10~
+  2026-06-16, `_MIN_LOOKBACK`/forward horizon 여유분 제외 후 범위).
+- **로드/계산 단계 결측 0건** — 이번 cache의 87종목·653거래일에는
+  종가/시가 결측이나 계산 실패가 하나도 없었다(`load_exclusion_
+  counts`/`compute_exclusion_counts` 전부 0).
+- **정합성 자체 검증**: `regime_sample_gate`가 계산한 국면별
+  표본(`bearish_trend` 96일/`range_bound` 206일/`bullish_trend`
+  351일)이 §14가 이미 확정한 "87종목·733거래일·bearish_trend
+  96일 포함"과 정확히 일치한다 — 이 스크립트의 국면 라벨 계산
+  경로가 기존 canonical 결과를 정확히 재현함을 구조적으로
+  확인했다(내용 판정이 아니라 계산 정합성 확인).
+- 산출 JSON에 `reproducibility_metadata.independence_caveat`가
+  §37의 정정 문구 그대로 포함됨을 확인했다.
+- **이번 턴은 결과를 판정하지 않는다** — IC/Newey-West t-통계
+  수치는 산출 JSON에 그대로 남아있으나, Go/Watch/Hold/No-Go
+  판정은 다음 턴(§36.2/§36.3 계약 적용) 과제로 명시적으로 미룬다.
+
+### 38.7 테스트·하네스 검증
+
+- `tests/scripts/test_validate_signal_predictive_power_v11_
+  candidate_bc_freeze.py`(신규, DB/네트워크 미사용) 11건 전부
+  PASS — 수식 정확성, lookback 부족, 시가/종가 결측 시 임의 보정
+  없이 제외, look-ahead 없음(미래 bar 변조에도 결과 불변), 순위
+  스케일링 방향·동점 규칙·결측 집계를 검증.
+- `bash scripts/harness/docker_dev_exec.sh pytest tests/scripts/
+  test_validate_signal_predictive_power_v11_candidate_bc_freeze.py
+  -q` — 11 passed.
+- `accept script-file`/`accept style`/`accept no-bypass`(hard_
+  bypass_count=0)/`accept architecture`(violation_count=0)/`accept
+  docs` 전부 PASS.
