@@ -12218,3 +12218,46 @@ power_validation.md` "38. 후보 B/C 계산 구현".
   수정했다(§38.8). 결측/동점이 없는 현재 cache에서는 수정 전후
   수치가 동일함을 재실행으로 확인(§38.9). 수식·판정 기준은
   무변경.
+
+## 후보 B/C cache 기반 1차 결과 판정 완료(2026-08-24 KST, read-only) — **전부 Watch, Go 없음, 운영 반영 불가**
+
+상세: `docs/10_signal_research_sppv/[DESIGN] signal_predictive_
+power_validation.md` "39. 후보 B/C cache 기반 1차 결과 판정".
+
+- **판정**: `overnight_ret_5d`/`intraday_ret_5d`(후보 B)/`low_
+  volatility_rank_20d`(후보 C) 전부 **Watch** — 1차(최근 12개월)
+  창이 세 신호 전부 모든 horizon에서 `|t_NW|<1.5`로 marginal
+  문턱조차 못 넘었고, 2차(3년 전체) T+1이 세 신호 모두 유의했다.
+  필수 국면(하락장)에서 **유의한** 방향 역전은 발견되지 않아
+  No-Go로 격하하지 않았다(부호 반전 조짐은 있으나 비유의).
+  **어느 후보도 Go가 아니다.**
+- 후보 A(`regime_switch_v1`)는 v8~v10 스크립트가 cache가 있어도
+  `_build_kis_live_quote_client()`를 무조건 호출해 외부 KIS 설정
+  없이는 재현 불가능함을 확인 — 실행하지 않고 기존 확정 결과
+  (2차 T+5=2.60/T+20=2.36, 1차 하락장 표본 0일로 게이트 미충족,
+  "가장 유망한 Watch, 확정 Go 아님")를 참조값으로만 인용했다.
+  재실행 불가를 실패/성공으로 해석하지 않는다.
+- 예외(`candidate_c_signal_snapshot_failed`/`regime_label_
+  unavailable`) 0건 — 다만 이는 이번 cache 범위에서 발동하지
+  않았다는 사실일 뿐, 예외 처리 설계가 완전하다는 뜻은 아니다.
+- **해석 제한**: 이 판정은 같은 정적 cache 안의 최근성·장기 국면
+  재검증이며 independent out-of-sample이 아니다(§37 계승). **통과
+  (Watch) 후보라도 독립 OOS 검증 전에는 운영 반영이 불가**하다.
+  Go 후보가 없어 No-Go 후보도 이번 턴엔 없다 — 과거 10개 후보의
+  No-Go/Hold 이력은 §36.2 표 그대로 보존.
+- **Stage B는 계속 보류** — 이번 Watch 판정은 축 1의 새 Go 증거가
+  아니다.
+- **다음 순서**: (1) 사용자 승인 후 cache를 `2026-07-14` 이후로
+  갱신(신규 KIS 호출), (2) 동결 수식을 변경 없이 그 신규 구간에
+  재실행해 진짜 independent OOS 검증, (3) 축 3 관측(PR #341 도구)
+  병행 지속.
+- **정정(2026-08-24 KST 후속)**: 후보 B(`overnight_ret_5d`/
+  `intraday_ret_5d`)의 Watch 판정을 취소했다 — §36.2 원문에
+  "두 leg가 서로 다를 것"이라는 정성적 기대만 있었고 **부호(방향)
+  계약이 애초에 동결되지 않았다**는 사실을 확인했다. B는
+  **"방향 계약 미고정으로 판정 보류"**로 정정하고, 관측된 유의한
+  음수 결과는 탐색적 관찰값으로만 남긴다. **역방향을 실제로 쓰려면
+  새 후보명·명시적 기대 방향으로 처음부터 다시 동결해야 한다**
+  (§40.4). C(`low_volatility_rank_20d`)의 Watch, A(`regime_switch_
+  v1`)의 참조 Watch는 변경 없음. Stage B 보류·독립 OOS 필요성도
+  무변경(오히려 더 엄격해짐).

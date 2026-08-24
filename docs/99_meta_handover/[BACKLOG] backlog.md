@@ -7894,3 +7894,27 @@ power_validation.md` "38. 후보 B/C 계산 구현", `[PRIORITY_MAP]`의
   다른 점수를 받던 결함을 수정(§38.8). 현재 cache는 결측 0건이라
   수정 전후 수치 동일함을 재실행으로 확인(§38.9). 수식·판정
   기준 무변경.
+
+## 후보 B/C cache 기반 1차 결과 판정 완료(2026-08-24 KST) — **전부 Watch, Go 없음**
+
+상세: `docs/10_signal_research_sppv/[DESIGN] signal_predictive_
+power_validation.md` "39. 후보 B/C cache 기반 1차 결과 판정",
+`[PRIORITY_MAP]`의 같은 제목 항목.
+
+- `overnight_ret_5d`/`intraday_ret_5d`(B)/`low_volatility_rank_
+  20d`(C) 전부 **Watch** — 1차 marginal 미달, 2차 T+1 유의, 필수
+  국면(하락장)에서 유의한 역전 없음. **Go 없음.**
+- A(`regime_switch_v1`)는 외부 KIS 설정 없이 재현 불가 확인 →
+  실행하지 않고 기존 확정 Watch 결과를 참조값으로만 인용.
+- **통과(Watch) 후보도 독립 OOS 검증 전에는 운영 반영 불가** —
+  같은 cache 재검증일 뿐 independent out-of-sample이 아니다(§37).
+  **Stage B는 계속 보류.** No-Go 후보는 이번 턴 없음(과거 10개
+  후보 이력은 §36.2 그대로 보존).
+- **다음 순서**: 사용자 승인 후 cache 갱신(신규 KIS 호출) →
+  동결 수식 변경 없이 재실행 → 진짜 independent OOS 검증. 축 3
+  관측(PR #341 도구) 병행 지속.
+- **정정(2026-08-24 KST 후속)**: 후보 B의 Watch 판정 취소 — §36.2
+  원문에 방향(부호) 계약이 없었음을 확인, **"방향 계약 미고정으로
+  판정 보류"**로 정정(§40). 음수 결과는 탐색적 관찰값일 뿐이며,
+  역방향을 쓰려면 새 후보명·명시적 기대 방향으로 새로 동결해야
+  한다. C/A 판정, Stage B 보류, 독립 OOS 필요성은 무변경.
