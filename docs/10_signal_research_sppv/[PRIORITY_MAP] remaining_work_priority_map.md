@@ -12320,3 +12320,10 @@ power_validation.md` "42. SPPV-3 독립 OOS 검증용 신규 bar cache
   (§41.2) 계산 함수 구현 + `low_volatility_rank_20d`(§36.2) 기존
   수식 재사용 → 이 신규 cache의 `oos_new` 구간만으로 §41.3/§36.3
   계약 그대로 첫 진짜 independent OOS 실행 → 판정.
+- **정정(2026-08-24 KST 후속)**: manifest의 `base_cache_path`가
+  수집 당시 임시 staging 절대경로를 기록하던 결함을 교정 —
+  `base_cache_id`/`base_cache_relative_path`(repo-relative,
+  결정론적 상수) 필드로 대체. **manifest 경로 정정은 데이터
+  재수집 없이 수행**(`--rebuild-manifest-for-date` 신규 모드로
+  KIS 미호출·bar 파일 무변경 확인, mtime 동일). §42의 실측
+  수치(88종목 성공, `ready_for_oos=true` 등)는 변경 없음(§43).

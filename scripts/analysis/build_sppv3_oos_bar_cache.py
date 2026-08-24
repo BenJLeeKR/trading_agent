@@ -53,6 +53,7 @@ import json
 import logging
 import os
 import sys
+import dataclasses
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
 from typing import Any
@@ -73,8 +74,13 @@ logger = logging.getLogger("build_sppv3_oos_bar_cache")
 KST = timezone(timedelta(hours=9))
 
 # ── 고정 계약(§41.4) — 실행 결과를 보고 바꾸지 않음 ─────────────────────────
-BASE_CACHE_DIR = os.path.join(_REPO_ROOT, "logs", "_bars_cache_core87_3y_2026-07-14")
 BASE_CACHE_AS_OF_DATE = "2026-07-14"
+BASE_CACHE_ID = f"_bars_cache_core87_3y_{BASE_CACHE_AS_OF_DATE}"
+# manifest에는 이 repo-relative 경로만 canonical 식별자로 남긴다 — 실행 시점의
+# 임시 staging 절대경로(예: 컨테이너 안 /tmp/oos_repo/...)는 환경마다 달라
+# 재현성/감사 추적에 부적합하므로 절대 저장하지 않는다(2026-08-24 후속 수정).
+BASE_CACHE_RELATIVE_PATH = os.path.join("logs", BASE_CACHE_ID)
+BASE_CACHE_DIR = os.path.join(_REPO_ROOT, BASE_CACHE_RELATIVE_PATH)
 OOS_START_DATE = "20260715"  # YYYYMMDD, KIS 응답 날짜 포맷과 동일한 문자열 비교 사용
 NEW_CACHE_DIR_PREFIX = os.path.join(_REPO_ROOT, "logs", "_bars_cache_core87_3y_")
 _WINDOW_DAYS = 100  # KIS 100거래일 제한 보수적으로 잡음(v4와 동일 관례)
@@ -170,7 +176,7 @@ class SymbolCollectionResult:
     new_first_trade_date: str | None
     new_last_trade_date: str | None
     merge_stats: MergeStats
-    duplicate_within_new_fetch_count: int
+    duplicate_within_new_fetch_count: int | None  # None = 재수집 없이 manifest만 재생성해 알 수 없음
     file_sha256: str | None
 
 
@@ -202,7 +208,8 @@ def build_manifest(
     cache_id: str,
     generated_at_kst_iso: str,
     generated_at_utc_iso: str,
-    base_cache_path: str,
+    base_cache_id: str,
+    base_cache_relative_path: str,
     base_cache_as_of_date: str,
     oos_start_date: str,
     oos_end_date: str,
@@ -211,21 +218,34 @@ def build_manifest(
     results: list[SymbolCollectionResult],
     ready_for_oos: bool,
     ready_for_oos_notes: list[str],
+    manifest_regenerated_from_existing_cache: bool = False,
 ) -> dict[str, Any]:
-    """비밀값이 전혀 포함되지 않는 감사용 manifest를 조립한다(순수 함수)."""
+    """비밀값이 전혀 포함되지 않는 감사용 manifest를 조립한다(순수 함수).
+
+    ``base_cache_relative_path``는 항상 **repo-relative** 경로여야 한다 —
+    실행 시점의 임시 staging 절대경로(예: 컨테이너 안 ``/tmp/oos_repo/...``)
+    를 여기 넣지 않는다. 이 경로는 실행 환경마다 달라져 다른 환경에서
+    manifest만 보고 base cache를 찾을 수 없게 만들기 때문이다
+    (2026-08-24 후속 수정 — 최초 실행에서 발견된 문제).
+    """
     total_base_bars = sum(r.merge_stats.base_bar_count for r in results)
     total_new_bars = sum(r.merge_stats.new_bar_added_count for r in results)
-    total_duplicates = sum(r.duplicate_within_new_fetch_count for r in results)
+    duplicate_counts = [r.duplicate_within_new_fetch_count for r in results]
+    duplicate_counts_unavailable = any(c is None for c in duplicate_counts)
+    total_duplicates = sum(c for c in duplicate_counts if c is not None)
 
     return {
         "cache_id": cache_id,
         "generated_at_kst": generated_at_kst_iso,
         "generated_at_utc": generated_at_utc_iso,
-        "base_cache_path": base_cache_path,
+        "manifest_regenerated_from_existing_cache": manifest_regenerated_from_existing_cache,
+        "base_cache_id": base_cache_id,
+        "base_cache_relative_path": base_cache_relative_path,
         "base_cache_as_of_date": base_cache_as_of_date,
         "base_cache_immutability_note": (
-            "base_cache_path는 이 실행 동안 읽기 전용으로만 열렸다 — "
-            "쓰기/삭제 API를 이 스크립트 어디에서도 호출하지 않는다."
+            "base_cache_relative_path가 가리키는 디렉터리는 이 실행 동안 "
+            "읽기 전용으로만 열렸다 — 쓰기/삭제 API를 이 스크립트 어디에서도 "
+            "호출하지 않는다."
         ),
         "oos_collection_window": {"start_date": oos_start_date, "end_date": oos_end_date},
         "universe_symbol_count": len(universe_symbols),
@@ -234,11 +254,15 @@ def build_manifest(
             "historical_daily_bar_read_only "
             "(inquire_daily_itemchartprice; 주문/잔고/체결/계좌 API 미사용, "
             "이 클라이언트는 account_number가 비어 있어 구조적으로 호출 불가)"
+            if not manifest_regenerated_from_existing_cache
+            else "no_kis_call (이 manifest는 기존 수집 결과 파일만 다시 읽어 "
+            "재생성됐다 — KIS를 재호출하지 않았다)"
         ),
         "totals": {
             "base_bar_count": total_base_bars,
             "new_bar_added_count": total_new_bars,
             "duplicate_within_new_fetch_count": total_duplicates,
+            "duplicate_within_new_fetch_count_unavailable_for_some_symbols": duplicate_counts_unavailable,
         },
         "symbols": [
             {
@@ -262,6 +286,13 @@ def build_manifest(
             "universe_symbols + benchmark 전원이 fetch_status='ok'여야 "
             "True다. 신규 bar 0건은 그 자체로 실패가 아니므로(거래정지 등 "
             "가능) ready_for_oos 판정에 포함하지 않는다."
+        ),
+        "ready_for_oos_meaning_note": (
+            "`ready_for_oos=true`는 '87종목+벤치마크 수집이 전부 완전하게 "
+            "끝났다'는 뜻일 뿐이다 — 표본 수·유의성 등 통계적으로 성과를 "
+            "판정할 준비가 됐다는 뜻이 아니다. Go/Watch/Hold/No-Go 판정은 "
+            "이 cache로 신호를 계산한 뒤 별도 턴에서 §36.3/§41.3 계약대로 "
+            "수행한다."
         ),
         "ready_for_oos_notes": ready_for_oos_notes,
         "oos_label_boundary_note": (
@@ -292,6 +323,71 @@ def load_base_bars(symbol: str) -> dict[str, dict]:
         return {}
     with open(path, encoding="utf-8") as f:
         return json.load(f)
+
+
+def summarize_symbol_bars(symbol: str, bars: dict[str, dict], oos_start_date: str) -> SymbolCollectionResult:
+    """이미 provenance 태그가 붙어 저장된 종목별 bar dict을 다시 읽어
+    ``SymbolCollectionResult``를 재구성한다(순수 함수, 파일 I/O 없음).
+
+    manifest만 재생성할 때 쓴다 — KIS를 다시 호출하지 않고, 이미 수집된
+    파일 내용만으로 요약을 되돌려 만든다. 원 수집 시점의 "윈도 간 중복
+    발생 건수"(``duplicate_within_new_fetch_count``)는 이미 병합·저장된
+    결과에서 되돌릴 수 없는 정보라 ``None``으로 남긴다(0으로 단정하지
+    않음 — 실제로 중복이 없었는지, 있었지만 이미 해소돼 사라졌는지 이
+    파일만으로는 구분할 수 없기 때문).
+    """
+    if not bars:
+        return SymbolCollectionResult(
+            symbol=symbol,
+            fetch_status="failed",
+            error_summary="existing_cache_file_missing_or_empty",
+            base_last_trade_date=None,
+            new_first_trade_date=None,
+            new_last_trade_date=None,
+            merge_stats=MergeStats(0, 0, 0, 0),
+            duplicate_within_new_fetch_count=None,
+            file_sha256=None,
+        )
+
+    base_dates = sorted(d for d, r in bars.items() if r.get("_cache_provenance") == "base_cache")
+    new_dates = sorted(
+        d for d, r in bars.items() if r.get("_cache_provenance") == "oos_new" and d >= oos_start_date
+    )
+
+    return SymbolCollectionResult(
+        symbol=symbol,
+        fetch_status="ok",
+        error_summary=None,
+        base_last_trade_date=base_dates[-1] if base_dates else None,
+        new_first_trade_date=new_dates[0] if new_dates else None,
+        new_last_trade_date=new_dates[-1] if new_dates else None,
+        merge_stats=MergeStats(
+            base_bar_count=len(base_dates),
+            new_bar_added_count=len(new_dates),
+            new_bar_discarded_pre_oos_count=0,
+            overlap_with_base_discarded_count=0,
+        ),
+        duplicate_within_new_fetch_count=None,
+        file_sha256=None,  # 호출자가 실제 파일 경로에서 채워 넣는다
+    )
+
+
+def regenerate_symbol_result_from_existing_file(symbol: str, new_cache_dir: str, oos_start_date: str) -> SymbolCollectionResult:
+    """``new_cache_dir/{symbol}.json``을 읽어(쓰기 없음) 결과를 재구성한다.
+
+    KIS를 호출하지 않는다 — 이미 디스크에 있는 파일만 연다.
+    """
+    path = os.path.join(new_cache_dir, f"{symbol}.json")
+    if not os.path.exists(path):
+        bars: dict[str, dict] = {}
+    else:
+        with open(path, encoding="utf-8") as f:
+            bars = json.load(f)
+
+    result = summarize_symbol_bars(symbol, bars, oos_start_date)
+    if result.fetch_status == "ok":
+        result = dataclasses.replace(result, file_sha256=sha256_of_file(path))
+    return result
 
 
 # ── I/O 레이어(KIS 호출 포함, 단위 테스트 대상 아님) ────────────────────────
@@ -382,6 +478,54 @@ async def collect_one_symbol(
     )
 
 
+def _rebuild_manifest_only(cache_run_date: str, universe: list[str], benchmark_symbol: str) -> int:
+    """KIS를 호출하지 않고, 이미 수집된 종목별 bar 파일만 다시 읽어
+    ``manifest.json``을 재생성한다. bar 파일 내용은 절대 건드리지 않는다.
+    """
+    new_cache_dir = f"{NEW_CACHE_DIR_PREFIX}{cache_run_date}"
+    if not os.path.isdir(new_cache_dir):
+        raise SystemExit(f"신규 cache 디렉터리가 없습니다 — 재수집이 필요합니다: {new_cache_dir}")
+
+    logger.info("manifest 전용 재생성 — KIS 미호출, 대상=%s", new_cache_dir)
+
+    results = [
+        regenerate_symbol_result_from_existing_file(symbol, new_cache_dir, OOS_START_DATE)
+        for symbol in universe
+    ]
+
+    ready_for_oos, notes = determine_ready_for_oos(results, set(universe))
+    oos_end_dates = [r.new_last_trade_date for r in results if r.new_last_trade_date]
+    oos_end_date = max(oos_end_dates) if oos_end_dates else OOS_START_DATE
+
+    now_kst = datetime.now(KST)
+    manifest = build_manifest(
+        cache_id=f"sppv3_oos_bar_cache_{cache_run_date}",
+        generated_at_kst_iso=now_kst.isoformat(),
+        generated_at_utc_iso=now_kst.astimezone(timezone.utc).isoformat(),
+        base_cache_id=BASE_CACHE_ID,
+        base_cache_relative_path=BASE_CACHE_RELATIVE_PATH,
+        base_cache_as_of_date=BASE_CACHE_AS_OF_DATE,
+        oos_start_date=OOS_START_DATE,
+        oos_end_date=oos_end_date,
+        universe_symbols=universe,
+        benchmark_symbol=benchmark_symbol,
+        results=results,
+        ready_for_oos=ready_for_oos,
+        ready_for_oos_notes=notes,
+        manifest_regenerated_from_existing_cache=True,
+    )
+
+    manifest_path = os.path.join(new_cache_dir, "manifest.json")
+    with open(manifest_path, "w", encoding="utf-8") as f:
+        json.dump(manifest, f, ensure_ascii=False, indent=2, default=str)
+
+    print(json.dumps({k: v for k, v in manifest.items() if k != "symbols"}, ensure_ascii=False, indent=2))
+    print(f"\n[출력] manifest 재생성(KIS 미호출): {manifest_path}")
+    print(f"[출력] ready_for_oos={ready_for_oos}")
+
+    return 0 if ready_for_oos else 1
+
+
 async def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         description=(
@@ -394,10 +538,18 @@ async def main(argv: list[str] | None = None) -> int:
         default=None,
         help="수집 종료일(YYYY-MM-DD, KST). 생략하면 실행 시각의 KST 오늘 날짜.",
     )
+    parser.add_argument(
+        "--rebuild-manifest-for-date",
+        default=None,
+        metavar="YYYY-MM-DD",
+        help=(
+            "지정하면 KIS를 전혀 호출하지 않고, "
+            "logs/_bars_cache_core87_3y_<날짜>/ 안의 기존 종목별 bar 파일만 "
+            "다시 읽어 manifest.json만 재생성한다(bar 파일은 수정하지 않음)."
+        ),
+    )
     args = parser.parse_args(argv)
 
-    from agent_trading.config.settings import AppSettings
-    from agent_trading.runtime.bootstrap import _build_kis_live_quote_client
     from agent_trading.services.core_universe_seed import APPROVED_CORE_UNIVERSE_SYMBOLS
 
     universe = sorted(APPROVED_CORE_UNIVERSE_SYMBOLS)
@@ -407,6 +559,12 @@ async def main(argv: list[str] | None = None) -> int:
             f"벤치마크 {benchmark_symbol}이 APPROVED_CORE_UNIVERSE_SYMBOLS에 없습니다 — "
             "universe 정의가 §36.1 기준과 어긋났을 수 있어 중단합니다."
         )
+
+    if args.rebuild_manifest_for_date:
+        return _rebuild_manifest_only(args.rebuild_manifest_for_date, universe, benchmark_symbol)
+
+    from agent_trading.config.settings import AppSettings
+    from agent_trading.runtime.bootstrap import _build_kis_live_quote_client
 
     settings = AppSettings()
     client = _build_kis_live_quote_client(settings)
@@ -459,7 +617,8 @@ async def main(argv: list[str] | None = None) -> int:
         cache_id=f"sppv3_oos_bar_cache_{cache_run_date}",
         generated_at_kst_iso=collected_at_kst_iso,
         generated_at_utc_iso=now_kst.astimezone(timezone.utc).isoformat(),
-        base_cache_path=BASE_CACHE_DIR,
+        base_cache_id=BASE_CACHE_ID,
+        base_cache_relative_path=BASE_CACHE_RELATIVE_PATH,
         base_cache_as_of_date=BASE_CACHE_AS_OF_DATE,
         oos_start_date=OOS_START_DATE,
         oos_end_date=end_date_obj.strftime("%Y%m%d"),

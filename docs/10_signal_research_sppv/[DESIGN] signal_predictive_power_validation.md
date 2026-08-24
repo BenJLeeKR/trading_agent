@@ -10525,3 +10525,88 @@ manifest 자체에 비밀값처럼 보이는 필드가 없음을 별도로 확�
   판정.
 - **Stage B 보류는 변경 없음** — 이번 절은 데이터 수집만 완료했을
   뿐, 어떤 신호의 실측 결과도 아직 없다.
+
+## 43. §42 정정 — manifest의 base cache 경로를 canonical 값으로 교정(2026-08-24 KST 후속, KIS 재호출 없음)
+
+§42가 실행한 최초 수집에서, `manifest.json`의 `base_cache_path`
+필드가 **수집 당시의 임시 staging 절대경로**(컨테이너 안
+`/tmp/oos_repo/logs/_bars_cache_core87_3y_2026-07-14`)를 그대로
+기록했다 — §42.1이 설명한 대로 dev validation container는
+`network_mode=none`이라 실제 KIS 수집을 bind mount 밖 임시 경로
+에서 수행했기 때문이다. 실제 bar 데이터에는 오류가 없었지만, 이
+경로는 실행 환경마다 달라져 **다른 환경에서 manifest만 보고 base
+cache를 찾을 수 없다**는 재현성/감사 추적 결함이었다. 이 절이
+그 결함을 정정한다 — **KIS를 다시 호출하지 않고, 이미 저장된
+bar 데이터도 전혀 건드리지 않는다.**
+
+### 43.1 수정 내용
+
+- `scripts/analysis/build_sppv3_oos_bar_cache.py`에 결정론적
+  상수 `BASE_CACHE_ID`(`_bars_cache_core87_3y_2026-07-14`,
+  `BASE_CACHE_AS_OF_DATE`에서 유도)와 `BASE_CACHE_RELATIVE_PATH`
+  (`logs/_bars_cache_core87_3y_2026-07-14`, repo-relative)를 신설
+  했다. 이 두 값은 실행 환경(호스트/컨테이너/staging 경로)과
+  무관하게 항상 같다.
+- `build_manifest()`의 `base_cache_path` 파라미터를 제거하고
+  `base_cache_id`/`base_cache_relative_path`로 명확히 분리했다 —
+  manifest에는 이제 이 canonical 값만 기록되고, 임시 절대경로는
+  **어디에도 저장되지 않는다.**
+- `ready_for_oos_meaning_note`를 추가해 "`ready_for_oos=true`는
+  87종목+벤치마크 수집이 완전했다는 뜻일 뿐, 통계적으로 성과를
+  판정할 준비가 됐다는 뜻이 아니다"를 manifest 자체에 명시했다
+  (기존 §36.3/§41.3의 원칙을 manifest 레벨에서도 재확인).
+- **manifest 전용 재생성 모드**(`--rebuild-manifest-for-date
+  YYYY-MM-DD`)를 추가했다 — 지정하면 KIS 클라이언트를 아예
+  생성/import하지 않고(구조적으로 호출 불가), `logs/_bars_cache_
+  core87_3y_<날짜>/`의 기존 종목별 bar 파일만 다시 읽어
+  `manifest.json`만 새로 쓴다. bar 파일 자체는 절대 재작성하지
+  않는다. 이 모드로 재생성된 manifest는 `manifest_regenerated_
+  from_existing_cache=true`로 표시되고, 원 수집 시점에만 알 수
+  있었던 "윈도 간 중복 발생 건수"는 되돌릴 수 없는 정보이므로
+  `None`으로 남기며 `totals.duplicate_within_new_fetch_count_
+  unavailable_for_some_symbols=true`로 명시한다(0으로 단정하지
+  않음 — 없었는지 있었지만 이미 해소돼 사라졌는지 파일만으로는
+  구분할 수 없기 때문).
+
+### 43.2 재생성 실행 결과(2026-08-24 17:42 KST, KIS 미호출)
+
+`bash scripts/harness/docker_dev_exec.sh python3 scripts/analysis/
+build_sppv3_oos_bar_cache.py --rebuild-manifest-for-date 2026-08-24`
+— **dev validation container(`network_mode=none`)에서 그대로
+실행됐다**는 사실 자체가 이 모드에 네트워크 의존성이 전혀 없음을
+구조적으로 증명한다(§42.3의 원 수집은 network_mode=none 컨테이너
+에서 실행할 수 없어 별도 환경이 필요했던 것과 대조적).
+
+- `base_cache_relative_path`: `logs/_bars_cache_core87_3y_2026-07-14`
+  (더 이상 임시 절대경로 없음).
+- `manifest_regenerated_from_existing_cache`: `true`.
+- 핵심 수치는 §42.3의 원 실행과 **완전히 동일** — `base_bar_count`
+  64,446, `new_bar_added_count` 2,376, `ready_for_oos=true`. 이는
+  bar 데이터를 전혀 건드리지 않고 manifest만 다시 읽어 만들었다는
+  증거다.
+- **종목별 bar JSON 파일의 수정 시각(mtime)이 재생성 전후로
+  정확히 동일함을 확인**(`005930.json` 기준 유닉스 타임스탬프
+  `1787560102`, 변화 없음) — bar 데이터 무변경을 파일시스템
+  레벨에서 직접 검증했다.
+- 이 실행 로그 어디에도 KIS API 호출(HTTP 요청 로그)이 없다 —
+  §42.3의 원 실행 로그에는 88건의 `httpx` HTTP 요청 로그가
+  있었던 것과 대조적으로, 이번 실행에는 단 한 건도 없다.
+
+### 43.3 테스트
+
+`tests/scripts/analysis/test_build_sppv3_oos_bar_cache.py`에 신규
+5건 추가(총 18건) — 임시 절대경로가 manifest canonical 필드로
+남지 않음(`base_cache_path` 키 부재, `base_cache_relative_path`가
+`/`로 시작하지 않고 `/tmp/`를 포함하지 않음), `BASE_CACHE_ID`/
+`BASE_CACHE_RELATIVE_PATH`가 결정론적 상수임, `summarize_symbol_
+bars()`의 ok/실패 판정, manifest 재생성 플래그와 `ready_for_oos`
+계약 유지 — 전부 PASS.
+
+### 43.4 §42와의 관계
+
+§42의 실측 사실(88종목 전부 성공, 신규 bar 2,376건, base 64,446건
+불변, `ready_for_oos=true`)은 **바뀌지 않는다** — 이번 정정은
+manifest 안의 경로 표기 방식만 교정했을 뿐이다. §42의 서술은
+삭제·수정하지 않았다. `[PRIORITY_MAP]`/`[BACKLOG]`의 관련 항목도
+"manifest 경로 정정은 데이터 재수집 없이 수행"이라는 사실만
+append-only로 추가한다.
