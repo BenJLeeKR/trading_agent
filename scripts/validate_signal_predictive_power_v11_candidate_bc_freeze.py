@@ -443,7 +443,18 @@ def _collect_candidate_samples(
 
 def attach_low_volatility_rank(all_samples: list[dict[str, Any]]) -> dict[str, Any]:
     """거래일별로 ``low_volatility_rank_20d``를 부여하고 그날의 유효/결측
-    종목 수·동점 규칙을 일별 메타데이터로 남긴다."""
+    종목 수·동점 규칙을 일별 메타데이터로 남긴다.
+
+    ``rank_low_volatility_cross_sectional()``이 ``volatility_20d_pct``
+    결측 종목을 ``scores``에서 아예 빼버리므로(§36.2 결측 제외 계약),
+    그 종목의 ``low_volatility_rank_20d``는 반드시 ``None``으로 남겨야
+    한다 — **결측(분석 제외 대상)과 "유효 종목이 1개뿐이라 중립 점수
+    0.0을 받은 경우"는 서로 다른 상태이며 혼동하면 안 된다**
+    (2026-08-24 후속 수정: 이전 구현은 ``scores.get(symbol, 0.0)``으로
+    결측 종목에도 조용히 `0.0`을 채워 넣어, 그 값이 이후 `_rows_with_
+    valid_signal_and_return()`을 정상 신호로 통과해 원래 제외돼야 할
+    결측 종목이 IC/quintile 계산에 섞이는 결함이 있었다).
+    """
     by_date: dict[str, list[dict[str, Any]]] = defaultdict(list)
     for row in all_samples:
         by_date[row["trade_date"]].append(row)
@@ -454,7 +465,7 @@ def attach_low_volatility_rank(all_samples: list[dict[str, Any]]) -> dict[str, A
         vol_by_symbol = {r["symbol"]: r["volatility_20d_pct_raw"] for r in rows}
         scores, meta = rank_low_volatility_cross_sectional(vol_by_symbol)
         for r in rows:
-            r["low_volatility_rank_20d"] = scores.get(r["symbol"], 0.0)
+            r["low_volatility_rank_20d"] = scores.get(r["symbol"])  # 결측이면 None 유지
         daily_meta[trade_date] = meta
     return daily_meta
 
@@ -500,8 +511,18 @@ def _rows_with_valid_signal_and_return(
     return valid, excluded
 
 
+def _count_none_signal_rows(all_samples: list[dict[str, Any]], signal: str) -> int:
+    """``signal`` 값이 ``None``인 행 수(horizon과 무관 — 신호 자체가
+    없는 행이라 어떤 horizon을 봐도 항상 제외 대상이다)."""
+    return sum(1 for row in all_samples if row.get(signal) is None)
+
+
 def summarize_signal_window(
-    all_samples: list[dict[str, Any]], signal: str, horizons: list[int]
+    all_samples: list[dict[str, Any]],
+    signal: str,
+    horizons: list[int],
+    *,
+    missing_signal_exclusion_label: str | None = None,
 ) -> dict[str, Any]:
     """한 신호(예: ``overnight_ret_5d``)에 대해 horizon별 IC/NW-t/spread를
     요약한다(§36.3 primary/보조 지표, v2/v4 함수 그대로 재사용).
@@ -510,7 +531,21 @@ def summarize_signal_window(
     IC·Newey-West·hit-rate·quintile spread 계산 전부에서 완전히
     제외한다(0으로 채우거나 정상 신호처럼 섞지 않음, 2026-08-24
     후속 수정) — 유효/제외 표본 수를 horizon별로 결과에 남긴다.
+
+    ``missing_signal_exclusion_label``을 지정하면(후보 C 전용),
+    그 이름으로 "``signal`` 자체가 ``None``인 행 수"를 horizon마다
+    별도 필드로 추가한다 — 이 개수는 horizon과 무관하게 항상
+    동일하다(신호 자체가 없으면 어떤 horizon의 forward return을
+    보든 제외 대상이기 때문). 후보 C의 `volatility_20d_pct` 결측을
+    "0.0 중립 점수"가 아니라 "분석 제외"로 명확히 구분해 보고하기
+    위한 필드다.
     """
+    none_signal_count = (
+        _count_none_signal_rows(all_samples, signal)
+        if missing_signal_exclusion_label is not None
+        else None
+    )
+
     out: dict[str, Any] = {}
     for h in horizons:
         valid_for_ic, excluded_ic = _rows_with_valid_signal_and_return(all_samples, signal, f"fwd_{h}")
@@ -523,7 +558,7 @@ def summarize_signal_window(
         spread_series = _quintile_spread_series(valid_for_spread, signal, f"fwd_{h}_net")
         spread_summary = _summarize_series(spread_series, h)
 
-        out[f"T+{h}"] = {
+        horizon_result = {
             "ic": ic_summary,
             "cost_adjusted_quintile_spread": spread_summary,
             "valid_row_count_for_ic": len(valid_for_ic),
@@ -531,6 +566,9 @@ def summarize_signal_window(
             "valid_row_count_for_spread": len(valid_for_spread),
             "excluded_row_count_for_spread": excluded_spread,
         }
+        if missing_signal_exclusion_label is not None:
+            horizon_result[missing_signal_exclusion_label] = none_signal_count
+        out[f"T+{h}"] = horizon_result
     return out
 
 
@@ -661,10 +699,18 @@ async def main() -> int:
         },
         "candidate_c_low_volatility_rank_20d": {
             "primary_window_recent_12m": summarize_signal_window(
-                primary_samples, "low_volatility_rank_20d", FORWARD_HORIZONS
+                primary_samples,
+                "low_volatility_rank_20d",
+                FORWARD_HORIZONS,
+                missing_signal_exclusion_label="excluded_row_count_volatility_missing",
             ),
             "secondary_window_full_cache": {
-                "summary": summarize_signal_window(all_samples, "low_volatility_rank_20d", FORWARD_HORIZONS),
+                "summary": summarize_signal_window(
+                    all_samples,
+                    "low_volatility_rank_20d",
+                    FORWARD_HORIZONS,
+                    missing_signal_exclusion_label="excluded_row_count_volatility_missing",
+                ),
                 "by_regime": summarize_by_regime(all_samples, "low_volatility_rank_20d", FORWARD_HORIZONS),
             },
             "daily_rank_metadata_sample": dict(list(daily_rank_meta.items())[:5]),

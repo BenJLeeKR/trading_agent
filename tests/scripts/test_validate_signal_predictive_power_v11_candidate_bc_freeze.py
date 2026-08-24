@@ -13,6 +13,7 @@ import os
 from scripts.validate_signal_predictive_power_v11_candidate_bc_freeze import (
     StrictBar,
     _rows_with_valid_signal_and_return,
+    attach_low_volatility_rank,
     compute_overnight_intraday_split_momentum,
     load_strict_bars,
     rank_low_volatility_cross_sectional,
@@ -263,3 +264,117 @@ class TestRankLowVolatilityCrossSectional:
         scores, meta = rank_low_volatility_cross_sectional(vols)
         assert "B" not in scores
         assert meta["missing_symbol_count"] == 1
+
+
+def _c_row(trade_date: str, symbol: str, vol_raw: float | None, fwd_1: float | None) -> dict:
+    return {
+        "trade_date": trade_date,
+        "symbol": symbol,
+        "volatility_20d_pct_raw": vol_raw,
+        "fwd_1": fwd_1,
+        "fwd_1_net": None if fwd_1 is None else fwd_1 - 0.003,
+    }
+
+
+class TestAttachLowVolatilityRankMissingHandling:
+    """2026-08-24 후속 수정 — 결측 종목이 0.0 신호로 되살아나던 결함."""
+
+    def test_missing_volatility_symbol_gets_none_not_zero(self):
+        rows = [
+            _c_row("2026-01-02", "A", 1.0, 0.01),
+            _c_row("2026-01-02", "B", 2.0, 0.02),
+            _c_row("2026-01-02", "C", 3.0, 0.03),
+            _c_row("2026-01-02", "D", 4.0, 0.04),
+            _c_row("2026-01-02", "E", 5.0, 0.05),
+            _c_row("2026-01-02", "F", None, 0.06),  # volatility 결측
+        ]
+        attach_low_volatility_rank(rows)
+        by_symbol = {r["symbol"]: r for r in rows}
+        assert by_symbol["F"]["low_volatility_rank_20d"] is None
+        for sym in ["A", "B", "C", "D", "E"]:
+            assert by_symbol[sym]["low_volatility_rank_20d"] is not None
+
+    def test_summarize_signal_window_does_not_crash_with_missing_rows(self):
+        rows = [
+            _c_row("2026-01-02", "A", 1.0, 0.01),
+            _c_row("2026-01-02", "B", 2.0, 0.02),
+            _c_row("2026-01-02", "C", 3.0, 0.03),
+            _c_row("2026-01-02", "D", 4.0, 0.04),
+            _c_row("2026-01-02", "E", 5.0, 0.05),
+            _c_row("2026-01-02", "F", None, 0.06),
+        ] + [
+            _c_row("2026-01-05", "A", 6.0, 0.01),
+            _c_row("2026-01-05", "B", 5.0, 0.02),
+            _c_row("2026-01-05", "C", 4.0, 0.03),
+            _c_row("2026-01-05", "D", 3.0, 0.04),
+            _c_row("2026-01-05", "E", 2.0, 0.05),
+            _c_row("2026-01-05", "F", 1.0, 0.06),
+        ]
+        attach_low_volatility_rank(rows)
+        summary = summarize_signal_window(
+            rows,
+            "low_volatility_rank_20d",
+            [1],
+            missing_signal_exclusion_label="excluded_row_count_volatility_missing",
+        )
+        assert summary["T+1"]["excluded_row_count_volatility_missing"] == 1
+
+    def test_missing_c_row_excluded_from_valid_counts_and_reflected_in_excluded_counts(self):
+        rows = [
+            _c_row("2026-01-02", "A", 1.0, 0.01),
+            _c_row("2026-01-02", "B", 2.0, 0.02),
+            _c_row("2026-01-02", "C", 3.0, 0.03),
+            _c_row("2026-01-02", "D", 4.0, 0.04),
+            _c_row("2026-01-02", "E", 5.0, 0.05),
+            _c_row("2026-01-02", "F", None, 0.06),
+        ] + [
+            _c_row("2026-01-05", "A", 6.0, 0.01),
+            _c_row("2026-01-05", "B", 5.0, 0.02),
+            _c_row("2026-01-05", "C", 4.0, 0.03),
+            _c_row("2026-01-05", "D", 3.0, 0.04),
+            _c_row("2026-01-05", "E", 2.0, 0.05),
+            _c_row("2026-01-05", "F", 1.0, 0.06),
+        ]
+        attach_low_volatility_rank(rows)
+        summary = summarize_signal_window(rows, "low_volatility_rank_20d", [1])
+        assert summary["T+1"]["valid_row_count_for_ic"] == 11  # 12행 - 결측 1행
+        assert summary["T+1"]["excluded_row_count_for_ic"] == 1
+
+    def test_single_valid_symbol_neutral_zero_distinct_from_missing_none(self):
+        rows = [
+            _c_row("2026-01-02", "A", 3.0, 0.01),  # 유일한 유효 변동성
+            _c_row("2026-01-02", "B", None, 0.02),
+            _c_row("2026-01-02", "C", None, 0.03),
+        ]
+        attach_low_volatility_rank(rows)
+        by_symbol = {r["symbol"]: r for r in rows}
+        assert by_symbol["A"]["low_volatility_rank_20d"] == 0.0  # 중립 점수(유효 1개)
+        assert by_symbol["B"]["low_volatility_rank_20d"] is None  # 결측
+        assert by_symbol["C"]["low_volatility_rank_20d"] is None  # 결측
+
+    def test_valid_only_fixture_summary_unchanged_by_missing_handling(self):
+        rows = [
+            _c_row("2026-01-02", "A", 1.0, 0.01),
+            _c_row("2026-01-02", "B", 2.0, 0.02),
+            _c_row("2026-01-02", "C", 3.0, 0.03),
+            _c_row("2026-01-02", "D", 4.0, 0.04),
+            _c_row("2026-01-02", "E", 5.0, 0.05),
+            _c_row("2026-01-02", "F", 6.0, 0.06),
+        ] + [
+            _c_row("2026-01-05", "A", 6.0, 0.01),
+            _c_row("2026-01-05", "B", 5.0, 0.02),
+            _c_row("2026-01-05", "C", 4.0, 0.03),
+            _c_row("2026-01-05", "D", 3.0, 0.04),
+            _c_row("2026-01-05", "E", 2.0, 0.05),
+            _c_row("2026-01-05", "F", 1.0, 0.06),
+        ]
+        attach_low_volatility_rank(rows)
+        summary = summarize_signal_window(
+            rows,
+            "low_volatility_rank_20d",
+            [1],
+            missing_signal_exclusion_label="excluded_row_count_volatility_missing",
+        )
+        assert summary["T+1"]["excluded_row_count_for_ic"] == 0
+        assert summary["T+1"]["valid_row_count_for_ic"] == 12
+        assert summary["T+1"]["excluded_row_count_volatility_missing"] == 0

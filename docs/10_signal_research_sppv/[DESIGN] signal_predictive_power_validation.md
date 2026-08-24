@@ -9945,3 +9945,47 @@ validate_signal_predictive_power_v11_candidate_bc_freeze.py`)으로
   재확인).
 - 이번 재실행도 Go/Watch/Hold/No-Go 판정을 내리지 않는다 — 판정은
   여전히 다음 턴 과제다.
+
+### 38.10 후보 C 결측 종목이 0점으로 되살아나던 결함 수정(2026-08-24 KST 재후속)
+
+§38.8에서 `_rows_with_valid_signal_and_return()`으로 결측을
+걸러내는 경계를 만들었으나, `attach_low_volatility_rank()`가
+`scores.get(row["symbol"], 0.0)`로 순위 계산에서 이미 제외된
+결측 종목에도 기본값 `0.0`을 채워 넣는 결함이 남아있었다 — 그
+결과 결측 종목이 "유한한 실수 `0.0`"으로 위장해 §38.8이 만든
+필터를 그대로 통과, 원래 제외돼야 할 결측 종목이 IC/quintile
+계산에 다시 섞일 수 있었다.
+
+**계약**: 결측은 "중립 점수 0"이 아니라 **"분석에서 완전히
+제외"**다. `0.0`은 그날 유효 종목이 정확히 1개뿐이라 상대 순위
+자체가 정의되지 않는 경우에만 쓰는 **중립 점수**이며, 결측(값이
+`None`)과는 서로 다른 상태다 — 이 둘을 혼동하지 않는다.
+
+**수정**: `scores.get(row["symbol"], 0.0)` → `scores.get(row["symbol"])`
+로 바꿔, `rank_low_volatility_cross_sectional()`이 순위를 매기지
+않은(=결측) 종목은 `None`을 그대로 유지하게 했다. 이번 수정은
+§36.2의 수식(낮은 변동성일수록 높은 점수, `[-1,1]` 스케일) 자체를
+바꾼 것이 아니라, 결측 처리 계약을 실제 구현에 정확히 반영한
+보정이다.
+
+추가로 `summarize_signal_window()`에 `missing_signal_exclusion_
+label` 옵션을 넣어, 후보 C 호출 시에만 그 신호(`volatility_20d_
+pct` 결측으로 `None`이 된 `low_volatility_rank_20d`) 자체가
+`None`인 행 수를 horizon별 결과에 `excluded_row_count_volatility_
+missing`으로 별도 기록한다(B 후보 호출부는 이 옵션을 쓰지 않아
+무영향).
+
+신규 통합 테스트 5건(총 25건)이 다음을 직접 증명한다: 결측
+volatility 종목의 `low_volatility_rank_20d is None`, 그런 표본을
+넣어도 `summarize_signal_window()`가 오류 없이 동작, 결측 행이
+유효 표본 수에서 빠지고 제외 수에 정확히 반영됨, 유효 종목 1개인
+날의 중립 `0.0`과 결측 `None`이 서로 명확히 구분됨, 결측 없는
+기존 fixture는 수치가 그대로 유지됨. 기존 동점 평균 순위·
+look-ahead 방지 테스트도 계속 통과한다.
+
+**재실행 결과**: dev container에서 재실행한 결과 `excluded_row_
+count_volatility_missing`이 모든 horizon에서 `0`으로 정상 기록
+됐고(현재 cache에 결측이 없으므로), IC/Newey-West 등 핵심 수치는
+§38.9와 완전히 동일 — 이번 수정도 결측이 없는 현재 cache에서는
+방어 로직이 no-op였음을 확인했다. Go/Watch/Hold/No-Go 판정은
+여전히 다음 턴 과제로 남긴다.
