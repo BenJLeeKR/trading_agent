@@ -7763,3 +7763,33 @@ existing.md`.
 - **완료 확정** — 코드/테스트/운영 실측 전부 종료.
 - **다음 순서**: `SPPV-3` 상태 정합성 재확인 및 축 3(포지션/보유기간)
   성과 검증으로 넘어간다.
+
+## `SPPV-3` 상태 정합성 정정 + 축 3 방법론 확정·실측(2026-08-24 KST, read-only)
+
+상세: `docs/40_action_plans/post_sppv3_policy_evaluation_design_
+2026-08-20.md` "16. `SPPV-3` 상태 정합성 정정 + 축 3 방법론
+확정·실측", `[PRIORITY_MAP]`의 같은 제목 항목.
+
+- **문서 정정**: 2026-08-20 항목(이 파일 및 `[PRIORITY_MAP]`)이
+  "축 1 종합 Go/Hold 판정 아직 없음"이라고 기록한 것은 오류였다 —
+  `[DESIGN] signal_predictive_power_validation.md` §33.6이 축 1의
+  판정 대상 전체(핵심 대상 3개 신호, §31.1이 비교군/파생 후보를
+  이미 배제)를 이미 **Hold로 종합 판정 완료**했다. 새 반증 데이터
+  때문이 아니라 판정 범위를 좁게 잘못 재해석한 추적 오류였다 —
+  과거 서술은 지우지 않고 정정 절로 남긴다.
+- **축 3 실측(2026-08-24)**: `candidate_intent=buy` population을
+  dedupe(대표 라벨+오염도)해 58개 독립 단위 확보(`downgraded` 43/
+  `matched` 11). T+1은 두 군이 거의 동일, T+5는 `matched`가 다소
+  높으나 `downgraded`의 91%가 `risk_off` 국면에 편중돼 인과 해석
+  불가 — **방향성 관찰로만 제한, 유의성 결론 없음**. `suppressed`
+  는 buy-intent에 존재하지 않음(watch 기원 전용)을 재확인.
+  `policy_git_sha` 층화는 population 전체가 NULL이라 불가능.
+- **Stage B 판정**: `SPPV-3 축 1 Hold로 인해 현행 entry_score
+  기반 Stage B는 부적절; 신호 재설계 또는 축 3 추가 검증 우선` —
+  축 1이 Hold로 확정된 이상 Stage B(threshold/gate 최적화)의 실제
+  착수는 계속 보류한다.
+- **다음 표본 축적 조건**: `risk_tone=risk_on` `downgraded` 15~20건
+  (현재 3건), 하락장/횡보장 국면 buy-intent 표본 1건 이상(현재
+  0건), `matched` T+20은 2026-09-중순경부터 확보 가능.
+- **다음 순서**: 신호 재설계 트랙에서 축 1을 통과할 새 후보 탐색과,
+  축 3 표본이 위 조건을 충족할 때까지 관측 축적을 병행한다.
