@@ -7834,3 +7834,43 @@ MAP]`의 같은 제목 항목.
 - **완료 확정**. population/dedupe 정의/Stage B 보류 판정 무변경.
 - **다음 순서**: 이 도구(`--as-of-at` 표준)로 축 3 표본 누적 관측을
   계속하고, 신호 재설계 후보 탐색을 병행한다.
+
+## `SPPV-3` 축 1 Hold 이후 신호 재설계 후보 탐색 + 후보군 동결(2026-08-24 KST, read-only) — **최우선 작업, 실행 전 상태**
+
+상세: `docs/10_signal_research_sppv/[DESIGN] signal_predictive_
+power_validation.md` "36. `SPPV-3` 축 1 Hold 이후 신호 재설계
+후보 탐색 + 후보군 동결", `[PRIORITY_MAP]`의 같은 제목 항목.
+
+- 과거 §17~23의 신호 재설계 10개 후보를 전부 재정리해 canonical로
+  못박음 — 새로운 것은 없고, `regime_switch_v1`(Watch, 확정 Go
+  아님)/`risk_adj_momentum_3m`(Watch/marginal)/`reversal_1m`
+  (Hold)/나머지 7개(No-Go)로 재확인.
+- **후보군 최대 3개로 사전 동결**: A. `regime_switch_v1`(재검증),
+  B. `overnight_intraday_split_momentum_v1`(신규), C. `low_
+  volatility_rank_20d`(신규). 평가 계약(horizon/판정기준/최소
+  표본/층화/cutoff)을 실측 전에 고정 — 결과를 본 뒤 후보를
+  추가하거나 계약을 소급 수정하지 않는다.
+- `regime_switch_v1`은 별도 "R3b" 운영 검증 트랙에서 이미
+  "Conditional Go"(다른 축의 판정)를 받은 상태임을 확인했으나,
+  이번 턴은 그 트랙을 건드리지 않는다 — SPPV-3 축 1식 통계 게이트
+  재검증만 다룬다.
+- **이번 턴은 실행 전 단계다** — 후보 3개 모두 아직 계산·실측되지
+  않았다. 축 1 Hold/Stage B 보류 판정은 무변경.
+- **현행 Stage B는 축 1 Hold로 계속 보류**, 신호 재설계 후보
+  탐색이 최우선 작업, 축 3 관측(PR #341 도구)은 병행 지속. **후보군
+  동결 후에만** 다음 단계(계산 함수 구현·이원 게이트 실행)로
+  넘어간다 — 이번 턴은 동결까지만이고 구현은 다음 턴 과제다.
+
+## 위 항목 정정(2026-08-24 KST 후속, read-only) — "독립 표본" 오해 표현 정정
+
+상세: `docs/10_signal_research_sppv/[DESIGN] signal_predictive_
+power_validation.md` "37. §36 정정", `[PRIORITY_MAP]`의 같은
+정정 항목.
+
+- 1차(12개월)/2차(3년) 창이 **같은 정적 bar cache**를 쓰고 1차가
+  2차의 부분집합이라, "독립 재검증"이라는 표현은 부정확했다 —
+  두 창은 독립 표본이 아니라 동일 cache 기반 이원 재검증이다.
+- 진짜 out-of-sample은 cache 갱신(2026-07-14 이후 거래일 포함,
+  신규 KIS 호출) 후 **동결된 수식을 변경 없이 재실행**해야만
+  확보된다.
+- 후보 동결과 Stage B 보류 판단은 변함없다.
