@@ -1046,3 +1046,150 @@ Go/Hold 판정은 아직 내려지지 않았다"/"SPPV-3는 완료되지 않았�
   파생 후보, `regime_switch_v1` 등)에서 축 1을 통과할 수 있는 새
   후보를 찾는 것, (2) 축 3의 `risk_on` 표본·국면 다양성이 §16.6
   기준을 충족할 때까지 관측을 계속 축적하는 것 두 갈래다.
+
+## 17. `SPPV-3` 축 3 재현 분석 도구 구현(2026-08-24 KST, 코드 구현)
+
+§16.4~16.6에서 ad hoc SQL(`/tmp/axis3_analysis.sql`, 세션 종료 시
+소실되는 임시 파일)로 확정한 축 3 계약을 재현 가능한 코드로
+고정한다. 이 절 자체는 정책 결론을 담지 않는다 — 축 3은 표본이
+§16.6 기준을 충족하기 전까지 **정책 변경 근거가 아니라 관측
+도구**이고, `Stage B`는 §16.7 판정대로 계속 보류다.
+
+### 17.1 도구 경로와 선택 이유
+
+- 경로: `scripts/analysis/measure_axis3_downstream_suppression_
+  forward_return.py`.
+- `scripts/analysis/`는 이미 이런 종류의 read-only 인과/성과 재현
+  분석 스크립트(`measure_a3_operational_effectiveness.py`,
+  `measure_signal_feature_snapshot_alignment.py`,
+  `analyze_universe_activity_gap.py` 등)를 모아두는 확립된 관례
+  디렉터리다 — 새 경로를 만들지 않고 재사용했다. `scripts/*.py`
+  루트에 두면 배포 파이프라인의 스크립트 분류(예: `runtime_files`
+  패턴 매칭)에 불필요하게 걸릴 수 있어 피했다.
+- DB 연결은 기존 스크립트와 동일하게 `agent_trading.db.connection`
+  의 `create_pool`/`get_pool`/`close_pool`을 재사용하고, CLI는
+  `argparse` 기반으로 기존 스크립트들과 동일한 패턴(`--output-json`,
+  human-readable 요약 + JSON)을 따른다.
+
+### 17.2 고정한 재현 계약
+
+- **population**: `candidate_intent='buy' AND primary_candidate=
+  'BUY_CANDIDATE'`, `alignment_status in ('matched','downgraded')`만
+  주 population. `diverged`/`suppressed`/`upgraded`/`promoted_
+  from_no_action`은 건수(0건이어도 명시)와 제외 사유를 항상
+  출력한다. 대표 라벨이 정확히 50:50 동률인 단위는 `mixed_tie`로
+  분리해 제외한다.
+- **dedupe**: (symbol, KST 거래일) 단위, 그날 가장 많이 등장한
+  `alignment_status`를 대표 라벨로, 비지배 비율을 오염도로 남긴다
+  (`dedupe_contract_version="axis3-dedupe-v1"`로 결과에 버전을
+  명시 — 향후 규약이 바뀌면 버전 문자열을 올려 과거 실행과 구분
+  가능하게 한다).
+- **가격/forward return**: 1차 소스 `instrument_status_snapshots`
+  (`kis_stock_basic_info`, `thdt_clpr`/`clpr_chng_dt`), 대체 소스
+  `signal_feature_snapshots`(`sma_20*(1+price_vs_sma_20_pct/100)`)
+  — 1차 소스가 없는 (종목, 거래일)에만 대체 소스를 쓴다. 실제
+  거래일은 `clpr_chng_dt`로 판별(달력 추정 아님). T+1/5/20(기본값,
+  `--horizons`로 변경 가능)은 종목별 실제 거래일 순서(리스트 위치)
+  로 계산하고, 결정일 종가 자체가 없으면 `price_source_missing`,
+  결정일 종가는 있지만 목표 거래일이 아직 쌓이지 않았으면
+  `horizon_not_arrived`으로 구분해 수익률을 0/NULL로 채우지 않는다.
+  실제 체결/실현손익 테이블은 이 스크립트가 전혀 조회하지 않는다.
+- **층화**: `risk_tone`/`regime_label`/`source_type`/
+  `policy_git_sha` 분포를 horizon별 요약에 포함한다.
+  `policy_git_sha`가 NULL인 표본은 `unknown_pre_fingerprint`로
+  명시적으로 분리해 실제 SHA 값과 섞지 않는다.
+- **읽기 전용 보장**: DB 조회는 `conn.transaction(readonly=True)`
+  안에서 CTE+SELECT만 실행한다. `CREATE TEMP TABLE`/`CREATE TABLE`
+  등 쓰기 성격 SQL은 코드에 전혀 없다 — dedupe·forward-return
+  계산은 전부 Python 순수 함수(`classify_and_dedupe`/
+  `build_close_index`/`compute_forward_return`)로 DB 밖에서
+  수행한다(이 덕분에 DB 없이 단위 테스트도 가능하다).
+- **재현성 메타데이터**: 조회 실행 시각(KST), 입력 기간, as-of
+  기준일, horizon 목록, dedupe 규약 버전, 가격 소스별 사용 건수,
+  스크립트 실행 시점의 Git SHA(얻지 못하면 `null`, 분석은 막지
+  않음)를 결과 JSON에 항상 포함한다.
+
+### 17.3 구현 파일 및 테스트
+
+- `scripts/analysis/measure_axis3_downstream_suppression_forward_
+  return.py`(신규).
+- `tests/scripts/analysis/test_measure_axis3_downstream_
+  suppression_forward_return.py`(신규, DB 미사용 — `classify_and_
+  dedupe`/`compute_forward_return`/`run_analysis` 순수 함수만
+  검증) — 12건 전부 PASS. 검증 내용: `matched`/`downgraded`만 주
+  population 선택, 50:50 동률의 `mixed_tie` 제외, 대표 라벨·오염도
+  정확성, 대체 가격 소스 사용, T+N이 달력일이 아닌 거래일 순서
+  기반(금요일→다음 거래일이 달력상 3일 차이 나는 월요일임을
+  검증), 가격 공백/horizon 미도래가 수익률 0으로 오염되지 않음,
+  `policy_git_sha` NULL과 실제 값의 분리 유지, 출력에 제외 사유가
+  항상 포함됨(0건인 카테고리도 명시).
+- `bash scripts/harness/docker_dev_exec.sh pytest tests/scripts/
+  analysis/test_measure_axis3_downstream_suppression_forward_
+  return.py -q` — 12 passed.
+- `bash scripts/harness/run.sh accept script-file scripts/analysis/
+  measure_axis3_downstream_suppression_forward_return.py` — PASS,
+  import-graph가 신규 DB-미사용 테스트 파일만 정확히 선택
+  (`unsafe_test_candidate_count=0`).
+- `bash scripts/harness/run.sh accept style` — PASS.
+- `bash scripts/harness/run.sh accept no-bypass` — PASS
+  (`hard_bypass_count=0`; `review_bypass_candidate` 3건은 기존
+  분석 스크립트와 동일한 패턴인 `noqa: E402` import 순서 2건과,
+  Git SHA 조회 실패를 분석 중단 없이 넘기기 위한 의도적
+  `except Exception` 1건 — 요구사항이 "얻지 못해도 분석을 막지
+  말 것"이라 의도된 설계).
+- `bash scripts/harness/run.sh accept architecture` — PASS
+  (`architecture_violation_count=0`).
+
+### 17.4 실제 read-only 실행 결과(2026-08-24 12:20 KST, 운영 DB)
+
+컨테이너 재기동·배포 없이, 실행 중인 `agent_trading-ops-scheduler`
+컨테이너의 Python 런타임(이미 `DATABASE_URL` 등 연결 정보를 가짐)에
+스크립트 파일 1개만 임시로 복사해 1회 실행했다 — 운영 checkout이나
+이미지를 바꾸지 않았고, 실행 후 임시 파일은 정리했다.
+
+```
+python3 scripts/analysis/measure_axis3_downstream_suppression_forward_return.py \
+  --start-date 2026-06-18 --end-date 2026-08-21 --as-of-date 2026-08-24 \
+  --horizons 1,5,20 --output-json <경로>
+```
+
+- population: 원시 1,515행 → dedupe 58개 단위 → 주 population 54개
+  (`matched` 11 + `downgraded` 43), `mixed_tie` 4, `diverged`/
+  `suppressed`/`upgraded`/`promoted_from_no_action` 전부 0건.
+- 가격 소스 사용: `kis_stock_basic_info` 233건, `signal_feature_
+  snapshots_derived`(대체) 12건.
+- `matched`: T+1 n=11 평균 -0.83%/중앙값 -0.26%/양수율 36.4%; T+5
+  n=7 평균 +1.57%/중앙값 +0.85%/양수율 57.1%(horizon 미도래 4건);
+  T+20 n=0(전부 horizon 미도래, 11건).
+- `downgraded`: T+1 n=41 평균 -0.70%/중앙값 -1.31%/양수율 39.0%
+  (가격 공백 1건, horizon 미도래 1건); T+5 n=26 평균 +2.95%/
+  중앙값 +0.46%/양수율 50.0%(horizon 미도래 16건); T+20 n=1
+  평균 +3.99%(가격 공백 1건, horizon 미도래 41건).
+
+### 17.5 §16.5(2026-08-24 11:51 KST ad hoc 조회)와의 차이 설명
+
+수치가 소폭 다르다 — **데이터가 누적된 게 아니라 규약 차이**다.
+§16.5의 ad hoc SQL은 1차 가격 소스만 썼고 대체 소스(`signal_
+feature_snapshots_derived`) 조인을 구현하지 않았다. 이번 도구는
+§16.4에서 이미 정한 대체 소스 우선순위를 실제로 구현해, 1차 소스가
+없던 일부 단위의 가격을 추가로 복구했다(`downgraded` T+1
+n=38→41, `price_source_missing` 4→1건; T+5 n=24→26). `matched`/
+`downgraded` unit 수(54개, 43/11)와 `mixed_tie`(4)는 두 실행이
+동일하다 — 같은 population/dedupe 규약을 쓰기 때문이다. 두 조회는
+**같은 결론(방향성 관찰만 가능, 유의성 결론 없음)**을 유지한다 —
+`downgraded`의 `risk_tone` 편중(§16.5에서 확인된 91% `risk_off`)과
+국면 다양성 부재는 이번 실행에서도 그대로다(이 도구의 층화 출력
+필드에도 남는다).
+
+**앞으로의 원칙**: §16.5는 이 도구 도입 **이전**의 historical
+snapshot으로 고정한다. 이후 재실행 결과는 항상 이 도구의 출력
+(`reproducibility_metadata` 포함)으로만 참조하고, 과거 ad hoc
+수치와 새 실행 수치를 섞어 하나의 "최신 수치"처럼 보고하지 않는다.
+
+### 17.6 Stage B 판정 재확인
+
+변경 없음 — §16.7의 `SPPV-3 축 1 Hold로 인해 현행 entry_score
+기반 Stage B는 부적절; 신호 재설계 또는 축 3 추가 검증 우선`을
+그대로 유지한다. 이 절(§17)은 축 3을 "측정할 수 있게" 만들었을
+뿐, 축 1의 Hold 판정이나 축 3의 표본 부족 상태 자체를 바꾸지
+않는다.
