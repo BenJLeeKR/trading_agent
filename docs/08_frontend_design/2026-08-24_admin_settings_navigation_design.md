@@ -237,7 +237,7 @@
 - 기타 리스크 한도(`daily_loss_limit_pct` 등) 발행 API — 범위 자체가 아직 정의되지 않음
 
 **기존 화면에 붙이는 게 적절:**
-- `PUT /orders/{id}/status` → `정합성 점검`(`ReconciliationView.tsx`) 화면의 행 단위 조치
+- `PUT /orders/{id}/status` — 상세는 §5 표 참고
 
 **설정 메뉴가 아니라 후속 관측 화면 후보(§3.3):**
 - `guardrail-evaluations` → `의사결정`/`주문내역` 상세의 차단 근거
@@ -363,7 +363,7 @@
 6. **`risk.max_single_position_pct` 조회 API 추가 후 읽기 전용 카드** — 백엔드
    `GET /config-versions/risk/max-single-position-pct/active`류 신설(§5 표) → §7.3의 "준비 중"
    상태를 실제 조회 카드로 교체(이 시점까지는 발행 버튼 없이 조회만).
-7. **`정합성 점검` 화면의 수동 상태 확정 조치** — §7.4. 3단계에서 만든 `ConfirmModal` 재사용.
+7. **`정합성 점검` 화면의 수동 상태 확정 조치** — §7.4. 5단계에서 만든 `ConfirmModal` 재사용.
    `role=viewer`면 버튼 자체를 숨기고(1단계 산출물 재사용), 제출 후 목록을 재조회해 해당 행이
    실제로 상태 전이됐는지 확인시켜준다(낙관적 업데이트 금지, 원칙 5).
 
