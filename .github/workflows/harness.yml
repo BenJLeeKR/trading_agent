@@ -438,6 +438,12 @@ jobs:
               echo "deploy_target_sha=$deploy_target_sha"
               echo "DETAIL pending_runtime_files:"
               printf '%s\n' "$pending_runtime_files" | sed '/^$/d' | sed 's/^/- /'
+              echo "DETAIL recovery:"
+              echo "- 이 실패는 sync-only 배포가 재기동 없이 런타임 코드를 서버에 내려놓는 것을 막은 결과다. 서버 상태는 바뀌지 않았다."
+              echo "- 해소 전까지 뒤따르는 문서/하네스 머지도 같은 지점에서 계속 실패한다."
+              echo "- 해소 방법 1: 장 종료(15:30 KST) 후 배포성 변경을 push하면 전체 배포가 돌며 함께 정리된다."
+              echo "- 해소 방법 2: 즉시 정리하려면 Actions에서 Harness workflow를 workflow_dispatch로 실행하고 deploy_main=true를 지정한다."
+              echo "- 장중에 즉시 배포해야 하면 allow_market_hours_deploy=true를 함께 지정한다. 운영 재기동이 발생하므로 매매 영향을 먼저 판단한다."
               exit 1
             fi
             echo "deploy_sync_blocked_by_pending_runtime_count=0"
