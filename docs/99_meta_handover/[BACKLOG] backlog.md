@@ -7874,3 +7874,23 @@ power_validation.md` "37. §36 정정", `[PRIORITY_MAP]`의 같은
   신규 KIS 호출) 후 **동결된 수식을 변경 없이 재실행**해야만
   확보된다.
 - 후보 동결과 Stage B 보류 판단은 변함없다.
+
+## 후보 B/C 계산 구현 완료(2026-08-24 KST 후속) — **실행 대기 상태, 판정 전**
+
+상세: `docs/10_signal_research_sppv/[DESIGN] signal_predictive_
+power_validation.md` "38. 후보 B/C 계산 구현", `[PRIORITY_MAP]`의
+같은 제목 항목.
+
+- `scripts/validate_signal_predictive_power_v11_candidate_bc_
+  freeze.py` 신규 구현 — §36.2 동결 수식 그대로, look-ahead 없음,
+  결측 임의 보정 없음. 후보 A/R3b 트랙 무수정.
+- read-only 1회 실행 완료(cache 결측 0건, 국면 분포가 §14와 정확히
+  일치 — 계산 정합성 확인). **Go/Watch/Hold/No-Go 판정은 아직
+  내리지 않았다.**
+- **다음 순서**: 판정(별도 턴) → cache 갱신 승인 후 독립 OOS
+  재검증. **Stage B는 계속 보류**, 축 3 관측은 병행 지속.
+- **후속 수정(2026-08-24 KST)**: 결측 신호가 `None`인 채로 IC/
+  quintile 계산에 섞일 수 있던 결함, 동점 변동성이 입력 순서로
+  다른 점수를 받던 결함을 수정(§38.8). 현재 cache는 결측 0건이라
+  수정 전후 수치 동일함을 재실행으로 확인(§38.9). 수식·판정
+  기준 무변경.

@@ -12190,3 +12190,31 @@ power_validation.md` "37. §36 정정 — '1차/2차 이원 게이트'는
 - 진짜 독립 검증 조건: bar cache를 `2026-07-14` 이후 거래일까지
   갱신(신규 KIS 호출, 사용자 승인 필요) 후 **동결된 수식을 변경
   없이** 그 신규 구간에만 재실행.
+
+## 후보 B/C 계산 구현 완료(2026-08-24 KST 후속, 코드 구현) — **실행 대기 상태, 판정 전**
+
+상세: `docs/10_signal_research_sppv/[DESIGN] signal_predictive_
+power_validation.md` "38. 후보 B/C 계산 구현".
+
+- `scripts/validate_signal_predictive_power_v11_candidate_bc_
+  freeze.py`(신규) — §36.2 동결 수식(`overnight_intraday_split_
+  momentum_v1`/`low_volatility_rank_20d`)을 정확히 구현, 기존
+  v2/v4 집계 함수 재사용(수정 없음), look-ahead 없음(단위 테스트로
+  증명), 시가/종가 결측을 임의 보정하지 않고 사유별 집계. 후보 A
+  (`regime_switch_v1`)와 R3b 트랙은 무수정.
+- 신규 테스트 11건(DB/네트워크 미사용) 전부 PASS, 관련 `accept`
+  계열 전부 PASS.
+- dev container에서 read-only 1회 실행: cache 결측 0건, `regime_
+  sample_gate`가 §14의 canonical 국면 분포(bearish_trend 96일 등)
+  를 정확히 재현 — 계산 정합성 확인. **결과 수치는 산출됐으나
+  이번 턴은 Go/Watch/Hold/No-Go 판정을 내리지 않는다.**
+- **다음 순서**: (1) §36.2/§36.3 계약대로 이번 실행 결과를 판정
+  (별도 턴), (2) cache 갱신(신규 KIS 호출, 사용자 승인 필요) 후
+  독립 OOS 재검증, (3) 축 3 관측(PR #341 도구) 병행 지속. **현행
+  Stage B는 계속 보류.**
+- **후속 수정(2026-08-24 KST, 구현 검토로 발견)**: 결측 신호/
+  return이 `None` 값으로 IC·quintile 계산에 조용히 섞일 수 있던
+  결함과, 동점 변동성이 입력 순서에 따라 다른 점수를 받던 결함을
+  수정했다(§38.8). 결측/동점이 없는 현재 cache에서는 수정 전후
+  수치가 동일함을 재실행으로 확인(§38.9). 수식·판정 기준은
+  무변경.
