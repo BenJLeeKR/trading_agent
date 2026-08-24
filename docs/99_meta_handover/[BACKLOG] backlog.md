@@ -7940,3 +7940,25 @@ power_validation.md` "41. 후보 B 역방향 신규 후보 2개 동결",
 - **다음 순서**: 사용자 승인 후 cache 갱신(신규 디렉터리, 기존
   보존) → 계산 구현 → 신규 구간 실행(B 역방향 2개 + C) → 판정.
   Stage B는 계속 보류.
+
+## SPPV-3 독립 OOS 검증용 신규 bar cache 수집 완료(2026-08-24 KST) — **`ready_for_oos=true`**
+
+상세: `docs/10_signal_research_sppv/[DESIGN] signal_predictive_
+power_validation.md` "42. SPPV-3 독립 OOS 검증용 신규 bar cache
+수집 완료", `[PRIORITY_MAP]`의 같은 제목 항목.
+
+- 사용자 명시 승인 하 KIS read-only 수집 실행 완료. 신규 cache
+  `logs/_bars_cache_core87_3y_2026-08-24/` — 88종목 전부 성공,
+  신규 구간 `20260715`~`20260824`(27거래일, 2,376 bar), base
+  cache(64,446 bar) 불변 확인. **`ready_for_oos=true`.**
+- 신호 계산·성과·판정은 이번 절에서 수행하지 않았다 — 원시 데이터
+  수집까지만. Stage B는 계속 보류.
+- **다음 순서**: B 역방향 2개(§41.2) 계산 구현 + C(`low_volatility_
+  rank_20d`) 기존 수식 재사용 → 이 cache의 `oos_new` 구간만으로
+  첫 진짜 independent OOS 실행 → 판정.
+- **정정(2026-08-24 KST 후속)**: manifest의 base cache 경로가
+  임시 staging 절대경로를 기록하던 결함을 repo-relative canonical
+  값(`base_cache_id`/`base_cache_relative_path`)으로 교정 — **KIS
+  재호출 없음, 기존 bar 데이터 무변경**(`--rebuild-manifest-for-date`
+  로 manifest만 재생성, mtime 동일 확인). §42의 실측 결과는
+  그대로 유지(§43).

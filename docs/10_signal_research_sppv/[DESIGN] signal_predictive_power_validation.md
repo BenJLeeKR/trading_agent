@@ -10419,3 +10419,194 @@ ret_Nd`)는 §36.2/`compute_overnight_intraday_split_momentum()`과
 변경 없음 — 축 1의 새로운 Go 증거 없이는 Stage B를 열지 않는다.
 이번 절은 "동결"만 했을 뿐 실측이 전무하므로, 이 원칙에 어떤
 영향도 주지 않는다.
+
+## 42. SPPV-3 독립 OOS 검증용 신규 bar cache 수집 완료(2026-08-24 KST, 사용자 명시 승인 하 KIS read-only 실행)
+
+§41.4가 명시한 cache 갱신 전제조건에 따라, 사용자가 이번 턴에
+**KIS 외부 read-only 호출과 신규 local cache 파일 생성**을 명시적으로
+승인했다. 이 절은 그 승인 범위(과거 일봉 read-only 수집) 안에서
+수행한 실제 수집 결과를 기록한다. **OOS 신호 계산·forward return·
+Go/Watch/Hold/No-Go 판정은 이 절에서 전혀 수행하지 않는다** — 그것은
+여전히 다음 턴의 별도 과제다.
+
+### 42.1 구현 및 실행 환경
+
+- 신규 연구용 스크립트: `scripts/analysis/build_sppv3_oos_bar_cache.py`
+  — DB 연결 없음, `.env` 수정 없음, universe 확장·축소 없음, 기존
+  cache 덮어쓰기 없음. 허용된 KIS 호출은 `inquire_daily_
+  itemchartprice`(국내주식 기간별시세, read-only)뿐이며, 이 스크립트가
+  쓰는 클라이언트(`_build_kis_live_quote_client()`)는 `account_
+  number`/`account_product_code`가 항상 빈 문자열이라 주문·잔고·
+  체결·계좌 엔드포인트를 애초에 호출할 방법이 구조적으로 없다.
+- **실행 환경이 dev validation container와 다르다**: dev validation
+  container(`docker_dev_exec.sh`)는 `network_mode=none`이라 외부 KIS
+  호출 자체가 불가능하다. 단위 테스트(§42.2)까지는 그 컨테이너에서
+  실행했으나, **실제 KIS 수집은 이미 실행 중인 `agent_trading-ops-
+  scheduler` 컨테이너**(실 서비스에 KIS_LIVE_INFO_* 자격증명과 실제
+  네트워크 egress가 이미 구성돼 있음)에서 수행했다. 이 컨테이너는
+  운영 checkout(`/workspace/agent_trading`)을 bind mount하지만,
+  이번 dev 저장소(`/workspace/agent_trading_dev`)의 base cache가
+  그 checkout에는 존재하지 않아(로컬 전용, `.gitignore` 대상)
+  컨테이너의 **bind mount 밖 임시 경로**(`/tmp/oos_repo`, 컨테이너
+  종료 시 자동 소실)에 스크립트와 base cache를 함께 복사해 실행하고,
+  결과만 호스트로 복사해 왔다 — **운영 checkout이나 컨테이너 이미지
+  자체는 전혀 건드리지 않았다**(컨테이너 재기동·compose 명령 없음,
+  실행 후 임시 경로 삭제로 정리 완료).
+
+### 42.2 테스트·하네스 검증(실제 수집 전에 전부 통과)
+
+- `tests/scripts/analysis/test_build_sppv3_oos_bar_cache.py`(신규,
+  DB/네트워크 미사용) 13건 — 기존 cache 불변(입력 dict 무변형),
+  신규 날짜만 병합(oos_start 이전/base와 겹치는 날짜는 방어적으로
+  폐기), 중복 결정론 처리(마지막 윈도 승리), manifest 완전성,
+  불완전 symbol 시 `ready_for_oos=False`, warm-up(`base_cache`)/
+  OOS(`oos_new`) provenance 라벨 상호 배타성 — 전부 PASS.
+- `bash scripts/harness/docker_dev_exec.sh pytest tests/scripts/
+  analysis/test_build_sppv3_oos_bar_cache.py -q` — 13 passed.
+- `accept script-file`/`accept style`/`accept no-bypass`(hard_
+  bypass_count=0)/`accept architecture`(violation_count=0) 전부
+  PASS.
+
+### 42.3 실제 수집 실행 결과(2026-08-24 17:28:08 KST)
+
+- 신규 cache 식별자: `sppv3_oos_bar_cache_2026-08-24`, 경로
+  `logs/_bars_cache_core87_3y_2026-08-24/`(`.gitignore` 대상, git에
+  커밋하지 않음 — 기존 base cache와 동일 관례).
+- base cache 경로/기준일: `logs/_bars_cache_core87_3y_2026-07-14`,
+  `2026-07-14`(읽기 전용으로만 열림).
+- 수집 구간: `20260715`~`20260824`(실행 시각의 KST 오늘 날짜).
+- universe: `APPROVED_CORE_UNIVERSE_SYMBOLS` 88개(87종목 +
+  벤치마크 `069500`) — §36.1의 base cache 종목 집합과 정확히
+  일치함을 사전 확인(코드로 강제, 불일치 시 `SystemExit`).
+- **전 종목 성공**: `fetch_status="ok"` 88/88, 실패 0건, 신규 bar
+  0건 종목 0건, 중복(같은 종목·같은 거래일이 서로 다른 조회
+  윈도에서 겹침) 0건.
+- 집계: base bar 64,446건(변경 없음) + 신규 bar 2,376건(종목당
+  평균 27거래일, `20260715`~`20260824` 구간과 정합) = 총 66,822건.
+- **`ready_for_oos = true`.**
+
+### 42.4 구조적 완전성 검증(read-only, 신호/성과 계산 없음)
+
+- **universe**: 신규 cache 디렉터리에 88개 종목 JSON 전부 존재,
+  벤치마크 `069500.json` 존재 확인.
+- **신규 구간 날짜 범위**: 표본 확인한 종목(`005930`/`000270`/
+  `069500`) 전부 `_cache_provenance="oos_new"` 최소일 `20260715`,
+  최대일 `20260824`, 27거래일 — 계약(§41.3/§41.4)과 정확히 일치.
+- **`ready_for_oos`**: manifest에서 `true` 확인(§42.3).
+- **기존 cache 불변**: base cache 전체 bar 수(88개 파일 합산)가
+  실행 전후로 `64,446`건으로 manifest의 `base_bar_count`와 정확히
+  일치. `find logs/_bars_cache_core87_3y_2026-07-14 -newer
+  scripts/analysis/build_sppv3_oos_bar_cache.py`가 0건을 반환해
+  이 스크립트 작성 이후 base cache 파일이 단 하나도 수정되지
+  않았음을 확인했다. `git status`로도 이 경로에 대한 변경 추적이
+  없음을 재확인(다만 `logs/`는 `.gitignore` 대상이라 git이 애초에
+  추적하지 않는다는 점은 감안).
+- **신규 cache의 중복·결측·실패**: 전부 0건(§42.3).
+
+### 42.5 비밀값 미노출 확인
+
+manifest·실행 로그 어디에도 API key/secret/계좌번호/토큰 원문이
+출력되지 않았다 — KIS 호출 URL 로그(`httpx` INFO 레벨)에는 종목
+코드·조회 기간만 포함되고 인증 헤더/키는 포함되지 않는다(HTTP
+요청 로그가 쿼리 파라미터만 보여줌, Authorization 헤더는 별도).
+단위 테스트(`test_manifest_contains_no_secret_looking_fields`)로
+manifest 자체에 비밀값처럼 보이는 필드가 없음을 별도로 확인했다.
+
+### 42.6 다음 단계
+
+- 이 cache는 **아직 어떤 신호도 계산되지 않은 원시 bar 데이터일
+  뿐**이다. 다음 턴에서: (1) `overnight_reversal_v1`/`intraday_
+  reversal_v1`(§41.2) 계산 함수 구현(원재료는 §36.2의 `compute_
+  overnight_intraday_split_momentum()` 재사용), (2) `low_
+  volatility_rank_20d`(§36.2)의 기존 수식을 변경 없이 재사용, (3)
+  이 신규 cache의 `_cache_provenance="oos_new"` 행만 OOS 표본으로
+  써서(§41.3/§41.4 계약 그대로, 완화 없음) 첫 진짜 independent
+  out-of-sample 검증을 수행, (4) 결과에 따라 Go/Watch/Hold/No-Go
+  판정.
+- **Stage B 보류는 변경 없음** — 이번 절은 데이터 수집만 완료했을
+  뿐, 어떤 신호의 실측 결과도 아직 없다.
+
+## 43. §42 정정 — manifest의 base cache 경로를 canonical 값으로 교정(2026-08-24 KST 후속, KIS 재호출 없음)
+
+§42가 실행한 최초 수집에서, `manifest.json`의 `base_cache_path`
+필드가 **수집 당시의 임시 staging 절대경로**(컨테이너 안
+`/tmp/oos_repo/logs/_bars_cache_core87_3y_2026-07-14`)를 그대로
+기록했다 — §42.1이 설명한 대로 dev validation container는
+`network_mode=none`이라 실제 KIS 수집을 bind mount 밖 임시 경로
+에서 수행했기 때문이다. 실제 bar 데이터에는 오류가 없었지만, 이
+경로는 실행 환경마다 달라져 **다른 환경에서 manifest만 보고 base
+cache를 찾을 수 없다**는 재현성/감사 추적 결함이었다. 이 절이
+그 결함을 정정한다 — **KIS를 다시 호출하지 않고, 이미 저장된
+bar 데이터도 전혀 건드리지 않는다.**
+
+### 43.1 수정 내용
+
+- `scripts/analysis/build_sppv3_oos_bar_cache.py`에 결정론적
+  상수 `BASE_CACHE_ID`(`_bars_cache_core87_3y_2026-07-14`,
+  `BASE_CACHE_AS_OF_DATE`에서 유도)와 `BASE_CACHE_RELATIVE_PATH`
+  (`logs/_bars_cache_core87_3y_2026-07-14`, repo-relative)를 신설
+  했다. 이 두 값은 실행 환경(호스트/컨테이너/staging 경로)과
+  무관하게 항상 같다.
+- `build_manifest()`의 `base_cache_path` 파라미터를 제거하고
+  `base_cache_id`/`base_cache_relative_path`로 명확히 분리했다 —
+  manifest에는 이제 이 canonical 값만 기록되고, 임시 절대경로는
+  **어디에도 저장되지 않는다.**
+- `ready_for_oos_meaning_note`를 추가해 "`ready_for_oos=true`는
+  87종목+벤치마크 수집이 완전했다는 뜻일 뿐, 통계적으로 성과를
+  판정할 준비가 됐다는 뜻이 아니다"를 manifest 자체에 명시했다
+  (기존 §36.3/§41.3의 원칙을 manifest 레벨에서도 재확인).
+- **manifest 전용 재생성 모드**(`--rebuild-manifest-for-date
+  YYYY-MM-DD`)를 추가했다 — 지정하면 KIS 클라이언트를 아예
+  생성/import하지 않고(구조적으로 호출 불가), `logs/_bars_cache_
+  core87_3y_<날짜>/`의 기존 종목별 bar 파일만 다시 읽어
+  `manifest.json`만 새로 쓴다. bar 파일 자체는 절대 재작성하지
+  않는다. 이 모드로 재생성된 manifest는 `manifest_regenerated_
+  from_existing_cache=true`로 표시되고, 원 수집 시점에만 알 수
+  있었던 "윈도 간 중복 발생 건수"는 되돌릴 수 없는 정보이므로
+  `None`으로 남기며 `totals.duplicate_within_new_fetch_count_
+  unavailable_for_some_symbols=true`로 명시한다(0으로 단정하지
+  않음 — 없었는지 있었지만 이미 해소돼 사라졌는지 파일만으로는
+  구분할 수 없기 때문).
+
+### 43.2 재생성 실행 결과(2026-08-24 17:42 KST, KIS 미호출)
+
+`bash scripts/harness/docker_dev_exec.sh python3 scripts/analysis/
+build_sppv3_oos_bar_cache.py --rebuild-manifest-for-date 2026-08-24`
+— **dev validation container(`network_mode=none`)에서 그대로
+실행됐다**는 사실 자체가 이 모드에 네트워크 의존성이 전혀 없음을
+구조적으로 증명한다(§42.3의 원 수집은 network_mode=none 컨테이너
+에서 실행할 수 없어 별도 환경이 필요했던 것과 대조적).
+
+- `base_cache_relative_path`: `logs/_bars_cache_core87_3y_2026-07-14`
+  (더 이상 임시 절대경로 없음).
+- `manifest_regenerated_from_existing_cache`: `true`.
+- 핵심 수치는 §42.3의 원 실행과 **완전히 동일** — `base_bar_count`
+  64,446, `new_bar_added_count` 2,376, `ready_for_oos=true`. 이는
+  bar 데이터를 전혀 건드리지 않고 manifest만 다시 읽어 만들었다는
+  증거다.
+- **종목별 bar JSON 파일의 수정 시각(mtime)이 재생성 전후로
+  정확히 동일함을 확인**(`005930.json` 기준 유닉스 타임스탬프
+  `1787560102`, 변화 없음) — bar 데이터 무변경을 파일시스템
+  레벨에서 직접 검증했다.
+- 이 실행 로그 어디에도 KIS API 호출(HTTP 요청 로그)이 없다 —
+  §42.3의 원 실행 로그에는 88건의 `httpx` HTTP 요청 로그가
+  있었던 것과 대조적으로, 이번 실행에는 단 한 건도 없다.
+
+### 43.3 테스트
+
+`tests/scripts/analysis/test_build_sppv3_oos_bar_cache.py`에 신규
+5건 추가(총 18건) — 임시 절대경로가 manifest canonical 필드로
+남지 않음(`base_cache_path` 키 부재, `base_cache_relative_path`가
+`/`로 시작하지 않고 `/tmp/`를 포함하지 않음), `BASE_CACHE_ID`/
+`BASE_CACHE_RELATIVE_PATH`가 결정론적 상수임, `summarize_symbol_
+bars()`의 ok/실패 판정, manifest 재생성 플래그와 `ready_for_oos`
+계약 유지 — 전부 PASS.
+
+### 43.4 §42와의 관계
+
+§42의 실측 사실(88종목 전부 성공, 신규 bar 2,376건, base 64,446건
+불변, `ready_for_oos=true`)은 **바뀌지 않는다** — 이번 정정은
+manifest 안의 경로 표기 방식만 교정했을 뿐이다. §42의 서술은
+삭제·수정하지 않았다. `[PRIORITY_MAP]`/`[BACKLOG]`의 관련 항목도
+"manifest 경로 정정은 데이터 재수집 없이 수행"이라는 사실만
+append-only로 추가한다.
