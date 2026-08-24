@@ -288,6 +288,10 @@ def build_benchmark_regime_and_risk_tone_by_date(bench_bars: list) -> dict[str, 
 # ── 후보 C: low_volatility_rank_20d ────────────────────────────────────────
 
 
+def _is_finite_number(value: Any) -> bool:
+    return isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value)
+
+
 def rank_low_volatility_cross_sectional(
     vol_by_symbol: dict[str, float | None],
 ) -> tuple[dict[str, float], dict[str, Any]]:
@@ -296,21 +300,30 @@ def rank_low_volatility_cross_sectional(
     가깝다(``relative_strength_rank_1m``, v10의 스케일링 공식을 그대로
     재사용하되 방향만 반전).
 
-    동점 처리 규칙: Python ``sorted()``는 안정 정렬(stable sort)이라
-    변동성 값이 완전히 같은 종목들은 **입력 순서**(이 함수에 넘긴
-    ``vol_by_symbol``의 키 순서, 호출자가 항상 정렬된 심볼 리스트로
-    호출해 결정론적이게 한다)를 그대로 유지한 채 순위가 매겨진다 —
-    별도 임의 난수·2차 정렬 기준을 두지 않는다.
+    동점 처리 규칙(**평균 순위, 2026-08-24 후속 수정**): 동일한
+    변동성 값을 가진 종목들은 그 그룹이 차지하는 순위 구간의
+    **평균 위치**를 공유해 정확히 같은 점수를 받는다 — 종목 코드나
+    ``vol_by_symbol``에 넘긴 입력 순서는 결과에 전혀 영향을 주지
+    않는다(정렬은 값으로만 하고, 동점 그룹의 평균 위치는 그 그룹의
+    개수와 순위 구간만으로 정해지므로 그룹 내부 순서는 무의미하다).
+    이전 구현(stable sort로 입력 순서 그대로 순위를 매김)은 종목
+    코드 나열 순서가 사실상 가짜 신호가 되는 결함이 있어 이번에
+    수정했다 — §36.2가 동결한 것은 "낮은 변동성일수록 높은 점수,
+    `[-1,1]` 스케일"이라는 수식 자체이지, 동점을 어떻게 처리할지의
+    구현 세부사항이 아니므로 이 수정은 수식 동결 위반이 아니다.
+
+    ``None``이거나 유한하지 않은(``NaN``/``inf``) 값은 결측으로
+    간주해 순위 계산에서 제외하고 ``missing_symbol_count``에 센다.
 
     반환값의 두 번째 항목은 그날의 ``valid_symbol_count``/``missing_
     symbol_count``를 담는다.
     """
-    valid = [(sym, v) for sym, v in vol_by_symbol.items() if v is not None]
+    valid = [(sym, v) for sym, v in vol_by_symbol.items() if _is_finite_number(v)]
     missing_count = len(vol_by_symbol) - len(valid)
     meta = {
         "valid_symbol_count": len(valid),
         "missing_symbol_count": missing_count,
-        "tie_break_rule": "stable_sort_preserves_input_symbol_order",
+        "tie_break_rule": "average_rank_for_ties_input_order_independent",
     }
     scores: dict[str, float] = {}
     n = len(valid)
@@ -320,9 +333,18 @@ def rank_low_volatility_cross_sectional(
         return scores, meta
 
     ordered = sorted(valid, key=lambda pair: pair[1])  # 오름차순: 낮은 변동성이 앞
-    for idx, (sym, _) in enumerate(ordered):
-        # idx=0(가장 낮은 변동성) -> +1.0, idx=n-1(가장 높은 변동성) -> -1.0
-        scores[sym] = ((n - 1 - idx) / (n - 1)) * 2.0 - 1.0
+    i = 0
+    while i < n:
+        j = i
+        while j < n and ordered[j][1] == ordered[i][1]:
+            j += 1
+        # [i, j) 구간이 동점 그룹 — 평균 위치를 그룹 전원에게 동일하게 부여
+        avg_position = (i + j - 1) / 2.0
+        # avg_position=0(가장 낮은 변동성 그룹) -> +1.0, n-1(가장 높은) -> -1.0
+        score = ((n - 1 - avg_position) / (n - 1)) * 2.0 - 1.0
+        for k in range(i, j):
+            scores[ordered[k][0]] = score
+        i = j
     return scores, meta
 
 
@@ -379,6 +401,9 @@ def _collect_candidate_samples(
         try:
             features, _card = build_signal_snapshot(symbol, window)
             vol_20d = features.volatility_20d_pct
+            if not _is_finite_number(vol_20d):
+                exclusion_counts["candidate_c_volatility_nonfinite"] += 1
+                vol_20d = None
         except Exception:
             exclusion_counts["candidate_c_signal_snapshot_failed"] += 1
             vol_20d = None
@@ -402,7 +427,12 @@ def _collect_candidate_samples(
         base_close = price_bars[t].close_price
         for h in FORWARD_HORIZONS:
             fwd_close = price_bars[t + h].close_price
-            raw_ret = (fwd_close / base_close) - 1.0
+            raw_ret = (fwd_close / base_close) - 1.0 if base_close else float("nan")
+            if not _is_finite_number(raw_ret):
+                exclusion_counts[f"fwd_{h}_nonfinite"] += 1
+                row[f"fwd_{h}"] = None
+                row[f"fwd_{h}_net"] = None
+                continue
             row[f"fwd_{h}"] = raw_ret
             row[f"fwd_{h}_net"] = raw_ret - (_ROUND_TRIP_COST_BPS / 10_000.0)
 
@@ -448,18 +478,59 @@ def regime_sample_gate(all_samples: list[dict[str, Any]]) -> dict[str, Any]:
     return out
 
 
+def _rows_with_valid_signal_and_return(
+    all_samples: list[dict[str, Any]], signal: str, return_key: str
+) -> tuple[list[dict[str, Any]], int]:
+    """``signal``/``return_key`` 둘 다 유한한 실수인 행만 남긴다.
+
+    v2/v4의 ``_cross_sectional_ic_by_date``/``_quintile_spread_series``는
+    "키가 row에 존재하는가"만 확인하고 값이 ``None``/``NaN``인지는
+    검사하지 않는다 — 그 함수들을 고치지 않고, 이 v11 경계에서
+    미리 걸러 넘긴다(2026-08-24 후속 수정). 이렇게 걸러진 행만 넘기면
+    저 함수들의 "키 존재 = 유효"라는 내부 가정이 실제로 항상 참이
+    된다.
+    """
+    valid: list[dict[str, Any]] = []
+    excluded = 0
+    for row in all_samples:
+        if _is_finite_number(row.get(signal)) and _is_finite_number(row.get(return_key)):
+            valid.append(row)
+        else:
+            excluded += 1
+    return valid, excluded
+
+
 def summarize_signal_window(
     all_samples: list[dict[str, Any]], signal: str, horizons: list[int]
 ) -> dict[str, Any]:
     """한 신호(예: ``overnight_ret_5d``)에 대해 horizon별 IC/NW-t/spread를
-    요약한다(§36.3 primary/보조 지표, v2/v4 함수 그대로 재사용)."""
+    요약한다(§36.3 primary/보조 지표, v2/v4 함수 그대로 재사용).
+
+    ``signal``/``fwd_h`` 값이 ``None``이거나 비정상(비유한)인 행은
+    IC·Newey-West·hit-rate·quintile spread 계산 전부에서 완전히
+    제외한다(0으로 채우거나 정상 신호처럼 섞지 않음, 2026-08-24
+    후속 수정) — 유효/제외 표본 수를 horizon별로 결과에 남긴다.
+    """
     out: dict[str, Any] = {}
     for h in horizons:
-        ic_series = _cross_sectional_ic_by_date(all_samples, signal, h, f"fwd_{h}")
+        valid_for_ic, excluded_ic = _rows_with_valid_signal_and_return(all_samples, signal, f"fwd_{h}")
+        ic_series = _cross_sectional_ic_by_date(valid_for_ic, signal, h, f"fwd_{h}")
         ic_summary = _summarize_series(ic_series, h, is_pct=False)
-        spread_series = _quintile_spread_series(all_samples, signal, f"fwd_{h}_net")
+
+        valid_for_spread, excluded_spread = _rows_with_valid_signal_and_return(
+            all_samples, signal, f"fwd_{h}_net"
+        )
+        spread_series = _quintile_spread_series(valid_for_spread, signal, f"fwd_{h}_net")
         spread_summary = _summarize_series(spread_series, h)
-        out[f"T+{h}"] = {"ic": ic_summary, "cost_adjusted_quintile_spread": spread_summary}
+
+        out[f"T+{h}"] = {
+            "ic": ic_summary,
+            "cost_adjusted_quintile_spread": spread_summary,
+            "valid_row_count_for_ic": len(valid_for_ic),
+            "excluded_row_count_for_ic": excluded_ic,
+            "valid_row_count_for_spread": len(valid_for_spread),
+            "excluded_row_count_for_spread": excluded_spread,
+        }
     return out
 
 
@@ -477,10 +548,14 @@ def summarize_by_regime(
             continue
         per_horizon = {}
         for h in horizons:
+            valid_for_ic, excluded_ic = _rows_with_valid_signal_and_return(all_samples, signal, f"fwd_{h}")
             ic_series = _cross_sectional_ic_by_date(
-                all_samples, signal, h, f"fwd_{h}", common_regime_filter=regime
+                valid_for_ic, signal, h, f"fwd_{h}", common_regime_filter=regime
             )
-            per_horizon[f"T+{h}"] = _summarize_series(ic_series, h, is_pct=False)
+            per_horizon[f"T+{h}"] = {
+                **_summarize_series(ic_series, h, is_pct=False),
+                "excluded_row_count_for_ic": excluded_ic,
+            }
         out[regime] = {
             "trading_day_count": gate_info["trading_day_count"],
             "ic_by_horizon": per_horizon,

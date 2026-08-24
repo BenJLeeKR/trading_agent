@@ -12,9 +12,11 @@ import os
 
 from scripts.validate_signal_predictive_power_v11_candidate_bc_freeze import (
     StrictBar,
+    _rows_with_valid_signal_and_return,
     compute_overnight_intraday_split_momentum,
     load_strict_bars,
     rank_low_volatility_cross_sectional,
+    summarize_signal_window,
 )
 
 
@@ -130,6 +132,83 @@ class TestLoadStrictBars:
         assert exclusions["close_missing_or_nonpositive"] == 0
 
 
+def _cross_sectional_rows(trade_date: str, signal_values: list[float | None]) -> list[dict]:
+    """한 거래일에 대해 종목별 signal/fwd 값을 가진 표본 행을 만든다.
+
+    ``_cross_sectional_ic_by_date``/``_quintile_spread_series``는 하루
+    표본이 5개 미만이면 그 날을 건너뛰므로, 테스트는 항상 6개 이상의
+    종목을 채운다.
+    """
+    rows = []
+    for i, sig in enumerate(signal_values):
+        rows.append(
+            {
+                "trade_date": trade_date,
+                "symbol": f"SYM{i}",
+                "sig": sig,
+                "fwd_1": None if sig is None else 0.01 * (i + 1),
+                "fwd_1_net": None if sig is None else 0.01 * (i + 1) - 0.003,
+            }
+        )
+    return rows
+
+
+class TestValidSignalReturnFiltering:
+    def test_none_signal_row_excluded_from_valid_set_and_counted(self):
+        rows = _cross_sectional_rows(
+            "2026-01-02", [1.0, 2.0, 3.0, 4.0, 5.0, None]
+        )
+        valid, excluded = _rows_with_valid_signal_and_return(rows, "sig", "fwd_1")
+        assert len(valid) == 5
+        assert excluded == 1
+        assert all(r["sig"] is not None for r in valid)
+
+    def test_none_return_row_excluded_and_counted(self):
+        rows = _cross_sectional_rows("2026-01-02", [1.0, 2.0, 3.0, 4.0, 5.0, 6.0])
+        rows[0]["fwd_1"] = None  # 신호는 있으나 forward return이 결측
+        valid, excluded = _rows_with_valid_signal_and_return(rows, "sig", "fwd_1")
+        assert len(valid) == 5
+        assert excluded == 1
+
+    def test_nonfinite_signal_excluded(self):
+        rows = _cross_sectional_rows(
+            "2026-01-02", [1.0, 2.0, 3.0, 4.0, 5.0, float("nan")]
+        )
+        valid, excluded = _rows_with_valid_signal_and_return(rows, "sig", "fwd_1")
+        assert len(valid) == 5
+        assert excluded == 1
+
+    def test_all_valid_rows_produce_zero_excluded_count(self):
+        rows = _cross_sectional_rows("2026-01-02", [1.0, 2.0, 3.0, 4.0, 5.0, 6.0])
+        valid, excluded = _rows_with_valid_signal_and_return(rows, "sig", "fwd_1")
+        assert len(valid) == 6
+        assert excluded == 0
+
+
+class TestSummarizeSignalWindowHandlesMissingRows:
+    def test_missing_signal_row_does_not_crash_and_is_excluded_from_summary(self):
+        samples = _cross_sectional_rows(
+            "2026-01-02", [1.0, 2.0, 3.0, 4.0, 5.0, None]
+        ) + _cross_sectional_rows("2026-01-05", [1.0, 2.0, 3.0, 4.0, 5.0, 6.0])
+        summary = summarize_signal_window(samples, "sig", [1])
+        assert summary["T+1"]["excluded_row_count_for_ic"] == 1
+        assert summary["T+1"]["valid_row_count_for_ic"] == 11
+
+    def test_valid_only_samples_are_unaffected_by_filtering(self):
+        # 결측이 전혀 없는 기존 사례 -> 필터를 거쳐도 결과가 동일해야 한다.
+        samples_no_missing = _cross_sectional_rows(
+            "2026-01-02", [1.0, 2.0, 3.0, 4.0, 5.0, 6.0]
+        ) + _cross_sectional_rows("2026-01-05", [6.0, 5.0, 4.0, 3.0, 2.0, 1.0])
+
+        filtered, excluded = _rows_with_valid_signal_and_return(samples_no_missing, "sig", "fwd_1")
+        assert excluded == 0
+        assert len(filtered) == len(samples_no_missing)
+
+        summary = summarize_signal_window(samples_no_missing, "sig", [1])
+        assert summary["T+1"]["excluded_row_count_for_ic"] == 0
+        assert summary["T+1"]["valid_row_count_for_ic"] == len(samples_no_missing)
+
+
 class TestRankLowVolatilityCrossSectional:
     def test_lowest_volatility_gets_highest_score(self):
         vols = {"A": 5.0, "B": 1.0, "C": 3.0}
@@ -152,12 +231,35 @@ class TestRankLowVolatilityCrossSectional:
         assert scores["A"] == 0.0
         assert meta["valid_symbol_count"] == 1
 
-    def test_ties_broken_by_stable_input_order(self):
-        # 동점 평균 순위를 쓰지 않는다 — 값이 같아도(A, B) 각자 별도 순위
-        # 하나씩 받고, 그 순서는 입력 딕셔너리 순서(stable sort)로 정해진다.
+    def test_tied_volatility_values_receive_identical_average_rank_score(self):
+        # A, B가 동일 변동성(2.0) -> 평균 순위를 공유해 정확히 같은 점수.
         vols = {"A": 2.0, "B": 2.0, "C": 1.0}
         scores, meta = rank_low_volatility_cross_sectional(vols)
         assert scores["C"] == 1.0  # 유일한 최저 변동성 -> 최고 점수
-        assert scores["A"] == 0.0  # 입력 순서상 A가 B보다 먼저 -> 중간 순위
-        assert scores["B"] == -1.0  # B는 A와 값이 같지만 입력상 뒤라 최저 순위
-        assert meta["tie_break_rule"] == "stable_sort_preserves_input_symbol_order"
+        assert scores["A"] == scores["B"]
+        assert meta["tie_break_rule"] == "average_rank_for_ties_input_order_independent"
+
+    def test_tie_scores_independent_of_input_dict_order(self):
+        vols_order_1 = {"A": 2.0, "B": 2.0, "C": 1.0}
+        vols_order_2 = {"B": 2.0, "A": 2.0, "C": 1.0}
+        scores_1, _ = rank_low_volatility_cross_sectional(vols_order_1)
+        scores_2, _ = rank_low_volatility_cross_sectional(vols_order_2)
+        assert scores_1 == scores_2
+
+    def test_three_way_tie_average_rank_matches_manual_calculation(self):
+        # 4개 종목, 3개가 동점(1.0) -> 그 3개는 순위 위치 0,1,2의 평균(=1)을
+        # 공유, 나머지 하나(5.0, 위치3)는 단독 최저 점수를 받는다.
+        vols = {"A": 1.0, "B": 1.0, "C": 1.0, "D": 5.0}
+        scores, _ = rank_low_volatility_cross_sectional(vols)
+        n = 4
+        expected_tied_score = ((n - 1 - 1.0) / (n - 1)) * 2.0 - 1.0  # avg_position=1
+        assert math.isclose(scores["A"], expected_tied_score)
+        assert math.isclose(scores["B"], expected_tied_score)
+        assert math.isclose(scores["C"], expected_tied_score)
+        assert scores["D"] == -1.0
+
+    def test_nonfinite_volatility_treated_as_missing(self):
+        vols = {"A": 5.0, "B": float("nan"), "C": 3.0}
+        scores, meta = rank_low_volatility_cross_sectional(vols)
+        assert "B" not in scores
+        assert meta["missing_symbol_count"] == 1

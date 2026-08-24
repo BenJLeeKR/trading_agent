@@ -9878,3 +9878,70 @@ freeze.py`, `network_mode=none`)에서 1회 실행했다 — 컨테이너
 - `accept script-file`/`accept style`/`accept no-bypass`(hard_
   bypass_count=0)/`accept architecture`(violation_count=0)/`accept
   docs` 전부 PASS.
+
+### 38.8 결측 처리·동점 순위 결함 수정(2026-08-24 KST 후속, 코드 구현)
+
+§38.6 실행 시점의 cache(87종목·653거래일)에는 결측이 0건이라
+드러나지 않았지만, 구현 자체에 두 가지 계약 결함이 있었다 — 실측
+이후가 아니라 **구현 검토 과정에서** 발견돼 수정했다(§36.2의
+수식·기간·판정 기준 자체는 바꾸지 않음, 구현 세부사항만 보강).
+
+1. **결측 행이 IC/quintile 계산에 조용히 섞일 수 있었다**: v2/v4의
+   `_cross_sectional_ic_by_date`/`_quintile_spread_series`는 "그
+   신호/return 키가 row에 존재하는가"만 확인하고 값이 `None`인지는
+   검사하지 않는다. 이번 스크립트가 결측을 `None` 값으로(키는
+   유지한 채) 표현하므로, 향후 cache에 결측이 생기면 `None`이
+   Spearman 순위 계산에 그대로 들어가 오류나 오염된 결과를 낼
+   위험이 있었다. **수정**: v2/v4 함수는 건드리지 않고, v11 경계에
+   `_rows_with_valid_signal_and_return()`을 신설해 신호·forward
+   return이 모두 유한한 실수인 행만 걸러 넘긴다 — 결측/비정상
+   행은 완전히 제외되고, horizon별 유효/제외 표본 수가
+   `valid_row_count_for_ic`/`excluded_row_count_for_ic` 등으로
+   결과 JSON에 항상 남는다.
+2. **동점 변동성이 입력 순서에 따라 다른 점수를 받았다**: 이전
+   구현은 Python `sorted()`의 안정 정렬 특성에 기대 동점을 입력
+   딕셔너리 순서로 갈랐다 — 값이 완전히 같은 두 종목이 순서만 다른
+   딕셔너리를 넘기면 다른 점수를 받는, 사실상 종목 코드/열거 순서가
+   가짜 신호가 되는 결함이었다. **수정**: `rank_low_volatility_
+   cross_sectional()`을 평균 순위(average rank) 방식으로 다시 구현
+   — 동일 변동성 값을 가진 종목들은 그 값이 차지하는 순위 구간의
+   평균 위치를 공유해 정확히 같은 점수를 받는다(입력 순서 무관,
+   단위 테스트로 두 가지 다른 딕셔너리 순서가 같은 점수를 냄을
+   직접 증명). `tie_break_rule` 메타데이터를 `average_rank_for_
+   ties_input_order_independent`로 갱신했다. **§36.2가 동결한
+   것은 "낮은 변동성일수록 높은 점수, `[-1,1]` 스케일"이라는 수식
+   자체이지 동점 처리 구현 세부사항이 아니므로, 이 수정은 수식
+   동결 위반이 아니다.**
+3. 부수적으로 forward return(`fwd_h`) 계산과 후보 C의
+   `volatility_20d_pct` 산출에도 유한성(`math.isfinite`) 검사를
+   추가해, 향후 비정상 값이 나오면 조용히 계산에 섞이지 않고
+   `fwd_{h}_nonfinite`/`candidate_c_volatility_nonfinite` 사유로
+   집계되게 했다.
+4. **재실행 결과 비교**: 위 세 수정 모두 "결측/동점이 실제로
+   존재할 때만" 동작이 달라지는 방어 로직이다 — 이번 cache는
+   결측 0건이고 동점(부동소수점 완전 일치)도 사실상 없어, 수정
+   전후로 §38.6의 실측 수치가 **바뀌지 않았음을 재실행으로
+   확인했다**(아래 §38.9).
+5. 신규 테스트 9건 추가(총 20건) — 결측 신호/return 행 제외, 비정상
+   값 제외, 동점 평균 순위 일치, 입력 순서 무관성, 결측 없는
+   기존 사례의 수치 불변, 기존 look-ahead 방지 테스트 계속 통과.
+
+### 38.9 수정 후 재실행(2026-08-24 KST)
+
+동일 명령(`bash scripts/harness/docker_dev_exec.sh python3 scripts/
+validate_signal_predictive_power_v11_candidate_bc_freeze.py`)으로
+재실행한 결과:
+
+- `load_exclusion_counts`/`compute_exclusion_counts` 전부 §38.6과
+  동일하게 0건.
+- `regime_sample_gate`(bearish_trend 96일 등)도 §38.6과 동일.
+- 신규로 추가된 `valid_row_count_for_ic`/`excluded_row_count_for_
+  ic` 등 필드가 정상적으로 채워짐(제외 0건 상황이므로
+  `valid_row_count_for_ic` = 해당 horizon의 전체 표본 수, `excluded_
+  row_count_for_ic` = 0).
+- IC/Newey-West t-통계 등 핵심 수치는 §38.6과 동일 — 이번 수정이
+  버그를 고쳤을 뿐 이번 cache의 실측 결과를 바꾸지 않았음을
+  확인했다(방어 로직이 결측/동점이 없는 상황에서는 no-op임을
+  재확인).
+- 이번 재실행도 Go/Watch/Hold/No-Go 판정을 내리지 않는다 — 판정은
+  여전히 다음 턴 과제다.
