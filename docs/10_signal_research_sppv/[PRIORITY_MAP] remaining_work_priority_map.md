@@ -12009,7 +12009,7 @@ execution_attempts/사후분석 SQL) 보존을 동시에 만족하는지** 코�
   engine.py`의 threshold 등)로 같은 margin contract 확장 여부는
   다음 턴 판단 대상 — `SPPV-3` 결론과 무관하게 계속 병행 착수 가능.
 
-## `AGENT_TRADING_GIT_SHA` 배포 자동 주입 구현(2026-08-24 KST, 코드 구현 턴) — **완료 전까지 추적**
+## `AGENT_TRADING_GIT_SHA` 배포 자동 주입 구현 및 실측 완료(2026-08-24 KST) — **완료**
 
 상세: `docs/40_action_plans/post_sppv3_policy_evaluation_design_
 2026-08-20.md` "15. `AGENT_TRADING_GIT_SHA` 배포 자동 주입 구현".
@@ -12030,12 +12030,17 @@ execution_attempts/사후분석 SQL) 보존을 동시에 만족하는지** 코�
   `accept no-bypass`/`accept architecture` 전부 PASS. `accept
   script-file`은 `.sh` 파일에 구조적으로 적용 불가(AST 기반, `.py`
   전용)로 확인.
-- **이 항목은 "완료" 표기하지 않는다** — 실제 운영 배포(CI/CD
-  `activate_runtime` 실행)를 통해 다음 컨테이너 recreate 이후
-  `trade_decisions.policy_git_sha`/`guardrail_evaluations.policy_
-  git_sha`가 실제로 채워지는지 read-only로 실측 확인해야 완료로
-  전환한다.
-- **완료(실측 확인) 후 다음 순서**: `SPPV-3` 상태 정합성 재확인과
+- PR #338 병합(main `7634d313`) 이후 사용자가 운영 컨테이너를 직접
+  재기동함. read-only 실측: `agent_trading-ops-scheduler`
+  프로세스 환경에 `AGENT_TRADING_GIT_SHA`가 존재하고 값이 배포
+  대상 커밋(`7634d3132fd6...`, 길이 40)과 정확히 일치함을 확인.
+  컨테이너 시작 시각(`2026-08-24T02:17:33Z`) 이후 생성된
+  `trade_decisions` 36건, `guardrail_evaluations` 3건 **전부**
+  같은 SHA 값으로 채워짐(NULL 없음). 재기동 이전 레코드는 여전히
+  NULL — 관측성 필드의 소급 적용 없음(예상된 동작).
+- **완료 확정** — 코드 구현과 운영 실측이 모두 끝나 이 항목을
+  완료로 전환한다.
+- **다음 순서**: `SPPV-3` 상태 정합성 재확인과
   축 3(포지션/보유기간) 성과 검증으로 넘어간다 — 이 두 과제는 이번
   fingerprint 주입 완료와 무관하게 독립적으로 착수 가능하지만, 관측
   기반 사후분석(code-version 단위 비교)이 이번 항목 완료 이후에야
