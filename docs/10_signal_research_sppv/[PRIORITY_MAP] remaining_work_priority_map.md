@@ -12137,3 +12137,36 @@ execution_attempts/사후분석 SQL) 보존을 동시에 만족하는지** 코�
 - **완료 확정** — population/dedupe 정의/Stage B 보류 판정은
   이번 턴에서 변경하지 않았다. 앞으로 이 도구를 재실행할 때는
   `--as-of-at`만 표준으로 쓴다.
+
+## `SPPV-3` 축 1 Hold 이후 신호 재설계 후보 탐색 + 후보군 동결(2026-08-24 KST, read-only) — **최우선 작업**
+
+상세: `docs/10_signal_research_sppv/[DESIGN] signal_predictive_
+power_validation.md` "36. `SPPV-3` 축 1 Hold 이후 신호 재설계
+후보 탐색 + 후보군 동결".
+
+- **canonical 상태 재확인**: 축 1 완료·Hold 확정, 축 2/4 미착수,
+  축 3 표본 축적 관측 중(§16~18), **현행 `entry_score` threshold/
+  gate 정책 최적화(Stage B)는 계속 보류**.
+- 과거 신호 재설계 트랙(§17~23)의 10개 후보 전부를 최종 상태로
+  재정리 — `risk_adj_momentum_3m`(Watch/marginal), `regime_
+  switch_v1`(가장 유망한 Watch, 확정 Go 아님, 관찰 유예 중),
+  `reversal_1m`(Hold), 나머지 7개는 No-Go. **`regime_switch_v1`은
+  별도의 "R3b" 운영 검증 트랙에서 이미 "Conditional Go"라는
+  다른 축의 판정을 받았음을 확인했으나, 이는 SPPV-3 축 1식 통계
+  게이트와는 별개 축이며 이번 턴은 그 운영 트랙을 건드리지
+  않는다.**
+- **후보군 최대 3개로 동결**(더 이상 추가하지 않음):
+  A. `regime_switch_v1`(재검증 후보), B. `overnight_intraday_
+  split_momentum_v1`(신규, 시가/종가 분리 모멘텀), C. `low_
+  volatility_rank_20d`(신규, 순수 리스크 기반 순위 — 저변동성
+  anomaly). 사전 평가 계약(horizon T+1/5/20, Go/Watch/Hold/No-Go
+  기준, 최소 표본, 층화, cutoff 계약)을 결과를 보기 전에 고정.
+- **실행 가능성**: 3개 전부 "즉시 cache 재검증 가능"(bar cache에
+  이미 있는 OHLCV로 계산). 단 A의 진짜 out-of-sample 검증은
+  캐시 갱신(신규 KIS 호출) 후에만 가능 — 이번 턴 범위 밖.
+- **Stage B 조건 불변**: 이번 턴은 후보를 동결했을 뿐 아직 한 번도
+  실행하지 않았다 — 실측 결과가 없다. 축 1의 새 Go 증거 없이는
+  Stage B를 열지 않는다는 원칙은 그대로 유지.
+- **다음 순서**: 후보 B/C의 계산 함수 신규 작성 → 사전 고정
+  계약대로 1차(12개월)/2차(3년) 이원 게이트 실행 → 결과에 따라
+  Go/Watch/Hold/No-Go 판정. 축 3 관측(PR #341 도구)은 병행 지속.
