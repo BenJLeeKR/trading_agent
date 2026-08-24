@@ -242,3 +242,73 @@ class TestStartupValidation:
             auth_enabled=False, auth_token=None, auth_role="viewer"
         )
         assert app is not None
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# G. GET /auth/me — 현재 토큰의 role 조회
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+class TestAuthMe:
+    """``GET /auth/me`` — Admin UI가 설정/발행 버튼을 노출하기 전에 확인하는
+    "지금 이 토큰의 role" 조회 엔드포인트."""
+
+    def test_viewer_token_reports_viewer_role(self, auth_client: TestClient) -> None:
+        """``auth_client``는 기본값이 ``auth_role="viewer"``다."""
+        resp = auth_client.get("/auth/me", headers=_auth_header())
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["role"] == "viewer"
+        assert body["auth_enabled"] is True
+
+    def test_admin_token_reports_admin_role(self) -> None:
+        """``auth_role="admin"``으로 띄운 배포는 ``role: "admin"``을 반환한다."""
+        app = create_app(auth_token=_VALID_TOKEN, auth_role="admin")
+        with TestClient(app) as client:
+            resp = client.get("/auth/me", headers=_auth_header())
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["role"] == "admin"
+        assert body["auth_enabled"] is True
+
+    def test_missing_token_is_401(self, auth_client: TestClient) -> None:
+        """Authorization 헤더 없음 → 401(기존 인증 규칙과 동일)."""
+        resp = auth_client.get("/auth/me")
+        assert resp.status_code == 401
+
+    def test_invalid_token_is_401(self, auth_client: TestClient) -> None:
+        """잘못된 토큰 값 → 401(기존 인증 규칙과 동일)."""
+        resp = auth_client.get("/auth/me", headers=_auth_header(_INVALID_TOKEN))
+        assert resp.status_code == 401
+
+    def test_auth_disabled_without_configured_token_is_401(
+        self, empty_client: TestClient
+    ) -> None:
+        """``auth_enabled=False``이고 별도 토큰도 없는 기본 개발 모드에서는
+        이 라우트도 ``get_current_principal``이 이미 반환하던 401
+        ("Authentication not configured")을 그대로 반환한다 — role을
+        확인할 principal 자체가 없기 때문이며, 이 라우트가 새로운 보안
+        의미를 만들어내지 않는다는 것을 확인한다."""
+        resp = empty_client.get("/auth/me")
+        assert resp.status_code == 401
+
+    def test_misconfigured_role_is_403_not_admin_fallback(
+        self, auth_client: TestClient
+    ) -> None:
+        """``_INSPECTION_ROLE``이 ``"viewer"``/``"admin"`` 둘 다 아닌 값으로
+        잘못 설정된 상태라면(운영 배포 오류 상황을 흉내낸다), ``require_viewer``
+        정책대로 403을 반환해야 한다 — 알 수 없는 role을 조용히 admin처럼
+        허용하지 않는지 확인한다."""
+        from agent_trading.api.security import configure_security
+
+        # auth_client가 이미 시작된 뒤, 배포 오류를 흉내내 role만 다시 설정한다
+        # (create_app()의 auth_role 검증은 시작 시점에만 걸리므로, 이미 뜬
+        # 프로세스에 잘못된 값이 들어간 상황은 configure_security()를 직접
+        # 다시 호출해서만 재현할 수 있다).
+        configure_security(token=_VALID_TOKEN, role="superadmin")
+        try:
+            resp = auth_client.get("/auth/me", headers=_auth_header())
+            assert resp.status_code == 403
+        finally:
+            # 이후 다른 테스트에 영향이 없도록 정상 role로 복구한다.
+            configure_security(token=_VALID_TOKEN, role="viewer")

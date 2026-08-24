@@ -18,6 +18,7 @@ import OrderTrackingView from "./components/OrderTrackingView";
 import FillHistoryView from "./components/FillHistoryView";
 import RealtimeQuoteView from "./components/RealtimeQuoteView";
 import UniverseSelectionView from "./components/UniverseSelectionView";
+import SettingsAccessView from "./components/SettingsAccessView";
 
 /** Redirect to "/" if already authenticated (reverse of ProtectedRoute). */
 function PublicRoute({ children }: { children: React.ReactNode }) {
@@ -67,6 +68,7 @@ export default function App() {
             <Route path="operations/orders" element={<OrderTrackingView />} />
             <Route path="operations/realtime-quotes" element={<RealtimeQuoteView />} />
             <Route path="operations/universe-selection" element={<UniverseSelectionView />} />
+            <Route path="settings/access" element={<SettingsAccessView />} />
           </Route>
         </Routes>
       </AuthProvider>

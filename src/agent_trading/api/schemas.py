@@ -93,6 +93,23 @@ class SchedulerHealth(BaseModel):
     is fresh (for non-trading days)."""
 
 
+class AuthMeResponse(BaseModel):
+    """``GET /auth/me`` — 현재 Bearer 토큰의 role을 알려준다.
+
+    이 시스템은 사용자별 계정이 아니라 프로세스 시작 시 설정된 토큰 1개와
+    고정 role 1개로 동작한다(``security.py``의 ``configure_security()``) —
+    이 응답은 "누가 로그인했는지"가 아니라 "지금 이 토큰이 어떤 권한을
+    갖는지"만 알려준다.
+    """
+
+    role: str
+    """``"viewer"`` 또는 ``"admin"`` — 이 요청에 사용된 토큰에 배정된 role."""
+
+    auth_enabled: bool
+    """이 배포가 Bearer 토큰 인증을 강제하는지 여부. 이 필드는 이 요청이 이미
+    인증을 통과했다는 사실과는 별개로, 배포 자체의 설정값을 그대로 보여준다."""
+
+
 class HealthResponse(BaseModel):
     """``GET /health`` — minimal server status + optional snapshot sync freshness."""
 

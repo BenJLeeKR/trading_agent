@@ -47,6 +47,11 @@ describe("Layout navigation", () => {
     expect(screen.getByText("실현손익")).toBeInTheDocument();
     expect(screen.getByText("의사결정")).toBeInTheDocument();
     expect(screen.getByText("에이전트 실행")).toBeInTheDocument();
+    // "설정" 대분류 — 이번 단계에서는 "권한 확인"만 활성화한다(PR #336 설계
+    // 문서 §3.2). "예약됨 > 관리"는 이 섹션으로 대체돼 더 이상 존재하지 않는다.
+    expect(screen.getByText("설정")).toBeInTheDocument();
+    expect(screen.getByText("권한 확인")).toBeInTheDocument();
+    expect(screen.queryByText("관리")).not.toBeInTheDocument();
 
     // Outlet content rendered
     expect(screen.getByText("Page Content")).toBeInTheDocument();

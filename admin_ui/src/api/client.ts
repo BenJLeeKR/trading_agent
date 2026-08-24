@@ -145,6 +145,18 @@ export async function getReadyz(): Promise<Record<string, string>> {
  * Protected API helpers — require Bearer token
  * ─────────────────────────────────────────── */
 
+/**
+ * 현재 토큰의 role(`"viewer"` | `"admin"`)과 이 배포의 인증 강제 여부를
+ * 조회한다. 사용자 계정 조회가 아니다 — 이 시스템은 프로세스 시작 시 설정된
+ * 토큰 1개 + 고정 role 1개로 동작한다(`설정 > 권한 확인` 화면에서 사용).
+ * 401(토큰 만료/미인증)은 `request()`가 `UnauthorizedError`로 던지고,
+ * 403(최소 viewer 권한도 없음)은 `ApiResponseError(status=403, ...)`로
+ * 그대로 올라간다 — 호출부에서 이 둘을 구분해서 처리해야 한다.
+ */
+export async function getAuthMe(): Promise<import("../types/api").AuthMeResponse> {
+  return request<import("../types/api").AuthMeResponse>("/auth/me");
+}
+
 export async function getClients(): Promise<import("../types/api").ClientDetail[]> {
   return request<import("../types/api").ClientDetail[]>("/clients");
 }

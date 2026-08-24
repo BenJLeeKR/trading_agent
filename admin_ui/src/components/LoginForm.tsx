@@ -26,8 +26,17 @@ export function LoginForm() {
     try {
       await verifyToken(trimmed);
 
-      // Token is valid
-      login(trimmed);
+      // Token is valid — login()이 토큰 저장과 role(viewer/admin) 조회를
+      // 함께 처리한다. 대시보드 자체는 role 없이도 볼 수 있으므로 조회
+      // 실패(403/네트워크 오류)는 로그인을 막지 않는다. 다만 방금 검증에
+      // 성공한 토큰이 곧바로 401을 받는 경우(레이스/토큰 무효화)만은 명확히
+      // 알려준다 — 그 경우는 이미 전역 로그아웃도 함께 처리된다.
+      const roleResult = await login(trimmed);
+      if (roleResult.status === "unauthorized") {
+        setError("토큰이 방금 만료되었거나 무효화됐습니다. 다시 시도해주세요.");
+        return;
+      }
+
       navigate("/");
     } catch (err) {
       if (err instanceof UnauthorizedError) {
