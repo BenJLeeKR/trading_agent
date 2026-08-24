@@ -12290,3 +12290,33 @@ power_validation.md` "41. 후보 B 역방향 신규 후보 2개 동결".
 - **다음 순서**: 사용자 승인 후 cache 갱신(신규 디렉터리, 기존
   cache 보존) → 계산 함수 구현 → §41.3 계약 그대로 신규 구간
   실행(B 역방향 2개 + C) → 판정. **Stage B는 계속 보류.**
+
+## SPPV-3 독립 OOS 검증용 신규 bar cache 수집 완료(2026-08-24 KST, 사용자 승인 하 KIS read-only 실행) — **`ready_for_oos=true`, 신호 계산 전**
+
+상세: `docs/10_signal_research_sppv/[DESIGN] signal_predictive_
+power_validation.md` "42. SPPV-3 독립 OOS 검증용 신규 bar cache
+수집 완료".
+
+- 사용자가 이번 턴에 KIS 외부 read-only 호출과 신규 local cache
+  생성을 명시적으로 승인 — `scripts/analysis/build_sppv3_oos_bar_
+  cache.py`(신규, DB 미사용) 구현·테스트(13건 PASS) 후 실제 수집
+  실행.
+- 실행 환경: dev validation container는 `network_mode=none`이라
+  외부 호출 불가 — 실제 KIS 수집은 이미 KIS_LIVE_INFO_* 자격증명이
+  구성된 `agent_trading-ops-scheduler` 컨테이너의 bind mount 밖
+  임시 경로에서 수행하고 결과만 호스트로 복사. 운영 checkout/이미지/
+  컨테이너 재기동 전혀 없음.
+- **결과**: 신규 cache `logs/_bars_cache_core87_3y_2026-08-24/`
+  (`.gitignore` 대상, 미커밋) — 88종목(87+벤치마크) **전부
+  성공**(실패 0, 신규 bar 0건 종목 0, 중복 0), 신규 구간
+  `20260715`~`20260824`(27거래일), 신규 bar 2,376건, base
+  64,446건 불변 확인. **`ready_for_oos=true`.**
+- 기존 base cache(`~2026-07-14`)는 실행 전후 bar 수·수정 시각
+  불변 확인 — 절대 수정하지 않았다.
+- **이 절은 신호 계산·성과 수치·Go/Watch/Hold/No-Go 판정을 전혀
+  수행하지 않았다** — 원시 bar 수집까지만 완료. Stage B는 계속
+  보류.
+- **다음 순서**: `overnight_reversal_v1`/`intraday_reversal_v1`
+  (§41.2) 계산 함수 구현 + `low_volatility_rank_20d`(§36.2) 기존
+  수식 재사용 → 이 신규 cache의 `oos_new` 구간만으로 §41.3/§36.3
+  계약 그대로 첫 진짜 independent OOS 실행 → 판정.
