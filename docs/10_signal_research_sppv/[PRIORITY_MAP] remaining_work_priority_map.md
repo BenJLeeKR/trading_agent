@@ -12084,3 +12084,56 @@ execution_attempts/사후분석 SQL) 보존을 동시에 만족하는지** 코�
 - **다음 순서**: (1) 신호 재설계 트랙(`regime_switch_v1` 등, §17~21
   파생 후보)에서 축 1을 통과할 새 후보 탐색, (2) 축 3 표본이 위
   조건을 충족할 때까지 관측 축적 계속.
+
+## `SPPV-3` 축 3 재현 분석 도구 구현(2026-08-24 KST, 코드 구현) — **완료, 운영 관측 단계로 전환**
+
+상세: `docs/40_action_plans/post_sppv3_policy_evaluation_design_
+2026-08-20.md` "17. `SPPV-3` 축 3 재현 분석 도구 구현".
+
+- `scripts/analysis/measure_axis3_downstream_suppression_forward_
+  return.py`(신규) — §16.4~16.6의 축 3 계약(population/dedupe/
+  가격·forward return/층화)을 같은 명령으로 재현 가능하게 코드화.
+  DB read-only transaction, `CREATE TEMP TABLE` 없음, dedupe·
+  forward-return 계산은 순수 Python 함수로 분리해 DB 없이도 단위
+  테스트 가능.
+- 신규 테스트 12건 전부 PASS(DB 미사용). `accept script-file`/
+  `accept style`/`accept no-bypass`(hard_bypass_count=0)/`accept
+  architecture` 전부 PASS.
+- 실제 운영 DB read-only 1회 실행(2026-08-24 12:20 KST): 주
+  population 54개 단위(`matched` 11/`downgraded` 43). §16.5 ad hoc
+  조회와 소폭 다른 수치는 대체 가격 소스가 이번에 실제로 구현돼
+  일부 가격 공백이 복구된 결과이며, 방향성 관찰만 가능하다는
+  결론과 `risk_tone` 편중은 동일하게 유지됨(상세 §17.5).
+- **이 항목을 "완료"로 전환** — 도구 구현 자체가 목표였고, 정책
+  결론은 여전히 미해당(축 3은 §16.6 표본 조건 충족 전까지 관측
+  도구일 뿐 정책 변경 근거 아님). 앞으로는 **표본이 쌓이는 대로
+  같은 명령으로 재실행**하는 "운영 관측" 단계로 전환한다.
+- **다음 우선순위**: (1) 신호 재설계 후보 탐색(축 1을 통과할 새
+  신호 찾기), (2) 이 도구로 축 3 표본을 계속 누적 관측(§16.6
+  조건 충족 여부를 주기적으로 재확인). Stage B는 계속 보류.
+
+## `SPPV-3` 축 3 재현 분석 도구 재현성 보강(PR #341 후속 커밋, 2026-08-24 KST) — **완료, 계약 v2로 전환**
+
+상세: `docs/40_action_plans/post_sppv3_policy_evaluation_design_
+2026-08-20.md` "18. `SPPV-3` 축 3 재현 분석 도구 재현성 보강".
+
+- `--as-of-at`(timezone 포함 ISO8601)을 표준 옵션으로 추가 — 앞으로
+  실행 예시는 이것만 쓴다. timezone 없는 입력은 명시적으로 거부.
+  `--as-of-date`는 저정밀 호환 옵션으로 남기고 메타데이터에 경고를
+  표시. `--end-date`가 as-of보다 미래면 명확한 입력 오류로 중단.
+- 가격 소스 availability cutoff를 `created_at`(실제 적재 시각)
+  기준으로 바꿈(과거엔 `clpr_chng_dt` 라벨만 썼는데, 이 라벨은
+  backfill로 사후에 채워질 수 있어 재현성을 보장하지 못했다).
+- 가격 소스별 (종목, 거래일) 중복을 `DISTINCT ON` + 결정론적
+  tie-break(snapshot_at→created_at→PK)로 SQL·Python 양쪽에서
+  방어. `DEDUPE_CONTRACT_VERSION`을 `axis3-dedupe-v2`로 승격.
+- 신규 테스트 17건 추가(총 29건, DB 미사용) 전부 PASS. 관련
+  `accept` 계열 전부 PASS.
+- 실제 운영 DB read-only 재실행(2026-08-24 13:05 KST,
+  `--as-of-at`): population/제외 건수/가격 소스 사용/horizon별
+  수치 전부 이전 v1 실행과 동일 — 중복이 0건이라 v2 보강이 이번
+  데이터셋의 실측값을 바꾸지 않았음을 확인(방어 로직이 정상 동작함,
+  버그 수정이 아니라 재현성 보증 강화).
+- **완료 확정** — population/dedupe 정의/Stage B 보류 판정은
+  이번 턴에서 변경하지 않았다. 앞으로 이 도구를 재실행할 때는
+  `--as-of-at`만 표준으로 쓴다.

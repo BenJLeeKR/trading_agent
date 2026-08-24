@@ -7793,3 +7793,44 @@ existing.md`.
   0건), `matched` T+20은 2026-09-중순경부터 확보 가능.
 - **다음 순서**: 신호 재설계 트랙에서 축 1을 통과할 새 후보 탐색과,
   축 3 표본이 위 조건을 충족할 때까지 관측 축적을 병행한다.
+
+## `SPPV-3` 축 3 재현 분석 도구 구현(2026-08-24 KST, 코드 구현) — **완료**
+
+상세: `docs/40_action_plans/post_sppv3_policy_evaluation_design_
+2026-08-20.md` "17. `SPPV-3` 축 3 재현 분석 도구 구현", `[PRIORITY_
+MAP]`의 같은 제목 항목.
+
+- `scripts/analysis/measure_axis3_downstream_suppression_forward_
+  return.py`(신규) — 위 축 3 계약을 read-only(트랜잭션 read-only,
+  `CREATE TEMP TABLE` 없음)로 재현. dedupe·forward-return은 순수
+  Python 함수라 DB 없이 단위 테스트 가능. 신규 테스트 12건 PASS,
+  관련 `accept` 계열 전부 PASS.
+- 운영 DB read-only 1회 실행 결과와 §16.5 ad hoc 조회 간 소폭 차이는
+  대체 가격 소스 구현으로 인한 규약 차이일 뿐, 결론(방향성 관찰만
+  가능)은 동일하게 유지됨.
+- **완료 확정** — 이 항목은 도구 구현이 목표였다. 정책 결론은
+  아직 아니다(§16.6 표본 조건 충족 전까지 관측 도구로만 사용).
+- **다음 순서**: 신호 재설계 후보 탐색 + 이 도구로 축 3 표본
+  누적 관측을 병행한다. Stage B는 계속 보류.
+
+## `SPPV-3` 축 3 재현 분석 도구 재현성 보강(PR #341 후속 커밋, 2026-08-24 KST) — **완료**
+
+상세: `docs/40_action_plans/post_sppv3_policy_evaluation_design_
+2026-08-20.md` "18. `SPPV-3` 축 3 재현 분석 도구 재현성 보강",
+`[PRIORITY_MAP]`의 같은 제목 항목.
+
+- `--as-of-at`(timezone 필수 ISO8601) 표준 옵션 추가, `--as-of-date`
+  는 저정밀 호환용으로 유지·경고. `end-date > as-of` 입력 오류
+  처리. 가격 availability cutoff를 라벨(`clpr_chng_dt`)이 아니라
+  실제 적재 시각(`created_at`)으로 교체. 가격 중복/충돌을
+  `DISTINCT ON` + 결정론적 tie-break로 SQL·Python 양쪽에서 방어.
+  계약 버전 `axis3-dedupe-v2`.
+- 신규 테스트 17건(총 29건) 전부 PASS, 관련 `accept` 계열 전부
+  PASS. `_resolve_script_git_sha()`의 broad exception을
+  `OSError`/`subprocess.SubprocessError`로 좁힘.
+- 실제 운영 DB read-only 재실행 결과가 v1과 완전히 동일(중복 0건
+  확인) — 재현성 보강이 버그 수정이 아니라 보증 강화였음을
+  실측으로 확인.
+- **완료 확정**. population/dedupe 정의/Stage B 보류 판정 무변경.
+- **다음 순서**: 이 도구(`--as-of-at` 표준)로 축 3 표본 누적 관측을
+  계속하고, 신호 재설계 후보 탐색을 병행한다.
