@@ -12261,3 +12261,32 @@ power_validation.md` "39. 후보 B/C cache 기반 1차 결과 판정".
   (§40.4). C(`low_volatility_rank_20d`)의 Watch, A(`regime_switch_
   v1`)의 참조 Watch는 변경 없음. Stage B 보류·독립 OOS 필요성도
   무변경(오히려 더 엄격해짐).
+
+## 후보 B 역방향 신규 후보 2개 동결(2026-08-24 KST, read-only 설계·문서화 전용) — **동결 완료, 실측 전**
+
+상세: `docs/10_signal_research_sppv/[DESIGN] signal_predictive_
+power_validation.md` "41. 후보 B 역방향 신규 후보 2개 동결".
+
+- **`overnight_reversal_v1`**(점수=`-overnight_ret_5d`)/
+  **`intraday_reversal_v1`**(점수=`-intraday_ret_5d`) 2개를 완전히
+  별도 신규 후보로 동결했다 — §39가 관측한 기존 B의 탐색적 음수
+  결과에서 유래한 사후 가설임을 명시. 기존 `overnight_intraday_
+  split_momentum_v1`(§40, 방향 계약 미고정 판정 보류)은 수정·
+  승격·재해석하지 않고 그대로 유지한다.
+  - 기대 방향 명시: 두 후보 모두 점수가 높을수록 forward return이
+    높다(양의 IC/quintile spread).
+  - **첫 유효 검증 표본은 `2026-07-15` 이후 신규 cache 구간만**
+    쓴다 — 기존 static cache(`~2026-07-14`)로는 재계산·판정하지
+    않는다(가설이 유래한 구간이라 순환 논증이 됨).
+  - horizon T+1(primary)/T+5·T+20(보조), Go/Watch/Hold/No-Go
+    기준(§36.3 계승, "정확한 부호=양"만 명시 재확인), 국면별 최소
+    30일, 결측 제외 계약(§38 계승) 전부 결과를 보기 전에 고정.
+- **이번 턴은 동결·문서화만** — 계산 구현, cache 재실행, cache
+  갱신, 외부 API/DB write 전혀 없음. **신규 구간 결과가 나오기
+  전까지 Watch/Go/운영 반영/Stage B 착수는 절대 불가.**
+- C(`low_volatility_rank_20d`)도 같은 신규 cache 구간에서 기존
+  §36.3 수식 그대로 OOS 검증 병행 가능(가설 재설계 불필요, §37.4가
+  요구한 첫 진짜 independent OOS 기회).
+- **다음 순서**: 사용자 승인 후 cache 갱신(신규 디렉터리, 기존
+  cache 보존) → 계산 함수 구현 → §41.3 계약 그대로 신규 구간
+  실행(B 역방향 2개 + C) → 판정. **Stage B는 계속 보류.**

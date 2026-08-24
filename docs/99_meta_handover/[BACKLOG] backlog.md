@@ -7918,3 +7918,25 @@ power_validation.md` "39. 후보 B/C cache 기반 1차 결과 판정",
   판정 보류"**로 정정(§40). 음수 결과는 탐색적 관찰값일 뿐이며,
   역방향을 쓰려면 새 후보명·명시적 기대 방향으로 새로 동결해야
   한다. C/A 판정, Stage B 보류, 독립 OOS 필요성은 무변경.
+
+## 후보 B 역방향 신규 후보 2개 동결(2026-08-24 KST, read-only 설계·문서화 전용) — **동결 완료, 실측 전**
+
+상세: `docs/10_signal_research_sppv/[DESIGN] signal_predictive_
+power_validation.md` "41. 후보 B 역방향 신규 후보 2개 동결",
+`[PRIORITY_MAP]`의 같은 제목 항목.
+
+- `overnight_reversal_v1`(점수=`-overnight_ret_5d`)/`intraday_
+  reversal_v1`(점수=`-intraday_ret_5d`)를 §39의 탐색 결과에서
+  유래한 사후 가설임을 명시하며 완전히 별도 신규 후보로 동결.
+  기존 B(방향 계약 미고정 판정 보류)는 그대로 유지.
+- 첫 유효 검증은 `2026-07-15` 이후 신규 cache 구간만 사용 —
+  기존 static cache로는 재계산·판정하지 않는다(순환 논증 방지).
+  기대 방향(양의 IC)·horizon(T+1 primary)·판정 기준을 결과 전에
+  고정.
+- 이번 턴은 계산 구현·cache 재실행·cache 갱신·DB write 없음.
+  **신규 구간 결과 전까지 Watch/Go/운영 반영/Stage B 착수 불가.**
+- C(`low_volatility_rank_20d`)도 같은 신규 cache 구간에서 기존
+  수식 그대로 OOS 병행 가능.
+- **다음 순서**: 사용자 승인 후 cache 갱신(신규 디렉터리, 기존
+  보존) → 계산 구현 → 신규 구간 실행(B 역방향 2개 + C) → 판정.
+  Stage B는 계속 보류.
