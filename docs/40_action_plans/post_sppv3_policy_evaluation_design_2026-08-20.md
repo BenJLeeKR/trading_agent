@@ -691,3 +691,109 @@ threshold 상수/override 조건 전부 기존 코드 그대로다.
   `gate_margin.margin_value`가 수학적으로 반대 부호(`deficit =
   -margin`)라는 사실이 사후 분석에서 혼동을 부를 수 있는지는 실제
   사용 시 지켜봐야 한다 — 이번 턴은 문서로만 명시.
+
+## 15. `AGENT_TRADING_GIT_SHA` 배포 자동 주입 구현(2026-08-24 KST, 코드 구현)
+
+### 15.1 배경(factual)
+
+- Stage A-2(2026-08-20)에서 `AGENT_TRADING_GIT_SHA` 환경변수 배선
+  (`settings.resolve_policy_git_sha()`, `docker-compose.yml`,
+  `.env.example`, `runtime_env_wiring.json`)까지는 완성했으나, **실제
+  값을 채우는 것은 배포 스크립트의 몫으로 범위 밖에 남겨뒀다.**
+- Stage A-3 배포 후 실측(2026-08-24, 같은 문서 앞선 실측 턴)에서
+  `trade_decisions.policy_git_sha`/`guardrail_evaluations.policy_
+  git_sha`가 **927건/87건 전부 NULL**임을 확인 — 원인은 컨테이너
+  `AGENT_TRADING_GIT_SHA` env가 비어있었기 때문(코드/DB 결함 아님)
+  으로 이미 분리해서 보고된 바 있다. 이번 턴은 그 미완료 항목을
+  닫는다.
+
+### 15.2 실제 표준 배포 진입점
+
+`.github/workflows/harness.yml`의 `activate_runtime` job을 코드
+기준으로 추적한 결과:
+
+1. `sync_source` job이 `/workspace/agent_trading`(운영 checkout)에서
+   `git fetch origin main` → `deploy_target_sha=$(git rev-parse
+   origin/main)` → **`git reset --hard "$deploy_target_sha"`**를
+   실행한다 — 이 시점 이후 `/workspace/agent_trading`의 HEAD가 곧
+   배포 대상 커밋이다.
+2. `activate_runtime` job이 같은 경로(`cd /workspace/agent_trading`)
+   에서 `bash scripts/harness/docker_compose_env.sh run --build --rm
+   migrate` / `up -d --build --remove-orphans` / `up -d --build
+   frontend` / `ps`를 호출한다 — **모든 compose 호출이 이 스크립트
+   하나를 통과**한다.
+
+**`scripts/harness/docker_compose_env.sh`를 표준 배포 진입점으로
+채택**했다 — 이 스크립트 하나만 고치면 migrate/up/frontend-only 배포
+경로 전부에 동일하게 적용되고, `sync_source`가 이미 hard reset해
+놓은 바로 그 checkout(`/workspace/agent_trading`)의 HEAD를 그대로
+읽을 수 있어 "배포 대상 commit과 SHA 산출 위치가 항상 동일"이라는
+조건을 만족한다.
+
+### 15.3 SHA 산출·우선순위·실패 정책
+
+- **산출 방식**: `git -C "$SCRIPT_DIR" rev-parse HEAD` — `$SCRIPT_DIR`
+  는 이 스크립트 자신이 물리적으로 위치한 디렉터리(`${BASH_SOURCE[0]}`
+  기준)이므로, 호출 시점의 현재 작업 디렉터리와 무관하게 **항상 이
+  스크립트가 속한 checkout**의 HEAD가 채택된다. detached HEAD에서도
+  `git rev-parse HEAD`는 커밋 SHA를 그대로 반환해 문제없다.
+- **우선순위(권장 기본 정책 채택)**: `load_external_env.sh`가 `/etc/
+  agent_trading/*.env`를 이미 로드한 **뒤** 검사한다 — 그 시점에
+  `AGENT_TRADING_GIT_SHA`가 이미 비어있지 않으면(외부 env 파일에
+  명시했거나 호출자가 직접 export했거나) **절대 덮어쓰지 않는다.**
+  비어있거나 미설정일 때만 자동 산출한다.
+- **실패 정책**: git 산출이 실패해도(예: git 저장소 밖) **배포를
+  막지 않는다** — `policy_git_sha`는 원래부터 nullable 관측성
+  전용 필드이므로 결측이 허용된다는 기존 설계(Stage A-2)를 그대로
+  따른다. 다만 조용히 넘어가지 않고 stderr에 명확한
+  `WARNING: AGENT_TRADING_GIT_SHA 자동 산출 실패...`를 남긴다.
+- **로그 정책**: 상태(자동 주입됨/명시값 사용/미주입)만 stderr에
+  남기고, 전체 SHA는 반복 출력하지 않는다(자동 주입 시에만 앞
+  12자리를 참고용으로 표시 — git SHA는 비밀값이 아니지만 로그
+  소음을 줄이기 위함). 명시값 사용 시에는 값 자체를 전혀 출력하지
+  않고 길이만 표시한다.
+- **dirty working tree**: 이 스크립트는 dirty 여부를 검사하지
+  않는다 — `sync_source`가 이미 `git reset --hard`로 tree를 깨끗하게
+  만든 뒤 호출하는 것이 기존 배포 파이프라인의 불변식이라, 이 스크립트
+  선에서 별도 검증을 추가하지 않았다(범위 확장 회피). 사람이 로컬에서
+  dirty tree 상태로 이 스크립트를 직접 실행하면 마지막 커밋 SHA가
+  기록되고 미커밋 변경분은 반영되지 않는다 — 이는 "코드 버전
+  fingerprint"의 본래 의미(커밋 단위 식별)와 일치하는 동작이다.
+
+### 15.4 변경 파일
+
+- `scripts/harness/docker_compose_env.sh` — `AGENT_TRADING_GIT_SHA`
+  자동 주입 로직 추가(위 §15.3). 기존 `--env-file` 배선/`exec docker
+  compose "$@"` 로직은 무수정.
+- `scripts/harness/test_docker_compose_env_git_sha.sh`(신규) — 좁은
+  검증 스크립트. `docker-compose.yml`/`.env.example`/`runtime_env_
+  wiring.json`/애플리케이션 코드는 **이미 완성돼 있어 무수정**이다
+  (지시사항의 "실제 변경이 필요할 때만 수정" 원칙에 따름).
+
+### 15.5 검증 결과(factual)
+
+- `bash scripts/harness/test_docker_compose_env_git_sha.sh` — **9개
+  시나리오 전부 PASS**(명시값 유지, 미설정 시 자동 주입 및 실제 HEAD
+  SHA와 일치, 빈 문자열도 미설정으로 취급, git 저장소 밖에서 WARNING
+  + 배포 계속 진행 + 값은 unset 유지, 기존 `--env-file`/추가 compose
+  인자 전달 계약 무변화). **dev validation container가 아니라 호스트
+  셸에서 직접 실행** — 그 컨테이너에는 `git`이 설치돼 있지 않아
+  (`network_mode=none` 격리 이미지) 이 로직의 핵심(실제 `git rev-parse
+  HEAD` 호출)을 그 안에서 검증할 수 없었기 때문이다. 실제 `docker`는
+  stub으로 완전히 대체해 실제 compose/네트워크 동작은 전혀 일으키지
+  않았다.
+- `accept env`/`accept style`/`accept no-bypass`(hard_bypass_
+  count=0)/`accept architecture` 전부 PASS. `accept script-file`은
+  `.py` 파일만 대상으로 하는 AST 기반 하네스라 이 `.sh` 파일에는
+  적용되지 않음(구조적으로 N/A, 이번 변경과 무관).
+
+### 15.6 미확정
+
+- 실제 CI/CD 파이프라인(`activate_runtime` job)을 통해 이 변경이
+  다음 배포에서 실제로 `AGENT_TRADING_GIT_SHA`를 채우는지는 read-only
+  로컬 시뮬레이션(stub docker)으로만 검증했다 — 실제 GitHub Actions
+  SSH 배포 흐름 자체를 이번 턴에서 실행하지는 않았다(운영 재기동
+  금지 제약).
+- 다음 배포 이후에만 `trade_decisions.policy_git_sha`/`guardrail_
+  evaluations.policy_git_sha`가 채워지기 시작한다 — 이번 커밋
+  merge만으로는 즉시 채워지지 않는다(컨테이너 recreate가 필요).

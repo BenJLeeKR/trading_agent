@@ -12008,3 +12008,35 @@ execution_attempts/사후분석 SQL) 보존을 동시에 만족하는지** 코�
 - **다음 착수 가능 최소 단위**: 다른 gate(`deterministic_trigger_
   engine.py`의 threshold 등)로 같은 margin contract 확장 여부는
   다음 턴 판단 대상 — `SPPV-3` 결론과 무관하게 계속 병행 착수 가능.
+
+## `AGENT_TRADING_GIT_SHA` 배포 자동 주입 구현(2026-08-24 KST, 코드 구현 턴) — **완료 전까지 추적**
+
+상세: `docs/40_action_plans/post_sppv3_policy_evaluation_design_
+2026-08-20.md` "15. `AGENT_TRADING_GIT_SHA` 배포 자동 주입 구현".
+
+- 배경: Stage A-3 배포 후 실측에서 `trade_decisions.policy_git_sha`/
+  `guardrail_evaluations.policy_git_sha`가 전부 NULL로 확인됨(컨테이너
+  `AGENT_TRADING_GIT_SHA` env 미주입, 코드/DB 결함 아님) — 이번 턴은
+  그 미완료 항목을 닫는 구현이다.
+- 실제 표준 배포 진입점(`scripts/harness/docker_compose_env.sh`,
+  `.github/workflows/harness.yml`의 `activate_runtime`이 호출하는
+  유일한 compose 경로)에 자동 주입 로직 추가: 명시값이 있으면 유지,
+  없거나 빈 문자열이면 이 스크립트가 속한 checkout의 `git rev-parse
+  HEAD`를 자동 산출·주입. 산출 실패 시 배포는 막지 않고 WARNING만
+  남김(nullable 관측성 필드이므로 결측 허용). 애플리케이션/정책/주문
+  로직은 무수정.
+- 신규 좁은 테스트(`scripts/harness/test_docker_compose_env_git_sha.
+  sh`, 호스트 셸 실행) 9건 전부 PASS. `accept env`/`accept style`/
+  `accept no-bypass`/`accept architecture` 전부 PASS. `accept
+  script-file`은 `.sh` 파일에 구조적으로 적용 불가(AST 기반, `.py`
+  전용)로 확인.
+- **이 항목은 "완료" 표기하지 않는다** — 실제 운영 배포(CI/CD
+  `activate_runtime` 실행)를 통해 다음 컨테이너 recreate 이후
+  `trade_decisions.policy_git_sha`/`guardrail_evaluations.policy_
+  git_sha`가 실제로 채워지는지 read-only로 실측 확인해야 완료로
+  전환한다.
+- **완료(실측 확인) 후 다음 순서**: `SPPV-3` 상태 정합성 재확인과
+  축 3(포지션/보유기간) 성과 검증으로 넘어간다 — 이 두 과제는 이번
+  fingerprint 주입 완료와 무관하게 독립적으로 착수 가능하지만, 관측
+  기반 사후분석(code-version 단위 비교)이 이번 항목 완료 이후에야
+  신뢰 가능해진다는 점에서 순서상 우선한다.
