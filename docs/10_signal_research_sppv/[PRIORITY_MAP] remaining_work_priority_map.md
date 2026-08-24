@@ -12045,3 +12045,42 @@ execution_attempts/사후분석 SQL) 보존을 동시에 만족하는지** 코�
   fingerprint 주입 완료와 무관하게 독립적으로 착수 가능하지만, 관측
   기반 사후분석(code-version 단위 비교)이 이번 항목 완료 이후에야
   신뢰 가능해진다는 점에서 순서상 우선한다.
+
+## `SPPV-3` 상태 정합성 정정 + 축 3 방법론 확정·실측(2026-08-24 KST, read-only) — **canonical 상태 확정**
+
+상세: `docs/40_action_plans/post_sppv3_policy_evaluation_design_
+2026-08-20.md` "16. `SPPV-3` 상태 정합성 정정 + 축 3 방법론
+확정·실측".
+
+- **정정**: `[DESIGN] signal_predictive_power_validation.md`
+  §33.6은 축 1의 "핵심 대상"(`slow_momentum`/`overall_score`/
+  `slow_score`, §31.1이 명시한 Go/Hold 판정 대상 전체)을 이미
+  **Hold로 종합 판정 완료**했다. 이 문서와 `[BACKLOG]`의
+  2026-08-20 항목들이 "축 1 종합 Go/Hold 판정 아직 없음"이라고
+  서술한 것은 **판정 범위를 과도하게 좁게 재해석한 추적 오류**였다
+  — 새로운 반증 데이터가 나온 게 아니다. 이번 절로 이 오류를
+  정정한다(과거 서술은 삭제하지 않고 그대로 유지).
+- **canonical 상태(4축)**: 축 1 **완료·Hold 확정**. 축 2 미착수.
+  축 3 **방법론 확정, 방향성 관찰만 가능(유의성 결론 불가)**.
+  축 4 미착수. 상세 표는 위 상세 문서 §16.2.
+- **축 3 실측(2026-08-24 11:51 KST 조회)**: `candidate_intent=
+  buy` 원시 1,515행(2026-06-18~08-21) → dedupe 후 58개 독립 단위
+  (`downgraded` 43/`matched` 11/동률 제외 4). T+1: 두 군 거의 동일
+  (평균 -0.96%/-0.83%, 양수율 36%대 동일). T+5: `matched`가
+  `downgraded`보다 높음(+1.57%/+0.68%, 평균 기준) — 그러나
+  `downgraded`의 91%가 `risk_off` 국면에 편중돼 있어 국면 효과와
+  downstream 효과를 분리할 수 없다. `suppressed`는 buy-intent에는
+  존재하지 않음(watch-기원 전용)을 재확인. `policy_git_sha` 층화는
+  전체 population이 NULL이라 불가능.
+- **Stage B 판정**: `SPPV-3 축 1 Hold로 인해 현행 entry_score
+  기반 Stage B는 부적절; 신호 재설계 또는 축 3 추가 검증 우선`.
+  축 1 Hold가 확정된 이상 축 2/3/4의 상태와 무관하게 현재
+  `entry_score`를 그대로 두고 threshold/gate만 최적화하는 것은
+  근거가 없다.
+- **다음 표본 축적 조건**(수치): `risk_tone=risk_on`인 `downgraded`
+  표본 15~20건 이상(현재 3건), `bearish_trend`/`range_bound` 국면
+  buy-intent 표본 1건 이상(현재 0건), `matched` T+20 표본은
+  2026-09-중순경부터 확보 가능.
+- **다음 순서**: (1) 신호 재설계 트랙(`regime_switch_v1` 등, §17~21
+  파생 후보)에서 축 1을 통과할 새 후보 탐색, (2) 축 3 표본이 위
+  조건을 충족할 때까지 관측 축적 계속.
