@@ -7736,3 +7736,26 @@ existing.md`.
   `provider_queue_timeout` 감소폭을 측정한 뒤, WATCH와
   `risk_opinion=reduce` 하위 구간 확대 여부를 shadow 데이터로 별도
   판단한다.
+
+## `AGENT_TRADING_GIT_SHA` 배포 자동 주입 구현(2026-08-24 KST) — **완료 전까지 추적, 완료 후 SPPV-3로 이관**
+
+상세: `docs/40_action_plans/post_sppv3_policy_evaluation_design_
+2026-08-20.md` "15. `AGENT_TRADING_GIT_SHA` 배포 자동 주입 구현",
+`[PRIORITY_MAP]`의 같은 제목 항목.
+
+- 배경: Stage A-3 실측에서 `trade_decisions`/`guardrail_evaluations`의
+  `policy_git_sha`가 전부 NULL로 확인됨 — 컨테이너에 `AGENT_TRADING_
+  GIT_SHA` env가 주입되지 않았기 때문(코드/DB 결함 아님).
+- 이번 턴 구현: 실제 표준 배포 진입점(`scripts/harness/docker_
+  compose_env.sh`)에서 명시값 우선/미설정 시 배포 대상 checkout의
+  `git rev-parse HEAD` 자동 주입/산출 실패 시 배포는 막지 않고 경고만
+  — 배선 완료(코드 레벨). 좁은 테스트 9건 PASS, 관련 `accept` 계열
+  전부 PASS. 애플리케이션 정책/주문 로직 무수정.
+- **신규 backlog(운영 실측 필요, 완료 전까지 미완료로 유지)**: 다음
+  CI/CD `activate_runtime` 실제 배포(컨테이너 recreate) 이후
+  read-only로 (1) 컨테이너 env에 `AGENT_TRADING_GIT_SHA` 존재 여부,
+  (2) 신규 `trade_decisions.policy_git_sha`, (3) 신규 `guardrail_
+  evaluations.policy_git_sha`가 실제로 채워지는지 확인해야 한다. 이
+  실측이 끝나야 이 항목을 완료로 전환한다.
+- **완료(실측 확인) 후 다음 순서**: `SPPV-3` 상태 정합성 재확인 및
+  축 3(포지션/보유기간) 성과 검증으로 넘어간다.
