@@ -787,13 +787,19 @@ threshold 상수/override 조건 전부 기존 코드 그대로다.
   `.py` 파일만 대상으로 하는 AST 기반 하네스라 이 `.sh` 파일에는
   적용되지 않음(구조적으로 N/A, 이번 변경과 무관).
 
-### 15.6 미확정
+### 15.6 운영 실측 결과(2026-08-24 KST 추가)
 
-- 실제 CI/CD 파이프라인(`activate_runtime` job)을 통해 이 변경이
-  다음 배포에서 실제로 `AGENT_TRADING_GIT_SHA`를 채우는지는 read-only
-  로컬 시뮬레이션(stub docker)으로만 검증했다 — 실제 GitHub Actions
-  SSH 배포 흐름 자체를 이번 턴에서 실행하지는 않았다(운영 재기동
-  금지 제약).
-- 다음 배포 이후에만 `trade_decisions.policy_git_sha`/`guardrail_
-  evaluations.policy_git_sha`가 채워지기 시작한다 — 이번 커밋
-  merge만으로는 즉시 채워지지 않는다(컨테이너 recreate가 필요).
+- PR #338을 main(`7634d313`)에 병합한 뒤 CI/CD `sync_source` job이
+  기존에 쌓여있던 미배포 runtime 파일(PR #337분, 이번 변경과 무관)
+  때문에 차단되어, 사용자가 운영 컨테이너를 직접 재기동했다.
+- read-only 실측: `agent_trading-ops-scheduler` 컨테이너의 실제
+  프로세스 env에 `AGENT_TRADING_GIT_SHA`가 존재하고, 값이 배포
+  대상 커밋과 정확히 일치함(`7634d3132fd6...`, 길이 40 — 값 앞
+  12자리만 확인, 전체 값은 비밀값 취급 원칙상 인용하지 않음).
+- 컨테이너 시작 시각(`2026-08-24T02:17:33Z`) 이후 생성된 `trade_
+  decisions` 36건, `guardrail_evaluations` 3건 **전부** 같은 SHA
+  값으로 채워짐(NULL 0건). 재기동 이전 레코드는 여전히 NULL —
+  관측성 필드라 소급 적용되지 않는 것이 설계상 정상 동작.
+- 이 실측으로 §15의 구현이 실제 운영 환경에서도 의도대로 동작함을
+  확인했다. `[PRIORITY_MAP]`/`[BACKLOG]`의 같은 제목 항목을 완료로
+  전환했다.
