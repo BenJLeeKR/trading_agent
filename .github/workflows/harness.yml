@@ -310,10 +310,13 @@ jobs:
     outputs:
       relevant: ${{ steps.detect.outputs.relevant }}
     steps:
+      # 가장 단순하고 안전한 방식(fetch-depth: 0)을 쓴다 — PR base
+      # SHA가 얕은 checkout 때문에 로컬에 없어 비교 자체가 불가능해지는
+      # 사고를 막는다(2026-08-25 2차 보정).
       - name: Checkout
         uses: actions/checkout@v5
         with:
-          fetch-depth: 2
+          fetch-depth: 0
 
       - name: Detect FDC quota PostgreSQL-relevant changes
         id: detect
@@ -325,27 +328,37 @@ jobs:
           # 이 좁은 PostgreSQL 통합 job만 독립적으로 file-change 감지한다
           # (기존 `changes` job의 출력을 재사용하지 않음 — 그 job의 계약을
           # 변경할 위험을 피하기 위해 완전히 분리된 판정).
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            echo "relevant=1" >> "$GITHUB_OUTPUT"
-            echo "reason=workflow_dispatch(수동 트리거는 항상 실행)"
-            exit 0
-          fi
+          #
+          # 2026-08-25 2차 보정: 이전 버전은 `HEAD^`(마지막 커밋 1개)만
+          # 봤다 — FDC quota 파일을 고친 커밋 뒤에 문서만 고친 커밋을
+          # 추가로 push하면 마지막 커밋만 비교해 relevant=0으로 잘못
+          # 판정하는 결함이 있었다. 이제 이벤트별로 PR/push **전체
+          # 범위**를 비교 기준으로 쓴다:
+          #   - pull_request: base 브랜치 SHA(github.event.pull_request.
+          #     base.sha) .. HEAD
+          #   - push: 직전 push 시점 SHA(github.event.before) .. HEAD
+          #   - workflow_dispatch: 항상 relevant=1
+          # 판정 로직 자체는 fixture git 저장소로 단위 테스트 가능한
+          # 별도 스크립트(scripts/harness/detect_fdc_quota_postgres_
+          # relevance.sh)로 분리했다 — 이 워크플로 스텝은 이벤트별
+          # base_ref만 계산해 그 스크립트에 넘긴다.
+          event_name="${{ github.event_name }}"
+          case "$event_name" in
+            pull_request)
+              base_ref="${{ github.event.pull_request.base.sha }}"
+              ;;
+            push)
+              base_ref="${{ github.event.before }}"
+              ;;
+            *)
+              base_ref=""
+              ;;
+          esac
 
-          if git rev-parse HEAD^ >/dev/null 2>&1; then
-            base_ref="HEAD^"
-          else
-            base_ref="${{ github.event.before }}"
-          fi
+          bash scripts/harness/detect_fdc_quota_postgres_relevance.sh \
+            "$event_name" "$base_ref" "HEAD" "." | tee /tmp/fdc_quota_relevance.log
 
-          pattern='^(db/migrations/.*fdc_quota.*\.sql|src/agent_trading/repositories/postgres/fdc_quota\.py|src/agent_trading/repositories/(memory|contracts)\.py|src/agent_trading/services/fdc_quota_coordinator\.py|tests/services/test_fdc_quota_coordinator\.py|\.github/workflows/harness\.yml)$'
-          changed_files="$(git diff --name-only "$base_ref" HEAD || true)"
-          matched_file_count="$(printf '%s\n' "$changed_files" | sed '/^$/d' | grep -cE "$pattern" || true)"
-
-          relevant="0"
-          [ "$matched_file_count" != "0" ] && relevant="1"
-
-          echo "matched_file_count=$matched_file_count"
-          echo "relevant=$relevant" >> "$GITHUB_OUTPUT"
+          grep '^relevant=' /tmp/fdc_quota_relevance.log >> "$GITHUB_OUTPUT"
 
   fdc_quota_postgres_integration:
     name: FDC quota PostgreSQL integration tests

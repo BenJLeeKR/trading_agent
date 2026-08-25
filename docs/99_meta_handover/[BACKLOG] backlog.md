@@ -8211,3 +8211,30 @@ postgres_ci.md`.
   기존 FDC 호출/limiter/주문 정책/`.env`/compose runtime 설정도 무변경.
   새 PR을 만들지 않고 같은 브랜치에서 갱신했으며, 이 턴에서도 병합은
   수행하지 않았다.
+
+## FDC quota PostgreSQL 전용 CI relevance detector 보정 — HEAD^만 보던 결함(PR #351, 2026-08-25 KST)
+
+상세: `docs/30_work_log/2026-08-25_fdc_quota_postgres_ci_relevance_fix.md`.
+
+- 위 PostgreSQL 전용 CI job의 `fdc_quota_postgres_relevant` 판정이
+  `git diff HEAD^ HEAD`(마지막 커밋 1개)만 봐서, FDC quota 파일을 고친
+  뒤 문서만 고친 커밋을 추가 push하면 `relevant=0`으로 잘못 판정해
+  실제 quota/migration 변경이 있는 PR에서도 PostgreSQL 검증이 빠질 수
+  있던 결함을 보정했다.
+- 이벤트별로 PR/push **전체 범위**를 비교 기준으로 바꿨다(`pull_request`
+  →`github.event.pull_request.base.sha..HEAD`, `push`→`github.event.
+  before..HEAD`, `workflow_dispatch`→항상 relevant=1). 판정 로직은
+  `scripts/harness/detect_fdc_quota_postgres_relevance.sh`(순수 bash,
+  GitHub Actions 컨텍스트 비의존)로 분리해 fixture git 저장소로 단위
+  테스트 가능하게 만들었다(`test_docker_compose_env_git_sha.sh`와
+  동일 관례).
+- base ref를 확인할 수 없으면(얕은 checkout, push 최초 커밋의 all-zero
+  SHA 등) fail-open(`relevant=0`)이 아니라 보수적 fallback(`relevant=1`)
+  을 선택했다 — 이 job이 매우 가벼워 불필요한 재실행 비용보다 검증
+  누락 방지가 우선이라는 판단.
+- `bash scripts/harness/test_detect_fdc_quota_postgres_relevance.sh`로
+  10개 케이스(HEAD^ 기준이면 결함이 재현됨을 보이는 대조 확인 포함)를
+  전부 PASS 확인. `safe`/`heavy` job의 범위·timeout·실행 조건은
+  변경하지 않았고, FDC quota runtime 코드/migration/provider/limiter/
+  dispatcher/주문 정책도 무변경. 새 PR을 만들지 않고 같은 브랜치에서
+  갱신했으며, 이 턴에서도 병합은 수행하지 않았다.
