@@ -84,11 +84,24 @@ class PostgresFdcQuotaRepository:
                 await reservation_tx.connection.execute(
                     f"SET LOCAL lock_timeout = {int(lock_timeout_ms)}"
                 )
-                await reservation_tx.connection.fetchrow(
+                anchor_row = await reservation_tx.connection.fetchrow(
                     "SELECT quota_scope FROM trading.fdc_quota_state "
                     "WHERE quota_scope = $1 FOR UPDATE",
                     quota_scope,
                 )
+                if anchor_row is None:
+                    # anchor 행이 없으면 ``FOR UPDATE``가 아무것도 잠그지
+                    # 못한 채 조용히 통과한다 — 그대로 진행하면 직렬화
+                    # 보장 없이 quota를 판단/소비하는 fail-open이 된다.
+                    # migration/seed 누락은 정상 상태가 아니므로 명확한
+                    # fail-closed 오류로 즉시 종료한다.
+                    await reservation_tx.rollback()
+                    return CoordinatorError(
+                        CoordinatorErrorClass.COORDINATOR_TRANSACTION_ERROR,
+                        f"anchor row missing for quota_scope={quota_scope!r} "
+                        "in trading.fdc_quota_state — seed the anchor row "
+                        "before use (fail-closed, quota not consumed)",
+                    )
 
                 window_count = await reservation_tx.connection.fetchval(
                     "SELECT count(*) FROM trading.fdc_provider_attempts "
@@ -172,11 +185,23 @@ class PostgresFdcQuotaRepository:
                 )
                 # 다른 shadow 등록(및 try_reserve)과 동일한 anchor 행을
                 # 잠가 FIFO 등록 순서를 직렬화한다 — 새치기 방지의 핵심.
-                await shadow_tx.connection.fetchrow(
+                anchor_row = await shadow_tx.connection.fetchrow(
                     "SELECT quota_scope FROM trading.fdc_quota_state "
                     "WHERE quota_scope = $1 FOR UPDATE",
                     quota_scope,
                 )
+                if anchor_row is None:
+                    # anchor 행이 없으면 ``FOR UPDATE``가 아무것도 잠그지
+                    # 못해 동시 등록 직렬화(새치기 방지)가 보장되지 않는다
+                    # — fail-open으로 shadow job을 등록하는 대신 명확한
+                    # fail-closed 오류로 즉시 종료한다(shadow job 미등록).
+                    await shadow_tx.rollback()
+                    return CoordinatorError(
+                        CoordinatorErrorClass.COORDINATOR_TRANSACTION_ERROR,
+                        f"anchor row missing for quota_scope={quota_scope!r} "
+                        "in trading.fdc_quota_state — seed the anchor row "
+                        "before use (fail-closed, shadow job not registered)",
+                    )
 
                 job_id = uuid.uuid4()
                 inserted = await shadow_tx.connection.fetchrow(

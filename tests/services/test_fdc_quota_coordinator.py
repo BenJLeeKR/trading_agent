@@ -571,3 +571,124 @@ class TestPostgresShadowFifoQueue:
         assert result_a.enqueue_sequence < result_b.enqueue_sequence
         assert result_a.would_grant is True
         assert result_b.would_grant is True
+
+    @pytest.mark.asyncio
+    async def test_14th_queued_state_unaffected_by_interleaved_real_reservation(
+        self, db_ready, quota_scope: str,
+    ) -> None:
+        """13개가 이미 SHADOW_WOULD_GRANT로 확정된 뒤 14번째가
+        SHADOW_QUEUED로 기록된 상태에서, 같은 quota_scope로 실제
+        `mode='real'` reservation을 수행해도 이미 확정된 13개의 상태와
+        14번째의 SHADOW_QUEUED 상태 어느 것도 바뀌지 않는다 —
+        real/shadow 완전 분리의 상태 불변성 확인."""
+        coordinator = _postgres_coordinator(quota_scope=quota_scope, target_rpm=13)
+        t0 = datetime.now(timezone.utc)
+
+        results = [
+            await coordinator.register_shadow_job_and_judge(
+                decision_cycle_id="cycle-1", decision_context_id=None,
+                symbol="005930", source_type="held_position", fdc_ready_at=t0,
+            )
+            for _ in range(14)
+        ]
+        assert all(r.would_grant for r in results[:13])
+        assert results[13].would_grant is False
+        job_ids_before = [r.job_id for r in results]
+
+        real_result = await coordinator.try_reserve(job_id=None, caller_id="test-caller")
+        assert isinstance(real_result, ReservationGrant)
+
+        from agent_trading.db.connection import connection
+        async with connection() as conn:
+            rows = await conn.fetch(
+                "SELECT job_id, status FROM trading.fdc_queue_jobs "
+                "WHERE quota_scope = $1 AND mode = 'shadow' "
+                "ORDER BY enqueue_sequence",
+                quota_scope,
+            )
+        assert [row["job_id"] for row in rows] == job_ids_before
+        statuses = [row["status"] for row in rows]
+        assert statuses[:13] == ["SHADOW_WOULD_GRANT"] * 13
+        assert statuses[13] == "SHADOW_QUEUED"
+
+    @pytest.mark.asyncio
+    async def test_real_reservations_do_not_affect_shadow_13_judgement(
+        self, db_ready, quota_scope: str,
+    ) -> None:
+        """real reservation 13건이 이미 존재해도 shadow 판단은 여전히
+        `mode='shadow'` 행만 세므로, 새 shadow 등록 13건은 전부
+        SHADOW_WOULD_GRANT여야 한다."""
+        coordinator = _postgres_coordinator(quota_scope=quota_scope, target_rpm=13)
+
+        real_results = await asyncio.gather(
+            *[
+                coordinator.try_reserve(job_id=None, caller_id="test-caller")
+                for _ in range(13)
+            ]
+        )
+        assert all(isinstance(r, ReservationGrant) for r in real_results)
+
+        t0 = datetime.now(timezone.utc)
+        shadow_results = [
+            await coordinator.register_shadow_job_and_judge(
+                decision_cycle_id="cycle-1", decision_context_id=None,
+                symbol="005930", source_type="held_position", fdc_ready_at=t0,
+            )
+            for _ in range(13)
+        ]
+        assert all(r.would_grant for r in shadow_results), (
+            "real reservation 13건이 이미 있어도 shadow 13개 판단에 영향을 주면 안 된다"
+        )
+
+
+@pytestmark_db
+class TestPostgresAnchorRowFailClosed:
+    """anchor 행(quota_scope)이 ``trading.fdc_quota_state``에 없으면
+    ``SELECT ... FOR UPDATE``가 아무 행도 잠그지 못한 채 조용히 통과해
+    버리는 fail-open 결함을 막는다 — migration/seed가 불완전한 경우
+    quota를 판단/소비하지 않고 명확한 ``CoordinatorError``로 종료돼야
+    한다."""
+
+    @pytest.mark.asyncio
+    async def test_try_reserve_fails_closed_when_anchor_row_missing(
+        self, db_ready, quota_scope: str,
+    ) -> None:
+        missing_scope = f"missing-anchor-real:{uuid4()}"
+        coordinator = _postgres_coordinator(quota_scope=missing_scope, target_rpm=13)
+
+        result = await coordinator.try_reserve(job_id=None, caller_id="test-caller")
+
+        assert isinstance(result, CoordinatorError)
+        assert result.error_class == CoordinatorErrorClass.COORDINATOR_TRANSACTION_ERROR
+
+        from agent_trading.db.connection import connection
+        async with connection() as conn:
+            count = await conn.fetchval(
+                "SELECT count(*) FROM trading.fdc_provider_attempts WHERE quota_scope = $1",
+                missing_scope,
+            )
+        assert count == 0, "anchor 행이 없으면 real quota를 절대 소비하면 안 된다"
+
+    @pytest.mark.asyncio
+    async def test_register_shadow_job_and_judge_fails_closed_when_anchor_row_missing(
+        self, db_ready, quota_scope: str,
+    ) -> None:
+        missing_scope = f"missing-anchor-shadow:{uuid4()}"
+        coordinator = _postgres_coordinator(quota_scope=missing_scope, target_rpm=13)
+
+        result = await coordinator.register_shadow_job_and_judge(
+            decision_cycle_id="cycle-1", decision_context_id=None,
+            symbol="005930", source_type="held_position",
+            fdc_ready_at=datetime.now(timezone.utc),
+        )
+
+        assert isinstance(result, CoordinatorError)
+        assert result.error_class == CoordinatorErrorClass.COORDINATOR_TRANSACTION_ERROR
+
+        from agent_trading.db.connection import connection
+        async with connection() as conn:
+            count = await conn.fetchval(
+                "SELECT count(*) FROM trading.fdc_queue_jobs WHERE quota_scope = $1",
+                missing_scope,
+            )
+        assert count == 0, "anchor 행이 없으면 shadow job도 절대 등록하면 안 된다"

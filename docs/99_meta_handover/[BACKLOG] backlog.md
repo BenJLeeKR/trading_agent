@@ -8178,3 +8178,36 @@ correction_2.md`.
   정책/EV gate/sizing/sell guard/주문 제출은 변경하지 않았다. shadow
   기본값은 여전히 `false`. migration은 여전히 미적용. 새 PR을 만들지
   않고 같은 브랜치에서 갱신했으며, 이 턴에서도 병합은 수행하지 않았다.
+
+## FDC cycle-scoped batch queue Phase 1(lifecycle shadow) — PostgreSQL 전용 좁은 CI 경로 추가(PR #351, 2026-08-25 KST)
+
+상세: `docs/30_work_log/2026-08-25_fdc_quota_lifecycle_shadow_phase1_
+postgres_ci.md`.
+
+- 전체 heavy test suite(`pytest tests/ -v`, 900초 timeout)가 알파벳순
+  19%에서 타임아웃돼 `tests/services/test_fdc_quota_coordinator.py`의
+  PostgreSQL 통합 테스트에 도달하지 못하던 문제를, 그 파일 **한 개만**
+  실제 PostgreSQL로 검증하는 신규 CI job(`fdc_quota_postgres_relevant`
+  판정 + `fdc_quota_postgres_integration` 실행)으로 해결했다.
+- `test-file` harness 명령이 CI 환경(`WORKSPACE_ROLE=ci`)에서는 이미
+  host python3로 직접 실행되며 job `env:`의 `DATABASE_*`를 그대로
+  상속함을 코드로 확인해, harness 스크립트 변경 없이 workflow job
+  구성만으로 구현했다(B안). migration 적용도 기존 `db_ready` fixture
+  (`create_pool()+run_all_migrations()`)가 이미 담당하므로 별도
+  migration 스텝 불필요.
+- 신규 job은 CI 전용 ephemeral `trading_db_fdc_quota_ci` 컨테이너(job
+  종료 시 폐기)만 쓰고, PR 변경 파일이 FDC quota 관련 경로(migration/
+  repository/coordinator/테스트 파일/workflow 자체)일 때만 실행되도록
+  좁혔다(`workflow_dispatch`는 항상 실행). pytest exit code만 보지 않고
+  출력의 "N skipped"를 직접 파싱해 1건이라도 skip이면 job을 실패
+  처리한다.
+- 부수 발견: `try_reserve()`/`register_shadow_job_and_judge()` 둘 다
+  anchor 행(`SELECT ... FOR UPDATE`)이 없을 때 `fetchrow()`의 `None`
+  반환을 확인하지 않고 그대로 진행하는 **fail-open** 결함을 발견해
+  보정했다 — 이제 anchor 행이 없으면 즉시 롤백 후 `CoordinatorError`를
+  반환한다(신규 테스트 `TestPostgresAnchorRowFailClosed` 2건). 그 외
+  shadow 13/14건·real-shadow 상호 무간섭 관련 테스트 3건도 추가했다.
+- `safe`/`heavy` job의 범위·timeout·실행 조건은 전혀 변경하지 않았다.
+  기존 FDC 호출/limiter/주문 정책/`.env`/compose runtime 설정도 무변경.
+  새 PR을 만들지 않고 같은 브랜치에서 갱신했으며, 이 턴에서도 병합은
+  수행하지 않았다.

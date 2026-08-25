@@ -23,6 +23,7 @@ GitHub Actions도 사람과 AI가 쓰는 동일한 하네스를 사용한다. CI
 
 - 기본 PR/push gate는 `.github/workflows/harness.yml`의 `safe` job이다.
 - `safe` job은 `check quick`, `accept db-structure`, `accept architecture`, `accept style`, `accept no-bypass`, `type-check backend`, `type-check frontend`, `security scan`을 실행한다.
+- `fdc_quota_postgres_integration` job(2026-08-25 신설)은 `safe`/`heavy`와 독립적으로 `tests/services/test_fdc_quota_coordinator.py` **한 파일만** 실제 PostgreSQL(CI 전용 ephemeral `trading_db_fdc_quota_ci` 컨테이너, job 종료 시 폐기)로 검증한다 — 전체 `pytest tests/`(heavy)를 돌리지 않고도 FDC quota migration/row lock/shadow FIFO SQL을 실행 확인하기 위함이다. `fdc_quota_postgres_relevant` job이 이 PR과 직접 관련된 파일(`db/migrations/*fdc_quota*.sql`, `repositories/postgres/fdc_quota.py`, `repositories/{memory,contracts}.py`, `services/fdc_quota_coordinator.py`, 테스트 파일 자체, 이 workflow 파일)이 바뀐 경우에만 `relevant=1`을 출력해 실행 여부를 좁힌다(`workflow_dispatch`는 항상 실행). 이 job은 `bash scripts/harness/run.sh test-file ...`의 exit code만 보지 않고, pytest 출력의 "N skipped" 카운트를 직접 파싱해 1건이라도 skip되면 즉시 실패 처리한다 — `DATABASE_HOST` 미전달로 조용히 skip되는 상황을 exit 0으로 통과시키지 않기 위함이다. `safe`/`heavy` job의 범위·timeout·실행 조건은 이 job 추가로 전혀 바뀌지 않는다.
 - 운영 배포는 `.github/workflows/harness.yml`의 `sync_source`, `activate_runtime` job으로 분리돼 있고 둘 다 `needs: safe` 성공 뒤에만 실행한다.
 - 문서만 변경된 `main` push는 `changes` job에서 `deploy_required=0`, `activate_required=0`으로 판정해 운영 재기동을 실행하지 않는다.
 - 문서만 변경된 `main` push는 `docs/` 경로가 sync-only 허용 대상으로 잡히면 `sync_source`만 실행하고 `activate_runtime`은 실행하지 않는다.
