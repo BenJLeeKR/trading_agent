@@ -2,6 +2,11 @@
 
 > **상태**: 설계 확정(read-only 검토·문서화 전용). 런타임 코드/migration/compose/`.env` 변경 없음.
 > 구현은 이 문서를 기준으로 별도 후속 PR에서 진행한다.
+>
+> **개정 이력**: 2026-08-25(2차) — 최초 확정본에 남아있던 4개 계약 충돌(reservation
+> 이중 소유 위험, 수동 호출 job 모델 미확정, retry/pre-HTTP 실패 계수 혼재, sliding
+> 60초 경계 규칙 불일치)을 보정했다. §4·§6·§7·§8·§9·§11·§12·§14·§15가 이번 개정의
+> 영향을 받는다(하단 각 절에 명시).
 
 ## 1. 배경과 문제 정의
 
@@ -104,25 +109,56 @@ held_position 매도 후보의 FDC(FinalDecisionComposer) 판단이 `provider_qu
   `assemble()` 내부에서 이미 동기 저장하는 것을 확인).
 - 사이클은 전 job이 `FDC_SUCCEEDED`/`FDC_FAILED_FINAL`/`CANCELLED`에 도달해야 종료.
 
+> **보정 1(reservation 단일 소유권, 2026-08-25 2차)**: "dispatcher가 permit을
+> 완전히 소유한다"는 문장이 §12의 `LiveGeminiProviderClient.generate_structured_
+> once()`도 coordinator를 호출한다는 서술과 병존해 이중 reservation처럼 읽힐
+> 여지가 있었다. **정확한 계약은 다음과 같다**: quota coordinator에게 실제로
+> reservation을 요청하는 주체는 **dispatcher 하나뿐**이다. dispatcher가 요청해
+> 발급받은 `ReservationGrant`(§6)를 FDC one-shot 호출에 **값으로 전달**하고,
+> `generate_structured_once(grant)`는 그 grant를 **소비만** 할 뿐 coordinator에게
+> 새 reservation을 절대 요청하지 않는다. 즉 "provider client도 coordinator를
+> 호출한다"는 것은 "결과를 attempt row에 기록하기 위해 같은 DB 접근 계층을
+> 쓴다"는 뜻이지 "reservation을 다시 얻는다"는 뜻이 아니다 — 상세 계약과
+> `generate_structured()`/`generate_structured_once()`의 reservation 경로 분리는
+> §12에서 표로 확정한다.
+
 ## 5. 상태 전이도
+
+> **보정 3(retry/pre-HTTP 실패 계수 분리, 2026-08-25 2차) 반영**: 아래 상태
+> 전이도는 `RETRY_QUEUED`를 발생 사유별로 분리해 표기한다 — HTTP가 실제로
+> 시작된 뒤의 재등록(`provider_retry_count` 증가)과, reservation은 받았으나
+> HTTP 시작 전에 실패한 재등록(`pre_http_execution_failure_count` 증가)은
+> **서로 다른 계수**이며, 둘 다 FIFO tail 재등록이라는 점만 같다(§9 참고).
 
 ```
 [Job lifecycle]
 QUEUED
-  → (worker slot 확보 성공 && quota reservation 성공)
+  → (worker slot 확보 성공 && quota reservation 성공 → ReservationGrant 발급)
   → RESERVATION_GRANTED
-  → FDC_RUNNING(HTTP one-shot 실행)
+  → FDC_RUNNING(발급받은 grant로 HTTP one-shot 실행 — 새 reservation 요청 없음)
     → HTTP_SUCCEEDED → FDC_SUCCEEDED → 즉시 assemble()/저장
     → HTTP_FAILED_RETRYABLE(429/5xx/timeout/DNS)
-        → RETRY_QUEUED(새 queue_entry_id, FIFO tail) → QUEUED로 복귀
-        → (max_http_attempts=3 소진) → FDC_FAILED_FINAL → 즉시 assemble()(fallback)/저장
-    → HTTP_FAILED_NONRETRYABLE(4xx/파싱오류) → FDC_FAILED_FINAL(즉시)
+        → provider_retry_count += 1
+        → RETRY_QUEUED(provider 사유, 새 queue_entry_id, FIFO tail) → QUEUED로 복귀
+        → (provider_retry_count가 max_http_attempts-1=2 소진)
+            → FDC_FAILED_FINAL(reason=provider_429_exhausted|provider_5xx_exhausted|provider_timeout_exhausted)
+    → HTTP_FAILED_NONRETRYABLE(4xx/파싱오류) → FDC_FAILED_FINAL(즉시, reason=provider_nonretryable)
   → (reservation 성공 후 HTTP 시작 전 worker/subprocess 생성 실패)
       → RESERVED_BUT_HTTP_NOT_STARTED(quota는 그 60초 동안 계속 소비된 것으로 기록)
-      → (max_pre_http_execution_failures 소진 전) RETRY_QUEUED
-      → (소진) FDC_FAILED_FINAL(reason=worker_start_exhausted)
+      → pre_http_execution_failure_count += 1
+      → (pre_http_execution_failure_count가 max_pre_http_execution_failures 미만)
+          → RETRY_QUEUED(pre-HTTP 사유, 새 queue_entry_id, FIFO tail) → QUEUED로 복귀
+      → (소진) → FDC_FAILED_FINAL(reason=worker_start_exhausted)
 CANCELLED ← 시장 종료 / 운영자 명시 취소 / 프로세스 종료(오직 이 세 사유만)
+```
 
+`queue_reenqueue_count = provider_retry_count + pre_http_execution_failure_count`
+(§9) — 위 두 재등록 경로를 합친 값으로, "FIFO tail에 총 몇 번 다시 섰는지"를
+보고 싶을 때만 참조하는 파생 지표다. 상태 전이의 종결 사유(`FDC_FAILED_FINAL`의
+`reason`)는 항상 두 계수 중 **어느 쪽이 소진됐는지**로 명확히 구분된다 — 어느
+경로든 순번 탈락이나 `CANCELLED`가 아니다.
+
+```
 [Cycle lifecycle]
 전 종목 pre-FDC(EI/AR/AC) 완료
   → FDC-ready job 전원 QUEUED
@@ -134,6 +170,13 @@ CANCELLED ← 시장 종료 / 운영자 명시 취소 / 프로세스 종료(오�
 않는다** — 순번 대기로 인한 확정 실패라는 개념 자체가 새 계약에는 존재하지 않는다.
 
 ## 6. Atomic reservation transaction 계약
+
+> **보정 1 반영**: 이 트랜잭션의 유일한 호출자는 **dispatcher**다. 트랜잭션이
+> 성공하면 dispatcher는 `ReservationGrant(reservation_id, quota_scope, job_id,
+> attempt_no)`를 발급받아 FDC one-shot 호출에 값으로 전달한다. one-shot은 이
+> grant의 네 필드가 자신이 실행하려는 job과 일치하는지 검증한 뒤 HTTP 1회만
+> 실행하며, **coordinator에게 새 reservation을 절대 요청하지 않는다**(§12 표
+> 참고).
 
 ```sql
 BEGIN;  -- 기본 isolation level(READ COMMITTED), 명시적 상향 불필요
@@ -157,8 +200,11 @@ BEGIN;  -- 기본 isolation level(READ COMMITTED), 명시적 상향 불필요
     -- 슬롯 이중 사용을 막는다(보수적 정책).
 
   IF count < 13:
-    INSERT INTO fdc_provider_attempts(..., outcome='reservation_granted', reserved_at=now());
+    INSERT INTO fdc_provider_attempts(attempt_id, job_id, quota_scope, attempt_no, ...,
+      outcome='reservation_granted', reserved_at=now())
+      RETURNING attempt_id AS reservation_id;
     UPDATE fdc_queue_jobs SET status='reservation_granted', ... WHERE job_id=...;
+    -- dispatcher는 이 reservation_id를 ReservationGrant에 담아 FDC one-shot에 전달한다.
   ELSE:
     ROLLBACK;  -- job은 QUEUED에 그대로 남는다. 탈락이 아니다.
 
@@ -171,10 +217,15 @@ COMMIT;
 - **DB 장애/lock timeout/트랜잭션 오류 시**: live Gemini HTTP 호출은 **fail-closed**
   — coordinator에 접근할 수 없으면 그 job은 시도하지 않고 `QUEUED`에 남는다(탈락
   아님, 다음 재시도 기회를 기다림).
-- **60초 경계의 판단 SQL과 사후 검증 SQL 일치**: 양쪽 모두 `reserved_at`(reservation
-  성공 시각) 기준 `> now() - interval '60 seconds'`(판단 시) / `RANGE BETWEEN
-  INTERVAL '60 seconds' PRECEDING AND CURRENT ROW`(사후 검증, §11) — **동일한
-  컬럼·동일한 반열림 구간 규칙**을 쓰도록 통일한다.
+- **60초 경계의 판단 SQL과 사후 검증 SQL 일치(보정 4)**: 판단 SQL은 `reserved_at
+  > now() - interval '60 seconds'`(반열림 구간 `(t-60초, t]`, 즉 **정확히 60초
+  이전 시각의 reservation은 이번 window에서 제외**된다 — `>`이지 `>=`가 아니다).
+  §14의 사후 검증 SQL은 이전 초안에서 `RANGE BETWEEN INTERVAL '60 seconds'
+  PRECEDING AND CURRENT ROW` window frame을 썼는데, 이 frame은 **경계값을
+  포함**해 판단 SQL의 반열림 규칙과 불일치했다 — §14에서 self-join 기반으로
+  같은 `>` 규칙을 쓰도록 정정했다. coordinator 판단, 사후 감사 SQL, fake clock
+  테스트(§15) **셋 모두 이 반열림 규칙을 동일하게 적용**하는 것이 13 RPM strict
+  계약의 일부다.
 
 ## 7. worker·retry·freshness·즉시 저장 계약
 
@@ -191,12 +242,18 @@ worker slot을 **먼저** 확보하는 이유: reservation과 실제 HTTP 시작
 최소화해, "permit은 받았는데 worker가 없어 대기"로 60초 window의 슬롯이 낭비되는
 상황을 막는다.
 
+> **보정 1 반영**: "PostgreSQL atomic reservation" 단계는 dispatcher가
+> §6 트랜잭션으로 `ReservationGrant`를 발급받는 것을 뜻하며, "즉시 FDC one-shot
+> HTTP 실행" 단계는 그 grant를 값으로 전달받아 소비만 한다 — one-shot 내부에서
+> coordinator를 다시 호출하지 않는다(§12 표).
+
 - **reservation 거부**: worker slot 즉시 반환, job은 `QUEUED` 유지.
 - **reservation 성공 후 worker 시작 실패**: `RESERVED_BUT_HTTP_NOT_STARTED` 기록
-  (quota는 60초간 소비 유지), `max_pre_http_execution_failures`(신규 설정, 권고
-  초기값 3) 소진 전엔 `RETRY_QUEUED`, 소진 시 `FDC_FAILED_FINAL(reason=
-  worker_start_exhausted)` — **이 종료는 순번 탈락도 `CANCELLED`도 아닌, 명확히
-  분리된 내부 실행 실패 사유다.**
+  (quota는 60초간 소비 유지), `pre_http_execution_failure_count`(§9)를 1 증가시킨다.
+  `max_pre_http_execution_failures`(신규 설정, 권고 초기값 3) 소진 전엔
+  `RETRY_QUEUED`, 소진 시 `FDC_FAILED_FINAL(reason=worker_start_exhausted)` —
+  **이 종료는 순번 탈락도 `CANCELLED`도 아닌, `provider_retry_count`와 무관하게
+  별도로 집계되는 내부 실행 실패 사유다(보정 3).**
 - **`FDC_WORKER_CONCURRENCY`**: 기존 `_SEMAPHORE_MAX`(종목 처리 동시성, 5)와는
   **별개의 설정**으로 신설한다. **초기값 5를 제안하되, 이는 확정값이 아니라
   실측 전 보수적 시작값**이다 — 13 RPM을 실제로 소진할 만큼 충분한지는 구현 후
@@ -222,7 +279,8 @@ worker slot을 **먼저** 확보하는 이유: reservation과 실제 HTTP 시작
 | `job_id` | UUID PK |
 | `decision_cycle_id`, `decision_context_id`, `symbol`, `source_type` | |
 | `status` | 인덱스 필요(재기동 후 미완료 조회) |
-| `queue_poll_count`, `dispatch_attempt_no`, `retry_count` | §9 정의 |
+| `queue_poll_count`, `dispatch_attempt_no` | §9 정의 |
+| `provider_retry_count`, `pre_http_execution_failure_count`, `queue_reenqueue_count` | **보정 3** — §9에서 3개로 분리 정의(기존 단일 `retry_count` 폐기) |
 | `permit_consumed_count`, `http_attempt_count`, `http_429_count`, `reserved_but_http_not_started_count` | §9 정의 |
 | `queued_at`, `completed_at` | |
 | `trade_decision_id` | nullable FK → `trade_decisions` |
@@ -232,34 +290,63 @@ worker slot을 **먼저** 확보하는 이유: reservation과 실제 HTTP 시작
 ### `fdc_provider_attempts`(신규, append-only — reservation 1회=attempt 1행)
 | 컬럼 | 비고 |
 |---|---|
-| `attempt_id` | UUID PK |
-| `job_id` | FK → `fdc_queue_jobs` |
+| `attempt_id` | UUID PK(= `reservation_id`로도 사용, §6) |
+| `job_id` | **nullable** FK → `fdc_queue_jobs`(보정 2 — 비운영 수동 호출은 `fdc_queue_jobs` row 자체를 만들지 않으므로 NULL 허용) |
+| `manual_run_id` | nullable, 수동 호출 전용 식별자(§11, `job_id`가 NULL일 때만 사용) |
 | `quota_scope`, `caller_id`(`"ops-scheduler"` / `"manual:<script명>"`), `queue_entry_id` | |
-| `attempt_no`, `retry_count` | |
-| `reserved_at`, `http_started_at`(nullable), `completed_at`(nullable) | `(quota_scope, reserved_at)` range 인덱스 필수 |
+| `attempt_no`, `provider_retry_count` | 이 attempt가 몇 번째 provider retry인지(§9) — pre-HTTP 재시도 횟수는 여기 담지 않고 `fdc_queue_jobs.pre_http_execution_failure_count`로만 집계(attempt row는 매 재시도마다 새로 생기므로 job 쪽에서 누적) |
+| `reserved_at`, `http_started_at`(nullable), `completed_at`(nullable) | `(quota_scope, reserved_at)` 인덱스 필수(§14 self-join 감사용) |
 | `outcome`, `http_status`(nullable), `error_class`(nullable), `http_429_observed` | |
-| unique 제약 `(job_id, attempt_no)` | 중복 기록 방지 |
+| unique 제약 `(job_id, attempt_no)` | `job_id IS NOT NULL`일 때만 의미(운영 FDC), 수동 호출은 `(manual_run_id, attempt_no)`로 별도 unique 고려 — 구현 PR에서 부분 unique index로 확정 |
+
+**테이블 이름 확정(보정 2 반영)**: `job_id`가 nullable이고 `caller_id`/`manual_
+run_id`로 이미 운영·수동 트래픽을 함께 수용하는 범용 구조이므로, **테이블 이름을
+`gemini_provider_attempts`로 바꾸지 않고 `fdc_provider_attempts`를 유지**한다 —
+FDC가 이 quota_scope의 유일한 운영 소비자이고, 수동 호출은 예외적 부가 사용자일
+뿐이라 이름을 일반화할 실익이 적다고 판단했다(구현 PR에서 재검토 가능).
 
 **원칙**: attempt row는 reservation 시 INSERT하고, 이후 같은 row를 HTTP 시작/종료
 정보로 UPDATE한다(하나의 "실행 기회"는 하나의 사건이므로 별도 event 테이블로 더
 쪼개지 않는다 — 현재 규모에서 과잉 정규화). **삭제·재사용 없음**(append-only).
 
-## 9. Accounting 정의(확정)
+## 9. Accounting 정의(확정, 보정 3 반영 — retry 계수 3분리)
 
 | 필드 | 정의 |
 |---|---|
 | `queue_poll_count` | reservation 가능 여부를 확인 시도한 횟수(거부 포함) |
 | `reservation_denied_count` | 13 RPM window가 가득 차 거부된 횟수 |
 | `dispatch_attempt_no` | reservation을 실제로 받아 worker 실행으로 넘어간 횟수 |
-| `retry_count` | 실패 후 FIFO tail 재등록 횟수 |
+| **`provider_retry_count`** | 실제 HTTP가 **시작된 뒤** retryable provider 오류(429/5xx/timeout/DNS)로 FIFO tail에 재등록된 횟수 — `http_started_at IS NOT NULL`인 attempt에서만 증가 |
+| **`pre_http_execution_failure_count`** | reservation 성공 후 **HTTP 시작 전**(`http_started_at IS NULL`)에 worker/subprocess 생성·취소 등으로 실패해 재등록된 횟수 |
+| **`queue_reenqueue_count`** | `= provider_retry_count + pre_http_execution_failure_count`(파생 지표, "FIFO tail에 총 몇 번 재등록됐는지"만 알고 싶을 때 참조) |
 | `permit_consumed_count` | 성공 reservation 수(`fdc_provider_attempts`에 `reservation_granted` 이상으로 기록된 행 수) |
 | `http_attempt_count` | `http_started_at IS NOT NULL`인 attempt 수 |
 | `http_429_count` | `http_status=429`인 attempt 수 |
-| `reserved_but_http_not_started_count` | `outcome='reserved_but_http_not_started'`인 attempt 수 |
+| `reserved_but_http_not_started_count` | `outcome='reserved_but_http_not_started'`인 attempt 수(= `pre_http_execution_failure_count`의 attempt-행 기준 합계와 일치해야 함, §14 정합성 검증 대상) |
 
-**불변식**: `http_attempt_count ≤ permit_consumed_count`(reservation 성공 후 HTTP
-시작 전 실패 사례가 있으면 부등식 성립) / `retry_count ≤ max_http_attempts-1=2`
-/ 임의 sliding 60초 구간 reservation 수 ≤ 13(§6 트랜잭션이 보장).
+**불변식(보정 후 확정)**:
+```
+provider_retry_count <= max_http_attempts - 1        (= 2, MAX_RETRIES=3 기준)
+pre_http_execution_failure_count <= max_pre_http_execution_failures
+queue_reenqueue_count = provider_retry_count + pre_http_execution_failure_count
+http_attempt_count <= permit_consumed_count
+reservation count <= 13 per any sliding 60-second window  (§6 트랜잭션이 보장)
+```
+
+**세 계수가 항상 같지 않은 이유(사례별)**:
+- `dispatch_attempt_no`만 증가하고 나머지는 불변 — reservation이 **거부**된 경우
+  (worker slot만 반환, HTTP는 애초에 시도되지 않음).
+- `pre_http_execution_failure_count`만 증가 — reservation은 받았으나(`permit_
+  consumed_count` 증가) worker 시작 자체가 실패한 경우(`http_attempt_count`
+  불변).
+- `provider_retry_count`와 `http_attempt_count`가 함께 증가 — HTTP가 실제로
+  나갔으나 429/5xx로 실패한 경우.
+
+이전 초안의 단일 `retry_count`는 위 두 계수를 혼재시켜 `retry_count ≤ max_http_
+attempts-1` 불변식이 pre-HTTP 실패 재등록까지 포함하면 깨지는 문제가 있었다 —
+이번 보정으로 **`retry_count`라는 이름은 이 문서에서 더 이상 쓰지 않는다**(전부
+`provider_retry_count`/`pre_http_execution_failure_count`/`queue_reenqueue_
+count` 중 하나로 대체).
 
 **명명 전환**: `MAX_RETRIES=3`(총 HTTP 시도 수)이라는 기존 이름이 실제 의미와
 혼동되므로, **신규 설계 문서·신규 코드에서는 `max_http_attempts=3`으로 명명**한다
@@ -279,23 +366,46 @@ worker slot을 **먼저** 확보하는 이유: reservation과 실제 HTTP 시작
 - **총 HTTP 시도 120회 극단(A=120, `max_http_attempts=3` 전원 소진)**: `ceil(120/13)
   =10` → 마지막 HTTP 시작 ≈ 540초, 완료 ≈ **약 9~9.5분**(재시도 backoff 포함).
 
-## 11. 수동 provider 호출 정책(확정)
+## 11. 수동 provider 호출 정책(확정, 보정 2 — A안 채택으로 정정)
 
-- 정책 후보 A(기술적 실행 금지)/B(공용 coordinator+low-priority)/C(synthetic job
-  으로 FDC FIFO에 편입)/D(운영 중 A, 비운영 시 B) 중 **D를 권고**한다: 운영 시간대
-  (정규장 중)에는 수동 스크립트의 `--with-provider` 실행을 절차적으로 금지하고,
-  기술적으로는 아래 §12의 강제 구조로 인해 **coordinator 없이는 애초에 live HTTP를
-  낼 수 없다**(실행하더라도 자동으로 같은 quota_scope를 공유하게 되거나 fail-closed로
-  막힌다).
-- 수동 호출도 `fdc_queue_jobs.job_id`가 필요하다(§8 스키마의 `caller_id` 필드로
-  ops-scheduler와 구분, `source_type`은 해당 없음 값으로 기록).
-- `fdc_provider_attempts`는 FDC 전용이 아니라 **`quota_scope`/`caller_id` 필드로
-  이미 범용화**돼 있으므로 별도 `gemini_provider_attempts` 테이블 분리는 불필요.
-- 수동 트래픽이 FDC 판단 기회를 늦추지 않는 방법: FIFO 순서는 `queue_entry_id`
-  생성 순서를 그대로 따르므로, 수동 호출도 같은 FIFO에 얹히면 도착 순서대로 공정하게
-  경쟁한다 — 운영 시간대 금지 정책(위 D안)이 이 경쟁 자체를 회피하는 1차 방어선이다.
+**정책 비교**:
 
-## 12. Live provider fail-closed 경계(확정)
+| 안 | 평가 |
+|---|---|
+| **A(운영 중 기술적 fail-closed 차단, 비운영 수동 호출은 coordinator reservation만 사용하고 FDC queue job은 만들지 않음)** | **채택** — 운영 FDC 판단 기회를 전혀 지연시키지 않는다(수동 호출이 FDC FIFO에 아예 들어오지 않으므로 worker slot·FIFO 순서 경쟁 자체가 없음). `fdc_queue_jobs.job_id` FK는 항상 실제 FDC job만 가리키면 되므로 정합성이 단순하다. 구현 복잡성 최소(synthetic job lifecycle을 별도로 설계할 필요 없음). 13 RPM strict는 quota_scope 공유만으로 유지된다 |
+| B(수동 호출도 synthetic `fdc_queue_job`을 만들어 FDC와 같은 전역 FIFO에 편입) | 기각 — synthetic job의 lifecycle·source_type·우선순위·worker slot 정책을 전부 새로 정의해야 하는데, 수동 분석 호출은 애초에 FDC의 실행 결과(assemble/저장)와 결합될 필요가 없어 "FDC job"이라는 개념 자체가 이 트래픽에 맞지 않는다. 정의가 불완전한 채로 채택하지 않는다(사용자 지침대로 B안은 완전한 정의가 없으면 배제) |
+
+**이전 초안 정정**: "수동 호출도 `fdc_queue_jobs.job_id`가 필요하다"는 이전 문장을
+**폐기**한다. 확정 정책은 다음과 같다.
+
+1. **운영 시간(정규장 중) 수동 live provider 호출은 기술적으로 차단된다** —
+   절차적 금지 문구만으로 충분하다고 서술하지 않는다. 기술적 강제는 §12의
+   `LiveGeminiProviderClient` 생성자가 coordinator 없이는 인스턴스화 자체를
+   거부하는 것과, coordinator 쪽에서 운영 시간대에는 `caller_id`가
+   `"manual:*"`인 reservation 요청을 무조건 거부(fail-closed)하는 것 **둘
+   다**로 구성한다(운영 시간 판정은 기존 `Market-hours` 관련 코드/설정을
+   재사용 — 이번 문서에서 새로 발명하지 않음, 구현 PR에서 정확한 재사용
+   지점을 확인).
+2. **비운영 시간 수동 호출**은 공용 quota coordinator를 통해 `reservation`을
+   얻는다 — 즉 `fdc_quota_state`(§6)의 같은 anchor 행을 잠그고 같은 60초
+   sliding window 집계에 참여한다. 다만 **FDC batch dispatcher의 FIFO 큐나
+   `FDC_WORKER_CONCURRENCY` slot을 전혀 점유하지 않는다** — 수동 호출은 자체
+   프로세스 안에서 스스로 worker 역할을 겸한다.
+3. 비운영 수동 호출의 provider attempt는 `fdc_provider_attempts.job_id=NULL`,
+   `manual_run_id`(호출 시각+스크립트명 기반, 구현 PR에서 생성 규칙 확정)로
+   연결한다(§8).
+4. 위 3번에 따라 `fdc_provider_attempts.job_id`는 **nullable**이다(§8에서
+   이미 반영). 테이블 이름은 `fdc_provider_attempts`를 유지한다(§8 근거).
+5. `fdc_queue_jobs`에는 수동 호출 row를 **만들지 않는다** — 이 테이블은 순수
+   FDC batch job 전용으로 남는다.
+
+**수동 트래픽이 FDC 판단 기회를 늦추지 않는 방법**: A안 채택으로 수동 호출은
+FDC FIFO에 전혀 편입되지 않으므로 "늦춘다"는 상황 자체가 구조적으로 발생하지
+않는다 — 유일한 공유 지점은 `fdc_quota_state` anchor 행의 60초 sliding window
+집계뿐이며, 운영 시간대에는 그 지점조차 fail-closed로 차단되므로 실질적인
+경쟁이 없다.
+
+## 12. Live provider fail-closed 경계(확정, 보정 1 — reservation 경로 표로 명확화)
 
 - 실제 Gemini HTTP를 낼 수 있는 구현체(`LiveGeminiProviderClient`, 신규 명명 제안)는
   **coordinator 의존성 없이는 생성·실행 불가능**하게 한다(생성자 필수 인자).
@@ -303,12 +413,27 @@ worker slot을 **먼저** 확보하는 이유: reservation과 실제 HTTP 시작
   =False` 같은 **플래그 방식은 채택하지 않는다**(오설정 우회 위험, 사용자 지적 반영).
 - FDC 전용 `generate_structured_once()`는 dispatcher가 permit/retry/backoff를
   전담하기 위한 **최소 신규 인터페이스**다. 기존 공용 `generate_structured()`(EI/AR/
-  AC 구식 클래스가 참조하나 운영 비활성)는 **무근거로 변경하지 않는다** — 이 함수
-  내부에서도 결국 `LiveGeminiProviderClient`의 coordinator 강제를 상속받으므로
-  이중 방어가 자연히 성립한다.
+  AC 구식 클래스가 참조하나 운영 비활성)는 **무근거로 변경하지 않는다**.
 - raw provider client 직접 호출(`ar_fdc_provider_validation.py` 등)과 두 분석
   스크립트 모두 **같은 강제 지점**(`LiveGeminiProviderClient` 생성자)을 통과해야
   하므로 개별적으로 막을 필요가 없다.
+
+**reservation 경로 분리표(보정 1의 핵심 산출물)** — 어느 함수가 coordinator에게
+"새 reservation을 요청"하는지, 아니면 "이미 발급된 grant를 소비만" 하는지를
+명확히 구분한다:
+
+| 호출 경로 | reservation을 새로 요청하는가? | 실행 주체 |
+|---|---|---|
+| FDC batch dispatcher | **예** — §6 트랜잭션의 유일한 호출자 | dispatcher(cycle-scoped) |
+| `generate_structured_once(grant)`(FDC 전용, 신규) | **아니오** — dispatcher가 전달한 `ReservationGrant`를 검증·소비만 함, coordinator를 호출하지 않음 | FDC worker(HTTP 1회) |
+| `generate_structured()`(공용, 기존 유지) | **경로에 따라 다르다** — 운영 EI/AR/AC 경로에서는 애초에 호출되지 않음(비활성). 비운영 수동 스크립트가 이 함수를 직접 쓴다면, `LiveGeminiProviderClient`가 **자체적으로** coordinator에 reservation을 요청(운영 시간대엔 fail-closed 거부, §11 정책 1) | 수동 스크립트 프로세스 |
+| raw HTTP client(coordinator 완전 우회 시도) | 시도 자체가 **생성 단계에서 차단**(`LiveGeminiProviderClient` 생성자가 coordinator 의존성 없이는 인스턴스화 거부) | — |
+
+이 표가 **보정 1의 확정 계약**이다: dispatcher가 발급받은 reservation을 FDC
+one-shot이 다시 요청하는 이중 소유는 구조적으로 발생하지 않으며, `generate_
+structured()`는 FDC 배치 경로에서는 아예 쓰이지 않고 오직 "coordinator를
+직접 호출하는 다른 경로"(비운영 수동 스크립트)에서만 자체 reservation을 요청
+한다 — 두 함수가 "같은 job에 대해 동시에" reservation을 다투는 경우가 없다.
 
 ## 13. 설정 계약(확정, 값은 구현 PR에서 실제 배선)
 
@@ -327,25 +452,47 @@ DECLARED_RPM_LIMIT`, 모든 수치형 값 `> 0`. 배선 경로: `.env.example` �
 `environment:` 블록. **이번 문서화 턴에서 `.env`/`.env.example`/compose/migration
 실제 수정 없음** — 구현 PR 대상.
 
-## 14. 관측(감사) SQL 요구사항
+## 14. 관측(감사) SQL 요구사항(보정 4 — 60초 경계 규칙을 §6 판단 SQL과 일치시킴)
+
+**정정 사유**: 이전 초안의 `RANGE BETWEEN INTERVAL '60 seconds' PRECEDING AND
+CURRENT ROW` window frame은 **정확히 60초 이전 행을 포함**하는데(Postgres RANGE
+frame은 경곗값 포함), §6의 coordinator 판단 SQL은 `reserved_at > now() -
+interval '60 seconds'`로 **경곗값을 제외**한다 — 이 불일치가 있으면 coordinator가
+"13개 미만이라 승인"한 상황을 감사 SQL이 "실제로는 14개였다"고 다르게 셀 수
+있었다. 아래는 self-join으로 **동일한 `>` 반열림 규칙**을 적용한 정정판이다.
 
 ```sql
 -- 임의 sliding 60초 구간 reservation 수 최댓값(13 초과 여부 검증)
-WITH counts AS (
-  SELECT reserved_at,
-         count(*) OVER (ORDER BY reserved_at
-           RANGE BETWEEN INTERVAL '60 seconds' PRECEDING AND CURRENT ROW) AS window_count
-  FROM fdc_provider_attempts WHERE quota_scope='gemini:shared-operational'
-)
-SELECT max(window_count) FROM counts;
+-- ── §6 판단 SQL과 동일한 반열림 구간 (t-60초, t] 규칙을 self-join으로 재현
+SELECT max(window_count) FROM (
+  SELECT anchor.reserved_at,
+         count(candidate.attempt_id) AS window_count
+  FROM fdc_provider_attempts anchor
+  JOIN fdc_provider_attempts candidate
+    ON candidate.quota_scope = anchor.quota_scope
+   AND candidate.reserved_at > anchor.reserved_at - interval '60 seconds'
+   AND candidate.reserved_at <= anchor.reserved_at
+   AND candidate.outcome IN ('reservation_granted','http_started','http_succeeded',
+                              'http_failed_retryable','http_failed_final',
+                              'reserved_but_http_not_started')
+  WHERE anchor.quota_scope = 'gemini:shared-operational'
+  GROUP BY anchor.reserved_at
+) w;
+-- 정확히 60초 이전(anchor.reserved_at - 60초)의 reservation은 `>` 조건에 의해
+-- 이번 window에서 제외된다 — §6 coordinator 판단과 동일한 규칙.
 
--- 실제 HTTP 시작 수 최댓값(같은 방식, http_started_at 기준)
+-- 실제 HTTP 시작 수 최댓값도 같은 self-join 패턴을 http_started_at 기준으로 적용
 -- reserved_at은 있으나 http_started_at 없는 attempt(reserved_but_http_not_started)
 -- caller_id별 quota 소비량
 -- job별 permit_consumed_count와 attempt 행 수 정합성(HAVING 불일치)
 -- 재기동 뒤 미완료 job 및 마지막 상태(status NOT IN 종결상태)
 -- provider_queue_timeout reason code가 신규 경로에서 생성되지 않았는지(기대값 0)
 ```
+
+fake clock 기반 테스트(§15)도 이 self-join 규칙과 동일한 경계(정확히 60초 전
+= 제외)로 어서션을 작성해야 한다 — coordinator, 감사 SQL, 테스트 셋 모두 같은
+반열림 규칙을 쓰는 것이 13 RPM strict 계약의 일부다.
+
 (전체 SQL 원문은 이전 설계 검토 세션 로그에 보존, 구현 PR에서 뷰/함수로 정리 예정.)
 
 ## 15. 테스트 · shadow · 단계적 전환 계획
@@ -354,11 +501,17 @@ SELECT max(window_count) FROM counts;
 실제 sleep·외부 API 없음): (1) 동시 2 caller가 합산 13건까지만 승인, (2) reservation
 0건 상태에서 phantom insert 미발생, (3) DB 장애 시 fail-closed, (4) worker slot
 확보 전 reservation 미소비, (5) reservation 후 HTTP 전 실패 시 quota 60초 소비 +
-`reserved_but_http_not_started` 기록, (6) retry는 새 reservation 없이 HTTP 미실행,
-(7) 임의 60초 구간 reservation/HTTP 시작 수 ≤ 13, (8) 수동/운영 caller가 같은
-quota_scope 공유, (9) coordinator 없는 raw 호출 차단, (10) fake provider는
-coordinator 없이도 정상 동작, (11) job 상태와 attempt 기록 수치 일관, (12) 40개/
-120개 극단 조건의 dispatch 스케줄이 §10 계산과 일치.
+`reserved_but_http_not_started` 기록 + `pre_http_execution_failure_count` 증가
+(보정 3), (6) `generate_structured_once(grant)`가 전달받은 grant만 소비하고
+coordinator에게 새 reservation을 절대 요청하지 않음(보정 1의 핵심 검증), (7) 임의
+60초 구간 reservation/HTTP 시작 수 ≤ 13이며 **정확히 60초 전 reservation은 제외**
+(보정 4의 경계 규칙, §14 self-join과 동일 어서션), (8) 운영 시간대 `caller_id=
+"manual:*"` reservation이 fail-closed로 거부됨 + 비운영 시간대는 승인되나 FDC
+FIFO/worker slot을 점유하지 않음(보정 2, A안), (9) coordinator 없는 raw 호출
+차단, (10) fake provider는 coordinator 없이도 정상 동작, (11) job 상태와 attempt
+기록 수치 일관(`provider_retry_count`/`pre_http_execution_failure_count`/
+`queue_reenqueue_count` 각각 별도 검증), (12) 40개/120개 극단 조건의 dispatch
+스케줄이 §10 계산과 일치.
 
 **단계적 도입**: ① lifecycle 관측(quota_state/queue_jobs/attempts 스키마 + shadow
 기록, 실제 dispatch 동작은 미변경) → ② held_position lane 한정 실전 전환 → ③ 전체
@@ -369,10 +522,16 @@ decision·order 영향/lane 공정성)을 수행한다.
 ## 16. 위험 · 롤백 · 확정된 구현 계약 vs 구현 후 실측 필요
 
 ### 확정된 구현 계약(이번 문서로 확정, 구현 PR은 이를 그대로 따른다)
-- Cycle-scoped(순차 유지), dispatcher 완전 소유 permit, PostgreSQL anchor-row
-  atomic reservation, FDC one-shot 인터페이스 신설(공용 `generate_structured()`
-  불변), 즉시 저장(배치 종료 대기 안 함), `CANCELLED` 사유 3종 한정, `fdc_queue_jobs`
-  +`fdc_provider_attempts`+`fdc_quota_state` 3-테이블 스키마.
+- Cycle-scoped(순차 유지), dispatcher 완전 소유 permit(FDC one-shot은 발급받은
+  `ReservationGrant`를 소비만 하고 재요청하지 않음 — 보정 1), PostgreSQL
+  anchor-row atomic reservation(§6), FDC one-shot 인터페이스 신설(공용
+  `generate_structured()` 불변), 즉시 저장(배치 종료 대기 안 함), `CANCELLED`
+  사유 3종 한정, `fdc_queue_jobs`+`fdc_provider_attempts`(`job_id` nullable)+
+  `fdc_quota_state` 3-테이블 스키마, 운영 시간 수동 호출 기술적 fail-closed
+  차단 + 비운영 시간 수동 호출은 coordinator만 공유하고 FDC FIFO/worker slot은
+  점유하지 않음(A안 — 보정 2), `provider_retry_count`/`pre_http_execution_
+  failure_count`/`queue_reenqueue_count` 3분리 accounting(보정 3), coordinator
+  판단·감사 SQL·테스트 전부 동일한 `(t-60초, t]` 반열림 경계 규칙 사용(보정 4).
 
 ### 구현 후 실측 필요(이번 문서로 확정하지 않음, 값·성능은 구현 후 검증)
 - `FDC_WORKER_CONCURRENCY=5`가 13 RPM을 실제로 소진하기에 충분한지.
@@ -382,6 +541,9 @@ decision·order 영향/lane 공정성)을 수행한다.
   검증 등)에 미치는 영향.
 - Gemini의 실제 quota 적용 단위(API 키/프로젝트/모델) — 외부 provider 정책, 이
   문서로 확정 불가.
+- §11에서 "운영 시간 판정은 기존 market-hours 관련 코드/설정을 재사용한다"고
+  명시했으나, 정확히 어느 기존 함수/설정을 재사용할지는 구현 PR에서 확인이
+  필요하다(이번 문서화 턴에서 코드 근거로 특정하지 않음, 보정 2 관련).
 
 ### 롤백
 전부 신규 테이블·신규 인터페이스 추가이며 기존 `fdc_rate_limiter.py`/`run_agent_

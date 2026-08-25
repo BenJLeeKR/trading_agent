@@ -84,3 +84,42 @@ GeminiProviderClient`/`FakeProviderClient` 타입 분리 → 설정 배선
 (`settings.py`/`.env.example`/compose) → 테스트(§15 시나리오) → 단계적
 도입(①lifecycle 관측 shadow → ②held_position 한정 → ③전체 전환).
 이번 문서화 턴에서는 미착수.
+
+## 2차 개정(2026-08-25, 같은 날 후속) — 4개 계약 충돌 보정
+
+최초 확정본에 남아있던 4개 계약 충돌을 사용자 지적에 따라 보정했다(같은
+PR #350, 브랜치·PR 신규 생성 없이 기존 브랜치에 추가 커밋).
+
+1. **reservation 단일 소유권 명확화**: "dispatcher가 permit을 완전히
+   소유한다"와 "FDC one-shot도 coordinator를 호출한다"는 표현이 병존해
+   이중 reservation처럼 읽히던 문제를 정정했다. 확정 계약: reservation을
+   실제로 요청하는 주체는 dispatcher 하나뿐이고, `generate_structured_
+   once(grant)`는 dispatcher가 발급받은 `ReservationGrant`를 값으로
+   전달받아 검증·소비만 한다 — coordinator에 새 reservation을 절대
+   요청하지 않는다. §12에 어느 함수가 reservation을 새로 요청하는지
+   정리한 표를 추가했다.
+2. **수동 provider 호출 정책과 job 모델 확정**: "수동 호출도 `fdc_queue_
+   jobs.job_id`가 필요하다"는 미확정 서술을 폐기하고, A안(운영 시간
+   기술적 fail-closed 차단 + 비운영 시간 수동 호출은 coordinator
+   reservation만 공유하고 FDC FIFO/worker slot은 점유하지 않음)을
+   채택했다. `fdc_provider_attempts.job_id`를 nullable로, 수동 호출은
+   `manual_run_id`로 연결하도록 스키마를 수정했다. `fdc_queue_jobs`에는
+   수동 호출 row를 만들지 않는다.
+3. **retry/pre-HTTP 실패 계수 분리**: 단일 `retry_count`가 "실제 HTTP
+   실패 후 재등록"과 "reservation 성공 후 HTTP 시작 전 실패로 인한
+   재등록"을 혼재시켜 `retry_count ≤ max_http_attempts-1` 불변식이
+   깨지던 문제를 `provider_retry_count`/`pre_http_execution_failure_
+   count`/`queue_reenqueue_count` 3개 필드로 분리해 해소했다. 상태
+   전이도·스키마·accounting 정의·테스트 계획 전부에 반영했다.
+4. **sliding 60초 경계 규칙 일치**: coordinator 판단 SQL(`reserved_at >
+   now() - interval '60 seconds'`, 반열림)과 이전 감사 SQL의 `RANGE
+   BETWEEN ... PRECEDING` window frame(경곗값 포함)이 서로 다른 규칙을
+   써서 경계에서 결과가 어긋날 수 있던 문제를 self-join 기반 감사 SQL로
+   정정해 동일한 `(t-60초, t]` 반열림 규칙을 쓰도록 통일했다.
+
+이번 개정은 §4·§5·§6·§7·§8·§9·§11·§12·§14·§15·§16을 수정했다. 런타임
+코드/migration/compose/`.env` 변경은 이번에도 없다.
+
+## 2차 검증
+
+`bash scripts/harness/run.sh accept docs` — PASS(상세는 완료 보고 참고).

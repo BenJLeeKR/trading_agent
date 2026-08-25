@@ -8030,3 +8030,18 @@ shared_13rpm_quota_design_2026-08-25.md`.
 - **다음 단계(사용자 승인 필요)**: 구현 PR 착수(migration 작성 →
   dispatcher/coordinator 코드 → FDC one-shot 인터페이스 → 설정
   배선 → 테스트) — 이번 문서화 턴에서는 미착수.
+
+## 위 항목 정정(2026-08-25 KST 후속) — 4개 계약 충돌 보정
+
+같은 문서(위 상세 링크)에 남아있던 4개 계약 충돌을 사용자 지적에 따라
+보정했다: (1) dispatcher/FDC one-shot의 reservation 이중 소유 위험 —
+`ReservationGrant`를 dispatcher만 발급받고 one-shot은 소비만 하도록
+명확화, (2) 수동 provider 호출의 job 모델 미확정 — A안(운영 시간 기술적
+차단, 비운영 수동 호출은 coordinator만 공유하고 FDC FIFO/worker slot은
+미점유, `fdc_provider_attempts.job_id` nullable)으로 확정, (3) 단일
+`retry_count`가 HTTP 실패 재등록과 pre-HTTP 실행 실패 재등록을 혼재시켜
+불변식이 깨지던 문제 — `provider_retry_count`/`pre_http_execution_
+failure_count`/`queue_reenqueue_count` 3분리로 해소, (4) coordinator
+판단 SQL과 감사 SQL의 sliding 60초 경계 규칙 불일치 — self-join 기반
+감사 SQL로 동일한 반열림 규칙 통일. 같은 브랜치·PR(#350)에 추가 커밋만
+반영, 신규 PR 없음. 런타임 코드·migration·compose·`.env` 변경 없음.
