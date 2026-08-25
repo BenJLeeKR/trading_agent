@@ -8003,3 +8003,30 @@ validation.md` "45. SPPV-3 OOS 일봉 cache 일 1회 자동 갱신 배치 —
   미확정) 설계와 알림 최소 계약(비밀값 미노출)을 정의.
 - **다음 단계(사용자 승인 필요)**: 배치 실행 메커니즘 확정, wrapper
   구현, 실제 배치 등록 — 전부 다음 구현 턴 대상.
+
+## FDC cycle-scoped batch queue + Gemini 공용 13 RPM quota — 설계 확정(2026-08-25 KST)
+
+상세: `docs/40_action_plans/fdc_cycle_scoped_batch_queue_gemini_
+shared_13rpm_quota_design_2026-08-25.md`.
+
+- 여러 차례의 read-only 실측·설계 검토(in-cycle FIFO 재대기열의
+  실제 성공률 0% 확인, EI/AR/AC가 운영에서 Gemini를 전혀 호출하지
+  않는다는 발견, 수동 분석 스크립트 2건이 limiter를 완전히
+  우회할 수 있다는 발견)를 종합해 최종 아키텍처를 확정했다.
+- 핵심 결정: (1) 사이클은 순차 유지, FDC 대상 전원을 사이클 안에서
+  탈락 없이 처리하는 cycle-scoped strict batch queue, (2)
+  PostgreSQL singleton anchor 행 잠금 기반 atomic quota reservation
+  (phantom insert 경쟁 조건 방지, 기존 `kis_fill_cumulative_state.py`
+  의 `FOR UPDATE` 관례 재사용), (3) dispatcher가 permit·retry·FIFO
+  재등록을 완전히 소유하고 FDC는 HTTP 1회만 시도하는 one-shot
+  인터페이스 신설(기존 공용 `generate_structured()`는 무변경), (4)
+  `LiveGeminiProviderClient`/`FakeProviderClient` 타입 분리로 live
+  provider 호출은 coordinator 없이는 생성 자체가 불가능하게 강제,
+  (5) `fdc_queue_jobs`+`fdc_provider_attempts`+`fdc_quota_state`
+  3-테이블 영속 스키마로 재기동 후 미완료 job 사후 확인 가능.
+- 코드/문서 수정은 이 설계 문서 자체와 backlog/work log뿐 —
+  런타임 코드·migration·compose·`.env` 변경 없음. 구현은 별도
+  후속 PR로 분리.
+- **다음 단계(사용자 승인 필요)**: 구현 PR 착수(migration 작성 →
+  dispatcher/coordinator 코드 → FDC one-shot 인터페이스 → 설정
+  배선 → 테스트) — 이번 문서화 턴에서는 미착수.
