@@ -1,7 +1,20 @@
 # FDC Cycle-Scoped Batch Queue + Gemini Shared 13 RPM Quota (PostgreSQL Atomic Reservation) — 설계 확정
 
-> **상태**: 설계 확정(read-only 검토·문서화 전용). 런타임 코드/migration/compose/`.env` 변경 없음.
-> 구현은 이 문서를 기준으로 별도 후속 PR에서 진행한다.
+> **상태(2026-08-25, Phase 1 구현 완료)**: 이 문서 §8의 영속 스키마(3-테이블),
+> §6의 atomic reservation 로직, §11/§12의 shadow 관측 경로를 **Phase 1
+> 범위로 구현 완료**했다 — `db/migrations/0068_add_fdc_quota_lifecycle_
+> tables.sql`, `src/agent_trading/repositories/contracts.py`(`FdcQuotaRepository`
+> Protocol), `src/agent_trading/repositories/postgres/fdc_quota.py`,
+> `src/agent_trading/repositories/memory.py`(`InMemoryFdcQuotaRepository`),
+> `src/agent_trading/services/fdc_quota_coordinator.py`(`FdcQuotaCoordinator`),
+> `src/agent_trading/services/decision_orchestrator.py`(lifecycle shadow
+> 관측 메서드). **실제 cycle-scoped dispatcher, FDC one-shot 인터페이스,
+> live/fake provider 타입 분리, held_position lane 실제 전환은 아직
+> 구현하지 않았다** — 이들은 후속 PR 범위다(§16 참고). 현재도 기존
+> `fdc_rate_limiter.py`의 10 RPM strict limiter가 실제 Gemini HTTP 요청의
+> 유일한 제한 장치이며, 이 문서의 13 RPM은 `FDC_BATCH_QUEUE_LIFECYCLE_
+> SHADOW_ENABLED=true`일 때만 작동하는 **shadow 판단값**일 뿐 실제
+> provider 호출량을 바꾸지 않는다.
 >
 > **개정 이력**: 2026-08-25(2차) — 최초 확정본에 남아있던 4개 계약 충돌(reservation
 > 이중 소유 위험, 수동 호출 job 모델 미확정, retry/pre-HTTP 실패 계수 혼재, sliding
@@ -22,6 +35,45 @@
 > 중 어느 것도 증가시키지 않는다(A안 채택)는 것을 명시하고, coordinator
 > 오류 전용 상태·backoff·최소 관측 계약을 신설했다. §5·§6·§9·§13·§15·§16이
 > 이번 개정의 영향을 받는다.
+>
+> **개정 이력**: 2026-08-25(5차, PR #351 1차 보정) — Phase 1 초기 구현이
+> `mode='real'` attempt만 세는 판정 로직을 그대로 shadow 경로에 재사용해
+> shadow window_count가 항상 0이 되던 결함과, shadow 관측 시점이 기존 FDC
+> permit 대기·HTTP 호출 이후(잘못된 시점)였던 결함을 보정했다. **정정된
+> 표현**: "13 RPM이면 지금 승인됐을까"가 아니라 "**같은 cycle 내 앞선
+> shadow FDC-ready job까지 포함한 FIFO 가상 큐에서 지금 승인 가능한가**"이다
+> — 판정은 오직 같은 `quota_scope`의 `mode='shadow'` 행만 보고(`mode='real'`
+> 행은 절대 보지 않음). **주의**: 이 개정에서 "FIFO 순서는 DB가 발급한
+> `enqueue_sequence`(INSERT와 함께 원자적으로 채번)로 정하므로 Python
+> task 완료 순서에 의존하지 않는다"고 서술했으나, 이는 **틀렸다** — DB
+> INSERT 자체가 `assemble()` 도착 시점에 일어났기 때문에, INSERT 순서는
+> 여전히 "여러 심볼이 동시 처리되는 중 어느 것이 먼저 `assemble()`에
+> 도착했는가"(=기존 limiter 대기·provider 응답·subprocess 종료 순서에
+> 좌우됨)를 반영했을 뿐, 진짜 `fdc_ready_at` 순서를 반영하지 못했다.
+> 이 오류는 6차 개정에서 바로잡았다.
+>
+> **개정 이력**: 2026-08-25(6차, PR #351 2차 보정) — 5차 개정이 남긴
+> "DB INSERT 순서가 곧 FDC-ready FIFO 순서"라는 서술을 정정했다. 실제
+> FIFO 기준은 **`(fdc_ready_at, cycle_index)`**다 — `fdc_ready_at`이
+> 1차 기준, 동일 시각이면 같은 cycle 내 `cycle_index`(universe 열거
+> 시점에 고정, `asyncio.gather()`가 입력 순서를 그대로 보존하는 성질을
+> 이용 — 어떤 subprocess/코루틴 완료 순서에도 의존하지 않음)가 2차
+> tie-breaker다. 기존 limiter 대기 완료 순서·provider 응답 순서·
+> subprocess 종료 순서·`assemble()` 호출 순서는 전혀 사용하지 않는다.
+> 이를 구현하기 위해 `assemble()`은 더 이상 shadow를 DB에 직접 등록하지
+> 않고(`FdcReadyShadowEvent`만 노출), 사이클의 모든 심볼 처리
+> (`asyncio.gather()`)가 끝난 뒤 호출자(`run_decision_loop.py`)가 이
+> 이벤트들을 `(fdc_ready_at, cycle_index)` 기준으로 정렬해 **순차** 재생한다
+> — `enqueue_sequence`는 이제 이 정렬된 재생 순서를 그대로 반영하는
+> 값이며, 더 이상 "단순 도착 순서"를 의미하지 않는다. `decision_cycle_id`
+> 도 `request.correlation_id`(심볼별 고유 문자열)에서 진짜 cycle-scoped
+> 식별자로 교체했다. 자동 dispatcher가 아직 없으므로 Phase 1이 신뢰성
+> 있게 관측하는 것은 여전히 "**즉시 shadow grant 가능**"(`SHADOW_WOULD_
+> GRANT`)과 "**shadow queued**"(`SHADOW_QUEUED`) 두 상태뿐이며, "몇 분
+> 후 실제로 grant될지"는 후속 dispatcher 단계(§16 "구현 후 실측 필요")
+> 범위다. `SHADOW_QUEUED`는 실패·timeout이 아니다. 상세는 `docs/30_
+> work_log/2026-08-25_fdc_quota_lifecycle_shadow_phase1_correction_2.md`
+> 참고.
 
 ## 1. 배경과 문제 정의
 

@@ -4,6 +4,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import date, datetime
 from decimal import Decimal
+from enum import Enum
 from typing import Any, Protocol
 from uuid import UUID
 
@@ -1996,5 +1997,151 @@ class OrderSubmissionAttemptRepository(Protocol):
         - order_request_id, symbol, side, latest_outcome,
           latest_error_type, latest_raw_code, latest_raw_message,
           last_submitted_at, created_at
+        """
+        ...
+
+
+# ---------------------------------------------------------------------------
+# FDC cycle-scoped batch queue — Gemini 공용 13 RPM quota coordinator (Phase 1)
+# ---------------------------------------------------------------------------
+#
+# 설계 근거: docs/40_action_plans/fdc_cycle_scoped_batch_queue_gemini_
+# shared_13rpm_quota_design_2026-08-25.md §6·§8·§9.
+
+
+class CoordinatorErrorClass(str, Enum):
+    """DB/coordinator 오류 3분류(설계 문서 §6 "coordinator 오류 경로").
+
+    이 분류는 DB row가 아니라 호출자의 프로세스 로그/메트릭 계층에서만
+    쓰인다 — DB 자체가 unavailable인 경우 그 사실 자체를 DB에 영속
+    기록할 방법이 없기 때문이다(A안, 설계 문서 §9의 4차 개정).
+    """
+
+    COORDINATOR_UNAVAILABLE = "coordinator_unavailable"
+    COORDINATOR_LOCK_TIMEOUT = "coordinator_lock_timeout"
+    COORDINATOR_TRANSACTION_ERROR = "coordinator_transaction_error"
+
+
+@dataclass(frozen=True, slots=True)
+class ReservationGrant:
+    """§6 트랜잭션이 성공(GRANTED)했을 때의 결과."""
+
+    reservation_id: UUID
+    quota_scope: str
+    job_id: UUID | None
+    attempt_no: int
+    window_count_before_grant: int
+
+
+@dataclass(frozen=True, slots=True)
+class ReservationDenied:
+    """§6 트랜잭션이 정상 완료됐으나 quota가 가득 차 거부(DENIED)된 결과."""
+
+    quota_scope: str
+    window_count: int
+
+
+@dataclass(frozen=True, slots=True)
+class CoordinatorError:
+    """coordinator 호출 자체가 실패한 경우(§6 "coordinator 오류 경로").
+
+    ``GRANTED``도 ``DENIED``도 아니므로 ``queue_poll_count``/
+    ``reservation_denied_count``/``dispatch_attempt_no`` 중 어느 것도
+    증가시키지 않는다.
+    """
+
+    error_class: CoordinatorErrorClass
+    detail: str
+
+
+ReservationResult = ReservationGrant | ReservationDenied | CoordinatorError
+
+
+@dataclass(frozen=True, slots=True)
+class ShadowJudgement:
+    """shadow 가상 FIFO 큐 판단 결과 — 실제(mode='real') quota를 전혀
+    소비하지 않고, 같은 quota_scope의 다른 mode='shadow' 행만 본다.
+
+    ``would_grant=True``면 ``SHADOW_WOULD_GRANT``(가상 13 RPM 큐에서
+    지금 승인 가능), ``False``면 ``SHADOW_QUEUED``(앞선 shadow grant가
+    이미 window 용량을 다 써서 대기) — 이 상태는 실패나 timeout이
+    아니다(설계 문서 §11 보정 — 자동 시간 진행 dispatcher가 없는
+    Phase 1에서는 "즉시 승인 가능"과 "대기 상태" 두 가지만 신뢰성
+    있게 관측한다).
+    """
+
+    job_id: UUID
+    would_grant: bool
+    window_count: int
+    attempt_id: UUID
+    enqueue_sequence: int
+
+
+ShadowJudgementResult = ShadowJudgement | CoordinatorError
+
+
+class FdcQuotaRepository(Protocol):
+    """FDC 공용 13 RPM quota의 atomic reservation과 lifecycle shadow 관측.
+
+    ``fdc_quota_state``(singleton anchor)/``fdc_queue_jobs``/
+    ``fdc_provider_attempts`` 3개 테이블을 함께 다룬다 — 세 테이블이
+    항상 하나의 원자적 단위(§6 트랜잭션)로 갱신되기 때문에 별도
+    repository로 쪼개지 않는다.
+
+    ``try_reserve()``는 Phase 1에서 실제 런타임 경로에 연결되지 않는다
+    (단위/통합 테스트 전용). ``register_shadow_job_and_judge()``만
+    Phase 1의 실제 관측 경로다.
+    """
+
+    async def try_reserve(
+        self,
+        *,
+        quota_scope: str,
+        target_rpm: int,
+        window_seconds: int,
+        job_id: UUID | None,
+        caller_id: str,
+        mode: str = "real",
+        manual_run_id: str | None = None,
+        attempt_no: int = 1,
+        lock_timeout_ms: int = 3000,
+    ) -> ReservationResult:
+        """§6의 atomic reservation transaction 계약을 그대로 구현한다.
+
+        anchor 행을 ``SELECT ... FOR UPDATE``로 잠근 뒤 ``(t-window_
+        seconds, t]`` 구간의 유효 reservation 수를 세고, ``target_rpm``
+        미만이면 새 attempt 행을 INSERT해 승인한다. 트랜잭션/행 잠금을
+        쥔 채 네트워크 I/O(Gemini HTTP 호출)를 절대 수행하지 않는다.
+        """
+        ...
+
+    async def register_shadow_job_and_judge(
+        self,
+        *,
+        quota_scope: str,
+        target_rpm: int,
+        window_seconds: int,
+        decision_cycle_id: str | None,
+        decision_context_id: UUID | None,
+        symbol: str,
+        source_type: str,
+        fdc_ready_at: datetime,
+        caller_id: str = "ops-scheduler",
+        lock_timeout_ms: int = 3000,
+    ) -> ShadowJudgementResult:
+        """FDC-ready job을 ``mode='shadow'`` FIFO 큐에 등록하고, "같은
+        cycle 내 앞선 shadow FDC-ready job까지 포함한 FIFO 가상 13 RPM
+        큐에서 지금 승인 가능한가"를 원자적으로 판단한다.
+
+        등록(INSERT)과 판단(COUNT+상태 결정)을 하나의 트랜잭션으로
+        묶는다 — anchor 행 잠금으로 동시 등록을 직렬화해, "뒤에 도착한
+        job이 앞선 job보다 먼저 승인되는 새치기"를 원천 차단한다. FIFO
+        순서는 DB가 발급하는 ``enqueue_sequence``(BIGSERIAL)로 정의되며
+        Python 코루틴/subprocess의 완료 순서에 의존하지 않는다.
+        ``fdc_ready_at``은 sliding window 경계 계산에만 쓰인다(어느
+        60초 구간에 속하는지).
+
+        ``mode='real'`` 행은 전혀 보지 않으며, 이 메서드가 만드는 모든
+        행은 ``mode='shadow'``다 — 실제 quota를 절대 소비하지 않는다.
         """
         ...

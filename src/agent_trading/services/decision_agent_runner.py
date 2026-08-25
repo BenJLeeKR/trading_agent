@@ -14,6 +14,7 @@ import subprocess  # noqa: F401 — used by subprocess-based execution
 import sys
 import time as time_module
 from dataclasses import replace
+from datetime import datetime, timezone
 
 from agent_trading.repositories.container import RepositoryContainer
 from agent_trading.services.ai_agents.base import (
@@ -495,7 +496,12 @@ class DecisionAgentRunner:
             )
             fdc_skipped = True
             skip_reason_codes.append("skip_fdc_high_risk")
+            fdc_ready_at = ""
         else:
+            # FDC cycle-scoped batch queue lifecycle shadow(Phase 1) 전용 —
+            # subprocess 경로(run_agent_subprocess.py)와 동일한 캡처
+            # 지점: "FDC 호출이 필요하다"는 판정 직후, 실제 호출 직전.
+            fdc_ready_at = datetime.now(timezone.utc).isoformat()
             _t2 = time_module.monotonic()
             try:
                 composer_output = await asyncio.wait_for(
@@ -609,6 +615,7 @@ class DecisionAgentRunner:
             ei_skipped=ei_skipped,
             ar_skipped=False,
             fdc_skipped=fdc_skipped,
+            fdc_ready_at=fdc_ready_at,
             skip_reason_codes=tuple(skip_reason_codes),
         )
         expected_value = evaluate_expected_value_gate(

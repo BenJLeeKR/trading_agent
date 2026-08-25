@@ -245,6 +245,32 @@ class DeterministicDerivationBundle:
     deterministic_trigger: Any | None = None
 
 
+@dataclass(slots=True, frozen=True)
+class FdcReadyShadowEvent:
+    """FDC cycle-scoped batch queue lifecycle shadow(Phase 1, 2026-08-25
+    2차 보정) — ``assemble()``이 노출하는 **DB에 쓰지 않는** FDC-ready
+    관측값.
+
+    2차 보정 이전에는 ``assemble()``이 이 시점에 바로 shadow 큐에 DB
+    등록(``FdcQuotaCoordinator.register_shadow_job_and_judge()``)까지
+    했으나, 그러면 ``enqueue_sequence``가 "실제 FDC-ready 순서"가 아니라
+    "``assemble()`` 도착 순서"(=기존 limiter 대기·provider 응답·subprocess
+    종료 순서에 좌우됨)를 반영하게 되는 구조적 결함이 있었다. 이제
+    ``assemble()``은 이 이벤트만 만들어 ``pending_fdc_ready_shadow_event``
+    로 노출하고, 실제 DB 등록은 호출자(``run_decision_loop.py``)가 사이클의
+    모든 심볼 처리(``asyncio.gather``)가 끝난 뒤 이 이벤트들을
+    ``(fdc_ready_at, cycle_index)`` 기준으로 정렬해 순차 재생할 때 비로소
+    일어난다 — 상세: docs/40_action_plans/fdc_cycle_scoped_batch_queue_
+    gemini_shared_13rpm_quota_design_2026-08-25.md §11(2차 보정).
+    """
+
+    decision_cycle_id: str | None
+    decision_context_id: UUID | None
+    symbol: str
+    source_type: str
+    fdc_ready_at: datetime
+
+
 class DecisionOrchestratorService:
     """Deterministic stub for order intent assembly.
 
@@ -334,6 +360,8 @@ class DecisionOrchestratorService:
         held_position_fdc_skip_shadow_enabled: bool = False,
         # --- held_position REDUCE/SELL_CANDIDATE shadow-skip 관측 (관측 전용, 결정 미개입) ---
         held_position_reduce_skip_shadow_enabled: bool = False,
+        # --- FDC cycle-scoped batch queue lifecycle shadow (Phase 1, 관측 전용, 결정 미개입) ---
+        fdc_batch_queue_lifecycle_shadow_enabled: bool = False,
     ) -> None:
         self._repos = repos
         self._decision_context_service = DecisionContextService(repos)
@@ -412,6 +440,19 @@ class DecisionOrchestratorService:
         self._held_position_reduce_skip_shadow_enabled = (
             held_position_reduce_skip_shadow_enabled
         )
+        # FDC cycle-scoped batch queue lifecycle shadow(Phase 1, 2026-08-25
+        # 2차 보정) — 동일한 관측 전용 원칙. FDC-ready(fdc_skipped=False)로
+        # 확정된 건에 한해 "같은 cycle 내 앞선 shadow FDC-ready job까지
+        # 포함한 FIFO 가상 큐에서 지금 승인 가능한가"를 관측하고, 실제 FDC
+        # 호출 여부/decision_type/side/주문 제출을 절대 바꾸지 않는다.
+        # 2차 보정: 이 orchestrator는 더 이상 DB에 직접 쓰지 않는다 —
+        # ``assemble()``은 ``pending_fdc_ready_shadow_event``만 노출하고,
+        # 실제 shadow 큐 DB 등록은 호출자(``run_decision_loop.py``)가
+        # 사이클 종료 후 정렬·재생한다(``FdcReadyShadowEvent`` 참고).
+        self._fdc_batch_queue_lifecycle_shadow_enabled = (
+            fdc_batch_queue_lifecycle_shadow_enabled
+        )
+        self.pending_fdc_ready_shadow_event: FdcReadyShadowEvent | None = None
         # --- Execution Service (execution pipeline state: sell guard, quote CB, fresh check) ---
         self._execution_service = ExecutionService(
             repos=repos,
@@ -1494,6 +1535,79 @@ class DecisionOrchestratorService:
                 exc_info=True,
             )
 
+    def _capture_fdc_ready_shadow_event(
+        self,
+        *,
+        decision_cycle_id: str | None,
+        assembled_context: AssembledContext,
+        symbol: str,
+        resolved_context_id: UUID | None,
+        fdc_ready_at_raw: str,
+    ) -> None:
+        """FDC cycle-scoped batch queue **lifecycle shadow**(Phase 1,
+        2026-08-25 2차 보정) — "같은 cycle 내 앞선 shadow FDC-ready job
+        까지 포함한 FIFO 가상 13 RPM 큐에서 지금 승인 가능한가"를 판단할
+        수 있도록 관측값만 ``self.pending_fdc_ready_shadow_event``에
+        노출한다. **DB에 아무것도 쓰지 않는다** — 이 메서드는 동기 함수고
+        `await`가 전혀 없다.
+
+        설계 근거: docs/40_action_plans/fdc_cycle_scoped_batch_queue_
+        gemini_shared_13rpm_quota_design_2026-08-25.md §11(2차 보정).
+
+        2차 보정 이유: 1차 보정까지는 이 메서드가 ``assemble()`` 끝(기존
+        FDC 호출·strict limiter 대기·저장이 이미 끝난 시점)에서 바로
+        DB에 shadow job을 등록하고 ``enqueue_sequence``를 발급받았다.
+        그런데 여러 심볼이 동시에(semaphore 상한 내에서) 처리되는 실제
+        운영 구조에서는 "``assemble()``에 먼저 도착한 순서"가 "실제
+        `fdc_ready_at` 순서"와 다를 수 있다 — 나중에 FDC-ready가 된
+        심볼이 먼저 처리를 끝내고 먼저 ``assemble()``에 도착하면, 더
+        이른 `fdc_ready_at`을 가진 다른 심볼보다 먼저 작은
+        `enqueue_sequence`를 받는 역전이 발생했다. 이는 "FDC-ready 도착
+        순서대로 FIFO 처리한다"는 shadow의 검증 목적에 맞지 않는다.
+
+        2차 보정 후에는 이 메서드가 DB 등록을 전혀 하지 않고, `decision_
+        cycle_id`(호출자가 넘긴 **진짜 cycle-scoped** 식별자 — `request.
+        correlation_id`는 심볼별로 다른 문자열이라 쓰지 않는다)·심볼·
+        `fdc_ready_at`만 담은 ``FdcReadyShadowEvent``를 만들어 노출한다.
+        실제 DB 등록(및 그에 따른 `enqueue_sequence` 발급)은 호출자
+        (`run_decision_loop.py`)가 사이클의 모든 심볼 처리가 끝난 뒤, 이
+        이벤트들을 `(fdc_ready_at, cycle_index)` 기준으로 정렬해 순차
+        재생할 때 비로소 일어난다 — 그 시점에는 완료 순서와 무관하게
+        진짜 FDC-ready 순서가 보장된다.
+
+        ``fdc_ready_at_raw``는 ``AIDecisionInputs.fdc_ready_at``(ISO-8601
+        UTC 문자열)를 그대로 전달받는다 — 이 값은 `_check_fdc_skip()`
+        (subprocess 경로) 또는 `_should_skip_final_decision_composer()`
+        (in-process 경로)가 "FDC 호출이 필요하다"고 판정한 **직후, 실제
+        permit 대기/HTTP 호출이 시작되기 직전**에 캡처된다. 빈
+        문자열이면 그 건은 결정론적으로 skip된 것이라 FDC-ready가
+        아니므로 대상에서 제외한다.
+        """
+        self.pending_fdc_ready_shadow_event = None
+        if not self._fdc_batch_queue_lifecycle_shadow_enabled:
+            return
+        if not fdc_ready_at_raw:
+            return
+
+        try:
+            fdc_ready_at = datetime.fromisoformat(fdc_ready_at_raw)
+        except ValueError:
+            logger.warning(
+                "fdc_batch_queue_lifecycle_shadow: invalid fdc_ready_at=%r "
+                "symbol=%s — skipping shadow event capture",
+                fdc_ready_at_raw,
+                symbol,
+            )
+            return
+
+        self.pending_fdc_ready_shadow_event = FdcReadyShadowEvent(
+            decision_cycle_id=decision_cycle_id,
+            decision_context_id=resolved_context_id,
+            symbol=symbol,
+            source_type=(assembled_context.source_type or "core"),
+            fdc_ready_at=fdc_ready_at,
+        )
+
     async def _check_held_position_exit_hysteresis_gate(
         self,
         *,
@@ -2541,6 +2655,7 @@ class DecisionOrchestratorService:
         decision_context_id: UUID | None = None,
         order_intent_id: UUID | None = None,
         seeded_events: list[ExternalEventEntity] | None = None,
+        decision_cycle_id: str | None = None,
     ) -> OrderIntent:
         """Assemble a structured order intent from a raw request.
 
@@ -2557,6 +2672,11 @@ class DecisionOrchestratorService:
         seeded_events : list[ExternalEventEntity] | None
             Transient seeded news events (T3) to inject alongside authoritative
             events. Passed from ``_run_one_cycle()`` — not persisted to DB.
+        decision_cycle_id : str | None
+            **진짜 cycle-scoped** 식별자(``request.correlation_id``는
+            심볼별로 다른 값이라 이 용도로 쓰지 않는다) — FDC batch queue
+            lifecycle shadow(Phase 1)가 같은 사이클의 FDC-ready job을
+            묶는 데만 사용한다(``FdcReadyShadowEvent.decision_cycle_id``).
 
         Returns
         -------
@@ -3256,6 +3376,13 @@ class DecisionOrchestratorService:
             composer_output=agent_bundle.composer_output,
             fdc_raw_decision_type=_fdc_raw_decision_type,
         )
+        self._capture_fdc_ready_shadow_event(
+            decision_cycle_id=decision_cycle_id,
+            assembled_context=assembled_context,
+            symbol=request.symbol,
+            resolved_context_id=resolved_context_id,
+            fdc_ready_at_raw=agent_bundle.ai_inputs.fdc_ready_at,
+        )
 
         # --- Generate decision_id if not provided ---
         decision_id = request.decision_id
@@ -3371,6 +3498,7 @@ class DecisionOrchestratorService:
         seeded_events: list[ExternalEventEntity] | None = None,
         actor_type: str = "system",
         actor_id: str = "decision_orchestrator",
+        decision_cycle_id: str | None = None,
     ) -> SubmitResult:
         """Execute the full AI decision → order submit pipeline.
 
@@ -3429,6 +3557,7 @@ class DecisionOrchestratorService:
             decision_context_id=decision_context_id,
             order_intent_id=order_intent_id,
             seeded_events=seeded_events,
+            decision_cycle_id=decision_cycle_id,
             _add_phase=_add_phase,
             _phase_trace=_phase_trace,
         )
@@ -3460,6 +3589,7 @@ class DecisionOrchestratorService:
         decision_context_id: UUID | None = None,
         order_intent_id: UUID | None = None,
         seeded_events: list[ExternalEventEntity] | None = None,
+        decision_cycle_id: str | None = None,
         _add_phase: Callable[[str, str], None],
         _phase_trace: list[PhaseTraceEntry],
     ) -> tuple[OrderIntent | None, UUID | None, SubmitResult | None]:
@@ -3488,6 +3618,7 @@ class DecisionOrchestratorService:
                 decision_context_id=decision_context_id,
                 order_intent_id=order_intent_id,
                 seeded_events=seeded_events,
+                decision_cycle_id=decision_cycle_id,
             )
             _assemble_elapsed = time_module.monotonic() - _assemble_t0
             logger.info(

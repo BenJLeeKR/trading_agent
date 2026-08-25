@@ -120,6 +120,14 @@ class AIDecisionInputs:
     ar_skipped: bool = False
     fdc_skipped: bool = False
     skip_reason_codes: tuple[str, ...] = ()
+    # FDC cycle-scoped batch queue lifecycle shadow(Phase 1) 전용 —
+    # 결정론적 skip 판정(_check_fdc_skip()/_should_skip_final_decision_
+    # composer())이 "FDC 호출 필요"로 확정한 직후, 실제 permit 대기/HTTP
+    # 호출이 시작되기 직전에 캡처한 ISO-8601 UTC 타임스탬프. fdc_skipped
+    # =True면 항상 빈 문자열("")이다. 설계 근거: docs/40_action_plans/
+    # fdc_cycle_scoped_batch_queue_gemini_shared_13rpm_quota_design_
+    # 2026-08-25.md §11(관측 시점 보정).
+    fdc_ready_at: str = ""
     expected_return_bps: Decimal | None = None
     expected_downside_bps: Decimal | None = None
     net_expected_value_bps: Decimal | None = None

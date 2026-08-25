@@ -5067,6 +5067,156 @@ class TestHeldPositionFdcSkipShadowObservation:
         repos.trade_decisions.sync_shadow_held_position_fdc_skip_observation.assert_awaited_once()
 
 
+class TestFdcReadyShadowEventCapture:
+    """`_capture_fdc_ready_shadow_event`는 관측 전용이다(Phase 1, 2026-08-25
+    2차 보정) — DB에 아무것도 쓰지 않고(동기 함수, `await` 없음)
+    `pending_fdc_ready_shadow_event`만 노출한다. 실제 DB 등록(shadow 큐
+    FIFO 판정)은 이제 이 orchestrator가 아니라 호출자
+    (`run_decision_loop.py`)가 사이클 종료 후 담당한다 — 그 이유는
+    `assemble()` 도착 순서가 실제 FDC-ready 순서와 다를 수 있어서(나중에
+    ready된 심볼이 먼저 처리를 끝내는 역전) DB 등록을 여기서 즉시
+    하면 안 되기 때문이다.
+
+    2차 보정 전(1차 보정): 파라미터가 `fdc_skipped: bool`에서
+    `fdc_ready_at_raw: str`로 바뀌었고, `register_shadow_job_and_judge`를
+    이 메서드가 직접 호출했다. 2차 보정: 그 직접 호출을 제거하고, 대신
+    `decision_cycle_id`(요청 파라미터로 명시적으로 전달받음 — `request.
+    correlation_id`는 심볼별로 다른 문자열이라 cycle 식별자로 쓰지
+    않는다)를 포함한 `FdcReadyShadowEvent`를 만들어 노출한다."""
+
+    _SAMPLE_FDC_READY_AT = "2026-08-25T09:00:00.123456+00:00"
+
+    @pytest.mark.asyncio
+    async def test_disabled_flag_is_a_full_noop(
+        self, sample_request: SubmitOrderRequest,
+    ) -> None:
+        repos = build_in_memory_repositories()
+        service = DecisionOrchestratorService(
+            repos=repos, use_subprocess_isolation=False,
+            fdc_batch_queue_lifecycle_shadow_enabled=False,
+        )
+        assembled_context = AssembledContext(source_type="held_position")
+
+        service._capture_fdc_ready_shadow_event(
+            decision_cycle_id="cycle-1#1",
+            assembled_context=assembled_context,
+            symbol=sample_request.symbol,
+            resolved_context_id=uuid4(),
+            fdc_ready_at_raw=self._SAMPLE_FDC_READY_AT,
+        )
+
+        assert service.pending_fdc_ready_shadow_event is None
+
+    @pytest.mark.asyncio
+    async def test_empty_fdc_ready_at_is_a_noop(
+        self, sample_request: SubmitOrderRequest,
+    ) -> None:
+        """`fdc_ready_at_raw=""`(결정론적 skip, 과거 fdc_skipped=True에
+        대응)면 FDC-ready가 아니므로 관측 대상에서 제외한다."""
+        repos = build_in_memory_repositories()
+        service = DecisionOrchestratorService(
+            repos=repos, use_subprocess_isolation=False,
+            fdc_batch_queue_lifecycle_shadow_enabled=True,
+        )
+        assembled_context = AssembledContext(source_type="held_position")
+
+        service._capture_fdc_ready_shadow_event(
+            decision_cycle_id="cycle-1#1",
+            assembled_context=assembled_context,
+            symbol=sample_request.symbol,
+            resolved_context_id=uuid4(),
+            fdc_ready_at_raw="",
+        )
+
+        assert service.pending_fdc_ready_shadow_event is None
+
+    @pytest.mark.asyncio
+    async def test_invalid_fdc_ready_at_is_a_noop(
+        self, sample_request: SubmitOrderRequest,
+    ) -> None:
+        """파싱 불가능한 타임스탬프는 예외 없이 조용히 스킵한다."""
+        repos = build_in_memory_repositories()
+        service = DecisionOrchestratorService(
+            repos=repos, use_subprocess_isolation=False,
+            fdc_batch_queue_lifecycle_shadow_enabled=True,
+        )
+        assembled_context = AssembledContext(source_type="held_position")
+
+        service._capture_fdc_ready_shadow_event(
+            decision_cycle_id="cycle-1#1",
+            assembled_context=assembled_context,
+            symbol=sample_request.symbol,
+            resolved_context_id=uuid4(),
+            fdc_ready_at_raw="not-a-timestamp",
+        )
+
+        assert service.pending_fdc_ready_shadow_event is None
+
+    @pytest.mark.asyncio
+    async def test_fdc_ready_exposes_pending_shadow_event(
+        self, sample_request: SubmitOrderRequest,
+    ) -> None:
+        """FDC-ready(유효한 fdc_ready_at)면 `pending_fdc_ready_shadow_
+        event`가 정확한 필드(진짜 cycle-scoped `decision_cycle_id` 포함,
+        `request.correlation_id`가 아님)로 채워진다. DB coordinator는
+        전혀 관여하지 않는다."""
+        repos = build_in_memory_repositories()
+        service = DecisionOrchestratorService(
+            repos=repos, use_subprocess_isolation=False,
+            fdc_batch_queue_lifecycle_shadow_enabled=True,
+        )
+        resolved_context_id = uuid4()
+        assembled_context = AssembledContext(source_type="held_position")
+
+        service._capture_fdc_ready_shadow_event(
+            decision_cycle_id="cycle-1#1",
+            assembled_context=assembled_context,
+            symbol=sample_request.symbol,
+            resolved_context_id=resolved_context_id,
+            fdc_ready_at_raw=self._SAMPLE_FDC_READY_AT,
+        )
+
+        event = service.pending_fdc_ready_shadow_event
+        assert event is not None
+        assert event.decision_cycle_id == "cycle-1#1"
+        assert event.decision_cycle_id != sample_request.correlation_id
+        assert event.decision_context_id == resolved_context_id
+        assert event.symbol == sample_request.symbol
+        assert event.source_type == "held_position"
+        assert event.fdc_ready_at == datetime.fromisoformat(self._SAMPLE_FDC_READY_AT)
+
+    @pytest.mark.asyncio
+    async def test_pending_event_resets_across_calls(
+        self, sample_request: SubmitOrderRequest,
+    ) -> None:
+        """이전 호출에서 채워진 이벤트가 다음 호출(예: skip 건)에서
+        잘못 남아있지 않아야 한다 — 매 호출마다 무조건 초기화한다."""
+        repos = build_in_memory_repositories()
+        service = DecisionOrchestratorService(
+            repos=repos, use_subprocess_isolation=False,
+            fdc_batch_queue_lifecycle_shadow_enabled=True,
+        )
+        assembled_context = AssembledContext(source_type="held_position")
+
+        service._capture_fdc_ready_shadow_event(
+            decision_cycle_id="cycle-1#1",
+            assembled_context=assembled_context,
+            symbol=sample_request.symbol,
+            resolved_context_id=uuid4(),
+            fdc_ready_at_raw=self._SAMPLE_FDC_READY_AT,
+        )
+        assert service.pending_fdc_ready_shadow_event is not None
+
+        service._capture_fdc_ready_shadow_event(
+            decision_cycle_id="cycle-1#1",
+            assembled_context=assembled_context,
+            symbol=sample_request.symbol,
+            resolved_context_id=uuid4(),
+            fdc_ready_at_raw="",
+        )
+        assert service.pending_fdc_ready_shadow_event is None
+
+
 class TestHeldPositionReduceSkipShadowObservation:
     """`_record_held_position_reduce_skip_shadow_observation`은 관측
     전용이다 — REDUCE_CANDIDATE/SELL_CANDIDATE + risk_opinion=reject/

@@ -94,6 +94,7 @@ from scripts.run_decision_loop import (
     _parse_args,
     _parse_universe_symbols,
     _read_trading_universe,
+    _replay_fdc_ready_shadow_events_for_cycle,
     _resolve_symbol_price,
     _general_lane_priority_key,
     _run_general_lane_pass2,
@@ -5682,3 +5683,320 @@ class TestAccountLookupFieldName:
         from agent_trading.repositories.filters import AccountLookup
         with pytest.raises(TypeError):
             AccountLookup(alias="test")  # type: ignore[call-arg]
+
+
+class TestReplayFdcReadyShadowEventsForCycle:
+    """``_replay_fdc_ready_shadow_events_for_cycle()`` — FDC cycle-scoped
+    batch queue lifecycle shadow(Phase 1, 2026-08-25 2차 보정) 핵심 로직.
+
+    1차 보정까지는 ``assemble()`` 도착 순서(=DB INSERT 순서)를 그대로
+    ``enqueue_sequence``로 썼는데, 그 도착 순서가 실제 `fdc_ready_at`
+    순서와 다를 수 있었다(나중에 FDC-ready된 심볼이 먼저 처리를 끝내고
+    먼저 도착하는 역전). 이 클래스는 그 역전이 있어도 `_replay_fdc_
+    ready_shadow_events_for_cycle()`이 ``cycle_results`` 리스트 위치가
+    아니라 **실제 `fdc_ready_at` 순서**(동률이면 리스트 위치=``cycle_
+    index``)로 shadow 큐에 순차 등록함을 증명한다.
+
+    실제 Postgres 연결은 쓰지 않는다 — ``AppSettings``/`_db_transaction`/
+    `build_postgres_repositories`만 fake로 대체하고, 나머지(``FdcQuota
+    Coordinator``, ``InMemoryFdcQuotaRepository.register_shadow_job_and_
+    judge()``의 진짜 FIFO/window 판정 로직)는 그대로 실행한다 — 실제
+    sleep·Gemini 호출·운영 DB write는 전혀 없다.
+    """
+
+    @staticmethod
+    def _shadow_event(
+        *, symbol: str, fdc_ready_at_iso: str, decision_cycle_id: str = "cycle-1#1",
+    ) -> dict[str, object]:
+        return {
+            "decision_cycle_id": decision_cycle_id,
+            "decision_context_id": None,
+            "symbol": symbol,
+            "source_type": "core",
+            "fdc_ready_at": fdc_ready_at_iso,
+        }
+
+    @pytest.fixture
+    def _shadow_repo(self, monkeypatch: pytest.MonkeyPatch):
+        """실제 ``InMemoryFdcQuotaRepository``를 심어 진짜 FIFO/window
+        판정 로직을 그대로 실행하되, Postgres 연결·설정 파일 의존은
+        전부 fake로 대체한다."""
+        from agent_trading.repositories.memory import InMemoryFdcQuotaRepository
+
+        repo = InMemoryFdcQuotaRepository()
+
+        class _FakeRepos:
+            fdc_quota = repo
+
+        class _FakeSettings:
+            fdc_batch_queue_lifecycle_shadow_enabled = True
+            fdc_provider_target_rpm = 13
+            fdc_provider_rate_window_seconds = 60
+            gemini_provider_declared_rpm_limit = 15
+
+        class _FakeTx:
+            connection = None
+
+            async def commit(self) -> None:
+                return None
+
+        class _FakeTxCM:
+            async def __aenter__(self) -> "_FakeTx":
+                return _FakeTx()
+
+            async def __aexit__(self, *exc: object) -> bool:
+                return False
+
+        monkeypatch.setattr(
+            "agent_trading.config.settings.AppSettings",
+            lambda: _FakeSettings(),
+        )
+        monkeypatch.setattr(
+            "agent_trading.repositories.postgres.bootstrap.build_postgres_repositories",
+            lambda tx: _FakeRepos(),
+        )
+        monkeypatch.setattr(
+            "agent_trading.db.transaction.transaction",
+            lambda: _FakeTxCM(),
+        )
+        return repo
+
+    @pytest.mark.asyncio
+    async def test_core_reversal_earlier_ready_gets_smaller_enqueue_sequence(
+        self, _shadow_repo: object,
+    ) -> None:
+        """핵심 역전 테스트: A(005930)의 fdc_ready_at이 B(000660)보다
+        이르지만, cycle_results 리스트에서는 B가 index 0(=먼저 처리를
+        끝낸 것처럼 보이는 위치)이고 A가 index 1이다. 그래도 A가 더
+        작은 enqueue_sequence를 받고 먼저 SHADOW_WOULD_GRANT돼야 한다."""
+        repo = _shadow_repo
+        t_a = "2026-08-25T09:00:00.000000+00:00"
+        t_b = "2026-08-25T09:00:01.000000+00:00"
+        cycle_results: list[dict[str, object]] = [
+            {"_fdc_ready_shadow_event": self._shadow_event(symbol="000660", fdc_ready_at_iso=t_b)},
+            {"_fdc_ready_shadow_event": self._shadow_event(symbol="005930", fdc_ready_at_iso=t_a)},
+        ]
+
+        await _replay_fdc_ready_shadow_events_for_cycle(cycle_results, cycle_count=1)
+
+        jobs = repo._shadow_jobs["gemini:shared-operational"]
+        assert [j["symbol"] for j in jobs] == ["005930", "000660"]
+        assert jobs[0]["enqueue_sequence"] < jobs[1]["enqueue_sequence"]
+        assert jobs[0]["status"] == "SHADOW_WOULD_GRANT"
+        assert jobs[1]["status"] == "SHADOW_WOULD_GRANT"
+
+    @pytest.mark.asyncio
+    async def test_reversal_14th_ready_job_is_queued_not_the_14th_list_position(
+        self, _shadow_repo: object,
+    ) -> None:
+        """A/B 역전이 포함된 14건 시나리오: cycle_results 리스트 순서는
+        fdc_ready_at 순서와 반대로 섞여 있다. 그래도 실제 fdc_ready_at이
+        가장 늦은 1건만 SHADOW_QUEUED가 되고, 나머지 13건(진짜 순서 기준
+        앞선 13건)은 SHADOW_WOULD_GRANT여야 한다 — cycle_results 리스트
+        상의 마지막 위치가 아니다."""
+        repo = _shadow_repo
+        base = datetime(2026, 8, 25, 9, 0, 0, tzinfo=timezone.utc)
+        # symbol=f"S{i}"의 실제 fdc_ready_at은 i초 뒤(오름차순)지만,
+        # cycle_results 리스트 위치는 역순(마지막에 ready된 게 index 0)으로 섞는다.
+        symbols_by_true_order = [f"S{i:02d}" for i in range(14)]
+        shuffled_indices = list(reversed(range(14)))
+        cycle_results: list[dict[str, object]] = [None] * 14  # type: ignore[list-item]
+        for true_order, list_position in enumerate(shuffled_indices):
+            symbol = symbols_by_true_order[true_order]
+            fdc_ready_at_iso = (base + timedelta(seconds=true_order)).isoformat()
+            cycle_results[list_position] = {
+                "_fdc_ready_shadow_event": self._shadow_event(
+                    symbol=symbol, fdc_ready_at_iso=fdc_ready_at_iso,
+                )
+            }
+
+        await _replay_fdc_ready_shadow_events_for_cycle(cycle_results, cycle_count=1)
+
+        jobs = repo._shadow_jobs["gemini:shared-operational"]
+        assert len(jobs) == 14
+        jobs_by_symbol = {j["symbol"]: j for j in jobs}
+        # 진짜 fdc_ready_at 순서 기준 앞 13건(S00..S12)은 grant, 가장
+        # 늦은 1건(S13)만 queued.
+        for symbol in symbols_by_true_order[:13]:
+            assert jobs_by_symbol[symbol]["status"] == "SHADOW_WOULD_GRANT", symbol
+        assert jobs_by_symbol[symbols_by_true_order[13]]["status"] == "SHADOW_QUEUED"
+        # enqueue_sequence도 진짜 순서와 정확히 일치해야 한다(FIFO 무순위변경).
+        sequences_in_true_order = [
+            jobs_by_symbol[s]["enqueue_sequence"] for s in symbols_by_true_order
+        ]
+        assert sequences_in_true_order == sorted(sequences_in_true_order)
+
+    @pytest.mark.asyncio
+    async def test_reversal_40_jobs_only_first_13_by_true_order_grant(
+        self, _shadow_repo: object,
+    ) -> None:
+        """A/B 역전이 포함된 40건 시나리오: cycle_results 리스트 순서를
+        완전히 뒤섞어도(완료 순서가 섞인 상황을 흉내) 진짜 fdc_ready_at
+        순서 기준 첫 13건만 grant, 나머지 27건은 queued여야 하며
+        timeout/cancelled 상태는 존재하지 않는다."""
+        repo = _shadow_repo
+        base = datetime(2026, 8, 25, 9, 0, 0, tzinfo=timezone.utc)
+        symbols_by_true_order = [f"S{i:03d}" for i in range(40)]
+        # 결정론적으로 섞인 리스트 위치(짝/홀 인터리빙 — 완료 순서 뒤섞임 흉내)
+        shuffled_indices = list(range(0, 40, 2)) + list(range(1, 40, 2))
+        shuffled_indices.reverse()
+        cycle_results: list[dict[str, object]] = [None] * 40  # type: ignore[list-item]
+        for true_order, list_position in enumerate(shuffled_indices):
+            symbol = symbols_by_true_order[true_order]
+            fdc_ready_at_iso = (base + timedelta(milliseconds=100 * true_order)).isoformat()
+            cycle_results[list_position] = {
+                "_fdc_ready_shadow_event": self._shadow_event(
+                    symbol=symbol, fdc_ready_at_iso=fdc_ready_at_iso,
+                )
+            }
+
+        await _replay_fdc_ready_shadow_events_for_cycle(cycle_results, cycle_count=1)
+
+        jobs = repo._shadow_jobs["gemini:shared-operational"]
+        assert len(jobs) == 40
+        jobs_by_symbol = {j["symbol"]: j for j in jobs}
+        for symbol in symbols_by_true_order[:13]:
+            assert jobs_by_symbol[symbol]["status"] == "SHADOW_WOULD_GRANT"
+        for symbol in symbols_by_true_order[13:]:
+            assert jobs_by_symbol[symbol]["status"] == "SHADOW_QUEUED"
+        statuses = {j["status"] for j in jobs}
+        assert statuses <= {"SHADOW_WOULD_GRANT", "SHADOW_QUEUED"}
+
+    @pytest.mark.asyncio
+    async def test_same_fdc_ready_at_tie_break_by_cycle_index_is_reproducible(
+        self, _shadow_repo: object,
+    ) -> None:
+        """동일 fdc_ready_at 충돌: 두 심볼이 정확히 같은 fdc_ready_at을
+        가지면, cycle_results 리스트 위치(cycle_index — universe 열거
+        시점에 고정, 실행마다 재현 가능)를 tie-breaker로 써서 항상 같은
+        순서로 등록돼야 한다."""
+        repo = _shadow_repo
+        same_ts = "2026-08-25T09:00:00.500000+00:00"
+        cycle_results: list[dict[str, object]] = [
+            {"_fdc_ready_shadow_event": self._shadow_event(symbol="AAA", fdc_ready_at_iso=same_ts)},
+            {"_fdc_ready_shadow_event": self._shadow_event(symbol="BBB", fdc_ready_at_iso=same_ts)},
+        ]
+
+        await _replay_fdc_ready_shadow_events_for_cycle(cycle_results, cycle_count=1)
+
+        jobs = repo._shadow_jobs["gemini:shared-operational"]
+        # cycle_index 0(AAA)이 cycle_index 1(BBB)보다 항상 먼저 등록된다.
+        assert [j["symbol"] for j in jobs] == ["AAA", "BBB"]
+        assert jobs[0]["enqueue_sequence"] < jobs[1]["enqueue_sequence"]
+
+    @pytest.mark.asyncio
+    async def test_limiter_wait_or_provider_duration_does_not_affect_order(
+        self, _shadow_repo: object,
+    ) -> None:
+        """기존 strict limiter 대기 시간·provider 실행 시간은 이 함수의
+        입력(cycle_results의 리스트 위치)에 전혀 반영되지 않는다 — 오직
+        `_fdc_ready_shadow_event["fdc_ready_at"]`(permit 대기 이전에
+        캡처된 값)만 정렬 기준이므로, 이후에 발생하는 실제 대기/실행
+        시간이 아무리 달라도 순서에 영향을 줄 수 없음을 구조적으로
+        증명한다(대기 시간이 긴 심볼이 리스트 뒤에 오더라도 fdc_ready_at
+        이 더 이르면 먼저 grant)."""
+        repo = _shadow_repo
+        t_early = "2026-08-25T09:00:00.000000+00:00"
+        t_late = "2026-08-25T09:00:05.000000+00:00"
+        # "긴 limiter 대기 끝에 늦게 assemble()에 도착"을 리스트 앞쪽
+        # 위치로 흉내내되, 실제 fdc_ready_at은 더 이르다.
+        cycle_results: list[dict[str, object]] = [
+            {"_fdc_ready_shadow_event": self._shadow_event(symbol="SLOW_BUT_EARLY_READY", fdc_ready_at_iso=t_early)},
+            {"_fdc_ready_shadow_event": self._shadow_event(symbol="FAST_BUT_LATE_READY", fdc_ready_at_iso=t_late)},
+        ]
+
+        await _replay_fdc_ready_shadow_events_for_cycle(cycle_results, cycle_count=1)
+
+        jobs = repo._shadow_jobs["gemini:shared-operational"]
+        assert [j["symbol"] for j in jobs] == ["SLOW_BUT_EARLY_READY", "FAST_BUT_LATE_READY"]
+
+    @pytest.mark.asyncio
+    async def test_shadow_disabled_flag_is_a_full_noop(
+        self, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """shadow flag=false이면 build_postgres_repositories/coordinator
+        어느 것도 호출하지 않는다(완전 no-op) — DB 접근 함수 자체가
+        호출되면 AssertionError를 던지도록 만들어 증명한다."""
+        class _FakeSettings:
+            fdc_batch_queue_lifecycle_shadow_enabled = False
+
+        def _boom(*args: object, **kwargs: object) -> None:
+            raise AssertionError("shadow flag=false인데 DB 접근 함수가 호출됨")
+
+        monkeypatch.setattr(
+            "agent_trading.config.settings.AppSettings",
+            lambda: _FakeSettings(),
+        )
+        monkeypatch.setattr(
+            "agent_trading.repositories.postgres.bootstrap.build_postgres_repositories",
+            _boom,
+        )
+        monkeypatch.setattr(
+            "agent_trading.db.transaction.transaction",
+            _boom,
+        )
+        cycle_results: list[dict[str, object]] = [
+            {"_fdc_ready_shadow_event": self._shadow_event(
+                symbol="005930",
+                fdc_ready_at_iso="2026-08-25T09:00:00.000000+00:00",
+            )},
+        ]
+
+        await _replay_fdc_ready_shadow_events_for_cycle(cycle_results, cycle_count=1)
+
+    @pytest.mark.asyncio
+    async def test_no_shadow_events_is_a_full_noop(
+        self, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """이번 사이클에 FDC-ready 이벤트가 하나도 없으면(전부 skip 건)
+        DB 접근 함수 자체를 호출하지 않는다 — FDC skip 건은 shadow
+        대상이 아니라는 계약의 직접 증명."""
+        class _FakeSettings:
+            fdc_batch_queue_lifecycle_shadow_enabled = True
+
+        def _boom(*args: object, **kwargs: object) -> None:
+            raise AssertionError("FDC-ready 이벤트가 없는데 DB 접근 함수가 호출됨")
+
+        monkeypatch.setattr(
+            "agent_trading.config.settings.AppSettings",
+            lambda: _FakeSettings(),
+        )
+        monkeypatch.setattr(
+            "agent_trading.repositories.postgres.bootstrap.build_postgres_repositories",
+            _boom,
+        )
+        monkeypatch.setattr(
+            "agent_trading.db.transaction.transaction",
+            _boom,
+        )
+        cycle_results: list[dict[str, object]] = [
+            {"status": "SKIPPED", "_fdc_ready_shadow_event": None},
+            {"status": "SKIPPED"},
+        ]
+
+        await _replay_fdc_ready_shadow_events_for_cycle(cycle_results, cycle_count=1)
+
+    @pytest.mark.asyncio
+    async def test_real_mode_quota_is_untouched_by_shadow_replay(
+        self, _shadow_repo: object,
+    ) -> None:
+        """shadow replay가 `mode='real'` 집계(try_reserve 경로)에 전혀
+        영향을 주지 않는다 — replay 전후로 `mode='real'` attempt 기록이
+        비어있는 채로 유지된다(shadow는 오직 `_shadow_jobs`에만 쓴다)."""
+        repo = _shadow_repo
+        cycle_results: list[dict[str, object]] = [
+            {"_fdc_ready_shadow_event": self._shadow_event(
+                symbol="005930",
+                fdc_ready_at_iso="2026-08-25T09:00:00.000000+00:00",
+            )},
+        ]
+
+        await _replay_fdc_ready_shadow_events_for_cycle(cycle_results, cycle_count=1)
+
+        # mode='real' 전용 저장소(self._attempts)는 shadow replay로 전혀
+        # 채워지지 않는다 — 존재하더라도 real outcome이 하나도 없어야 한다.
+        real_attempts = [
+            entry for entry in repo._attempts.get("gemini:shared-operational", [])
+            if entry[1] == "real"
+        ]
+        assert real_attempts == []

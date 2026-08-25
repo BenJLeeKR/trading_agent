@@ -304,6 +304,136 @@ jobs:
           bash scripts/harness/run.sh full-test
           bash scripts/harness/run.sh admin-build
 
+  fdc_quota_postgres_relevant:
+    name: FDC quota PostgreSQL relevance detector
+    runs-on: ubuntu-latest
+    outputs:
+      relevant: ${{ steps.detect.outputs.relevant }}
+    steps:
+      # 가장 단순하고 안전한 방식(fetch-depth: 0)을 쓴다 — PR base
+      # SHA가 얕은 checkout 때문에 로컬에 없어 비교 자체가 불가능해지는
+      # 사고를 막는다(2026-08-25 2차 보정).
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Detect FDC quota PostgreSQL-relevant changes
+        id: detect
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          # Safe/Heavy job의 범위·timeout·실행 조건은 건드리지 않고,
+          # 이 좁은 PostgreSQL 통합 job만 독립적으로 file-change 감지한다
+          # (기존 `changes` job의 출력을 재사용하지 않음 — 그 job의 계약을
+          # 변경할 위험을 피하기 위해 완전히 분리된 판정).
+          #
+          # 2026-08-25 2차 보정: 이전 버전은 `HEAD^`(마지막 커밋 1개)만
+          # 봤다 — FDC quota 파일을 고친 커밋 뒤에 문서만 고친 커밋을
+          # 추가로 push하면 마지막 커밋만 비교해 relevant=0으로 잘못
+          # 판정하는 결함이 있었다. 이제 이벤트별로 PR/push **전체
+          # 범위**를 비교 기준으로 쓴다:
+          #   - pull_request: base 브랜치 SHA(github.event.pull_request.
+          #     base.sha) .. HEAD
+          #   - push: 직전 push 시점 SHA(github.event.before) .. HEAD
+          #   - workflow_dispatch: 항상 relevant=1
+          # 판정 로직 자체는 fixture git 저장소로 단위 테스트 가능한
+          # 별도 스크립트(scripts/harness/detect_fdc_quota_postgres_
+          # relevance.sh)로 분리했다 — 이 워크플로 스텝은 이벤트별
+          # base_ref만 계산해 그 스크립트에 넘긴다.
+          event_name="${{ github.event_name }}"
+          case "$event_name" in
+            pull_request)
+              base_ref="${{ github.event.pull_request.base.sha }}"
+              ;;
+            push)
+              base_ref="${{ github.event.before }}"
+              ;;
+            *)
+              base_ref=""
+              ;;
+          esac
+
+          bash scripts/harness/detect_fdc_quota_postgres_relevance.sh \
+            "$event_name" "$base_ref" "HEAD" "." | tee /tmp/fdc_quota_relevance.log
+
+          grep '^relevant=' /tmp/fdc_quota_relevance.log >> "$GITHUB_OUTPUT"
+
+  fdc_quota_postgres_integration:
+    name: FDC quota PostgreSQL integration tests
+    runs-on: ubuntu-latest
+    needs: [fdc_quota_postgres_relevant]
+    if: needs.fdc_quota_postgres_relevant.outputs.relevant == '1'
+    env:
+      HARNESS_CI: "1"
+      HARNESS_SAFE_TIMEOUT_SECONDS: "180"
+      PIP_DISABLE_PIP_VERSION_CHECK: "1"
+      # CI 전용 ephemeral PostgreSQL 컨테이너 접속 정보 — 운영 DB/컨테이너와
+      # 무관하며, 이 job이 끝나면 컨테이너 자체가 폐기된다.
+      DATABASE_HOST: "127.0.0.1"
+      DATABASE_PORT: "5432"
+      DATABASE_USER: "trading"
+      DATABASE_PASSWORD: "trading"
+      DATABASE_NAME: "trading"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version-file: .python-version
+
+      - name: Install backend dependencies
+        run: python3 -m pip install --constraint requirements.lock -e ".[dev]"
+
+      - name: Start CI-only ephemeral PostgreSQL container
+        run: |
+          POSTGRES_VERSION="$(cat .postgres-version)"
+          docker run --detach --name trading_db_fdc_quota_ci \
+            --publish 127.0.0.1:5432:5432 \
+            --env POSTGRES_USER=trading \
+            --env POSTGRES_PASSWORD=trading \
+            --env POSTGRES_DB=trading \
+            "postgres:${POSTGRES_VERSION}"
+          for attempt in {1..30}; do
+            if docker exec trading_db_fdc_quota_ci pg_isready -U trading -d trading >/dev/null 2>&1; then
+              exit 0
+            fi
+            sleep 1
+          done
+          docker logs trading_db_fdc_quota_ci
+          exit 1
+
+      - name: Run FDC quota PostgreSQL integration tests (skip=0 required)
+        run: |
+          set -euo pipefail
+          # migration은 이 CI 전용 컨테이너에만 적용된다 — DATABASE_HOST가
+          # 127.0.0.1(방금 띄운 trading_db_fdc_quota_ci)을 가리키므로,
+          # tests/services/test_fdc_quota_coordinator.py의 db_ready fixture가
+          # create_pool()+run_all_migrations()로 0068_add_fdc_quota_lifecycle_
+          # tables.sql을 포함한 전체 migration을 이 컨테이너에 적용한다.
+          # 운영 DB/컨테이너는 이 job에서 전혀 참조하지 않는다.
+          bash scripts/harness/run.sh test-file tests/services/test_fdc_quota_coordinator.py \
+            2>&1 | tee /tmp/fdc_quota_pg_test.log
+
+          skipped_line="$(grep -oE '[0-9]+ skipped' /tmp/fdc_quota_pg_test.log | tail -1 || true)"
+          skipped_count="$(printf '%s' "$skipped_line" | grep -oE '^[0-9]+' || true)"
+          skipped_count="${skipped_count:-0}"
+          echo "postgres_skipped_count=$skipped_count"
+
+          if [ "$skipped_count" != "0" ]; then
+            echo "::error::PostgreSQL 통합 테스트가 ${skipped_count}건 skip됐습니다 — DATABASE_HOST 등 CI 전용 DB 환경이 제대로 전달되지 않았을 가능성이 있습니다. exit code만으로는 이 job을 통과시키지 않습니다."
+            exit 1
+          fi
+
+      - name: Stop CI-only ephemeral PostgreSQL container
+        if: always()
+        run: docker rm -f trading_db_fdc_quota_ci >/dev/null 2>&1 || true
+
   market_hours_guard:
     name: Market-hours deploy guard
     runs-on: ubuntu-latest

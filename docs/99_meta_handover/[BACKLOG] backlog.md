@@ -8073,3 +8073,168 @@ DB 장애 중 최소 관측 근거(프로세스 로그/in-memory counter, 전부
 자동 발동하지 않음을 명시하고, 장기 장애 시 운영자 수동 개입을 표준
 절차로 문서화했다. 같은 브랜치·PR(#350)에 추가 커밋만 반영, 신규 PR
 없음. 런타임 코드·migration·compose·`.env` 변경 없음.
+
+## FDC cycle-scoped batch queue Phase 1(lifecycle shadow 기반) 구현 완료(2026-08-25 KST)
+
+상세: `docs/40_action_plans/fdc_cycle_scoped_batch_queue_gemini_
+shared_13rpm_quota_design_2026-08-25.md`(설계 문서 상단 상태 갱신).
+
+- PR #350 설계 문서를 기준으로 Phase 1(lifecycle shadow 기반)을
+  구현했다. 신규 migration(`0068_add_fdc_quota_lifecycle_tables.sql`,
+  `fdc_quota_state`/`fdc_queue_jobs`/`fdc_provider_attempts` 3-테이블),
+  신규 repository(`FdcQuotaRepository` Protocol + Postgres/InMemory
+  구현, 기존 `RepositoryContainer` 관례 그대로 준수), 신규 서비스
+  (`FdcQuotaCoordinator` — atomic reservation §6 계약 그대로 구현,
+  단 Phase 1에서는 단위/통합 테스트 전용이고 실제 런타임 경로에는
+  미연결), `decision_orchestrator.py`에 lifecycle shadow 관측 메서드
+  추가(다른 shadow 관측 메서드와 동일한 관측 전용 원칙).
+- 신규 설정 `FDC_BATCH_QUEUE_LIFECYCLE_SHADOW_ENABLED`(기본 false)/
+  `FDC_PROVIDER_TARGET_RPM`(13)/`FDC_PROVIDER_RATE_WINDOW_SECONDS`(60)/
+  `GEMINI_PROVIDER_DECLARED_RPM_LIMIT`(15) — `settings.py`→
+  `run_decision_loop.py`→`docker-compose.yml`→`.env.example` 배선.
+- 기존 실제 FDC HTTP 호출, 기존 `fdc_rate_limiter.py`(10 RPM strict
+  limiter), 기존 `provider_client.generate_structured()` retry, EI/AR/
+  AC, held_position override, EV gate, sizing, sell guard, 주문 제출
+  경로는 전혀 변경하지 않았다 — shadow flag 기본값 false에서는 신규
+  코드 경로가 전혀 실행되지 않는다.
+- 테스트: `test_fdc_quota_coordinator.py`(신규, 11 in-memory 로직
+  테스트 + 3 Postgres 통합 테스트(DATABASE_HOST 없으면 skip)),
+  `test_decision_orchestrator.py`에 shadow 관측 메서드 테스트 6건
+  추가(전부 mock coordinator, DB 불필요) — 전체 105 passed.
+  `accept architecture`/`accept db-structure`/`accept backend-runtime`/
+  `accept env`/`accept no-bypass`/`accept style`/`accept docs` 전부
+  PASS 확인.
+- **다음 단계**: 실제 cycle-scoped dispatcher, FDC one-shot 인터페이스
+  (`generate_structured_once()`), `LiveGeminiProviderClient`/
+  `FakeProviderClient` 타입 분리, held_position lane 한정 실제 전환
+  — 전부 후속 PR 대상, 이번 PR에서는 미착수.
+
+## FDC cycle-scoped batch queue Phase 1(lifecycle shadow) 보정 — PR #351 병합 전 수정(2026-08-25 KST)
+
+상세: `docs/30_work_log/2026-08-25_fdc_quota_lifecycle_shadow_phase1_
+correction.md`.
+
+- 위 Phase 1 초기 구현에 두 결함이 발견돼 같은 PR #351(같은 브랜치)에서
+  보정했다: (1) shadow 판정이 `mode='real'` attempt를 세는 바람에
+  window_count가 항상 0이 돼 모든 FDC-ready job이 무조건 `SHADOW_WOULD_
+  GRANT`로 기록되던 결함, (2) shadow 관측 시점이 `assemble()` 내부 기존
+  FDC 호출·permit 대기 **이후**였던 결함 — 13 RPM 가상 큐의 실제 도착
+  순서를 재현할 수 없었다.
+- 보정: `register_shadow_job_and_judge()`(신규 원자적 단일 메서드)가
+  오직 같은 `quota_scope`의 `mode='shadow'` 행만 보고, DB 발급
+  `enqueue_sequence`(anchor-row 잠금 트랜잭션 안에서 INSERT와 원자적
+  채번)를 FIFO 키로 사용. `fdc_ready_at` 캡처를 `run_agent_subprocess.
+  py`의 `_check_fdc_skip()` 반환 직후·permit 대기 시작 직전으로 이동해
+  subprocess 경계 너머로 전파(`AgentSubprocessOutput`→`AIDecisionInputs`).
+- 테스트로 13/14/40건 시나리오·FIFO 무순위변경·60초 경계·real/shadow
+  상호 무간섭·shadow 등록 시점이 permit 대기 이전임을 전부 확인
+  (`test_fdc_quota_coordinator.py::TestShadowFifoQueueLogic`,
+  `test_fdc_skip.py::TestFdcReadyAtCapturedBeforePermitWait`).
+- 기존 실제 FDC 호출/10 RPM strict limiter/provider 호출 수/주문
+  정책/EV gate/sizing/sell guard/주문 제출은 변경하지 않았다. shadow
+  기본값은 여전히 `false`. migration은 여전히 미적용.
+- 사용자 지시에 따라 새 PR을 만들지 않고 기존 PR #351을 같은 브랜치에서
+  갱신했으며, 이 턴에서 병합은 수행하지 않았다.
+
+## FDC cycle-scoped batch queue Phase 1(lifecycle shadow) 2차 보정 — PR #351 병합 전 수정(2026-08-25 KST)
+
+상세: `docs/30_work_log/2026-08-25_fdc_quota_lifecycle_shadow_phase1_
+correction_2.md`.
+
+- 위 1차 보정 이후에도 여전히 남아있던 구조적 결함을 발견해 같은
+  PR #351(같은 브랜치)에서 보정했다: shadow job의 DB 등록·`enqueue_
+  sequence` 발급이 `assemble()` 내부(기존 FDC 호출·10 RPM strict
+  limiter 대기 이후)에서 일어나, 여러 심볼이 동시 처리되는 실제 구조
+  에서 "`assemble()` 도착 순서"(=limiter 대기·provider 응답·subprocess
+  종료 순서에 좌우됨)가 "실제 `fdc_ready_at` 순서"와 달라 역전이
+  발생할 수 있었다 — 나중에 FDC-ready된 심볼이 먼저 도착해 더 작은
+  `enqueue_sequence`를 받는 경우.
+- 보정 방식 B(사이클 종료 후 정렬 재생) 채택: `assemble()`은 더 이상
+  DB에 쓰지 않고 `FdcReadyShadowEvent`(DB 미접촉, 순수 값 객체)만
+  노출한다. `run_decision_loop.py`가 사이클의 모든 심볼 처리
+  (`asyncio.gather()`, 완료 순서와 무관하게 입력 순서를 보존)가 끝난
+  뒤, 신규 `_replay_fdc_ready_shadow_events_for_cycle()`이 이 이벤트들을
+  `(fdc_ready_at, cycle_index)` 기준으로 정렬해 순차 재생한다 — DB
+  등록 자체를 사이클 종료 후로 미뤄 `enqueue_sequence`가 항상 진짜
+  FDC-ready 순서를 반영하게 만들었다. subprocess가 DB에 직접 접근하는
+  A안은 기존 프로세스 격리 원칙을 깨고 변경 범위가 커서 배제했다.
+- `decision_cycle_id`도 `request.correlation_id`(심볼별 고유 문자열)
+  에서 진짜 cycle-scoped 식별자로 교체(`assemble()`/`assemble_and_
+  submit()`/`_run_decision_pipeline()`에 파라미터 추가) — 기존
+  guardrail 기록 경로가 이미 이 값을 cycle 단위로 쓰고 있음을 코드로
+  확인해 추정 없이 증명했다.
+- 테스트로 A/B 역전이 포함된 14/40건 시나리오·동일 fdc_ready_at
+  tie-break·limiter 대기 시간 무관성을 확인
+  (`test_run_decision_loop.py::TestReplayFdcReadyShadowEventsForCycle`,
+  8건, in-memory repository + fake Postgres 배선), 실제 PostgreSQL에서도
+  "정렬된 순서로 순차 호출하면 DB가 그 순서를 그대로 반영한다"를 확인
+  (`test_fdc_quota_coordinator.py::TestPostgresShadowFifoQueue::
+  test_sequential_replay_in_true_fdc_ready_order_grants_by_that_order`,
+  신규, 로컬 `DATABASE_HOST` 없어 skip — CI Heavy harness는
+  `workflow_dispatch(run_heavy=true)` 수동 트리거 전용이라 일반 PR
+  자동 CI에서도 실행되지 않음, `.github/workflows/harness.yml`의
+  `if` 조건으로 코드 확인).
+- 기존 실제 FDC 호출/10 RPM strict limiter/provider 호출 수/주문
+  정책/EV gate/sizing/sell guard/주문 제출은 변경하지 않았다. shadow
+  기본값은 여전히 `false`. migration은 여전히 미적용. 새 PR을 만들지
+  않고 같은 브랜치에서 갱신했으며, 이 턴에서도 병합은 수행하지 않았다.
+
+## FDC cycle-scoped batch queue Phase 1(lifecycle shadow) — PostgreSQL 전용 좁은 CI 경로 추가(PR #351, 2026-08-25 KST)
+
+상세: `docs/30_work_log/2026-08-25_fdc_quota_lifecycle_shadow_phase1_
+postgres_ci.md`.
+
+- 전체 heavy test suite(`pytest tests/ -v`, 900초 timeout)가 알파벳순
+  19%에서 타임아웃돼 `tests/services/test_fdc_quota_coordinator.py`의
+  PostgreSQL 통합 테스트에 도달하지 못하던 문제를, 그 파일 **한 개만**
+  실제 PostgreSQL로 검증하는 신규 CI job(`fdc_quota_postgres_relevant`
+  판정 + `fdc_quota_postgres_integration` 실행)으로 해결했다.
+- `test-file` harness 명령이 CI 환경(`WORKSPACE_ROLE=ci`)에서는 이미
+  host python3로 직접 실행되며 job `env:`의 `DATABASE_*`를 그대로
+  상속함을 코드로 확인해, harness 스크립트 변경 없이 workflow job
+  구성만으로 구현했다(B안). migration 적용도 기존 `db_ready` fixture
+  (`create_pool()+run_all_migrations()`)가 이미 담당하므로 별도
+  migration 스텝 불필요.
+- 신규 job은 CI 전용 ephemeral `trading_db_fdc_quota_ci` 컨테이너(job
+  종료 시 폐기)만 쓰고, PR 변경 파일이 FDC quota 관련 경로(migration/
+  repository/coordinator/테스트 파일/workflow 자체)일 때만 실행되도록
+  좁혔다(`workflow_dispatch`는 항상 실행). pytest exit code만 보지 않고
+  출력의 "N skipped"를 직접 파싱해 1건이라도 skip이면 job을 실패
+  처리한다.
+- 부수 발견: `try_reserve()`/`register_shadow_job_and_judge()` 둘 다
+  anchor 행(`SELECT ... FOR UPDATE`)이 없을 때 `fetchrow()`의 `None`
+  반환을 확인하지 않고 그대로 진행하는 **fail-open** 결함을 발견해
+  보정했다 — 이제 anchor 행이 없으면 즉시 롤백 후 `CoordinatorError`를
+  반환한다(신규 테스트 `TestPostgresAnchorRowFailClosed` 2건). 그 외
+  shadow 13/14건·real-shadow 상호 무간섭 관련 테스트 3건도 추가했다.
+- `safe`/`heavy` job의 범위·timeout·실행 조건은 전혀 변경하지 않았다.
+  기존 FDC 호출/limiter/주문 정책/`.env`/compose runtime 설정도 무변경.
+  새 PR을 만들지 않고 같은 브랜치에서 갱신했으며, 이 턴에서도 병합은
+  수행하지 않았다.
+
+## FDC quota PostgreSQL 전용 CI relevance detector 보정 — HEAD^만 보던 결함(PR #351, 2026-08-25 KST)
+
+상세: `docs/30_work_log/2026-08-25_fdc_quota_postgres_ci_relevance_fix.md`.
+
+- 위 PostgreSQL 전용 CI job의 `fdc_quota_postgres_relevant` 판정이
+  `git diff HEAD^ HEAD`(마지막 커밋 1개)만 봐서, FDC quota 파일을 고친
+  뒤 문서만 고친 커밋을 추가 push하면 `relevant=0`으로 잘못 판정해
+  실제 quota/migration 변경이 있는 PR에서도 PostgreSQL 검증이 빠질 수
+  있던 결함을 보정했다.
+- 이벤트별로 PR/push **전체 범위**를 비교 기준으로 바꿨다(`pull_request`
+  →`github.event.pull_request.base.sha..HEAD`, `push`→`github.event.
+  before..HEAD`, `workflow_dispatch`→항상 relevant=1). 판정 로직은
+  `scripts/harness/detect_fdc_quota_postgres_relevance.sh`(순수 bash,
+  GitHub Actions 컨텍스트 비의존)로 분리해 fixture git 저장소로 단위
+  테스트 가능하게 만들었다(`test_docker_compose_env_git_sha.sh`와
+  동일 관례).
+- base ref를 확인할 수 없으면(얕은 checkout, push 최초 커밋의 all-zero
+  SHA 등) fail-open(`relevant=0`)이 아니라 보수적 fallback(`relevant=1`)
+  을 선택했다 — 이 job이 매우 가벼워 불필요한 재실행 비용보다 검증
+  누락 방지가 우선이라는 판단.
+- `bash scripts/harness/test_detect_fdc_quota_postgres_relevance.sh`로
+  10개 케이스(HEAD^ 기준이면 결함이 재현됨을 보이는 대조 확인 포함)를
+  전부 PASS 확인. `safe`/`heavy` job의 범위·timeout·실행 조건은
+  변경하지 않았고, FDC quota runtime 코드/migration/provider/limiter/
+  dispatcher/주문 정책도 무변경. 새 PR을 만들지 않고 같은 브랜치에서
+  갱신했으며, 이 턴에서도 병합은 수행하지 않았다.
