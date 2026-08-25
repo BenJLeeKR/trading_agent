@@ -8073,3 +8073,38 @@ DB 장애 중 최소 관측 근거(프로세스 로그/in-memory counter, 전부
 자동 발동하지 않음을 명시하고, 장기 장애 시 운영자 수동 개입을 표준
 절차로 문서화했다. 같은 브랜치·PR(#350)에 추가 커밋만 반영, 신규 PR
 없음. 런타임 코드·migration·compose·`.env` 변경 없음.
+
+## FDC cycle-scoped batch queue Phase 1(lifecycle shadow 기반) 구현 완료(2026-08-25 KST)
+
+상세: `docs/40_action_plans/fdc_cycle_scoped_batch_queue_gemini_
+shared_13rpm_quota_design_2026-08-25.md`(설계 문서 상단 상태 갱신).
+
+- PR #350 설계 문서를 기준으로 Phase 1(lifecycle shadow 기반)을
+  구현했다. 신규 migration(`0068_add_fdc_quota_lifecycle_tables.sql`,
+  `fdc_quota_state`/`fdc_queue_jobs`/`fdc_provider_attempts` 3-테이블),
+  신규 repository(`FdcQuotaRepository` Protocol + Postgres/InMemory
+  구현, 기존 `RepositoryContainer` 관례 그대로 준수), 신규 서비스
+  (`FdcQuotaCoordinator` — atomic reservation §6 계약 그대로 구현,
+  단 Phase 1에서는 단위/통합 테스트 전용이고 실제 런타임 경로에는
+  미연결), `decision_orchestrator.py`에 lifecycle shadow 관측 메서드
+  추가(다른 shadow 관측 메서드와 동일한 관측 전용 원칙).
+- 신규 설정 `FDC_BATCH_QUEUE_LIFECYCLE_SHADOW_ENABLED`(기본 false)/
+  `FDC_PROVIDER_TARGET_RPM`(13)/`FDC_PROVIDER_RATE_WINDOW_SECONDS`(60)/
+  `GEMINI_PROVIDER_DECLARED_RPM_LIMIT`(15) — `settings.py`→
+  `run_decision_loop.py`→`docker-compose.yml`→`.env.example` 배선.
+- 기존 실제 FDC HTTP 호출, 기존 `fdc_rate_limiter.py`(10 RPM strict
+  limiter), 기존 `provider_client.generate_structured()` retry, EI/AR/
+  AC, held_position override, EV gate, sizing, sell guard, 주문 제출
+  경로는 전혀 변경하지 않았다 — shadow flag 기본값 false에서는 신규
+  코드 경로가 전혀 실행되지 않는다.
+- 테스트: `test_fdc_quota_coordinator.py`(신규, 11 in-memory 로직
+  테스트 + 3 Postgres 통합 테스트(DATABASE_HOST 없으면 skip)),
+  `test_decision_orchestrator.py`에 shadow 관측 메서드 테스트 6건
+  추가(전부 mock coordinator, DB 불필요) — 전체 105 passed.
+  `accept architecture`/`accept db-structure`/`accept backend-runtime`/
+  `accept env`/`accept no-bypass`/`accept style`/`accept docs` 전부
+  PASS 확인.
+- **다음 단계**: 실제 cycle-scoped dispatcher, FDC one-shot 인터페이스
+  (`generate_structured_once()`), `LiveGeminiProviderClient`/
+  `FakeProviderClient` 타입 분리, held_position lane 한정 실제 전환
+  — 전부 후속 PR 대상, 이번 PR에서는 미착수.

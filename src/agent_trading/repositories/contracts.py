@@ -4,6 +4,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import date, datetime
 from decimal import Decimal
+from enum import Enum
 from typing import Any, Protocol
 from uuid import UUID
 
@@ -1996,5 +1997,136 @@ class OrderSubmissionAttemptRepository(Protocol):
         - order_request_id, symbol, side, latest_outcome,
           latest_error_type, latest_raw_code, latest_raw_message,
           last_submitted_at, created_at
+        """
+        ...
+
+
+# ---------------------------------------------------------------------------
+# FDC cycle-scoped batch queue — Gemini 공용 13 RPM quota coordinator (Phase 1)
+# ---------------------------------------------------------------------------
+#
+# 설계 근거: docs/40_action_plans/fdc_cycle_scoped_batch_queue_gemini_
+# shared_13rpm_quota_design_2026-08-25.md §6·§8·§9.
+
+
+class CoordinatorErrorClass(str, Enum):
+    """DB/coordinator 오류 3분류(설계 문서 §6 "coordinator 오류 경로").
+
+    이 분류는 DB row가 아니라 호출자의 프로세스 로그/메트릭 계층에서만
+    쓰인다 — DB 자체가 unavailable인 경우 그 사실 자체를 DB에 영속
+    기록할 방법이 없기 때문이다(A안, 설계 문서 §9의 4차 개정).
+    """
+
+    COORDINATOR_UNAVAILABLE = "coordinator_unavailable"
+    COORDINATOR_LOCK_TIMEOUT = "coordinator_lock_timeout"
+    COORDINATOR_TRANSACTION_ERROR = "coordinator_transaction_error"
+
+
+@dataclass(frozen=True, slots=True)
+class ReservationGrant:
+    """§6 트랜잭션이 성공(GRANTED)했을 때의 결과."""
+
+    reservation_id: UUID
+    quota_scope: str
+    job_id: UUID | None
+    attempt_no: int
+    window_count_before_grant: int
+
+
+@dataclass(frozen=True, slots=True)
+class ReservationDenied:
+    """§6 트랜잭션이 정상 완료됐으나 quota가 가득 차 거부(DENIED)된 결과."""
+
+    quota_scope: str
+    window_count: int
+
+
+@dataclass(frozen=True, slots=True)
+class CoordinatorError:
+    """coordinator 호출 자체가 실패한 경우(§6 "coordinator 오류 경로").
+
+    ``GRANTED``도 ``DENIED``도 아니므로 ``queue_poll_count``/
+    ``reservation_denied_count``/``dispatch_attempt_no`` 중 어느 것도
+    증가시키지 않는다.
+    """
+
+    error_class: CoordinatorErrorClass
+    detail: str
+
+
+ReservationResult = ReservationGrant | ReservationDenied | CoordinatorError
+
+
+@dataclass(frozen=True, slots=True)
+class ShadowJudgement:
+    """shadow 판단 결과 — 실제 quota를 소비하지 않는다."""
+
+    would_grant: bool
+    window_count: int
+    attempt_id: UUID
+
+
+ShadowJudgementResult = ShadowJudgement | CoordinatorError
+
+
+class FdcQuotaRepository(Protocol):
+    """FDC 공용 13 RPM quota의 atomic reservation과 lifecycle shadow 관측.
+
+    ``fdc_quota_state``(singleton anchor)/``fdc_queue_jobs``/
+    ``fdc_provider_attempts`` 3개 테이블을 함께 다룬다 — 세 테이블이
+    항상 하나의 원자적 단위(§6 트랜잭션)로 갱신되기 때문에 별도
+    repository로 쪼개지 않는다.
+
+    ``try_reserve()``는 Phase 1에서 실제 런타임 경로에 연결되지 않는다
+    (단위/통합 테스트 전용). ``create_shadow_job()``/``judge_shadow_
+    reservation()``만 Phase 1의 실제 관측 경로다.
+    """
+
+    async def try_reserve(
+        self,
+        *,
+        quota_scope: str,
+        target_rpm: int,
+        window_seconds: int,
+        job_id: UUID | None,
+        caller_id: str,
+        mode: str = "real",
+        manual_run_id: str | None = None,
+        attempt_no: int = 1,
+        lock_timeout_ms: int = 3000,
+    ) -> ReservationResult:
+        """§6의 atomic reservation transaction 계약을 그대로 구현한다.
+
+        anchor 행을 ``SELECT ... FOR UPDATE``로 잠근 뒤 ``(t-window_
+        seconds, t]`` 구간의 유효 reservation 수를 세고, ``target_rpm``
+        미만이면 새 attempt 행을 INSERT해 승인한다. 트랜잭션/행 잠금을
+        쥔 채 네트워크 I/O(Gemini HTTP 호출)를 절대 수행하지 않는다.
+        """
+        ...
+
+    async def create_shadow_job(
+        self,
+        *,
+        decision_cycle_id: str | None,
+        decision_context_id: UUID | None,
+        symbol: str,
+        source_type: str,
+    ) -> UUID:
+        """FDC-ready로 확정된 건에 대해 ``mode='shadow'`` job row를 만든다."""
+        ...
+
+    async def judge_shadow_reservation(
+        self,
+        *,
+        job_id: UUID,
+        quota_scope: str,
+        target_rpm: int,
+        window_seconds: int,
+        caller_id: str = "ops-scheduler",
+    ) -> ShadowJudgementResult:
+        """"13 RPM 공용 quota였다면 지금 승인됐을까"를 관측만 한다.
+
+        ``mode='real'`` 행만 집계하므로 기존 strict limiter/실제 quota에
+        전혀 영향을 주지 않는다.
         """
         ...

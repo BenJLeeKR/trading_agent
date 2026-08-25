@@ -16,6 +16,7 @@ from agent_trading.repositories.contracts import (
     DecisionContextRepository,
     ExecutionAttemptRepository,
     ExternalEventRepository,
+    FdcQuotaRepository,
     FillEventRepository,
     FillSyncRunRepository,
     GuardrailEvaluationRepository,
@@ -94,3 +95,4 @@ class RepositoryContainer:
     realized_pnl_recompute_queue: RealizedPnlRecomputeQueueRepository
     historical_buy_fee_overlays: HistoricalBuyFeeOverlayRepository
     historical_sell_fee_tax_overlays: HistoricalSellFeeTaxOverlayRepository
+    fdc_quota: FdcQuotaRepository

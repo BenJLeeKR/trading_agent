@@ -28,6 +28,10 @@ from agent_trading.domain.entities import (
 )
 from agent_trading.domain.enums import DecisionType, OrderSide
 from agent_trading.domain.models import SubmitOrderRequest
+from agent_trading.services.fdc_quota_coordinator import (
+    CoordinatorError,
+    FdcQuotaCoordinator,
+)
 from agent_trading.services.loss_cut_shadow import evaluate_loss_cut_shadow
 from agent_trading.services.shadow_bots import (
     AR_SHADOW_RULE_SET_VERSION,
@@ -334,6 +338,9 @@ class DecisionOrchestratorService:
         held_position_fdc_skip_shadow_enabled: bool = False,
         # --- held_position REDUCE/SELL_CANDIDATE shadow-skip 관측 (관측 전용, 결정 미개입) ---
         held_position_reduce_skip_shadow_enabled: bool = False,
+        # --- FDC cycle-scoped batch queue lifecycle shadow (Phase 1, 관측 전용, 결정 미개입) ---
+        fdc_batch_queue_lifecycle_shadow_enabled: bool = False,
+        fdc_quota_coordinator: "FdcQuotaCoordinator | None" = None,
     ) -> None:
         self._repos = repos
         self._decision_context_service = DecisionContextService(repos)
@@ -412,6 +419,14 @@ class DecisionOrchestratorService:
         self._held_position_reduce_skip_shadow_enabled = (
             held_position_reduce_skip_shadow_enabled
         )
+        # FDC cycle-scoped batch queue lifecycle shadow(Phase 1) — 동일한
+        # 관측 전용 원칙. FDC-ready(fdc_skipped=False)로 확정된 건에 한해
+        # "13 RPM 공용 quota였다면 승인됐을까"만 관측하고, 실제 FDC 호출
+        # 여부/decision_type/side/주문 제출을 절대 바꾸지 않는다.
+        self._fdc_batch_queue_lifecycle_shadow_enabled = (
+            fdc_batch_queue_lifecycle_shadow_enabled
+        )
+        self._fdc_quota_coordinator = fdc_quota_coordinator
         # --- Execution Service (execution pipeline state: sell guard, quote CB, fresh check) ---
         self._execution_service = ExecutionService(
             repos=repos,
@@ -1491,6 +1506,67 @@ class DecisionOrchestratorService:
                 "shadow_held_position_reduce_skip observation sync failed: "
                 "trade_decision_id=%s",
                 trade_decision_id,
+                exc_info=True,
+            )
+
+    async def _record_fdc_batch_queue_lifecycle_shadow_observation(
+        self,
+        *,
+        request: SubmitOrderRequest,
+        assembled_context: AssembledContext,
+        resolved_context_id: UUID | None,
+        fdc_skipped: bool,
+    ) -> None:
+        """FDC cycle-scoped batch queue **lifecycle shadow**(Phase 1,
+        관측 전용) — "13 RPM 공용 quota였다면 이 시점에 승인됐을까"만
+        기록한다.
+
+        설계 근거: docs/40_action_plans/fdc_cycle_scoped_batch_queue_
+        gemini_shared_13rpm_quota_design_2026-08-25.md.
+
+        ``fdc_skipped``(``ai_call_path.fdc_skipped``, `_check_fdc_skip()`
+        의 결정론적 판정 결과)가 ``False``인 건만 대상으로 삼는다 — 이는
+        "FDC-ready"(결정론적 skip 조건에 걸리지 않아 실제로 FDC 호출이
+        시도된 건)를 뜻하며, 기존 strict limiter가 이후 그 호출을 실제로
+        승인했는지(성공) 거부했는지(``provider_queue_timeout``)와는
+        무관하다 — 양쪽 다 "FDC-ready였다"는 사실은 동일하기 때문이다.
+
+        이 메서드는 새 `fdc_quota_coordinator.FdcQuotaCoordinator`의
+        ``mode='shadow'`` 경로만 호출한다 — 기존 `fdc_rate_limiter.py`의
+        실제 strict limiter, 실제 FDC HTTP 호출, `decision_type`/`side`/
+        주문 제출 경로는 전혀 참조하지도, 바꾸지도 않는다. coordinator
+        호출이 실패해도(DB 장애 등) 예외를 삼켜 기존 파이프라인에
+        영향을 주지 않는다(다른 shadow 관측 메서드와 동일한 안전 원칙).
+        """
+        if not self._fdc_batch_queue_lifecycle_shadow_enabled:
+            return
+        if self._fdc_quota_coordinator is None:
+            return
+        if fdc_skipped:
+            return
+
+        try:
+            job_id = await self._fdc_quota_coordinator.create_shadow_job(
+                decision_cycle_id=request.correlation_id,
+                decision_context_id=resolved_context_id,
+                symbol=request.symbol,
+                source_type=(assembled_context.source_type or "core"),
+            )
+            result = await self._fdc_quota_coordinator.judge_shadow_reservation(
+                job_id=job_id,
+            )
+            if isinstance(result, CoordinatorError):
+                logger.warning(
+                    "fdc_batch_queue_lifecycle_shadow coordinator error: "
+                    "symbol=%s error_class=%s detail=%s",
+                    request.symbol,
+                    result.error_class.value,
+                    result.detail,
+                )
+        except Exception:
+            logger.warning(
+                "fdc_batch_queue_lifecycle_shadow observation failed: symbol=%s",
+                request.symbol,
                 exc_info=True,
             )
 
@@ -3255,6 +3331,12 @@ class DecisionOrchestratorService:
             ar_output=agent_bundle.risk_output,
             composer_output=agent_bundle.composer_output,
             fdc_raw_decision_type=_fdc_raw_decision_type,
+        )
+        await self._record_fdc_batch_queue_lifecycle_shadow_observation(
+            request=request,
+            assembled_context=assembled_context,
+            resolved_context_id=resolved_context_id,
+            fdc_skipped=agent_bundle.ai_inputs.fdc_skipped,
         )
 
         # --- Generate decision_id if not provided ---

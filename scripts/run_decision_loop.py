@@ -87,6 +87,7 @@ from agent_trading.services.deterministic_trigger_engine import (
     DeterministicTriggerAssessment,
 )
 from agent_trading.services.execution_service import ExecutionService
+from agent_trading.services.fdc_quota_coordinator import FdcQuotaCoordinator
 from agent_trading.services.guardrail_audit import (
     persist_validation_result,
 )
@@ -1332,6 +1333,15 @@ async def _build_core_risk_off_apply_overrides_for_cycle(
             held_position_reduce_skip_shadow_enabled=(
                 settings.held_position_reduce_skip_shadow_enabled
             ),
+            fdc_batch_queue_lifecycle_shadow_enabled=(
+                settings.fdc_batch_queue_lifecycle_shadow_enabled
+            ),
+            fdc_quota_coordinator=FdcQuotaCoordinator(
+                repo=repos.fdc_quota,
+                target_rpm=settings.fdc_provider_target_rpm,
+                window_seconds=settings.fdc_provider_rate_window_seconds,
+                declared_rpm_limit=settings.gemini_provider_declared_rpm_limit,
+            ),
         )
         for item in universe:
             if item.source_type != "core":
@@ -1897,6 +1907,15 @@ async def _run_one_cycle(
                 ),
                 held_position_reduce_skip_shadow_enabled=(
                     settings.held_position_reduce_skip_shadow_enabled
+                ),
+                fdc_batch_queue_lifecycle_shadow_enabled=(
+                    settings.fdc_batch_queue_lifecycle_shadow_enabled
+                ),
+                fdc_quota_coordinator=FdcQuotaCoordinator(
+                    repo=repos.fdc_quota,
+                    target_rpm=settings.fdc_provider_target_rpm,
+                    window_seconds=settings.fdc_provider_rate_window_seconds,
+                    declared_rpm_limit=settings.gemini_provider_declared_rpm_limit,
                 ),
             )
             reconciliation_service = ReconciliationService(repos=repos)

@@ -32,6 +32,7 @@ from agent_trading.repositories.postgres.execution_attempts import (
 from agent_trading.repositories.postgres.external_events import (
     PostgresExternalEventRepository,
 )
+from agent_trading.repositories.postgres.fdc_quota import PostgresFdcQuotaRepository
 from agent_trading.repositories.postgres.fill_events import (
     PostgresFillEventRepository,
 )
@@ -191,4 +192,5 @@ def build_postgres_repositories(
         realized_pnl_recompute_queue=PostgresRealizedPnlRecomputeQueueRepository(tx),
         historical_buy_fee_overlays=PostgresHistoricalBuyFeeOverlayRepository(tx),
         historical_sell_fee_tax_overlays=PostgresHistoricalSellFeeTaxOverlayRepository(tx),
+        fdc_quota=PostgresFdcQuotaRepository(tx),
     )

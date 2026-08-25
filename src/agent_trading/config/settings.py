@@ -662,6 +662,47 @@ def _resolve_held_position_reduce_skip_shadow_enabled() -> bool:
     return raw.strip().lower() == "true"
 
 
+def _resolve_fdc_batch_queue_lifecycle_shadow_enabled() -> bool:
+    """FDC cycle-scoped batch queue **lifecycle shadow**(관측 전용) on/off
+    스위치를 ``FDC_BATCH_QUEUE_LIFECYCLE_SHADOW_ENABLED`` env에서 읽는다.
+
+    설계 근거: docs/40_action_plans/fdc_cycle_scoped_batch_queue_gemini_
+    shared_13rpm_quota_design_2026-08-25.md. 다른 shadow 스위치들과 동일한
+    패턴 — 기본값 ``False``, ``True``여도 실제 FDC HTTP 호출·기존
+    `fdc_rate_limiter.py` strict limiter·주문 제출에는 전혀 개입하지
+    않는다. FDC-ready(=``ai_call_path.fdc_skipped is False``)로 확정된
+    건에 한해, "13 RPM 공용 quota였다면 이 시점에 승인됐을까"를
+    ``fdc_queue_jobs``/``fdc_provider_attempts``(둘 다 ``mode='shadow'``)
+    에만 기록한다 — 실제 quota를 소비하지 않는다.
+    """
+    raw = os.getenv("FDC_BATCH_QUEUE_LIFECYCLE_SHADOW_ENABLED", "false")
+    return raw.strip().lower() == "true"
+
+
+def _resolve_fdc_provider_target_rpm() -> int:
+    """``FDC_PROVIDER_TARGET_RPM`` env — 공용 quota coordinator의 운영
+    목표 RPM. 기본값 ``13``(Gemini 선언 한도 15보다 여유 2를 둔 값,
+    설계 문서 §13). Phase 1에서는 shadow 판단에만 쓰이고 실제 provider
+    호출 상한을 바꾸지 않는다 — 기존 ``fdc_rate_limiter.py``의
+    ``DEFAULT_MAX_CALLS_PER_WINDOW=10``이 여전히 실제 HTTP 요청의
+    유일한 제한 장치다."""
+    return max(1, int(os.getenv("FDC_PROVIDER_TARGET_RPM", "13")))
+
+
+def _resolve_fdc_provider_rate_window_seconds() -> int:
+    """``FDC_PROVIDER_RATE_WINDOW_SECONDS`` env — quota coordinator의
+    sliding window 길이(초). 기본값 ``60``."""
+    return max(1, int(os.getenv("FDC_PROVIDER_RATE_WINDOW_SECONDS", "60")))
+
+
+def _resolve_gemini_provider_declared_rpm_limit() -> int:
+    """``GEMINI_PROVIDER_DECLARED_RPM_LIMIT`` env — Gemini 측 선언
+    한도(문서/startup validation 전용 값, 코드가 실제로 강제 호출하는
+    값이 아니다). 기본값 ``15``. 외부 provider의 실시간 검증값이 아니라
+    운영자가 알고 있는 선언값임에 유의(설계 문서 §13)."""
+    return max(1, int(os.getenv("GEMINI_PROVIDER_DECLARED_RPM_LIMIT", "15")))
+
+
 def _resolve_kis_fill_incremental_append_enabled() -> bool:
     """KIS 누적 체결량(``TOT_CCLD_QTY``)을 증분으로 해석해 실제
     ``fill_events``에 append할지 여부를 ``KIS_FILL_INCREMENTAL_APPEND_
@@ -982,6 +1023,32 @@ class AppSettings:
     `trade_decisions.decision_json.shadow_held_position_reduce_skip`
     (NO_ACTION/WATCH shadow와 별도 key)에 REDUCE_CANDIDATE/SELL_CANDIDATE
     + risk_opinion=reject/reduce 하위 구간의 가상 비교만 기록한다."""
+
+    fdc_batch_queue_lifecycle_shadow_enabled: bool = field(
+        default_factory=_resolve_fdc_batch_queue_lifecycle_shadow_enabled
+    )
+    """`FDC_BATCH_QUEUE_LIFECYCLE_SHADOW_ENABLED` env로 제어하는 관측 전용
+    스위치. 기본값 ``False``. FDC cycle-scoped batch queue Phase 1
+    (lifecycle shadow) 전용 — 실제 FDC HTTP 호출/기존 strict limiter/
+    주문 제출을 전혀 바꾸지 않는다."""
+
+    fdc_provider_target_rpm: int = field(
+        default_factory=_resolve_fdc_provider_target_rpm
+    )
+    """`FDC_PROVIDER_TARGET_RPM` env(기본 13) — 공용 quota coordinator의
+    shadow 판단 목표 RPM. 실제 provider 호출 상한을 바꾸지 않는다."""
+
+    fdc_provider_rate_window_seconds: int = field(
+        default_factory=_resolve_fdc_provider_rate_window_seconds
+    )
+    """`FDC_PROVIDER_RATE_WINDOW_SECONDS` env(기본 60) — quota coordinator
+    sliding window 길이(초)."""
+
+    gemini_provider_declared_rpm_limit: int = field(
+        default_factory=_resolve_gemini_provider_declared_rpm_limit
+    )
+    """`GEMINI_PROVIDER_DECLARED_RPM_LIMIT` env(기본 15) — 문서/startup
+    validation 전용 선언값."""
 
     # ---- KIS 누적 체결량 → 증분 fill 해석 (설계 문서 14번) ---------------
     kis_fill_incremental_append_enabled: bool = field(

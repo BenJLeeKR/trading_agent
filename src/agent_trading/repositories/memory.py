@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from collections import defaultdict
 from collections.abc import Sequence
 from dataclasses import replace
@@ -65,6 +66,11 @@ from agent_trading.repositories.contracts import (
     CoreEligibilitySample,
     FillSyncHealthSummary,
     LossCutShadowObservationRow,
+    ReservationDenied,
+    ReservationGrant,
+    ReservationResult,
+    ShadowJudgement,
+    ShadowJudgementResult,
     SnapshotSyncHealthSummary,
     TradeDecisionRow,
 )
@@ -3130,3 +3136,121 @@ class InMemoryMarketSessionRepository:
         self._events.clear()
         self._next_session_id = 1
         self._next_event_id = 1
+
+
+class InMemoryFdcQuotaRepository:
+    """``FdcQuotaRepository``의 in-memory 구현(테스트 전용).
+
+    ``asyncio.Lock``으로 ``try_reserve()``의 "anchor 행 잠금" 의미를
+    프로세스 내에서 재현한다 — 실제 Postgres phantom-insert 방지(여러
+    프로세스/커넥션 간 경쟁)까지 증명하지는 못하지만, 서비스 계층
+    로직(단일 프로세스 내 동시 코루틴 경쟁)은 동일하게 검증할 수 있다.
+    """
+
+    __slots__ = ("_lock", "_attempts", "_jobs")
+
+    def __init__(self) -> None:
+        self._lock = asyncio.Lock()
+        # quota_scope -> list of (reserved_at, mode, outcome)
+        self._attempts: dict[str, list[tuple[datetime, str, str]]] = defaultdict(list)
+        self._jobs: dict[UUID, dict[str, Any]] = {}
+
+    def _window_count(self, *, quota_scope: str, window_seconds: int) -> int:
+        cutoff = datetime.now(timezone.utc) - timedelta(seconds=window_seconds)
+        consuming = {
+            "reservation_granted", "http_started", "http_succeeded",
+            "http_failed_retryable", "http_failed_final",
+            "reserved_but_http_not_started",
+        }
+        return sum(
+            1
+            for reserved_at, mode, outcome in self._attempts[quota_scope]
+            if mode == "real" and outcome in consuming and reserved_at > cutoff
+        )
+
+    async def try_reserve(
+        self,
+        *,
+        quota_scope: str,
+        target_rpm: int,
+        window_seconds: int,
+        job_id: UUID | None,
+        caller_id: str,
+        mode: str = "real",
+        manual_run_id: str | None = None,
+        attempt_no: int = 1,
+        lock_timeout_ms: int = 3000,
+    ) -> ReservationResult:
+        async with self._lock:
+            window_count = self._window_count(
+                quota_scope=quota_scope, window_seconds=window_seconds
+            )
+            if job_id is not None and job_id in self._jobs:
+                self._jobs[job_id]["queue_poll_count"] += 1
+            if window_count >= target_rpm:
+                if job_id is not None and job_id in self._jobs:
+                    self._jobs[job_id]["reservation_denied_count"] += 1
+                return ReservationDenied(quota_scope=quota_scope, window_count=window_count)
+
+            now = datetime.now(timezone.utc)
+            self._attempts[quota_scope].append((now, mode, "reservation_granted"))
+            if job_id is not None and job_id in self._jobs:
+                self._jobs[job_id]["dispatch_attempt_no"] += 1
+                self._jobs[job_id]["permit_consumed_count"] += 1
+                self._jobs[job_id]["status"] = "RESERVATION_GRANTED"
+            return ReservationGrant(
+                reservation_id=uuid4(),
+                quota_scope=quota_scope,
+                job_id=job_id,
+                attempt_no=attempt_no,
+                window_count_before_grant=window_count,
+            )
+
+    async def create_shadow_job(
+        self,
+        *,
+        decision_cycle_id: str | None,
+        decision_context_id: UUID | None,
+        symbol: str,
+        source_type: str,
+    ) -> UUID:
+        job_id = uuid4()
+        self._jobs[job_id] = {
+            "decision_cycle_id": decision_cycle_id,
+            "decision_context_id": decision_context_id,
+            "symbol": symbol,
+            "source_type": source_type,
+            "mode": "shadow",
+            "status": "QUEUED",
+            "queue_poll_count": 0,
+            "reservation_denied_count": 0,
+            "dispatch_attempt_no": 0,
+            "permit_consumed_count": 0,
+        }
+        return job_id
+
+    async def judge_shadow_reservation(
+        self,
+        *,
+        job_id: UUID,
+        quota_scope: str,
+        target_rpm: int,
+        window_seconds: int,
+        caller_id: str = "ops-scheduler",
+    ) -> ShadowJudgementResult:
+        window_count = self._window_count(
+            quota_scope=quota_scope, window_seconds=window_seconds
+        )
+        would_grant = window_count < target_rpm
+        outcome = "shadow_would_grant" if would_grant else "shadow_denied"
+        self._attempts[quota_scope].append(
+            (datetime.now(timezone.utc), "shadow", outcome)
+        )
+        if job_id in self._jobs:
+            self._jobs[job_id]["queue_poll_count"] += 1
+            self._jobs[job_id]["status"] = (
+                "SHADOW_WOULD_GRANT" if would_grant else "SHADOW_DENIED"
+            )
+        return ShadowJudgement(
+            would_grant=would_grant, window_count=window_count, attempt_id=uuid4(),
+        )

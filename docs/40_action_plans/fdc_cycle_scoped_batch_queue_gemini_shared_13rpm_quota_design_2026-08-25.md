@@ -1,7 +1,20 @@
 # FDC Cycle-Scoped Batch Queue + Gemini Shared 13 RPM Quota (PostgreSQL Atomic Reservation) — 설계 확정
 
-> **상태**: 설계 확정(read-only 검토·문서화 전용). 런타임 코드/migration/compose/`.env` 변경 없음.
-> 구현은 이 문서를 기준으로 별도 후속 PR에서 진행한다.
+> **상태(2026-08-25, Phase 1 구현 완료)**: 이 문서 §8의 영속 스키마(3-테이블),
+> §6의 atomic reservation 로직, §11/§12의 shadow 관측 경로를 **Phase 1
+> 범위로 구현 완료**했다 — `db/migrations/0068_add_fdc_quota_lifecycle_
+> tables.sql`, `src/agent_trading/repositories/contracts.py`(`FdcQuotaRepository`
+> Protocol), `src/agent_trading/repositories/postgres/fdc_quota.py`,
+> `src/agent_trading/repositories/memory.py`(`InMemoryFdcQuotaRepository`),
+> `src/agent_trading/services/fdc_quota_coordinator.py`(`FdcQuotaCoordinator`),
+> `src/agent_trading/services/decision_orchestrator.py`(lifecycle shadow
+> 관측 메서드). **실제 cycle-scoped dispatcher, FDC one-shot 인터페이스,
+> live/fake provider 타입 분리, held_position lane 실제 전환은 아직
+> 구현하지 않았다** — 이들은 후속 PR 범위다(§16 참고). 현재도 기존
+> `fdc_rate_limiter.py`의 10 RPM strict limiter가 실제 Gemini HTTP 요청의
+> 유일한 제한 장치이며, 이 문서의 13 RPM은 `FDC_BATCH_QUEUE_LIFECYCLE_
+> SHADOW_ENABLED=true`일 때만 작동하는 **shadow 판단값**일 뿐 실제
+> provider 호출량을 바꾸지 않는다.
 >
 > **개정 이력**: 2026-08-25(2차) — 최초 확정본에 남아있던 4개 계약 충돌(reservation
 > 이중 소유 위험, 수동 호출 job 모델 미확정, retry/pre-HTTP 실패 계수 혼재, sliding

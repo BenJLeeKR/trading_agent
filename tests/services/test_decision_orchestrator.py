@@ -34,6 +34,11 @@ from agent_trading.domain.enums import (
     TimeInForce,
 )
 from agent_trading.domain.models import SubmitOrderRequest
+from agent_trading.services.fdc_quota_coordinator import (
+    CoordinatorError,
+    CoordinatorErrorClass,
+    ShadowJudgement,
+)
 from agent_trading.services.order_manager import OrderManager
 from agent_trading.repositories.bootstrap import build_in_memory_repositories
 from agent_trading.services.ai_agents.schemas import (
@@ -5065,6 +5070,166 @@ class TestHeldPositionFdcSkipShadowObservation:
             fdc_raw_decision_type="WATCH",
         )
         repos.trade_decisions.sync_shadow_held_position_fdc_skip_observation.assert_awaited_once()
+
+
+class TestFdcBatchQueueLifecycleShadowObservation:
+    """`_record_fdc_batch_queue_lifecycle_shadow_observation`은 관측
+    전용이다(Phase 1) — 어떤 실행 경로에서도 실제 FDC 호출/decision_type/
+    side/주문 제출을 바꾸지 않으며, coordinator 예외도 삼킨다."""
+
+    @pytest.mark.asyncio
+    async def test_disabled_flag_is_a_full_noop(
+        self, sample_request: SubmitOrderRequest,
+    ) -> None:
+        repos = build_in_memory_repositories()
+        coordinator = AsyncMock()
+        service = DecisionOrchestratorService(
+            repos=repos, use_subprocess_isolation=False,
+            fdc_batch_queue_lifecycle_shadow_enabled=False,
+            fdc_quota_coordinator=coordinator,
+        )
+        assembled_context = AssembledContext(source_type="held_position")
+
+        await service._record_fdc_batch_queue_lifecycle_shadow_observation(
+            request=sample_request,
+            assembled_context=assembled_context,
+            resolved_context_id=uuid4(),
+            fdc_skipped=False,
+        )
+
+        coordinator.create_shadow_job.assert_not_awaited()
+        coordinator.judge_shadow_reservation.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_none_coordinator_is_a_full_noop(
+        self, sample_request: SubmitOrderRequest,
+    ) -> None:
+        repos = build_in_memory_repositories()
+        service = DecisionOrchestratorService(
+            repos=repos, use_subprocess_isolation=False,
+            fdc_batch_queue_lifecycle_shadow_enabled=True,
+            fdc_quota_coordinator=None,
+        )
+        assembled_context = AssembledContext(source_type="held_position")
+
+        # 예외 없이 조용히 반환돼야 한다(coordinator가 없다는 것은 설정 실수가
+        # 아니라 Phase 1 배선 자체가 아직 없을 수 있다는 정상 상태).
+        await service._record_fdc_batch_queue_lifecycle_shadow_observation(
+            request=sample_request,
+            assembled_context=assembled_context,
+            resolved_context_id=uuid4(),
+            fdc_skipped=False,
+        )
+
+    @pytest.mark.asyncio
+    async def test_fdc_skipped_true_is_a_noop(
+        self, sample_request: SubmitOrderRequest,
+    ) -> None:
+        """fdc_skipped=True(결정론적 skip)면 FDC-ready가 아니므로 관측
+        대상에서 제외한다."""
+        repos = build_in_memory_repositories()
+        coordinator = AsyncMock()
+        service = DecisionOrchestratorService(
+            repos=repos, use_subprocess_isolation=False,
+            fdc_batch_queue_lifecycle_shadow_enabled=True,
+            fdc_quota_coordinator=coordinator,
+        )
+        assembled_context = AssembledContext(source_type="held_position")
+
+        await service._record_fdc_batch_queue_lifecycle_shadow_observation(
+            request=sample_request,
+            assembled_context=assembled_context,
+            resolved_context_id=uuid4(),
+            fdc_skipped=True,
+        )
+
+        coordinator.create_shadow_job.assert_not_awaited()
+        coordinator.judge_shadow_reservation.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_fdc_ready_records_shadow_job_and_judgement(
+        self, sample_request: SubmitOrderRequest,
+    ) -> None:
+        """fdc_skipped=False(FDC-ready)면 shadow job 생성 + 판단 호출
+        둘 다 일어나며, judge는 create가 반환한 job_id로 호출된다."""
+        repos = build_in_memory_repositories()
+        job_id = uuid4()
+        coordinator = AsyncMock()
+        coordinator.create_shadow_job.return_value = job_id
+        coordinator.judge_shadow_reservation.return_value = ShadowJudgement(
+            would_grant=True, window_count=3, attempt_id=uuid4(),
+        )
+        service = DecisionOrchestratorService(
+            repos=repos, use_subprocess_isolation=False,
+            fdc_batch_queue_lifecycle_shadow_enabled=True,
+            fdc_quota_coordinator=coordinator,
+        )
+        resolved_context_id = uuid4()
+        assembled_context = AssembledContext(source_type="held_position")
+
+        await service._record_fdc_batch_queue_lifecycle_shadow_observation(
+            request=sample_request,
+            assembled_context=assembled_context,
+            resolved_context_id=resolved_context_id,
+            fdc_skipped=False,
+        )
+
+        coordinator.create_shadow_job.assert_awaited_once_with(
+            decision_cycle_id=sample_request.correlation_id,
+            decision_context_id=resolved_context_id,
+            symbol=sample_request.symbol,
+            source_type="held_position",
+        )
+        coordinator.judge_shadow_reservation.assert_awaited_once_with(job_id=job_id)
+
+    @pytest.mark.asyncio
+    async def test_coordinator_error_is_swallowed(
+        self, sample_request: SubmitOrderRequest,
+    ) -> None:
+        """coordinator가 CoordinatorError를 반환해도(예: DB 장애) 예외를
+        던지지 않고 조용히 로그만 남긴다 — 기존 파이프라인 무영향."""
+        repos = build_in_memory_repositories()
+        coordinator = AsyncMock()
+        coordinator.create_shadow_job.return_value = uuid4()
+        coordinator.judge_shadow_reservation.return_value = CoordinatorError(
+            CoordinatorErrorClass.COORDINATOR_UNAVAILABLE, "connection refused",
+        )
+        service = DecisionOrchestratorService(
+            repos=repos, use_subprocess_isolation=False,
+            fdc_batch_queue_lifecycle_shadow_enabled=True,
+            fdc_quota_coordinator=coordinator,
+        )
+        assembled_context = AssembledContext(source_type="held_position")
+
+        await service._record_fdc_batch_queue_lifecycle_shadow_observation(
+            request=sample_request,
+            assembled_context=assembled_context,
+            resolved_context_id=uuid4(),
+            fdc_skipped=False,
+        )  # raises nothing
+
+    @pytest.mark.asyncio
+    async def test_coordinator_raising_exception_is_swallowed(
+        self, sample_request: SubmitOrderRequest,
+    ) -> None:
+        """coordinator 호출 자체가 예외를 던져도(예: 코드 버그) 기존
+        assemble() 파이프라인을 절대 중단시키지 않는다."""
+        repos = build_in_memory_repositories()
+        coordinator = AsyncMock()
+        coordinator.create_shadow_job.side_effect = RuntimeError("boom")
+        service = DecisionOrchestratorService(
+            repos=repos, use_subprocess_isolation=False,
+            fdc_batch_queue_lifecycle_shadow_enabled=True,
+            fdc_quota_coordinator=coordinator,
+        )
+        assembled_context = AssembledContext(source_type="held_position")
+
+        await service._record_fdc_batch_queue_lifecycle_shadow_observation(
+            request=sample_request,
+            assembled_context=assembled_context,
+            resolved_context_id=uuid4(),
+            fdc_skipped=False,
+        )  # raises nothing
 
 
 class TestHeldPositionReduceSkipShadowObservation:
