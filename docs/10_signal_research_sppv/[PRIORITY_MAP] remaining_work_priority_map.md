@@ -12327,3 +12327,34 @@ power_validation.md` "42. SPPV-3 독립 OOS 검증용 신규 bar cache
   재수집 없이 수행**(`--rebuild-manifest-for-date` 신규 모드로
   KIS 미호출·bar 파일 무변경 확인, mtime 동일). §42의 실측
   수치(88종목 성공, `ready_for_oos=true` 등)는 변경 없음(§43).
+
+## SPPV-3 신호 재설계 후보 독립 OOS 성과 계산 도구 구현(2026-08-24 KST) — **계산 도구 구현 완료, 통계적 판정은 PENDING**
+
+상세: `docs/10_signal_research_sppv/[DESIGN] signal_predictive_
+power_validation.md` "44. SPPV-3 신호 재설계 후보 독립 OOS 성과
+계산 도구 구현".
+
+- `scripts/analysis/measure_sppv3_oos_candidate_performance.py`
+  (신규) — `overnight_reversal_v1`/`intraday_reversal_v1`/`low_
+  volatility_rank_20d` 계산 도구. v11의 계산 함수를 그대로 재사용,
+  수식·기대 방향 재해석 없음. manifest/provenance 계약을 검증해
+  하나라도 어긋나면 명확히 실패. base_cache 행은 warm-up 전용,
+  `oos_new`+`>=2026-07-15` 행만 성과 표본으로 집계. horizon(T+1/
+  T+5/T+20)을 서로 독립적으로 판정(v11의 "미도래 horizon이 있으면
+  행 전체 폐기" 로직을 그대로 쓰지 않음 — 27일뿐인 OOS 구간에서는
+  치명적 결함이 될 수 있어 새로 구현).
+- **"계산 도구 구현"과 "통계적 OOS 판정 가능"은 분리했다** — 이번
+  실행 결과 `total_oos_trading_days=27`(§36.3 최소 30일 미달),
+  국면별 표본(`bearish_trend` 18일/`range_bound` 9일, 둘 다 30일
+  미달)도 미달이라 **세 후보 전부 `PENDING_INSUFFICIENT_OOS_
+  SAMPLE`**로 귀결됐다(억지 판정 없음, 정상 상태로 명시).
+- 신규 테스트 24건(DB/네트워크 미사용) 전부 PASS, 관련 `accept`
+  계열 전부 PASS. 실행 중 벤치마크 국면 라벨이 forward horizon
+  절단으로 최근 20일 통째로 `unknown`이 되던 관련 결함을 발견·
+  수정(전용 회귀 테스트 추가).
+- **Stage B는 계속 보류** — `PENDING_INSUFFICIENT_OOS_SAMPLE`은
+  Go/Watch/Hold/No-Go 중 어느 것도 아니다.
+- **다음 공식 판정 최소 조건**: 전체 OOS 거래일 30일 이상(현재
+  27일, 최소 3일 추가), `bearish_trend`/`range_bound` 각 30일
+  이상(현재 18일/9일), T+20 유효 표본 확보를 위해 전체 OOS 거래일
+  50일 안팎 필요.

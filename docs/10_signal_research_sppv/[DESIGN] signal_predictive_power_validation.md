@@ -10610,3 +10610,123 @@ manifest 안의 경로 표기 방식만 교정했을 뿐이다. §42의 서술�
 삭제·수정하지 않았다. `[PRIORITY_MAP]`/`[BACKLOG]`의 관련 항목도
 "manifest 경로 정정은 데이터 재수집 없이 수행"이라는 사실만
 append-only로 추가한다.
+
+## 44. SPPV-3 신호 재설계 후보 독립 OOS 성과 계산 도구 구현(2026-08-24 KST, read-only)
+
+§41(B 역방향 동결)·§42/§43(OOS bar cache)이 준비한 `2026-07-15` 이후
+구간으로, `overnight_reversal_v1`/`intraday_reversal_v1`/`low_
+volatility_rank_20d`의 **계산 도구**를 구현했다. **"계산 도구 구현"과
+"통계적 OOS 판정 가능"은 서로 다른 사건이다** — 이 절은 전자만
+완료했다. 표본이 §36.3/§41.3 최소 조건에 못 미쳐, 세 후보 전부
+`PENDING_INSUFFICIENT_OOS_SAMPLE`로 귀결됐다(억지 판정 없음, 정상
+상태). 신규 KIS 호출·DB 연결·임시 테이블·컨테이너 재기동 없음.
+
+### 44.1 OOS/warm-up 표본 분리 방법
+
+- 신규 스크립트: `scripts/analysis/measure_sppv3_oos_candidate_
+  performance.py`(신규 파일). §36.2/§41.2/§42의 계산 함수(원재료
+  계산, 국면/`risk_tone` 분류, 결측 제외, IC·Newey-West 집계, 동점
+  평균 순위)는 `scripts/validate_signal_predictive_power_v11_
+  candidate_bc_freeze.py`에서 **그대로 import해 재사용**했다 — 수식·
+  기대 방향은 한 글자도 재해석하지 않았다.
+- §42/§43이 저장한 OOS cache 파일은 종목별로 **base_cache(warm-up)
+  +oos_new(성과 표본)이 하나의 연속 시계열로 이미 합쳐져 있다** —
+  이 파일을 그대로 읽어 5/20/60일 lookback 계산에 필요한 과거 구간을
+  자연스럽게 확보하고, 그 위에서 계산된 값 중 **`_cache_provenance
+  == "oos_new"` 그리고 거래일 `>= 2026-07-15`인 행만** 성과 표본에
+  포함한다(`collect_oos_samples_for_symbol()`).
+- horizon(T+1/T+5/T+20)은 **서로 독립적으로** 판정한다 — v11의
+  원래 표본 수집 로직(`_collect_candidate_samples`)은 가장 긴
+  horizon(T+20)의 forward bar가 없으면 그 거래일 행 **전체**를
+  버렸는데, 이는 3년 전체 cache에서는 무해했지만 **27거래일뿐인
+  OOS 구간에서는 거의 모든 행이 통째로 사라지는 결함**이 될 수
+  있어, 이 스크립트는 그 로직을 그대로 쓰지 않고 horizon별로
+  독립적으로 `fwd_h`를 계산하거나(도래) `None`으로 남긴다(미도래) —
+  "T+1은 되는데 T+20은 아직"이라는 상태를 그대로 보고한다.
+- **실행 중 발견·수정한 관련 결함**: 벤치마크 국면 라벨도 v11의
+  `build_benchmark_regime_and_risk_tone_by_date()`를 그대로 썼다가,
+  같은 이유(forward horizon 여유분만큼 뒷부분을 잘라내는 로직)로
+  **최근 20거래일의 국면 라벨이 통째로 `unknown`이 되는 결함**을
+  실제 실행에서 발견했다(§44.3 참고). 국면 라벨 자체는 forward
+  return이 필요 없는 순수 backward-looking 계산이라, 이 절단이
+  없는 `build_benchmark_regime_and_risk_tone_by_date_full_range()`
+  를 새로 작성해 교체했다.
+
+### 44.2 manifest/provenance 검증 계약
+
+- `validate_oos_manifest()`가 실행 시작 시 `--oos-cache-dir`의
+  `manifest.json`을 읽어 다음을 전부 확인한다 — 하나라도 어긋나면
+  `ValueError`로 **명확히 실패**한다(조용히 진행하지 않음):
+  `base_cache_id == "_bars_cache_core87_3y_2026-07-14"`,
+  `base_cache_relative_path == "logs/_bars_cache_core87_3y_
+  2026-07-14"`, `base_cache_as_of_date == "2026-07-14"`,
+  `oos_collection_window.start_date == "20260715"`,
+  `ready_for_oos == true`.
+- `build_provenance_by_date()`가 종목별 raw bar dict에서
+  `_cache_provenance` 값을 뽑아 ISO 날짜로 재매핑하면서, 값이
+  `"base_cache"`/`"oos_new"` 둘 중 하나가 아니면(=provenance 혼입·
+  손상) 즉시 `ValueError`를 낸다.
+
+### 44.3 실제 실행 결과(2026-08-25 09:01 KST) — `PENDING_INSUFFICIENT_OOS_SAMPLE`
+
+`bash scripts/harness/docker_dev_exec.sh python3 scripts/analysis/
+measure_sppv3_oos_candidate_performance.py --oos-cache-dir logs/
+_bars_cache_core87_3y_2026-08-24`(`network_mode=none`, 정적 cache
+파일만 읽음) — manifest 검증 통과, 87종목 전부 처리.
+
+- `total_oos_trading_days = 27`(§42/§43의 manifest와 일치).
+- 국면 분포(벤치마크 KODEX 200 기준, 국면 라벨 절단 결함 수정 후):
+  `bearish_trend` 18일, `range_bound` 9일 — **하락장/횡보장 둘 다
+  §36.3 최소 30일에 못 미친다.**
+- horizon별 유효 표본(예: `low_volatility_rank_20d`): T+1 n=26,
+  T+5 n=22, T+20 n=7 — **T+1조차 30건 미만.**
+- horizon 미도래 제외: T+1 87건, T+5 435건, T+20 1,740건(종목수×
+  미도래 거래일수에 비례 — 27일 구간에서는 T+20이 도래하는 날이
+  거의 없다는 뜻).
+- **세 후보 전부 `status = "PENDING_INSUFFICIENT_OOS_SAMPLE"`**,
+  사유:
+  - "전체 OOS 거래일 수 부족: 27일(최소 30일 필요)"
+  - "국면별 최소 표본(각 30거래일) 미달 국면: ['bearish_trend',
+    'range_bound']"
+  (참고로 T+20의 `low_volatility_rank_20d` 원시 IC는 n=7로
+  `t_newey_west=-19.72`라는 통계적으로 무의미한 극단값을 냈다 —
+  **이것이 바로 이 절이 표본 부족 시 억지 판정을 금지하는 이유를
+  실측으로 보여주는 사례**다.)
+
+### 44.4 테스트·하네스 검증
+
+- `tests/scripts/analysis/test_measure_sppv3_oos_candidate_
+  performance.py`(신규, DB/네트워크 미사용) 24건 — manifest 계약
+  위반 거부, provenance 혼입 거부, `base_cache` 행이 성과 표본에
+  섞이지 않음, `oos_new`만 사용, horizon별 독립 미도래 처리, 미래
+  bar 추가가 과거 신호·이미 계산된 forward return을 바꾸지 않음,
+  표본 부족 시 판정 보류, 표본 충족 fixture에서는 `classify_
+  verdict_from_t_stat()`에 정확히 위임, 벤치마크 국면 라벨이
+  forward horizon으로 절단되지 않음(§44.1 결함 회귀 테스트) — 전부
+  PASS.
+- `accept script-file`/`accept style`/`accept no-bypass`(hard_
+  bypass_count=0)/`accept architecture`(violation_count=0) 전부
+  PASS.
+
+### 44.5 Stage B/운영 반영 판정
+
+변경 없음 — `PENDING_INSUFFICIENT_OOS_SAMPLE`은 Go/Watch/Hold/
+No-Go 중 어느 것도 아니다. Stage B는 계속 보류.
+
+### 44.6 다음 공식 판정에 필요한 최소 추가 조건
+
+- **전체 거래일**: 최소 `MIN_OOS_TRADING_DAYS_FOR_VERDICT=30`거래일
+  — 현재 27일이므로 **최소 3거래일 추가**(달력일 기준 약 1주,
+  휴장일 제외) 필요.
+- **국면별 최소 표본**: `bearish_trend`/`range_bound` 각각 30일 —
+  현재 18일/9일이라 **하락장 12일, 횡보장 21일 추가** 필요(§36.3
+  규칙상 이 두 국면 다 채워야 하며, `bullish_trend`가 새로 나타나면
+  그것도 별도로 30일을 채워야 판정 대상에 들어간다).
+- **T+20 실질 표본**: 현재 n=7 — T+20이 유효하려면 그 거래일로부터
+  20거래일 뒤가 이미 지나야 하므로, 전체 거래일이 30일을 넘긴
+  이후에도 **가장 최근 20거래일은 항상 T+20 미도래로 자동 제외**
+  된다는 점을 감안해야 한다(즉 T+20 유효 표본이 30건이 되려면
+  전체 OOS 거래일이 최소 50거래일 안팎 필요).
+- cache 갱신은 이 절에서 수행하지 않았다 — §41.4/§42가 정한 대로,
+  다음 갱신도 사용자 승인 후 신규 디렉터리에 수행하고 기존 cache는
+  보존한다.
