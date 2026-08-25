@@ -534,3 +534,40 @@ class TestPostgresShadowFifoQueue:
             symbol="005930", source_type="held_position", fdc_ready_at=t0,
         )
         assert shadow_result.would_grant is True, "real quota가 shadow 판단에 영향을 주면 안 된다"
+
+    @pytest.mark.asyncio
+    async def test_sequential_replay_in_true_fdc_ready_order_grants_by_that_order(
+        self, db_ready, quota_scope: str,
+    ) -> None:
+        """PR #351 2차 보정 — 실제 PostgreSQL에서도 ``enqueue_sequence``는
+        "호출 순서"만 반영한다(재정렬 로직은 DB가 아니라 호출자
+        `run_decision_loop.py::_replay_fdc_ready_shadow_events_for_cycle()`
+        의 책임). 이 테스트는 그 호출자가 실제로 하는 일 — 진짜
+        `fdc_ready_at` 오름차순으로 순차 호출 — 을 그대로 재현해, DB가
+        그 호출 순서를 정확히 `enqueue_sequence` 오름차순으로 기록하는지
+        검증한다. 심볼 A(가장 이른 fdc_ready_at)가 심볼 B(더 늦은
+        fdc_ready_at)보다 먼저 호출되면(=애플리케이션 계층이 이미
+        올바르게 정렬해 순차 호출했다는 전제), A가 항상 더 작은
+        enqueue_sequence를 받아야 한다 — 그 반대(B를 먼저 호출했는데도
+        A가 더 작은 sequence를 받는 것)는 DB 계층이 절대 재현할 수
+        없으므로, 정렬 책임이 호출자에게 있다는 설계를 실제 DB로 확인한다."""
+        coordinator = _postgres_coordinator(quota_scope=quota_scope, target_rpm=13)
+        t_a = datetime.now(timezone.utc)
+        t_b = t_a + timedelta(seconds=1)
+
+        # 애플리케이션 계층이 이미 (fdc_ready_at, cycle_index) 순으로
+        # 정렬해 순차 호출한다고 가정 — A(이른 시각)를 먼저 호출.
+        result_a = await coordinator.register_shadow_job_and_judge(
+            decision_cycle_id="cycle-1", decision_context_id=None,
+            symbol="005930", source_type="core", fdc_ready_at=t_a,
+        )
+        result_b = await coordinator.register_shadow_job_and_judge(
+            decision_cycle_id="cycle-1", decision_context_id=None,
+            symbol="000660", source_type="core", fdc_ready_at=t_b,
+        )
+
+        assert isinstance(result_a, ShadowJudgement)
+        assert isinstance(result_b, ShadowJudgement)
+        assert result_a.enqueue_sequence < result_b.enqueue_sequence
+        assert result_a.would_grant is True
+        assert result_b.would_grant is True

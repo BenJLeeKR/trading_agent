@@ -8135,3 +8135,46 @@ correction.md`.
   기본값은 여전히 `false`. migration은 여전히 미적용.
 - 사용자 지시에 따라 새 PR을 만들지 않고 기존 PR #351을 같은 브랜치에서
   갱신했으며, 이 턴에서 병합은 수행하지 않았다.
+
+## FDC cycle-scoped batch queue Phase 1(lifecycle shadow) 2차 보정 — PR #351 병합 전 수정(2026-08-25 KST)
+
+상세: `docs/30_work_log/2026-08-25_fdc_quota_lifecycle_shadow_phase1_
+correction_2.md`.
+
+- 위 1차 보정 이후에도 여전히 남아있던 구조적 결함을 발견해 같은
+  PR #351(같은 브랜치)에서 보정했다: shadow job의 DB 등록·`enqueue_
+  sequence` 발급이 `assemble()` 내부(기존 FDC 호출·10 RPM strict
+  limiter 대기 이후)에서 일어나, 여러 심볼이 동시 처리되는 실제 구조
+  에서 "`assemble()` 도착 순서"(=limiter 대기·provider 응답·subprocess
+  종료 순서에 좌우됨)가 "실제 `fdc_ready_at` 순서"와 달라 역전이
+  발생할 수 있었다 — 나중에 FDC-ready된 심볼이 먼저 도착해 더 작은
+  `enqueue_sequence`를 받는 경우.
+- 보정 방식 B(사이클 종료 후 정렬 재생) 채택: `assemble()`은 더 이상
+  DB에 쓰지 않고 `FdcReadyShadowEvent`(DB 미접촉, 순수 값 객체)만
+  노출한다. `run_decision_loop.py`가 사이클의 모든 심볼 처리
+  (`asyncio.gather()`, 완료 순서와 무관하게 입력 순서를 보존)가 끝난
+  뒤, 신규 `_replay_fdc_ready_shadow_events_for_cycle()`이 이 이벤트들을
+  `(fdc_ready_at, cycle_index)` 기준으로 정렬해 순차 재생한다 — DB
+  등록 자체를 사이클 종료 후로 미뤄 `enqueue_sequence`가 항상 진짜
+  FDC-ready 순서를 반영하게 만들었다. subprocess가 DB에 직접 접근하는
+  A안은 기존 프로세스 격리 원칙을 깨고 변경 범위가 커서 배제했다.
+- `decision_cycle_id`도 `request.correlation_id`(심볼별 고유 문자열)
+  에서 진짜 cycle-scoped 식별자로 교체(`assemble()`/`assemble_and_
+  submit()`/`_run_decision_pipeline()`에 파라미터 추가) — 기존
+  guardrail 기록 경로가 이미 이 값을 cycle 단위로 쓰고 있음을 코드로
+  확인해 추정 없이 증명했다.
+- 테스트로 A/B 역전이 포함된 14/40건 시나리오·동일 fdc_ready_at
+  tie-break·limiter 대기 시간 무관성을 확인
+  (`test_run_decision_loop.py::TestReplayFdcReadyShadowEventsForCycle`,
+  8건, in-memory repository + fake Postgres 배선), 실제 PostgreSQL에서도
+  "정렬된 순서로 순차 호출하면 DB가 그 순서를 그대로 반영한다"를 확인
+  (`test_fdc_quota_coordinator.py::TestPostgresShadowFifoQueue::
+  test_sequential_replay_in_true_fdc_ready_order_grants_by_that_order`,
+  신규, 로컬 `DATABASE_HOST` 없어 skip — CI Heavy harness는
+  `workflow_dispatch(run_heavy=true)` 수동 트리거 전용이라 일반 PR
+  자동 CI에서도 실행되지 않음, `.github/workflows/harness.yml`의
+  `if` 조건으로 코드 확인).
+- 기존 실제 FDC 호출/10 RPM strict limiter/provider 호출 수/주문
+  정책/EV gate/sizing/sell guard/주문 제출은 변경하지 않았다. shadow
+  기본값은 여전히 `false`. migration은 여전히 미적용. 새 PR을 만들지
+  않고 같은 브랜치에서 갱신했으며, 이 턴에서도 병합은 수행하지 않았다.

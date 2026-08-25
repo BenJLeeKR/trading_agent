@@ -34,11 +34,6 @@ from agent_trading.domain.enums import (
     TimeInForce,
 )
 from agent_trading.domain.models import SubmitOrderRequest
-from agent_trading.services.fdc_quota_coordinator import (
-    CoordinatorError,
-    CoordinatorErrorClass,
-    ShadowJudgement,
-)
 from agent_trading.services.order_manager import OrderManager
 from agent_trading.repositories.bootstrap import build_in_memory_repositories
 from agent_trading.services.ai_agents.schemas import (
@@ -5072,15 +5067,22 @@ class TestHeldPositionFdcSkipShadowObservation:
         repos.trade_decisions.sync_shadow_held_position_fdc_skip_observation.assert_awaited_once()
 
 
-class TestFdcBatchQueueLifecycleShadowObservation:
-    """`_record_fdc_batch_queue_lifecycle_shadow_observation`은 관측
-    전용이다(Phase 1) — 어떤 실행 경로에서도 실제 FDC 호출/decision_type/
-    side/주문 제출을 바꾸지 않으며, coordinator 예외도 삼킨다.
+class TestFdcReadyShadowEventCapture:
+    """`_capture_fdc_ready_shadow_event`는 관측 전용이다(Phase 1, 2026-08-25
+    2차 보정) — DB에 아무것도 쓰지 않고(동기 함수, `await` 없음)
+    `pending_fdc_ready_shadow_event`만 노출한다. 실제 DB 등록(shadow 큐
+    FIFO 판정)은 이제 이 orchestrator가 아니라 호출자
+    (`run_decision_loop.py`)가 사이클 종료 후 담당한다 — 그 이유는
+    `assemble()` 도착 순서가 실제 FDC-ready 순서와 다를 수 있어서(나중에
+    ready된 심볼이 먼저 처리를 끝내는 역전) DB 등록을 여기서 즉시
+    하면 안 되기 때문이다.
 
-    보정(2026-08-25 후속): 파라미터가 `fdc_skipped: bool`에서
-    `fdc_ready_at_raw: str`(ISO-8601, 빈 문자열=미대상)로 바뀌었고,
-    coordinator 호출도 `create_shadow_job`+`judge_shadow_reservation`
-    2회에서 `register_shadow_job_and_judge` 1회로 통합됐다."""
+    2차 보정 전(1차 보정): 파라미터가 `fdc_skipped: bool`에서
+    `fdc_ready_at_raw: str`로 바뀌었고, `register_shadow_job_and_judge`를
+    이 메서드가 직접 호출했다. 2차 보정: 그 직접 호출을 제거하고, 대신
+    `decision_cycle_id`(요청 파라미터로 명시적으로 전달받음 — `request.
+    correlation_id`는 심볼별로 다른 문자열이라 cycle 식별자로 쓰지
+    않는다)를 포함한 `FdcReadyShadowEvent`를 만들어 노출한다."""
 
     _SAMPLE_FDC_READY_AT = "2026-08-25T09:00:00.123456+00:00"
 
@@ -5089,43 +5091,21 @@ class TestFdcBatchQueueLifecycleShadowObservation:
         self, sample_request: SubmitOrderRequest,
     ) -> None:
         repos = build_in_memory_repositories()
-        coordinator = AsyncMock()
         service = DecisionOrchestratorService(
             repos=repos, use_subprocess_isolation=False,
             fdc_batch_queue_lifecycle_shadow_enabled=False,
-            fdc_quota_coordinator=coordinator,
         )
         assembled_context = AssembledContext(source_type="held_position")
 
-        await service._record_fdc_batch_queue_lifecycle_shadow_observation(
-            request=sample_request,
+        service._capture_fdc_ready_shadow_event(
+            decision_cycle_id="cycle-1#1",
             assembled_context=assembled_context,
+            symbol=sample_request.symbol,
             resolved_context_id=uuid4(),
             fdc_ready_at_raw=self._SAMPLE_FDC_READY_AT,
         )
 
-        coordinator.register_shadow_job_and_judge.assert_not_awaited()
-
-    @pytest.mark.asyncio
-    async def test_none_coordinator_is_a_full_noop(
-        self, sample_request: SubmitOrderRequest,
-    ) -> None:
-        repos = build_in_memory_repositories()
-        service = DecisionOrchestratorService(
-            repos=repos, use_subprocess_isolation=False,
-            fdc_batch_queue_lifecycle_shadow_enabled=True,
-            fdc_quota_coordinator=None,
-        )
-        assembled_context = AssembledContext(source_type="held_position")
-
-        # 예외 없이 조용히 반환돼야 한다(coordinator가 없다는 것은 설정 실수가
-        # 아니라 Phase 1 배선 자체가 아직 없을 수 있다는 정상 상태).
-        await service._record_fdc_batch_queue_lifecycle_shadow_observation(
-            request=sample_request,
-            assembled_context=assembled_context,
-            resolved_context_id=uuid4(),
-            fdc_ready_at_raw=self._SAMPLE_FDC_READY_AT,
-        )
+        assert service.pending_fdc_ready_shadow_event is None
 
     @pytest.mark.asyncio
     async def test_empty_fdc_ready_at_is_a_noop(
@@ -5134,22 +5114,21 @@ class TestFdcBatchQueueLifecycleShadowObservation:
         """`fdc_ready_at_raw=""`(결정론적 skip, 과거 fdc_skipped=True에
         대응)면 FDC-ready가 아니므로 관측 대상에서 제외한다."""
         repos = build_in_memory_repositories()
-        coordinator = AsyncMock()
         service = DecisionOrchestratorService(
             repos=repos, use_subprocess_isolation=False,
             fdc_batch_queue_lifecycle_shadow_enabled=True,
-            fdc_quota_coordinator=coordinator,
         )
         assembled_context = AssembledContext(source_type="held_position")
 
-        await service._record_fdc_batch_queue_lifecycle_shadow_observation(
-            request=sample_request,
+        service._capture_fdc_ready_shadow_event(
+            decision_cycle_id="cycle-1#1",
             assembled_context=assembled_context,
+            symbol=sample_request.symbol,
             resolved_context_id=uuid4(),
             fdc_ready_at_raw="",
         )
 
-        coordinator.register_shadow_job_and_judge.assert_not_awaited()
+        assert service.pending_fdc_ready_shadow_event is None
 
     @pytest.mark.asyncio
     async def test_invalid_fdc_ready_at_is_a_noop(
@@ -5157,105 +5136,85 @@ class TestFdcBatchQueueLifecycleShadowObservation:
     ) -> None:
         """파싱 불가능한 타임스탬프는 예외 없이 조용히 스킵한다."""
         repos = build_in_memory_repositories()
-        coordinator = AsyncMock()
         service = DecisionOrchestratorService(
             repos=repos, use_subprocess_isolation=False,
             fdc_batch_queue_lifecycle_shadow_enabled=True,
-            fdc_quota_coordinator=coordinator,
         )
         assembled_context = AssembledContext(source_type="held_position")
 
-        await service._record_fdc_batch_queue_lifecycle_shadow_observation(
-            request=sample_request,
+        service._capture_fdc_ready_shadow_event(
+            decision_cycle_id="cycle-1#1",
             assembled_context=assembled_context,
+            symbol=sample_request.symbol,
             resolved_context_id=uuid4(),
             fdc_ready_at_raw="not-a-timestamp",
         )
 
-        coordinator.register_shadow_job_and_judge.assert_not_awaited()
+        assert service.pending_fdc_ready_shadow_event is None
 
     @pytest.mark.asyncio
-    async def test_fdc_ready_records_shadow_job_and_judgement(
+    async def test_fdc_ready_exposes_pending_shadow_event(
         self, sample_request: SubmitOrderRequest,
     ) -> None:
-        """FDC-ready(유효한 fdc_ready_at)면 register_shadow_job_and_judge
-        가 정확한 fdc_ready_at(datetime으로 파싱된 값)으로 호출된다."""
+        """FDC-ready(유효한 fdc_ready_at)면 `pending_fdc_ready_shadow_
+        event`가 정확한 필드(진짜 cycle-scoped `decision_cycle_id` 포함,
+        `request.correlation_id`가 아님)로 채워진다. DB coordinator는
+        전혀 관여하지 않는다."""
         repos = build_in_memory_repositories()
-        coordinator = AsyncMock()
-        coordinator.register_shadow_job_and_judge.return_value = ShadowJudgement(
-            job_id=uuid4(), would_grant=True, window_count=3,
-            attempt_id=uuid4(), enqueue_sequence=4,
-        )
         service = DecisionOrchestratorService(
             repos=repos, use_subprocess_isolation=False,
             fdc_batch_queue_lifecycle_shadow_enabled=True,
-            fdc_quota_coordinator=coordinator,
         )
         resolved_context_id = uuid4()
         assembled_context = AssembledContext(source_type="held_position")
 
-        await service._record_fdc_batch_queue_lifecycle_shadow_observation(
-            request=sample_request,
+        service._capture_fdc_ready_shadow_event(
+            decision_cycle_id="cycle-1#1",
             assembled_context=assembled_context,
+            symbol=sample_request.symbol,
             resolved_context_id=resolved_context_id,
             fdc_ready_at_raw=self._SAMPLE_FDC_READY_AT,
         )
 
-        coordinator.register_shadow_job_and_judge.assert_awaited_once_with(
-            decision_cycle_id=sample_request.correlation_id,
-            decision_context_id=resolved_context_id,
+        event = service.pending_fdc_ready_shadow_event
+        assert event is not None
+        assert event.decision_cycle_id == "cycle-1#1"
+        assert event.decision_cycle_id != sample_request.correlation_id
+        assert event.decision_context_id == resolved_context_id
+        assert event.symbol == sample_request.symbol
+        assert event.source_type == "held_position"
+        assert event.fdc_ready_at == datetime.fromisoformat(self._SAMPLE_FDC_READY_AT)
+
+    @pytest.mark.asyncio
+    async def test_pending_event_resets_across_calls(
+        self, sample_request: SubmitOrderRequest,
+    ) -> None:
+        """이전 호출에서 채워진 이벤트가 다음 호출(예: skip 건)에서
+        잘못 남아있지 않아야 한다 — 매 호출마다 무조건 초기화한다."""
+        repos = build_in_memory_repositories()
+        service = DecisionOrchestratorService(
+            repos=repos, use_subprocess_isolation=False,
+            fdc_batch_queue_lifecycle_shadow_enabled=True,
+        )
+        assembled_context = AssembledContext(source_type="held_position")
+
+        service._capture_fdc_ready_shadow_event(
+            decision_cycle_id="cycle-1#1",
+            assembled_context=assembled_context,
             symbol=sample_request.symbol,
-            source_type="held_position",
-            fdc_ready_at=datetime.fromisoformat(self._SAMPLE_FDC_READY_AT),
-        )
-
-    @pytest.mark.asyncio
-    async def test_coordinator_error_is_swallowed(
-        self, sample_request: SubmitOrderRequest,
-    ) -> None:
-        """coordinator가 CoordinatorError를 반환해도(예: DB 장애) 예외를
-        던지지 않고 조용히 로그만 남긴다 — 기존 파이프라인 무영향."""
-        repos = build_in_memory_repositories()
-        coordinator = AsyncMock()
-        coordinator.register_shadow_job_and_judge.return_value = CoordinatorError(
-            CoordinatorErrorClass.COORDINATOR_UNAVAILABLE, "connection refused",
-        )
-        service = DecisionOrchestratorService(
-            repos=repos, use_subprocess_isolation=False,
-            fdc_batch_queue_lifecycle_shadow_enabled=True,
-            fdc_quota_coordinator=coordinator,
-        )
-        assembled_context = AssembledContext(source_type="held_position")
-
-        await service._record_fdc_batch_queue_lifecycle_shadow_observation(
-            request=sample_request,
-            assembled_context=assembled_context,
             resolved_context_id=uuid4(),
             fdc_ready_at_raw=self._SAMPLE_FDC_READY_AT,
-        )  # raises nothing
-
-    @pytest.mark.asyncio
-    async def test_coordinator_raising_exception_is_swallowed(
-        self, sample_request: SubmitOrderRequest,
-    ) -> None:
-        """coordinator 호출 자체가 예외를 던져도(예: 코드 버그) 기존
-        assemble() 파이프라인을 절대 중단시키지 않는다."""
-        repos = build_in_memory_repositories()
-        coordinator = AsyncMock()
-        coordinator.register_shadow_job_and_judge.side_effect = RuntimeError("boom")
-        service = DecisionOrchestratorService(
-            repos=repos, use_subprocess_isolation=False,
-            fdc_batch_queue_lifecycle_shadow_enabled=True,
-            fdc_quota_coordinator=coordinator,
         )
-        assembled_context = AssembledContext(source_type="held_position")
+        assert service.pending_fdc_ready_shadow_event is not None
 
-        await service._record_fdc_batch_queue_lifecycle_shadow_observation(
-            request=sample_request,
+        service._capture_fdc_ready_shadow_event(
+            decision_cycle_id="cycle-1#1",
             assembled_context=assembled_context,
+            symbol=sample_request.symbol,
             resolved_context_id=uuid4(),
-            fdc_ready_at_raw=self._SAMPLE_FDC_READY_AT,
-        )  # raises nothing
+            fdc_ready_at_raw="",
+        )
+        assert service.pending_fdc_ready_shadow_event is None
 
 
 class TestHeldPositionReduceSkipShadowObservation:

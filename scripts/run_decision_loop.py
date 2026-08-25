@@ -71,6 +71,7 @@ from agent_trading.domain.entities import (
 from agent_trading.domain.models import SubmitOrderRequest
 from agent_trading.repositories.container import RepositoryContainer
 from agent_trading.repositories.contracts import (
+    CoordinatorError,
     ExternalEventRepository,
     SnapshotSyncHealthSummary,
 )
@@ -1336,12 +1337,6 @@ async def _build_core_risk_off_apply_overrides_for_cycle(
             fdc_batch_queue_lifecycle_shadow_enabled=(
                 settings.fdc_batch_queue_lifecycle_shadow_enabled
             ),
-            fdc_quota_coordinator=FdcQuotaCoordinator(
-                repo=repos.fdc_quota,
-                target_rpm=settings.fdc_provider_target_rpm,
-                window_seconds=settings.fdc_provider_rate_window_seconds,
-                declared_rpm_limit=settings.gemini_provider_declared_rpm_limit,
-            ),
         )
         for item in universe:
             if item.source_type != "core":
@@ -1816,6 +1811,121 @@ _T3_GATHER_WAIT = 5         # decision 완료 후 T3 추가 대기시간 (초)
 # events are available for the next cycle's freshness check.
 _active_t3_tasks: set[asyncio.Task] = set()
 
+
+async def _replay_fdc_ready_shadow_events_for_cycle(
+    cycle_results: list[dict[str, object]],
+    *,
+    cycle_count: int,
+) -> None:
+    """FDC cycle-scoped batch queue lifecycle shadow(Phase 1, 2026-08-25
+    2차 보정) — 사이클의 모든 심볼 처리(``asyncio.gather``)가 끝난 뒤,
+    이번 사이클에서 수집된 FDC-ready 이벤트를 ``(fdc_ready_at, cycle_
+    index)`` 기준으로 정렬해 순서대로 shadow 큐에 등록한다.
+
+    ``cycle_index``는 별도로 저장하지 않고 ``enumerate(cycle_results)``의
+    위치를 그대로 쓴다 — ``asyncio.gather()``는 완료 순서와 무관하게
+    입력 코루틴 순서(=``enumerate(universe)`` 시점에 고정된 순서)를 그대로
+    보존하므로, 이 위치값은 어떤 subprocess/코루틴 완료 순서에도 의존하지
+    않는 안정적 tie-breaker다. 1차 보정까지는 DB INSERT 도착 순서
+    (``enqueue_sequence`` 자동 채번)를 FIFO 순서로 오인했으나, 그 도착
+    순서는 기존 limiter 대기·provider 응답·subprocess 종료 순서에 좌우돼
+    실제 FDC-ready 순서와 다를 수 있었다 — 이 함수가 그 결함을 보정한다:
+    DB 등록 자체를 사이클 종료 후 이 정렬된 순서대로 **순차** 재생해,
+    ``enqueue_sequence``가 항상 진짜 FDC-ready 순서를 반영하게 만든다.
+
+    shadow flag가 꺼져 있거나 이번 사이클에 FDC-ready 이벤트가 하나도
+    없으면 DB에 전혀 접근하지 않는다(완전 no-op). 개별 항목의 등록
+    실패는 예외를 삼켜 나머지 항목의 재생과 사이클 진행에 영향을 주지
+    않는다(best-effort, 다른 shadow 관측 경로와 동일한 안전 원칙).
+    """
+    from agent_trading.config.settings import AppSettings
+    from agent_trading.db.transaction import transaction as _db_transaction
+    from agent_trading.repositories.postgres.bootstrap import (
+        build_postgres_repositories,
+    )
+
+    settings = AppSettings()
+    if not settings.fdc_batch_queue_lifecycle_shadow_enabled:
+        return
+
+    pending: list[tuple[int, dict[str, object]]] = []
+    for idx, r in enumerate(cycle_results):
+        if not isinstance(r, dict):
+            continue
+        raw_event = r.get("_fdc_ready_shadow_event")
+        if isinstance(raw_event, dict):
+            pending.append((idx, raw_event))
+
+    if not pending:
+        return
+
+    def _sort_key(pair: tuple[int, dict[str, object]]) -> tuple[str, int]:
+        idx, raw_event = pair
+        return (str(raw_event.get("fdc_ready_at", "")), idx)
+
+    pending.sort(key=_sort_key)
+
+    try:
+        async with _db_transaction() as tx:
+            repos = build_postgres_repositories(tx)
+            coordinator = FdcQuotaCoordinator(
+                repo=repos.fdc_quota,
+                target_rpm=settings.fdc_provider_target_rpm,
+                window_seconds=settings.fdc_provider_rate_window_seconds,
+                declared_rpm_limit=settings.gemini_provider_declared_rpm_limit,
+            )
+            for idx, raw_event in pending:
+                symbol = str(raw_event.get("symbol", ""))
+                try:
+                    fdc_ready_at = datetime.fromisoformat(
+                        str(raw_event.get("fdc_ready_at", ""))
+                    )
+                except ValueError:
+                    logger.warning(
+                        "fdc_batch_queue_lifecycle_shadow replay: invalid "
+                        "fdc_ready_at cycle=%d cycle_index=%d symbol=%s",
+                        cycle_count, idx, symbol,
+                    )
+                    continue
+                decision_context_id_raw = raw_event.get("decision_context_id")
+                decision_context_id = (
+                    UUID(str(decision_context_id_raw))
+                    if decision_context_id_raw
+                    else None
+                )
+                try:
+                    result = await coordinator.register_shadow_job_and_judge(
+                        decision_cycle_id=raw_event.get("decision_cycle_id"),
+                        decision_context_id=decision_context_id,
+                        symbol=symbol,
+                        source_type=str(raw_event.get("source_type", "core")),
+                        fdc_ready_at=fdc_ready_at,
+                    )
+                    if isinstance(result, CoordinatorError):
+                        logger.warning(
+                            "fdc_batch_queue_lifecycle_shadow replay coordinator "
+                            "error: cycle=%d cycle_index=%d symbol=%s "
+                            "error_class=%s detail=%s",
+                            cycle_count, idx, symbol,
+                            result.error_class.value, result.detail,
+                        )
+                except Exception:
+                    logger.warning(
+                        "fdc_batch_queue_lifecycle_shadow replay failed: "
+                        "cycle=%d cycle_index=%d symbol=%s",
+                        cycle_count, idx, symbol,
+                        exc_info=True,
+                    )
+            await tx.commit()
+    except Exception:
+        logger.warning(
+            "fdc_batch_queue_lifecycle_shadow replay transaction failed: "
+            "cycle=%d",
+            cycle_count,
+            exc_info=True,
+        )
+
+
 async def _run_one_cycle(
     cycle: int,
     *,
@@ -1910,12 +2020,6 @@ async def _run_one_cycle(
                 ),
                 fdc_batch_queue_lifecycle_shadow_enabled=(
                     settings.fdc_batch_queue_lifecycle_shadow_enabled
-                ),
-                fdc_quota_coordinator=FdcQuotaCoordinator(
-                    repo=repos.fdc_quota,
-                    target_rpm=settings.fdc_provider_target_rpm,
-                    window_seconds=settings.fdc_provider_rate_window_seconds,
-                    declared_rpm_limit=settings.gemini_provider_declared_rpm_limit,
                 ),
             )
             reconciliation_service = ReconciliationService(repos=repos)
@@ -2126,6 +2230,7 @@ async def _run_one_cycle(
                     orchestrator.assemble(
                         request,
                         seeded_events=seeded_events,
+                        decision_cycle_id=decision_cycle_id,
                     ),
                     timeout=PER_AGENT_HARD_TIMEOUT,
                 )
@@ -2210,6 +2315,7 @@ async def _run_one_cycle(
                         order_manager=order_manager,
                         broker=broker,
                         seeded_events=seeded_events,
+                        decision_cycle_id=decision_cycle_id,
                     ),
                     timeout=PER_AGENT_HARD_TIMEOUT,
                 )
@@ -2231,6 +2337,7 @@ async def _run_one_cycle(
                     orchestrator.assemble(
                         request,
                         seeded_events=seeded_events,
+                        decision_cycle_id=decision_cycle_id,
                     ),
                     timeout=PER_AGENT_HARD_TIMEOUT,
                 )
@@ -2313,6 +2420,29 @@ async def _run_one_cycle(
                     "event_reason_codes": list(ai_inputs.event_reason_codes),
                 }
 
+            # FDC cycle-scoped batch queue lifecycle shadow(Phase 1, 2차
+            # 보정) — assemble()이 노출한 관측값을 JSON 직렬화 가능한 dict
+            # 로 변환해 결과 dict에 실어 보낸다(이 dict는 `output=="json"`
+            # 일 때 그대로 `json.dumps()`되므로 dataclass 인스턴스를 직접
+            # 담으면 안 된다). 실제 shadow DB 등록은 여기서 하지 않는다 —
+            # 사이클의 모든 심볼 처리가 끝난 뒤 `_replay_fdc_ready_shadow_
+            # events_for_cycle()`이 (fdc_ready_at, cycle_index) 순으로
+            # 정렬해 한 번에 재생한다(진짜 FDC-ready 순서 보장).
+            _pending_shadow_event = orchestrator.pending_fdc_ready_shadow_event
+            fdc_ready_shadow_event: dict[str, object] | None = None
+            if _pending_shadow_event is not None:
+                fdc_ready_shadow_event = {
+                    "decision_cycle_id": _pending_shadow_event.decision_cycle_id,
+                    "decision_context_id": (
+                        str(_pending_shadow_event.decision_context_id)
+                        if _pending_shadow_event.decision_context_id is not None
+                        else None
+                    ),
+                    "symbol": _pending_shadow_event.symbol,
+                    "source_type": _pending_shadow_event.source_type,
+                    "fdc_ready_at": _pending_shadow_event.fdc_ready_at.isoformat(),
+                }
+
             # ── 5. Commit per-symbol transaction ─────────────────────────
             await tx.commit()
 
@@ -2323,7 +2453,7 @@ async def _run_one_cycle(
                 result.status if result is not None else "ERROR",
                 duration,
             )
-            return _serialize_cycle_result(
+            serialized = _serialize_cycle_result(
                 cycle,
                 result,
                 duration,
@@ -2336,6 +2466,8 @@ async def _run_one_cycle(
                 dry_run_reason=dry_run_reason,
                 universe_anchor=universe_anchor,
             )
+            serialized["_fdc_ready_shadow_event"] = fdc_ready_shadow_event
+            return serialized
 
     except asyncio.TimeoutError:
         duration = time.monotonic() - start
@@ -3510,6 +3642,23 @@ async def _run_loop(
             cycle_results: list[dict[str, object]] = list(
                 await asyncio.gather(*coros)
             )
+
+            # FDC cycle-scoped batch queue lifecycle shadow(Phase 1, 2차
+            # 보정) — 사이클의 모든 심볼 처리가 끝난 직후, Pass 2가
+            # cycle_results를 변형하기 전에 FDC-ready 이벤트를 정렬·재생한다.
+            # Pass 2는 이미 확정된 actionable 후보의 실제 제출만 다루고
+            # FDC를 다시 호출하지 않으므로, 이 시점 이후에는 이번 사이클의
+            # FDC-ready 이벤트가 더 늘어나지 않는다.
+            try:
+                await _replay_fdc_ready_shadow_events_for_cycle(
+                    cycle_results, cycle_count=cycle_count,
+                )
+            except Exception:
+                logger.warning(
+                    "fdc_batch_queue_lifecycle_shadow replay call failed: cycle=%d",
+                    cycle_count,
+                    exc_info=True,
+                )
 
             # ── D안 Pass 1.5 + Pass 2 (2026-08-11 KST) ──────────────────────
             # Pass 1(위 _process_one)은 budget과 무관하게 분석만 수행했다.
