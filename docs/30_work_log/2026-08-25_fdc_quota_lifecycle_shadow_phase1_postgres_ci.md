@@ -112,6 +112,29 @@ Protocol/contracts 표면적 변경 없이 구현 파일 내부 로직만 보정
 quota_scope에 대해 real/shadow 양쪽 경로 모두 `CoordinatorError`를
 반환하고 어떤 행도 삽입되지 않음을 확인한다.
 
+## 6.5 실제 CI 1차 실행에서 발견한 loop_scope 결함(부수 발견 2)
+
+신규 job을 push한 뒤 실제 GitHub Actions에서 처음 실행했을 때, 13개
+PostgreSQL 통합 테스트가 skip 없이 실제로 실행됐지만 전부
+`RuntimeError: ... attached to a different loop` /
+`asyncpg.exceptions._base.InterfaceError: cannot perform operation:
+another operation is in progress`로 실패했다. 원인은 `pyproject.toml`의
+`asyncio_default_fixture_loop_scope = "module"`과 테스트 자체의 기본
+loop scope("function")가 불일치해, `quota_scope`/`db_ready`
+fixture(둘 다 평범한 `@pytest.fixture`)가 만든 asyncpg pool이 테스트
+함수의 이벤트 루프와 다른 루프에 묶였기 때문이다 — 이 테스트들이
+`DATABASE_HOST` 없이는 한 번도 실제로 실행된 적이 없어서 지금까지
+발견되지 못했던 결함이다.
+
+**보정**: 이 두 fixture만 `@pytest_asyncio.fixture(loop_scope="function")`
+로 명시해 테스트와 같은 이벤트 루프를 쓰도록 고쳤다 — 프로젝트 전역
+`asyncio_default_fixture_loop_scope` 설정은 바꾸지 않았다(다른 테스트
+파일에 미치는 영향을 예측할 수 없어 이번 PR 범위 밖으로 남김).
+`tests/conftest.py`의 `postgres_repos`/`seeded_postgres_data`도 동일한
+평범한 `@pytest.fixture` 패턴이라 같은 결함 가능성이 있으나, 그 fixture는
+이 job이 쓰는 파일에서 쓰이지 않고 확인 범위 밖이라 별도 백그라운드
+점검 작업으로 분리했다(수정하지 않음).
+
 ## 완료 보고 형식에 따른 나머지 항목
 
 ### 7. 변경 파일 목록

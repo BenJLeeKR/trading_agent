@@ -302,12 +302,26 @@ pytestmark_db = pytest.mark.skipif(
 )
 
 
-@pytest.fixture
+# 이 프로젝트의 pyproject.toml은 ``asyncio_default_fixture_loop_scope =
+# "module"``이지만 테스트 자체는 기본값인 "function" loop scope로
+# 실행된다. 두 async fixture(quota_scope/db_ready)가 기본값(module)을
+# 그대로 따르면, 실제 PostgreSQL이 연결된 CI에서 fixture가 만든
+# asyncpg pool/connection이 테스트 함수의 이벤트 루프와 다른 루프에
+# 묶여 "attached to a different loop"/"another operation is in
+# progress" 오류로 전부 실패한다(로컬/기존 CI에서는 DATABASE_HOST가
+# 없어 이 두 fixture 자체가 실행된 적이 없어 발견되지 못했던 결함).
+# 프로젝트 전역 설정을 바꾸지 않고, 이 파일의 DB 통합 fixture만
+# 명시적으로 "function" loop scope로 고정해 테스트와 같은 루프를
+# 쓰도록 한다.
+import pytest_asyncio
+
+
+@pytest_asyncio.fixture(loop_scope="function")
 async def quota_scope() -> str:
     return f"test:{uuid4()}"
 
 
-@pytest.fixture
+@pytest_asyncio.fixture(loop_scope="function")
 async def db_ready(quota_scope: str):
     """pool 생성 + migration 적용 + 이 테스트 전용 anchor 행 seed.
 
