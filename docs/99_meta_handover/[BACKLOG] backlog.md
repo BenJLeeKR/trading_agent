@@ -7962,3 +7962,24 @@ power_validation.md` "42. SPPV-3 독립 OOS 검증용 신규 bar cache
   재호출 없음, 기존 bar 데이터 무변경**(`--rebuild-manifest-for-date`
   로 manifest만 재생성, mtime 동일 확인). §42의 실측 결과는
   그대로 유지(§43).
+
+## SPPV-3 신호 재설계 후보 독립 OOS 성과 계산 도구 구현(2026-08-24 KST) — **계산 도구 완료, 판정은 PENDING**
+
+상세: `docs/10_signal_research_sppv/[DESIGN] signal_predictive_
+power_validation.md` "44. SPPV-3 신호 재설계 후보 독립 OOS 성과
+계산 도구 구현", `[PRIORITY_MAP]`의 같은 제목 항목.
+
+- `scripts/analysis/measure_sppv3_oos_candidate_performance.py`
+  신규 구현 — v11 계산 함수 재사용, 수식·기대 방향 무변경,
+  manifest/provenance 계약 검증(위반 시 명확히 실패), base_cache는
+  warm-up 전용, `oos_new`만 성과 표본, horizon별 독립 미도래 처리.
+- 실제 실행 결과: 전체 OOS 27거래일, 국면 표본(`bearish_trend`
+  18일/`range_bound` 9일) 모두 §36.3 최소 30일 미달 → **세 후보
+  전부 `PENDING_INSUFFICIENT_OOS_SAMPLE`**(정상 상태, 억지 판정
+  없음). 부수적으로 벤치마크 국면 라벨의 forward-horizon 절단
+  결함을 발견·수정.
+- 신규 테스트 24건 PASS, 관련 `accept` 계열 전부 PASS. Stage B는
+  계속 보류.
+- **다음 공식 판정 조건**: 전체 OOS 거래일 30일 이상(현재 27일),
+  `bearish_trend`/`range_bound` 각 30일 이상(현재 18/9일), T+20
+  유효 표본 확보에는 전체 OOS 거래일 50일 안팎 필요.
