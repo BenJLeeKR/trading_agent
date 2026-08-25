@@ -8045,3 +8045,15 @@ failure_count`/`queue_reenqueue_count` 3분리로 해소, (4) coordinator
 판단 SQL과 감사 SQL의 sliding 60초 경계 규칙 불일치 — self-join 기반
 감사 SQL로 동일한 반열림 규칙 통일. 같은 브랜치·PR(#350)에 추가 커밋만
 반영, 신규 PR 없음. 런타임 코드·migration·compose·`.env` 변경 없음.
+
+## 위 항목 재정정(2026-08-25 KST 3차 후속) — accounting 정의·스키마 정합성 보정
+
+같은 문서에 남아있던 accounting 표 내부 모순 2건을 추가로 보정했다:
+(1) `dispatch_attempt_no`가 정의("reservation을 실제로 받아 넘긴 횟수")와
+사례 설명("거부 시 증가")에서 서로 모순됐던 것을 "성공(`ReservationGrant`
+발급) 시에만 증가"로 통일, (2) accounting 표에는 있었으나 `fdc_queue_
+jobs` 스키마 표에 누락됐던 `reservation_denied_count`를 스키마에 추가
+(A안 — job 단위 누적 카운터, `fdc_provider_attempts`엔 넣지 않음).
+`queue_poll_count = reservation_denied_count + dispatch_attempt_no`
+정합성 검증 SQL을 함께 추가했다. 같은 브랜치·PR(#350)에 추가 커밋만
+반영, 신규 PR 없음. 런타임 코드·migration·compose·`.env` 변경 없음.

@@ -123,3 +123,32 @@ PR #350, 브랜치·PR 신규 생성 없이 기존 브랜치에 추가 커밋).
 ## 2차 검증
 
 `bash scripts/harness/run.sh accept docs` — PASS(상세는 완료 보고 참고).
+
+## 3차 개정(2026-08-25, 같은 날 후속) — accounting 정의·스키마 정합성 보정
+
+2차 개정에서 도입한 `provider_retry_count`/`pre_http_execution_failure_
+count`/`queue_reenqueue_count` 3분리와 별개로, accounting 표 자체에 남아있던
+내부 모순 2건을 보정했다(같은 PR #350, 브랜치·PR 신규 생성 없이 추가 커밋).
+
+1. **`dispatch_attempt_no` 정의 통일**: accounting 표는 "reservation을
+   실제로 받아 worker 실행으로 넘어간 횟수"로 정의했으나, 사례 설명에는
+   "reservation이 거부된 경우 `dispatch_attempt_no`만 증가"라는 모순된
+   문장이 있었다. **"reservation 성공(`ReservationGrant` 발급) 시에만
+   증가하고, 거부 시에는 증가하지 않는다"**로 통일했다. 거부 시에는
+   `queue_poll_count`와 `reservation_denied_count`만 증가하도록 명시적
+   불변식 블록을 §9에 추가했다.
+2. **`reservation_denied_count` 스키마 누락 보완**: accounting 표에는
+   있었으나 `fdc_queue_jobs` 컬럼 표에 누락돼 있던 `reservation_denied_
+   count`를 스키마에 추가했다(A안 채택 — job 단위 누적 카운터로 저장,
+   `fdc_provider_attempts`에는 넣지 않음 — 그 테이블은 "성공한 attempt
+   1건=1행" 원칙이라 거부를 넣으면 원칙이 깨짐). 초기값 0, 원자적 증가
+   시점, lane별 queue 혼잡 분석 용도, `queue_poll_count = reservation_
+   denied_count + dispatch_attempt_no` 정합성 검증 SQL을 §8·§9·§14에
+   추가했다.
+
+이번 개정은 §8·§9·§14·§15·§16을 수정했다. 런타임 코드/migration/compose/
+`.env` 변경은 이번에도 없다.
+
+## 3차 검증
+
+`bash scripts/harness/run.sh accept docs` — PASS(상세는 완료 보고 참고).

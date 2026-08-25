@@ -7,6 +7,13 @@
 > 이중 소유 위험, 수동 호출 job 모델 미확정, retry/pre-HTTP 실패 계수 혼재, sliding
 > 60초 경계 규칙 불일치)을 보정했다. §4·§6·§7·§8·§9·§11·§12·§14·§15가 이번 개정의
 > 영향을 받는다(하단 각 절에 명시).
+>
+> **개정 이력**: 2026-08-25(3차) — accounting 정의 내부 불일치를 보정했다:
+> `dispatch_attempt_no`가 "reservation을 실제로 받아 넘긴 횟수"(§9 정의)와
+> "reservation 거부 시 증가"(사례 설명)로 서로 모순되게 서술돼 있던 문제를
+> "성공 시에만 증가"로 통일하고, 이전에 accounting 표에만 있고 `fdc_queue_jobs`
+> 스키마 표에는 누락됐던 `reservation_denied_count`를 스키마에 추가했다.
+> §8·§9·§14·§15·§16이 이번 개정의 영향을 받는다.
 
 ## 1. 배경과 문제 정의
 
@@ -279,13 +286,34 @@ worker slot을 **먼저** 확보하는 이유: reservation과 실제 HTTP 시작
 | `job_id` | UUID PK |
 | `decision_cycle_id`, `decision_context_id`, `symbol`, `source_type` | |
 | `status` | 인덱스 필요(재기동 후 미완료 조회) |
-| `queue_poll_count`, `dispatch_attempt_no` | §9 정의 |
+| `queue_poll_count`, `reservation_denied_count`, `dispatch_attempt_no` | §9 정의(**보정 A** — `reservation_denied_count`가 이전 초안의 스키마 표에서 누락돼 있었음, 이번 개정으로 추가) |
 | `provider_retry_count`, `pre_http_execution_failure_count`, `queue_reenqueue_count` | **보정 3** — §9에서 3개로 분리 정의(기존 단일 `retry_count` 폐기) |
 | `permit_consumed_count`, `http_attempt_count`, `http_429_count`, `reserved_but_http_not_started_count` | §9 정의 |
 | `queued_at`, `completed_at` | |
 | `trade_decision_id` | nullable FK → `trade_decisions` |
 | `failure_or_cancel_reason` | nullable |
 | `created_at`, `updated_at` | |
+
+**`reservation_denied_count`의 저장 위치(보정 — A안 채택)**: 이 필드는 `fdc_queue_
+jobs`에 저장한다(대안 B — 별도 event 테이블만으로 재구성하는 안은 채택하지 않음.
+이유: 거부는 "이 job이 몇 번이나 순서를 기다리며 밀렸는지"를 나타내는 job 단위
+누적 카운터일 뿐, `fdc_provider_attempts`(reservation **성공** 1건=1행 원칙, §8
+"원칙" 참고)에 넣으면 "성공한 attempt만 기록한다"는 그 테이블의 불변식이 깨진다).
+- **초기값**: `0`(job이 `QUEUED`로 INSERT될 때).
+- **증가 시점**: coordinator가 §6 트랜잭션에서 `count ≥ 13`으로 `DENIED`를
+  반환할 때마다, 그 job의 `fdc_queue_jobs.reservation_denied_count`를 원자적으로
+  `+1`한다(같은 UPDATE 문 안에서 `queue_poll_count`도 함께 `+1`, `dispatch_
+  attempt_no`는 증가시키지 않음 — 아래 불변식 참고).
+- **사용 목적**: `reservation_denied_count`가 특정 lane(예: held_position)이나
+  특정 사이클에서 유독 높게 나오면 "그 lane의 job들이 quota 경쟁에서 계속 밀리고
+  있다"는 lane 공정성 신호가 된다 — ①단계(lifecycle 관측 shadow, §15)에서 배포
+  전 기준선을 잡고, ②③단계 실전 전환 후 이 값의 lane별 분포 변화를 비교하는
+  것이 배포 후 실측 계획(§15)의 핵심 지표 중 하나다.
+- **job 상태와 attempt 행 집계의 정합성 검증**: `reservation_denied_count`는
+  정의상 `fdc_provider_attempts`에 대응 행이 없으므로(거부는 attempt로 기록되지
+  않음), 이 필드의 정합성은 다른 방식으로 검증한다 — `queue_poll_count =
+  reservation_denied_count + dispatch_attempt_no`(폴링 시도는 거부 아니면
+  성공 둘 중 하나로만 귀결되므로)라는 항등식을 job별로 SQL 검증한다(§14).
 
 ### `fdc_provider_attempts`(신규, append-only — reservation 1회=attempt 1행)
 | 컬럼 | 비고 |
@@ -313,9 +341,9 @@ FDC가 이 quota_scope의 유일한 운영 소비자이고, 수동 호출은 예
 
 | 필드 | 정의 |
 |---|---|
-| `queue_poll_count` | reservation 가능 여부를 확인 시도한 횟수(거부 포함) |
-| `reservation_denied_count` | 13 RPM window가 가득 차 거부된 횟수 |
-| `dispatch_attempt_no` | reservation을 실제로 받아 worker 실행으로 넘어간 횟수 |
+| `queue_poll_count` | reservation 가능 여부를 확인 시도한 횟수(거부+성공 전부 포함) — 모든 reservation 조회 시도마다 증가 |
+| `reservation_denied_count` | 13 RPM window가 가득 차 `DENIED`를 받은 횟수 — coordinator가 `DENIED`를 반환할 때만 증가 |
+| `dispatch_attempt_no` | reservation을 **성공적으로 받아 `ReservationGrant`가 발급된** 횟수 — `DENIED` 시에는 증가하지 않는다(보정, 이전 초안의 모순 표현 정정) |
 | **`provider_retry_count`** | 실제 HTTP가 **시작된 뒤** retryable provider 오류(429/5xx/timeout/DNS)로 FIFO tail에 재등록된 횟수 — `http_started_at IS NOT NULL`인 attempt에서만 증가 |
 | **`pre_http_execution_failure_count`** | reservation 성공 후 **HTTP 시작 전**(`http_started_at IS NULL`)에 worker/subprocess 생성·취소 등으로 실패해 재등록된 횟수 |
 | **`queue_reenqueue_count`** | `= provider_retry_count + pre_http_execution_failure_count`(파생 지표, "FIFO tail에 총 몇 번 재등록됐는지"만 알고 싶을 때 참조) |
@@ -330,17 +358,39 @@ provider_retry_count <= max_http_attempts - 1        (= 2, MAX_RETRIES=3 기준)
 pre_http_execution_failure_count <= max_pre_http_execution_failures
 queue_reenqueue_count = provider_retry_count + pre_http_execution_failure_count
 http_attempt_count <= permit_consumed_count
+queue_poll_count = reservation_denied_count + dispatch_attempt_no   (보정 — 폴링 시도는 거부/성공 둘 중 하나로만 귀결)
 reservation count <= 13 per any sliding 60-second window  (§6 트랜잭션이 보장)
 ```
 
+**reservation 거부/성공 시 정확한 증가 규칙(보정, 이전 초안의 모순 정정)**:
+```
+reservation denied(coordinator가 count>=13으로 DENIED 반환):
+  queue_poll_count += 1
+  reservation_denied_count += 1
+  dispatch_attempt_no 증가 없음
+  permit_consumed_count 증가 없음
+  http_attempt_count 증가 없음
+  job은 QUEUED 유지(§6 ROLLBACK 경로)
+
+reservation granted(coordinator가 count<13으로 승인, ReservationGrant 발급):
+  queue_poll_count += 1
+  dispatch_attempt_no += 1
+  permit_consumed_count += 1
+  (이후 실제 HTTP 시작 여부는 §7의 worker 실행 결과에 달려 있으며, 그 결과에
+   따라 http_attempt_count 또는 pre_http_execution_failure_count가 추가로
+   증가한다 — 아래 사례 참고)
+```
+
 **세 계수가 항상 같지 않은 이유(사례별)**:
-- `dispatch_attempt_no`만 증가하고 나머지는 불변 — reservation이 **거부**된 경우
-  (worker slot만 반환, HTTP는 애초에 시도되지 않음).
-- `pre_http_execution_failure_count`만 증가 — reservation은 받았으나(`permit_
-  consumed_count` 증가) worker 시작 자체가 실패한 경우(`http_attempt_count`
-  불변).
-- `provider_retry_count`와 `http_attempt_count`가 함께 증가 — HTTP가 실제로
-  나갔으나 429/5xx로 실패한 경우.
+- `reservation_denied_count`만 증가하고 `dispatch_attempt_no`/`permit_consumed_
+  count`/`http_attempt_count`는 불변 — reservation이 **거부**된 경우(worker
+  slot만 반환, HTTP는 애초에 시도되지 않음, 위 불변식 참고).
+- `dispatch_attempt_no`와 `permit_consumed_count`는 증가했으나 `pre_http_
+  execution_failure_count`만 추가로 증가 — reservation은 받았으나 worker 시작
+  자체가 실패한 경우(`http_attempt_count`는 불변).
+- `dispatch_attempt_no`/`permit_consumed_count`/`http_attempt_count`/
+  `provider_retry_count`가 모두 증가 — HTTP가 실제로 나갔으나 429/5xx로
+  실패한 경우.
 
 이전 초안의 단일 `retry_count`는 위 두 계수를 혼재시켜 `retry_count ≤ max_http_
 attempts-1` 불변식이 pre-HTTP 실패 재등록까지 포함하면 깨지는 문제가 있었다 —
@@ -487,6 +537,13 @@ SELECT max(window_count) FROM (
 -- job별 permit_consumed_count와 attempt 행 수 정합성(HAVING 불일치)
 -- 재기동 뒤 미완료 job 및 마지막 상태(status NOT IN 종결상태)
 -- provider_queue_timeout reason code가 신규 경로에서 생성되지 않았는지(기대값 0)
+
+-- (보정) job별 queue_poll_count = reservation_denied_count + dispatch_attempt_no 정합성 검증
+SELECT job_id, queue_poll_count, reservation_denied_count, dispatch_attempt_no
+FROM fdc_queue_jobs
+WHERE queue_poll_count <> reservation_denied_count + dispatch_attempt_no;
+-- 기대 결과: 0 rows. 1행이라도 나오면 coordinator 호출 지점이 두 카운터 중
+--하나를 누락하고 있다는 뜻이다.
 ```
 
 fake clock 기반 테스트(§15)도 이 self-join 규칙과 동일한 경계(정확히 60초 전
@@ -511,7 +568,10 @@ FIFO/worker slot을 점유하지 않음(보정 2, A안), (9) coordinator 없는 
 차단, (10) fake provider는 coordinator 없이도 정상 동작, (11) job 상태와 attempt
 기록 수치 일관(`provider_retry_count`/`pre_http_execution_failure_count`/
 `queue_reenqueue_count` 각각 별도 검증), (12) 40개/120개 극단 조건의 dispatch
-스케줄이 §10 계산과 일치.
+스케줄이 §10 계산과 일치, (13) reservation 거부 시 `dispatch_attempt_no`는
+증가하지 않고 `reservation_denied_count`만 증가함 + 승인 시 반대(§9 보정 규칙
+직접 검증), (14) 임의 job에 대해 `queue_poll_count = reservation_denied_count
++ dispatch_attempt_no` 항등식이 항상 성립.
 
 **단계적 도입**: ① lifecycle 관측(quota_state/queue_jobs/attempts 스키마 + shadow
 기록, 실제 dispatch 동작은 미변경) → ② held_position lane 한정 실전 전환 → ③ 전체
@@ -531,7 +591,10 @@ decision·order 영향/lane 공정성)을 수행한다.
   차단 + 비운영 시간 수동 호출은 coordinator만 공유하고 FDC FIFO/worker slot은
   점유하지 않음(A안 — 보정 2), `provider_retry_count`/`pre_http_execution_
   failure_count`/`queue_reenqueue_count` 3분리 accounting(보정 3), coordinator
-  판단·감사 SQL·테스트 전부 동일한 `(t-60초, t]` 반열림 경계 규칙 사용(보정 4).
+  판단·감사 SQL·테스트 전부 동일한 `(t-60초, t]` 반열림 경계 규칙 사용(보정 4),
+  `dispatch_attempt_no`는 reservation **성공 시에만** 증가하고 `reservation_
+  denied_count`는 `fdc_queue_jobs`에 저장해 `queue_poll_count = reservation_
+  denied_count + dispatch_attempt_no`를 항상 만족(accounting 정합성 보정).
 
 ### 구현 후 실측 필요(이번 문서로 확정하지 않음, 값·성능은 구현 후 검증)
 - `FDC_WORKER_CONCURRENCY=5`가 13 RPM을 실제로 소진하기에 충분한지.
