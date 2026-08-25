@@ -152,3 +152,32 @@ count`/`queue_reenqueue_count` 3분리와 별개로, accounting 표 자체에 �
 ## 3차 검증
 
 `bash scripts/harness/run.sh accept docs` — PASS(상세는 완료 보고 참고).
+
+## 4차 개정(2026-08-25, 같은 날 후속) — coordinator 오류 경로와 accounting 항등식 충돌 보정
+
+`queue_poll_count = reservation_denied_count + dispatch_attempt_no`
+항등식과 DB/coordinator 오류(fail-closed) 경로가 서로 충돌하던 문제를
+보정했다(같은 PR #350, 추가 커밋).
+
+- coordinator 오류(DB unavailable/lock timeout/transaction 오류)는
+  `GRANTED`도 `DENIED`도 아닌 "결론 자체를 못 받은" 시도라, 위 세 카운터
+  중 어느 것도 증가시키지 않기로 확정했다(A안 — `reservation_error_count`
+  를 추가하는 B안은 기각. 이유: DB 자체가 unavailable이면 그 오류 자체를
+  `fdc_queue_jobs` row에 영속 기록할 방법이 없어, B안의 "오류도 영속
+  카운터로 관리"라는 전제가 정확히 그 시나리오에서 성립하지 않는다).
+- `COORDINATOR_UNAVAILABLE`/`COORDINATOR_LOCK_TIMEOUT`/`COORDINATOR_
+  TRANSACTION_ERROR` 3종 오류 분류, worker slot 즉시 반환, 지수 backoff
+  (초기 1초/상한 30초, 신규 설정 2건), DB 복구 후 자동 재개, DB 자체가
+  내려간 동안의 최소 관측 근거(프로세스 로그/in-memory counter/사이클
+  요약 로그 — 전부 휘발성, DB 영속 아님)를 §6에 상세 계약으로 추가했다.
+- coordinator 오류가 아무리 지속돼도 `CANCELLED`(시장 종료/운영자/
+  프로세스 종료 3사유 한정)가 자동으로 발동하지 않는다는 것을 명시하고,
+  장기 장애 시 표준 대응은 운영자의 수동 `operator_cancel` 개입임을
+  운영 절차로 문서화했다(자동 시간제한 신설 아님).
+
+이번 개정은 §5·§6·§9·§13·§15·§16을 수정했다. 런타임 코드/migration/
+compose/`.env` 변경은 이번에도 없다.
+
+## 4차 검증
+
+`bash scripts/harness/run.sh accept docs` — PASS(상세는 완료 보고 참고).

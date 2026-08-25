@@ -8057,3 +8057,19 @@ jobs` 스키마 표에 누락됐던 `reservation_denied_count`를 스키마에 �
 `queue_poll_count = reservation_denied_count + dispatch_attempt_no`
 정합성 검증 SQL을 함께 추가했다. 같은 브랜치·PR(#350)에 추가 커밋만
 반영, 신규 PR 없음. 런타임 코드·migration·compose·`.env` 변경 없음.
+
+## 위 항목 재정정(2026-08-25 KST 4차 후속) — coordinator 오류 경로와 accounting 항등식 충돌 보정
+
+`queue_poll_count = reservation_denied_count + dispatch_attempt_no`
+항등식이 DB/coordinator 오류(fail-closed) 경로와 충돌하던 문제를
+보정했다: coordinator 오류(DB unavailable/lock timeout/transaction
+오류)는 `GRANTED`도 `DENIED`도 아니므로 세 카운터 중 어느 것도 증가시키지
+않기로 확정(A안 채택, `reservation_error_count`를 추가하는 B안은 "DB
+자체가 내려간 상황엔 그 값 자체를 저장할 수 없다"는 이유로 기각).
+`COORDINATOR_UNAVAILABLE`/`COORDINATOR_LOCK_TIMEOUT`/`COORDINATOR_
+TRANSACTION_ERROR` 3종 오류 분류, 지수 backoff(초기 1초/상한 30초),
+DB 장애 중 최소 관측 근거(프로세스 로그/in-memory counter, 전부 휘발성)
+를 §6에 추가했다. coordinator 오류가 지속돼도 `CANCELLED`(3사유 한정)가
+자동 발동하지 않음을 명시하고, 장기 장애 시 운영자 수동 개입을 표준
+절차로 문서화했다. 같은 브랜치·PR(#350)에 추가 커밋만 반영, 신규 PR
+없음. 런타임 코드·migration·compose·`.env` 변경 없음.

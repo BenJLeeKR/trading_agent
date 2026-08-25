@@ -14,6 +14,14 @@
 > "성공 시에만 증가"로 통일하고, 이전에 accounting 표에만 있고 `fdc_queue_jobs`
 > 스키마 표에는 누락됐던 `reservation_denied_count`를 스키마에 추가했다.
 > §8·§9·§14·§15·§16이 이번 개정의 영향을 받는다.
+>
+> **개정 이력**: 2026-08-25(4차) — `queue_poll_count = reservation_denied_
+> count + dispatch_attempt_no` 항등식과 DB/coordinator 오류 fail-closed
+> 경로 사이의 불일치를 보정했다. coordinator 오류(DB unavailable/lock
+> timeout/transaction 오류)는 `GRANTED`도 `DENIED`도 아니므로 이 세 카운터
+> 중 어느 것도 증가시키지 않는다(A안 채택)는 것을 명시하고, coordinator
+> 오류 전용 상태·backoff·최소 관측 계약을 신설했다. §5·§6·§9·§13·§15·§16이
+> 이번 개정의 영향을 받는다.
 
 ## 1. 배경과 문제 정의
 
@@ -156,7 +164,15 @@ QUEUED
       → (pre_http_execution_failure_count가 max_pre_http_execution_failures 미만)
           → RETRY_QUEUED(pre-HTTP 사유, 새 queue_entry_id, FIFO tail) → QUEUED로 복귀
       → (소진) → FDC_FAILED_FINAL(reason=worker_start_exhausted)
-CANCELLED ← 시장 종료 / 운영자 명시 취소 / 프로세스 종료(오직 이 세 사유만)
+  → (coordinator 호출이 COORDINATOR_UNAVAILABLE/COORDINATOR_LOCK_TIMEOUT/
+     COORDINATOR_TRANSACTION_ERROR로 실패, 보정 4차 — §6 "coordinator 오류
+     경로" 참고)
+      → worker slot 즉시 반환, job은 QUEUED 유지(탈락 아님)
+      → 지수 backoff 후 재시도(queue_poll_count/reservation_denied_count/
+        dispatch_attempt_no 어느 것도 증가하지 않음 — 로그/in-memory
+        counter로만 관측)
+CANCELLED ← 시장 종료 / 운영자 명시 취소 / 프로세스 종료(오직 이 세 사유만 —
+             coordinator 오류가 아무리 지속돼도 이 사유가 자동 추가되지 않음)
 ```
 
 `queue_reenqueue_count = provider_retry_count + pre_http_execution_failure_count`
@@ -223,7 +239,115 @@ COMMIT;
 
 - **DB 장애/lock timeout/트랜잭션 오류 시**: live Gemini HTTP 호출은 **fail-closed**
   — coordinator에 접근할 수 없으면 그 job은 시도하지 않고 `QUEUED`에 남는다(탈락
-  아님, 다음 재시도 기회를 기다림).
+  아님, 다음 재시도 기회를 기다림). 상세 계약은 바로 아래 "coordinator 오류 경로"
+  절에서 확정한다.
+
+### coordinator 오류 경로(보정, 4차 개정 — `queue_poll_count` 항등식과의 충돌 해소)
+
+**충돌 확인**: 이전 초안은 `queue_poll_count = 모든 reservation 확인 시도`와
+`queue_poll_count = reservation_denied_count + dispatch_attempt_no`를 동시에
+정의했는데, coordinator 오류(DB unavailable/lock timeout/transaction 오류)는
+`GRANTED`도 `DENIED`도 아닌 **"결론 자체를 받지 못한" 시도**라 이 항등식에
+끼워 넣을 자리가 없었다.
+
+**A/B 비교**:
+
+| 안 | 설명 | 평가 |
+|---|---|---|
+| **A(채택)** | `queue_poll_count`를 "coordinator가 정상적으로 `GRANTED`/`DENIED` 결론을 반환한 시도"로 재정의. 오류는 이 세 카운터에 전혀 포함하지 않고 별도 로그/메트릭으로만 관측 | DB 자체가 unavailable이면 `fdc_queue_jobs` row를 UPDATE할 방법이 없다는 근본 제약과 정확히 들어맞는다 — "저장할 수 없는 값을 저장하기로 계약해두는" 모순을 피한다 |
+| B(`reservation_error_count` 추가, `queue_poll_count = denied + dispatch + error`) | 오류도 영속 카운터로 관리 | **기각** — DB 자체가 내려간 상황에서 "이 job의 `reservation_error_count`를 `+1`하라"는 UPDATE 자체를 실행할 수 없다. 즉 B안이 요구하는 영속 저장이 정확히 그 순간에 불가능한 경우가 이 오류 경로의 **핵심 시나리오**라, "정의는 있으나 저장할 수 없는 필드"라는 자기모순이 생긴다 |
+
+**확정 계약(A안)**:
+```
+queue_poll_count:
+  coordinator가 정상적으로 GRANTED 또는 DENIED 결론을 반환한 횟수만 계산
+
+reservation_denied_count:
+  정상 coordinator 응답 중 quota가 가득 차 DENIED된 횟수
+
+dispatch_attempt_no:
+  정상 coordinator 응답 중 GRANTED되어 ReservationGrant가 발급된 횟수
+
+queue_poll_count = reservation_denied_count + dispatch_attempt_no
+  (오류 경로는 이 항등식 계산에 전혀 참여하지 않으므로 오류가 아무리 나도 깨지지 않는다)
+```
+
+**coordinator 오류 상태와 동작(확정 계약)**:
+```
+QUEUED
+  → coordinator 호출(§6 트랜잭션 시도)
+  → COORDINATOR_UNAVAILABLE(DB 연결 자체 실패)
+    또는 COORDINATOR_LOCK_TIMEOUT(anchor 행 잠금 대기 초과)
+    또는 COORDINATOR_TRANSACTION_ERROR(그 외 트랜잭션 실행 오류)
+  → Gemini HTTP 미호출(fail-closed)
+  → local worker slot 즉시 반환
+  → job은 QUEUED 유지
+  → backoff 후 재시도(아래 backoff 원칙)
+```
+
+1. **오류 분류**: `COORDINATOR_UNAVAILABLE`/`COORDINATOR_LOCK_TIMEOUT`/
+   `COORDINATOR_TRANSACTION_ERROR` 3종으로 분류한다. 이 분류는 **DB row가
+   아니라 프로세스 로그/메트릭 계층에서만** 기록된다(A안의 핵심 — DB 자체가
+   내려간 경우 이 분류값을 그 job의 DB row에 영속 기록할 수 없으므로, 애초에
+   그런 계약을 하지 않는다).
+2. **`CANCELLED`/`FDC_FAILED_FINAL`/`provider_queue_timeout`이 아닌 이유**:
+   - `CANCELLED`가 아닌 이유: `CANCELLED`는 시장 종료/운영자 명시 취소/프로세스
+     종료 **오직 세 사유만**으로 한정된 확정 계약(§5)이다 — infra 오류는 이
+     셋 중 어디에도 해당하지 않고, job에게 다시 기회를 줘야 하므로 종결
+     상태로 보내지 않는다.
+   - `FDC_FAILED_FINAL`이 아닌 이유: 이 상태는 **provider(Gemini) 자신의
+     실패**(HTTP가 실제로 나갔으나 429/5xx/파싱오류 등으로 실패)를 뜻하는데,
+     coordinator 오류는 HTTP 시도 자체가 발생하기 **이전** 단계의 인프라
+     문제라 provider 실패와 원인이 다르다.
+   - `provider_queue_timeout`이 아닌 이유: 이 reason code는 폐기된 구
+     FIFO 설계(§5)의 "시간 경과로 인한 포기" 개념이다. 새 계약에는 "시간이
+     지나서 포기"라는 개념 자체가 없으므로 이 이름을 재사용하지 않는다.
+3. **worker slot 반환 시점**: coordinator 호출이 예외로 실패하는 **즉시**
+   (reservation `DENIED`를 받았을 때와 동일한 원칙 — worker slot을 쥐고
+   backoff 대기까지 하지 않는다, §7의 실행 순서와 일치).
+4. **hot-loop 방지 backoff 원칙**: **지수 백오프(exponential backoff)를
+   권고**한다(고정 간격이 아님) — DB 장애가 지속되는 동안 고정 짧은 간격으로
+   재연결을 반복하면 이미 불안정한 DB에 재연결 시도 자체가 부하를 더해
+   회복을 늦출 위험이 있다. 권고 초기값 1초, 배수 2, **상한 30초**(신규 설정
+   `FDC_COORDINATOR_ERROR_BACKOFF_MAX_SECONDS`, 구현 PR에서 배선). 이 backoff은
+   **그 job 하나의 재시도 간격**이며, cycle 전체는 사이클-scoped 순차 모델
+   그대로 이 job(과 같은 처지의 다른 job들)이 종결 상태에 도달할 때까지
+   순차적으로 대기한다(§4의 순차 cycle 원칙과 동일 — cycle이 병행되지
+   않는다는 계약은 DB 오류 상황에서도 변하지 않는다).
+5. **DB 복구 후 재시도 조건**: 별도의 "복구 확인" 절차는 두지 않는다 —
+   backoff이 끝난 뒤 다음 폴링 시도가 §6 트랜잭션을 그대로 다시 실행하고,
+   DB가 응답 가능한 상태로 돌아와 있으면 그 시도가 곧 "정상적인 `GRANTED`
+   또는 `DENIED` 응답"이 되어 `queue_poll_count`에 자연스럽게 편입된다.
+6. **DB 자체가 내려가 DB row 기록도 불가능한 경우의 최소 관측 근거**(A안의
+   핵심 트레이드오프, 구현 후 실측 필요 항목으로도 별도 명시):
+   - **프로세스 로그**: dispatcher 프로세스가 구조화된 로그 라인(오류
+     분류/`job_id`/타임스탬프)을 표준 출력/로그 파일에 남긴다 — DB와
+     무관한 유일한 즉시 기록 수단.
+   - **in-memory counter**: dispatcher 프로세스 메모리 안에서만 오류
+     발생 횟수를 집계한다 — **재기동 시 소실되는 휘발성 정보**임을
+     명시한다(직전 개정에서 확립한 "휘발성 정보 허용" 원칙과 동일선상).
+   - **scheduler cycle summary**: 사이클 종료 시 그 사이클 동안 발생한
+     coordinator 오류 총량을 in-memory counter로부터 집계해 1줄 로그로
+     요약 출력한다(DB 저장 아님, 로그 전용).
+   - **DB 복구 후 final job 상태 기록**: DB가 복구된 뒤에는 해당 job의
+     `fdc_queue_jobs` row가 정상적으로 계속 갱신되므로, "그 job이 결국
+     `FDC_SUCCEEDED`/`FDC_FAILED_FINAL`/`CANCELLED` 중 무엇으로 끝났는가"는
+     DB에 남는다 — 다만 **그 사이에 있었던 개별 오류 발생 횟수 자체**는
+     DB에 남지 않고 로그로만 남는다는 한계를 명시적으로 인정한다.
+7. **DB 오류가 장기간 지속될 때 cycle의 무한 대기 허용 여부**: 사용자의
+   "순번이 늦다는 이유로 탈락하지 않는다"는 요구와 **DB 장애로 인한 대기는
+   원인이 다르지만, 계약상으로는 동일하게 다뤄진다** — 둘 다 "명시적
+   취소 사유(시장 종료/운영자/프로세스 종료) 외에는 시간 경과만으로 자동
+   종료하지 않는다"는 원칙을 따른다. 즉 **새로운 자동 시간제한(예: "DB
+   오류가 N분 지속되면 자동으로 `CANCELLED`")은 도입하지 않는다** — 이는
+   §5가 이미 확정한 "`CANCELLED` 사유 3종 한정"과 상충하기 때문이다. 다만
+   이것이 실무적으로 "장애가 나면 그날 장이 끝날 때까지 사이클이 멈춰
+   있을 수 있다"는 운영 위험을 그대로 남긴다는 뜻이므로, **이 경우 운영자가
+   기존 `CANCELLED(operator_cancel)` 경로로 수동 개입**하는 것을 표준
+   대응 절차로 문서화한다(자동 메커니즘 신설이 아니라 기존 사유를 수동으로
+   발동하는 운영 절차 — 구현 후 실측/운영 런북 대상, 12절 미확인 사항에도
+   중복 명시).
+
 - **60초 경계의 판단 SQL과 사후 검증 SQL 일치(보정 4)**: 판단 SQL은 `reserved_at
   > now() - interval '60 seconds'`(반열림 구간 `(t-60초, t]`, 즉 **정확히 60초
   이전 시각의 reservation은 이번 window에서 제외**된다 — `>`이지 `>=`가 아니다).
@@ -303,7 +427,10 @@ jobs`에 저장한다(대안 B — 별도 event 테이블만으로 재구성하�
 - **증가 시점**: coordinator가 §6 트랜잭션에서 `count ≥ 13`으로 `DENIED`를
   반환할 때마다, 그 job의 `fdc_queue_jobs.reservation_denied_count`를 원자적으로
   `+1`한다(같은 UPDATE 문 안에서 `queue_poll_count`도 함께 `+1`, `dispatch_
-  attempt_no`는 증가시키지 않음 — 아래 불변식 참고).
+  attempt_no`는 증가시키지 않음 — 아래 불변식 참고). **주의**: `DENIED`(정상
+  응답)와 coordinator 오류(DB unavailable 등, §6 "coordinator 오류 경로")는
+  다른 개념이다 — `DENIED`만 이 카운터를 증가시키고, 오류는 이 카운터에
+  전혀 관여하지 않는다(§9의 4차 보정 참고).
 - **사용 목적**: `reservation_denied_count`가 특정 lane(예: held_position)이나
   특정 사이클에서 유독 높게 나오면 "그 lane의 job들이 quota 경쟁에서 계속 밀리고
   있다"는 lane 공정성 신호가 된다 — ①단계(lifecycle 관측 shadow, §15)에서 배포
@@ -341,9 +468,9 @@ FDC가 이 quota_scope의 유일한 운영 소비자이고, 수동 호출은 예
 
 | 필드 | 정의 |
 |---|---|
-| `queue_poll_count` | reservation 가능 여부를 확인 시도한 횟수(거부+성공 전부 포함) — 모든 reservation 조회 시도마다 증가 |
-| `reservation_denied_count` | 13 RPM window가 가득 차 `DENIED`를 받은 횟수 — coordinator가 `DENIED`를 반환할 때만 증가 |
-| `dispatch_attempt_no` | reservation을 **성공적으로 받아 `ReservationGrant`가 발급된** 횟수 — `DENIED` 시에는 증가하지 않는다(보정, 이전 초안의 모순 표현 정정) |
+| `queue_poll_count` | **coordinator가 정상적으로 `GRANTED` 또는 `DENIED` 결론을 반환한** 확인 시도 횟수(보정 — coordinator 오류로 결론 자체를 못 받은 시도는 포함하지 않는다, §6·§9 하단 오류 경로 참고) |
+| `reservation_denied_count` | 정상 coordinator 응답 중 13 RPM window가 가득 차 `DENIED`를 받은 횟수 |
+| `dispatch_attempt_no` | 정상 coordinator 응답 중 `GRANTED`되어 `ReservationGrant`가 발급된 횟수 — `DENIED` 시에는 증가하지 않는다(보정, 이전 초안의 모순 표현 정정) |
 | **`provider_retry_count`** | 실제 HTTP가 **시작된 뒤** retryable provider 오류(429/5xx/timeout/DNS)로 FIFO tail에 재등록된 횟수 — `http_started_at IS NOT NULL`인 attempt에서만 증가 |
 | **`pre_http_execution_failure_count`** | reservation 성공 후 **HTTP 시작 전**(`http_started_at IS NULL`)에 worker/subprocess 생성·취소 등으로 실패해 재등록된 횟수 |
 | **`queue_reenqueue_count`** | `= provider_retry_count + pre_http_execution_failure_count`(파생 지표, "FIFO tail에 총 몇 번 재등록됐는지"만 알고 싶을 때 참조) |
@@ -379,6 +506,15 @@ reservation granted(coordinator가 count<13으로 승인, ReservationGrant 발�
   (이후 실제 HTTP 시작 여부는 §7의 worker 실행 결과에 달려 있으며, 그 결과에
    따라 http_attempt_count 또는 pre_http_execution_failure_count가 추가로
    증가한다 — 아래 사례 참고)
+
+coordinator error(DB unavailable / lock timeout / transaction 오류 — GRANTED도
+DENIED도 아닌 "결론 자체를 못 받은" 경우, 아래 §6-보정 참고):
+  queue_poll_count 증가 없음
+  reservation_denied_count 증가 없음
+  dispatch_attempt_no 증가 없음
+  → 이 세 카운터의 항등식(queue_poll_count = reservation_denied_count +
+    dispatch_attempt_no)은 오류 경로에서 애초에 셋 다 건드리지 않으므로
+    깨지지 않는다.
 ```
 
 **세 계수가 항상 같지 않은 이유(사례별)**:
@@ -494,6 +630,8 @@ structured()`는 FDC 배치 경로에서는 아예 쓰이지 않고 오직 "coor
 | `GEMINI_PROVIDER_DECLARED_RPM_LIMIT` | `15` | 문서/startup validation 전용(코드가 강제 호출하는 값 아님) |
 | `FDC_WORKER_CONCURRENCY` | `5`(실측 전 보수적 시작값) | FDC 전용 동시 실행 수 |
 | `FDC_QUOTA_COORDINATOR_BACKEND` | `"postgres"` | 백엔드 선택(현재 단일 값만 지원) |
+| `FDC_COORDINATOR_ERROR_BACKOFF_INITIAL_SECONDS` | `1` | coordinator 오류(§6) 시 job 재시도 지수 backoff 초기값 |
+| `FDC_COORDINATOR_ERROR_BACKOFF_MAX_SECONDS` | `30` | 위 backoff 상한(hot-loop 방지) |
 
 startup validation(구현 PR 대상): `FDC_PROVIDER_TARGET_RPM < GEMINI_PROVIDER_
 DECLARED_RPM_LIMIT`, 모든 수치형 값 `> 0`. 배선 경로: `.env.example` 주석 추가 →
@@ -571,7 +709,17 @@ FIFO/worker slot을 점유하지 않음(보정 2, A안), (9) coordinator 없는 
 스케줄이 §10 계산과 일치, (13) reservation 거부 시 `dispatch_attempt_no`는
 증가하지 않고 `reservation_denied_count`만 증가함 + 승인 시 반대(§9 보정 규칙
 직접 검증), (14) 임의 job에 대해 `queue_poll_count = reservation_denied_count
-+ dispatch_attempt_no` 항등식이 항상 성립.
++ dispatch_attempt_no` 항등식이 항상 성립, (15) DB connection 실패를 fake
+repository로 재현했을 때 Gemini HTTP 시도가 0회임을 확인, (16) lock timeout/
+transaction 오류 시 local worker slot이 즉시 반환됨, (17) coordinator 오류가
+`reservation_denied_count`/`dispatch_attempt_no`/`queue_poll_count` 어느 것도
+증가시키지 않아 (14)의 항등식이 오류 경로에서도 깨지지 않음(A안 핵심 검증),
+(18) 지수 backoff이 고정 간격이 아니라 매 실패마다 증가하며 상한
+(`FDC_COORDINATOR_ERROR_BACKOFF_MAX_SECONDS`)에서 멈추고, fake DB가
+"복구"(성공 응답으로 전환)되면 다음 폴링에서 즉시 정상 재개됨, (19)
+coordinator 오류가 반복되는 동안에도 `CANCELLED`(시장 종료/운영자/프로세스
+종료 3사유 외)가 자동으로 발동하지 않음(job이 순번·오류 어느 이유로도
+자동 제거되지 않는다는 계약의 직접 검증).
 
 **단계적 도입**: ① lifecycle 관측(quota_state/queue_jobs/attempts 스키마 + shadow
 기록, 실제 dispatch 동작은 미변경) → ② held_position lane 한정 실전 전환 → ③ 전체
@@ -594,7 +742,11 @@ decision·order 영향/lane 공정성)을 수행한다.
   판단·감사 SQL·테스트 전부 동일한 `(t-60초, t]` 반열림 경계 규칙 사용(보정 4),
   `dispatch_attempt_no`는 reservation **성공 시에만** 증가하고 `reservation_
   denied_count`는 `fdc_queue_jobs`에 저장해 `queue_poll_count = reservation_
-  denied_count + dispatch_attempt_no`를 항상 만족(accounting 정합성 보정).
+  denied_count + dispatch_attempt_no`를 항상 만족(accounting 정합성 보정),
+  coordinator 오류(DB unavailable/lock timeout/transaction 오류)는 위 세
+  카운터 어디에도 포함하지 않고 프로세스 로그/in-memory counter로만 관측하며
+  (A안), 그 오류로 job이 `CANCELLED`/`FDC_FAILED_FINAL`로 자동 전이되지
+  않고 지수 backoff 후 계속 재시도(4차 보정).
 
 ### 구현 후 실측 필요(이번 문서로 확정하지 않음, 값·성능은 구현 후 검증)
 - `FDC_WORKER_CONCURRENCY=5`가 13 RPM을 실제로 소진하기에 충분한지.
@@ -607,6 +759,14 @@ decision·order 영향/lane 공정성)을 수행한다.
 - §11에서 "운영 시간 판정은 기존 market-hours 관련 코드/설정을 재사용한다"고
   명시했으나, 정확히 어느 기존 함수/설정을 재사용할지는 구현 PR에서 확인이
   필요하다(이번 문서화 턴에서 코드 근거로 특정하지 않음, 보정 2 관련).
+- coordinator 오류 시 dispatcher 프로세스 로그/in-memory counter만으로
+  운영자가 "DB 장애로 몇 개 job이 얼마나 오래 대기했는지"를 사후 파악하기에
+  충분한지는 구현 후 실제 장애 상황(또는 fault-injection 테스트)으로 검증이
+  필요하다 — 이번 설계는 "저장 불가능한 상황에서는 로그로만 관측한다"는
+  원칙만 확정했고, 그 로그의 구체적 포맷/보존 기간/알림 연동은 구현 PR 대상.
+- `FDC_COORDINATOR_ERROR_BACKOFF_INITIAL_SECONDS=1`/`_MAX_SECONDS=30`이
+  적정한 값인지는 실제 DB 장애 복구 시간 분포에 대한 실측 없이 제안한
+  보수적 시작값이다.
 
 ### 롤백
 전부 신규 테이블·신규 인터페이스 추가이며 기존 `fdc_rate_limiter.py`/`run_agent_
