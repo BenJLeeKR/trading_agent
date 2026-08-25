@@ -8003,3 +8003,73 @@ validation.md` "45. SPPV-3 OOS 일봉 cache 일 1회 자동 갱신 배치 —
   미확정) 설계와 알림 최소 계약(비밀값 미노출)을 정의.
 - **다음 단계(사용자 승인 필요)**: 배치 실행 메커니즘 확정, wrapper
   구현, 실제 배치 등록 — 전부 다음 구현 턴 대상.
+
+## FDC cycle-scoped batch queue + Gemini 공용 13 RPM quota — 설계 확정(2026-08-25 KST)
+
+상세: `docs/40_action_plans/fdc_cycle_scoped_batch_queue_gemini_
+shared_13rpm_quota_design_2026-08-25.md`.
+
+- 여러 차례의 read-only 실측·설계 검토(in-cycle FIFO 재대기열의
+  실제 성공률 0% 확인, EI/AR/AC가 운영에서 Gemini를 전혀 호출하지
+  않는다는 발견, 수동 분석 스크립트 2건이 limiter를 완전히
+  우회할 수 있다는 발견)를 종합해 최종 아키텍처를 확정했다.
+- 핵심 결정: (1) 사이클은 순차 유지, FDC 대상 전원을 사이클 안에서
+  탈락 없이 처리하는 cycle-scoped strict batch queue, (2)
+  PostgreSQL singleton anchor 행 잠금 기반 atomic quota reservation
+  (phantom insert 경쟁 조건 방지, 기존 `kis_fill_cumulative_state.py`
+  의 `FOR UPDATE` 관례 재사용), (3) dispatcher가 permit·retry·FIFO
+  재등록을 완전히 소유하고 FDC는 HTTP 1회만 시도하는 one-shot
+  인터페이스 신설(기존 공용 `generate_structured()`는 무변경), (4)
+  `LiveGeminiProviderClient`/`FakeProviderClient` 타입 분리로 live
+  provider 호출은 coordinator 없이는 생성 자체가 불가능하게 강제,
+  (5) `fdc_queue_jobs`+`fdc_provider_attempts`+`fdc_quota_state`
+  3-테이블 영속 스키마로 재기동 후 미완료 job 사후 확인 가능.
+- 코드/문서 수정은 이 설계 문서 자체와 backlog/work log뿐 —
+  런타임 코드·migration·compose·`.env` 변경 없음. 구현은 별도
+  후속 PR로 분리.
+- **다음 단계(사용자 승인 필요)**: 구현 PR 착수(migration 작성 →
+  dispatcher/coordinator 코드 → FDC one-shot 인터페이스 → 설정
+  배선 → 테스트) — 이번 문서화 턴에서는 미착수.
+
+## 위 항목 정정(2026-08-25 KST 후속) — 4개 계약 충돌 보정
+
+같은 문서(위 상세 링크)에 남아있던 4개 계약 충돌을 사용자 지적에 따라
+보정했다: (1) dispatcher/FDC one-shot의 reservation 이중 소유 위험 —
+`ReservationGrant`를 dispatcher만 발급받고 one-shot은 소비만 하도록
+명확화, (2) 수동 provider 호출의 job 모델 미확정 — A안(운영 시간 기술적
+차단, 비운영 수동 호출은 coordinator만 공유하고 FDC FIFO/worker slot은
+미점유, `fdc_provider_attempts.job_id` nullable)으로 확정, (3) 단일
+`retry_count`가 HTTP 실패 재등록과 pre-HTTP 실행 실패 재등록을 혼재시켜
+불변식이 깨지던 문제 — `provider_retry_count`/`pre_http_execution_
+failure_count`/`queue_reenqueue_count` 3분리로 해소, (4) coordinator
+판단 SQL과 감사 SQL의 sliding 60초 경계 규칙 불일치 — self-join 기반
+감사 SQL로 동일한 반열림 규칙 통일. 같은 브랜치·PR(#350)에 추가 커밋만
+반영, 신규 PR 없음. 런타임 코드·migration·compose·`.env` 변경 없음.
+
+## 위 항목 재정정(2026-08-25 KST 3차 후속) — accounting 정의·스키마 정합성 보정
+
+같은 문서에 남아있던 accounting 표 내부 모순 2건을 추가로 보정했다:
+(1) `dispatch_attempt_no`가 정의("reservation을 실제로 받아 넘긴 횟수")와
+사례 설명("거부 시 증가")에서 서로 모순됐던 것을 "성공(`ReservationGrant`
+발급) 시에만 증가"로 통일, (2) accounting 표에는 있었으나 `fdc_queue_
+jobs` 스키마 표에 누락됐던 `reservation_denied_count`를 스키마에 추가
+(A안 — job 단위 누적 카운터, `fdc_provider_attempts`엔 넣지 않음).
+`queue_poll_count = reservation_denied_count + dispatch_attempt_no`
+정합성 검증 SQL을 함께 추가했다. 같은 브랜치·PR(#350)에 추가 커밋만
+반영, 신규 PR 없음. 런타임 코드·migration·compose·`.env` 변경 없음.
+
+## 위 항목 재정정(2026-08-25 KST 4차 후속) — coordinator 오류 경로와 accounting 항등식 충돌 보정
+
+`queue_poll_count = reservation_denied_count + dispatch_attempt_no`
+항등식이 DB/coordinator 오류(fail-closed) 경로와 충돌하던 문제를
+보정했다: coordinator 오류(DB unavailable/lock timeout/transaction
+오류)는 `GRANTED`도 `DENIED`도 아니므로 세 카운터 중 어느 것도 증가시키지
+않기로 확정(A안 채택, `reservation_error_count`를 추가하는 B안은 "DB
+자체가 내려간 상황엔 그 값 자체를 저장할 수 없다"는 이유로 기각).
+`COORDINATOR_UNAVAILABLE`/`COORDINATOR_LOCK_TIMEOUT`/`COORDINATOR_
+TRANSACTION_ERROR` 3종 오류 분류, 지수 backoff(초기 1초/상한 30초),
+DB 장애 중 최소 관측 근거(프로세스 로그/in-memory counter, 전부 휘발성)
+를 §6에 추가했다. coordinator 오류가 지속돼도 `CANCELLED`(3사유 한정)가
+자동 발동하지 않음을 명시하고, 장기 장애 시 운영자 수동 개입을 표준
+절차로 문서화했다. 같은 브랜치·PR(#350)에 추가 커밋만 반영, 신규 PR
+없음. 런타임 코드·migration·compose·`.env` 변경 없음.
