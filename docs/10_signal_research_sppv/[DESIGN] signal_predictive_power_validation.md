@@ -10730,3 +10730,83 @@ No-Go 중 어느 것도 아니다. Stage B는 계속 보류.
 - cache 갱신은 이 절에서 수행하지 않았다 — §41.4/§42가 정한 대로,
   다음 갱신도 사용자 승인 후 신규 디렉터리에 수행하고 기존 cache는
   보존한다.
+
+## 45. SPPV-3 OOS 일봉 cache 일 1회 자동 갱신 배치 — 설계(2026-08-25 KST, read-only 조사·설계 전용)
+
+§44가 만든 OOS 성과 계산 도구가 통계적으로 유의미한 판정을 내리려면
+(§44.6) 표본이 계속 쌓여야 하는데, 지금까지는 §42처럼 사람이 수동으로
+`build_sppv3_oos_bar_cache.py`를 실행해야만 표본이 늘어난다. 이 절은
+그 수집을 장 마감 후 하루 1회 자동으로 실행하는 배치의 **아키텍처만
+설계**했다. 코드 구현, GitHub Actions 수정, cron 등록, 컨테이너
+재기동, 실제 KIS 호출, DB write, 주문 제출은 이 절에서 전혀 수행하지
+않았다. 전체 설계는 `docs/40_action_plans/sppv3_oos_daily_batch_design_2026-08-25.md`에
+있으며, 이 절은 그 요지만 요약한다.
+
+### 45.1 KIS 일봉 확정 시각 — 사실과 미확정 구분
+
+- 코드로 확인 가능한 사실: `scripts/run_ops_scheduler.py:182`의
+  `MARKET_CLOSE = dtime(15, 30, 30)`, 같은 파일의 기존
+  `signal_feature_batch`가 `20:10 KST`에 실행되도록 이미 설계돼
+  있음(`DEFAULT_SIGNAL_FEATURE_BATCH_TIME`), `.github/workflows/harness.yml`의
+  `market_hours_guard`가 09:00~15:29:59 KST를 장중으로 판정.
+- KIS `inquire_daily_itemchartprice` 클라이언트 코드에는 당일 일봉이
+  언제 확정되는지에 대한 주석/근거가 없다. 저장소 전체를 검색해도
+  실측 기록이 없다. **이 확정 시각은 미확정으로 남겨두었다.**
+- 보수적 대응: 기존 `signal_feature_batch`(20:10)를 유일한 선례로
+  삼아, 그보다 더 늦은 **21:00 KST**를 배치 실행 후보로 권장했다.
+  실제 배치 가동 전, 최소 1회는 21:00 실행 결과를 사람이 직접
+  관찰해 그 시점에 당일 일봉이 실제로 존재하는지 확인하는 것을
+  권장한다.
+
+### 45.2 실행 주체 — 주문 스케줄러와 분리 권장
+
+`ops-scheduler`(`docker-compose.yml:268-330`)에 잡을 얹는 방안과
+별도 one-shot 실행 방안을 비교한 결과, **별도 프로세스/장애 도메인
+분리**를 권장했다. 이 배치가 실패하거나 버그가 있어도 실주문
+경로(`ops-scheduler`)에 전혀 영향을 주지 않아야 하기 때문이다.
+KIS 자격증명(`KIS_LIVE_INFO_*`)은 이미 `agent_trading-ops-scheduler`
+컨테이너가 보유(§42에서 실측 검증)하고 있으므로 재사용하되, 구체적
+실행 메커니즘(host cron/systemd timer/별도 컨테이너 등)은 다음
+구현 턴에서 사용자 승인 후 확정한다.
+
+### 45.3 cache 저장 전략 — 매일 신규 디렉터리 유지 + `latest` 포인터
+
+기존 `_bars_cache_core87_3y_<날짜>` 매일 신규 디렉터리 방식(§42)을
+그대로 유지하는 것을 권장했다. append-only 단일 cache로 바꾸면
+manifest가 최신 상태로 덮어써져 특정 시점 재현·회귀비교가
+어려워지기 때문이다. 대신 성공한 날에만 갱신되는 `latest` 포인터
+(심링크 또는 포인터 파일)만 추가해, 후속 분석 단계가 "가장 최근
+성공한 완전한 cache"를 안전하게 찾을 수 있게 한다. base cache
+불변 원칙과 `_cache_provenance`(`base_cache`/`oos_new`) 계약은
+그대로 유지된다.
+
+### 45.4 실패 모드와 알림 최소 계약
+
+중복 실행(그날 디렉터리가 이미 `ready_for_oos=true`면 스킵),
+휴장일(`MarketSessionProvider.is_trading_day()` 재사용해 스킵),
+KIS 지연(전체 타임아웃 후 부분 결과로 `ready_for_oos=false` 명시),
+부분 수집 실패(기존 `determine_ready_for_oos()`의 "전종목 성공해야
+`ready_for_oos=True`" 정책 재사용), 당일 데이터 미확정(해당 거래일을
+억지로 채우지 않고 "미확정"으로 표시) — 다섯 가지 모두 "성공으로
+가장하지 않는다"는 원칙 아래 명시적으로 상태를 남기도록 설계했다.
+알림은 실행 시각·대상 거래일·종목 수·성공/실패/누락·checksum·
+cache ID·OOS 표본 수·판정 상태를 담은 구조화 로그 1건으로 정의했고,
+비밀값·계좌정보는 필드에 포함하지 않는다.
+
+### 45.5 OOS 성과 계산 자동 실행 — 수집 성공 시에만 후행 실행
+
+§44의 계산 도구는 완전히 read-only이고 표본 부족 시
+`PENDING_INSUFFICIENT_OOS_SAMPLE`만 반환하도록 이미 설계돼 있어,
+수집이 성공(`ready_for_oos=true`)한 날에만 자동으로 후행 실행하는
+것을 권장했다. 이 자동 실행이 어떤 Go/Watch/Hold/No-Go 판정을
+내더라도, 그 결과는 **정책 변경이나 Stage B 착수의 근거가 아니다**
+— 사람이 검토하기 전까지는 운영 신호가 아니라는 원칙은 §37.4/§44와
+동일하게 유지된다.
+
+### 45.6 다음 단계 — 반드시 사용자 승인 필요
+
+배치 실행 메커니즘 확정(host cron/systemd timer/컨테이너 서브프로세스
+중 택일), 배치 wrapper 코드 구현, 거래일 가드·lock·manifest/checksum·
+알림 코드 구현, 실제 KIS 호출을 주기적으로 실행하는 등록 작업 — 이
+절에 나열된 항목 전부는 이번 턴에서 착수하지 않았으며, 다음 구현
+턴에서 사용자 승인 후에만 진행한다.
