@@ -7983,3 +7983,23 @@ power_validation.md` "44. SPPV-3 신호 재설계 후보 독립 OOS 성과
 - **다음 공식 판정 조건**: 전체 OOS 거래일 30일 이상(현재 27일),
   `bearish_trend`/`range_bound` 각 30일 이상(현재 18/9일), T+20
   유효 표본 확보에는 전체 OOS 거래일 50일 안팎 필요.
+
+## SPPV-3 OOS 일봉 cache 일 1회 자동 갱신 배치 설계(2026-08-25 KST) — **설계만 완료, 구현·배치 등록 없음**
+
+상세: `docs/40_action_plans/sppv3_oos_daily_batch_design_2026-08-25.md`,
+`docs/10_signal_research_sppv/[DESIGN] signal_predictive_power_
+validation.md` "45. SPPV-3 OOS 일봉 cache 일 1회 자동 갱신 배치 —
+설계", `[PRIORITY_MAP]`의 같은 제목 항목.
+
+- 표본 축적을 자동화하기 위한 배치 아키텍처를 read-only 조사로만
+  설계했다. 코드 구현·GitHub Actions 수정·cron 등록·컨테이너
+  재기동·실제 KIS 호출·DB write·주문 제출 전부 미실행.
+- 권장: 실행 시각 21:00 KST(기존 20:10 signal feature batch 대비
+  안전 마진, KIS 일봉 확정 정확 시각은 실측 근거 없어 미확정으로
+  명시), 실행 주체는 주문 스케줄러(`ops-scheduler`)와 프로세스
+  분리, cache 저장은 매일 신규 디렉터리 유지 + `latest` 포인터
+  추가, 수집 성공 시에만 기존 OOS 성과 계산 도구 후행 실행.
+- 실패 모드(중복 실행/휴장일/KIS 지연/부분 실패/당일 데이터
+  미확정) 설계와 알림 최소 계약(비밀값 미노출)을 정의.
+- **다음 단계(사용자 승인 필요)**: 배치 실행 메커니즘 확정, wrapper
+  구현, 실제 배치 등록 — 전부 다음 구현 턴 대상.
