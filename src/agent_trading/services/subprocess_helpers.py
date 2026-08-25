@@ -145,6 +145,10 @@ def deserialize_agent_output(
     else:
         skip_reason_codes = ()
 
+    # FDC cycle-scoped batch queue lifecycle shadow(Phase 1) 전용 —
+    # 구버전 payload(키 없음)와 호환되도록 기본값 ""를 쓴다.
+    fdc_ready_at = str(data.get("fdc_ready_at", "") or "")
+
     # 2026-08-21 신설: strict FDC rate limiter + retry-inclusive permit
     # 관측성 필드. 구버전 subprocess payload(이 필드들이 없는 경우)와도
     # 호환되도록 키 부재 시 안전한 기본값을 쓴다 — FDC가 아예 생략되거나
@@ -225,6 +229,7 @@ def deserialize_agent_output(
         ar_skipped=ar_skipped,
         fdc_skipped=fdc_skipped,
         skip_reason_codes=skip_reason_codes,
+        fdc_ready_at=fdc_ready_at,
     )
 
     logger.info(

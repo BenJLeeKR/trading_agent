@@ -1,5 +1,13 @@
 # FDC cycle-scoped batch queue Phase 1(lifecycle shadow 기반) 구현
 
+> **정정 안내(2026-08-25, PR #351 보정)**: 이 문서가 서술하는 `create_
+> shadow_job()`/`judge_shadow_reservation()` 설계는 `mode='real'` attempt만
+> 세는 결함이 있어(shadow window_count가 항상 0이 됨) `register_shadow_job_
+> and_judge()`로 교체됐다. shadow 관측 시점도 기존 FDC permit 대기 이후에서
+> 그 이전으로 이동했다. 정정 상세는 `docs/30_work_log/2026-08-25_fdc_quota_
+> lifecycle_shadow_phase1_correction.md` 참고. 이 문서는 최초 구현 이력으로
+> 그대로 남긴다.
+
 ## 배경
 
 PR #350(설계 확정 문서, `docs/40_action_plans/fdc_cycle_scoped_batch_

@@ -35,6 +35,24 @@
 > 중 어느 것도 증가시키지 않는다(A안 채택)는 것을 명시하고, coordinator
 > 오류 전용 상태·backoff·최소 관측 계약을 신설했다. §5·§6·§9·§13·§15·§16이
 > 이번 개정의 영향을 받는다.
+>
+> **개정 이력**: 2026-08-25(5차, PR #351 보정) — Phase 1 초기 구현이
+> `mode='real'` attempt만 세는 판정 로직을 그대로 shadow 경로에 재사용해
+> shadow window_count가 항상 0이 되던 결함과, shadow 관측 시점이 기존 FDC
+> permit 대기·HTTP 호출 이후(잘못된 시점)였던 결함을 보정했다. **정정된
+> 표현**: "13 RPM이면 지금 승인됐을까"가 아니라 "**같은 cycle 내 앞선
+> shadow FDC-ready job까지 포함한 FIFO 가상 큐에서 지금 승인 가능한가**"이다
+> — 판정은 오직 같은 `quota_scope`의 `mode='shadow'` 행만 보고(`mode='real'`
+> 행은 절대 보지 않음), FIFO 순서는 DB가 발급한 `enqueue_sequence`(같은
+> anchor-row 잠금 트랜잭션 안에서 INSERT와 함께 원자적으로 채번, Python
+> task 완료 순서에 의존하지 않음)로 정한다. 자동 dispatcher가 아직 없으므로
+> Phase 1이 신뢰성 있게 관측하는 것은 "**즉시 shadow grant 가능**"
+> (`SHADOW_WOULD_GRANT`)과 "**shadow queued**"(`SHADOW_QUEUED`) 두 상태뿐이며,
+> "몇 분 후 실제로 grant될지"는 후속 dispatcher 단계(§16 "구현 후 실측 필요")
+> 범위다. `SHADOW_QUEUED`는 실패·timeout이 아니다 — 그저 "가상 큐에서 아직
+> 앞선 shadow job에 밀려 승인되지 않았다"는 관측값일 뿐이며, 이 상태 자체로
+> job이 취소되거나 timeout 처리되지 않는다. 상세는 `docs/30_work_log/
+> 2026-08-25_fdc_quota_lifecycle_shadow_phase1_correction.md` 참고.
 
 ## 1. 배경과 문제 정의
 

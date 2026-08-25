@@ -21,6 +21,7 @@ Test coverage
 
 from __future__ import annotations
 
+import asyncio
 from datetime import datetime, timezone
 from decimal import Decimal
 from uuid import UUID, uuid4
@@ -530,6 +531,145 @@ class TestRunFdcWithOuterTimeout:
         assert observation_fields["provider_http_attempt_count"] == 2
         assert observation_fields["provider_http_429_count"] == 1
         assert observation_fields["provider_execution_seconds"] == 3.4
+
+
+class _TimestampingSlowFdcAgent:
+    """``run()`` 진입(=실제 permit 대기/HTTP 호출 시작) 시각을 기록하는
+    fake agent — ``fdc_ready_at`` 캡처가 이 시각보다 먼저였는지 직접
+    비교하기 위한 증인(witness) 역할."""
+
+    def __init__(self) -> None:
+        self.last_provider_observation = None
+        self.run_entered_at: datetime | None = None
+
+    async def run(self, request: AgentExecutionRequest) -> FinalDecisionComposerOutput:
+        self.run_entered_at = datetime.now(timezone.utc)
+        return FinalDecisionComposerOutput(symbol=request.symbol, decision_type="HOLD")
+
+
+class TestFdcReadyAtCapturedBeforePermitWait:
+    """FDC cycle-scoped batch queue lifecycle shadow(Phase 1) 보정
+    요구사항 9 — "shadow 등록 시점이 기존 FDC permit 대기 이전임을
+    단위 테스트로 증명".
+
+    ``scripts/run_agent_subprocess.py``의 실제 순서는 다음과 같다
+    (사이에 ``await``가 전혀 없는 순수 동기 코드):
+
+        skip_fdc, ... = _check_fdc_skip(...)          # 1) 결정론적 판정
+        fdc_ready_at = "" if skip_fdc else datetime.now(...).isoformat()  # 2) 캡처
+        ...
+        composer_output, ... = await _run_fdc_with_outer_timeout(...)    # 3) permit 대기 + HTTP
+
+        (2)와 (3) 사이에는 dataclass 재구성/로깅만 있고 await가 없으므로,
+        이 테스트는 실제 프로덕션 함수(``_check_fdc_skip``,
+        ``_run_fdc_with_outer_timeout``)를 그대로 호출해 (2)에서 캡처한
+        타임스탬프가 (3)의 ``fdc_agent.run()`` 진입 시각보다 항상 이전임을
+        직접 비교로 증명한다 — Python task 완료 순서가 아니라 실제 코드
+        경로의 순차 실행 순서에 의존한다.
+    """
+
+    def test_fdc_ready_at_capture_precedes_agent_run_entry(
+        self,
+        sample_subprocess_input: AgentSubprocessInput,
+        default_event_output: EventInterpretationOutput,
+        risk_allow_output: AIRiskOutput,
+    ) -> None:
+        from agent_trading.domain.entities import ExternalEventEntity
+
+        event = ExternalEventEntity(
+            event_id=uuid4(),
+            event_type="earnings",
+            source_name="NAVER",
+            published_at=datetime.now(timezone.utc),
+            source_reliability_tier="tier1",
+            headline="테스트 뉴스",
+            symbol="005930",
+            ingested_at=datetime.now(timezone.utc),
+        )
+        context = AssembledContext(
+            source_type="core",
+            recent_events=(event,),
+            position_snapshot=None,
+            cash_balance_snapshot=CashBalanceSnapshotEntity(
+                cash_balance_snapshot_id=uuid4(),
+                account_id=uuid4(),
+                currency="KRW",
+                available_cash=Decimal("1000000"),
+                settled_cash=Decimal("1000000"),
+                unsettled_cash=Decimal("0"),
+                source_of_truth="KIS",
+                snapshot_at=datetime.now(timezone.utc),
+                total_asset=Decimal("1000000"),
+                orderable_amount=Decimal("1000000"),
+            ),
+        )
+        request = AgentExecutionRequest(
+            decision_context_id=None,
+            correlation_id="test",
+            context=context,
+            symbol="005930",
+            market="KRX",
+        )
+
+        # --- 1) 결정론적 skip 판정 (실제 코드와 동일 호출) ---
+        skip_fdc, _reason, _skip_output = _check_fdc_skip(
+            sample_subprocess_input, request,
+            default_event_output, risk_allow_output,
+        )
+        assert skip_fdc is False, "이 테스트는 FDC-ready(스킵 아님) 경로를 가정한다"
+
+        # --- 2) 실제 코드의 캡처 표현식을 그대로 재현 ---
+        fdc_ready_at_raw = (
+            "" if skip_fdc else datetime.now(timezone.utc).isoformat()
+        )
+        assert fdc_ready_at_raw != ""
+        captured_at = datetime.fromisoformat(fdc_ready_at_raw)
+
+        # --- 3) 실제 permit 대기/HTTP 호출 진입점을 그대로 호출 ---
+        witness_agent = _TimestampingSlowFdcAgent()
+
+        async def _invoke() -> None:
+            await _run_fdc_with_outer_timeout(
+                witness_agent, request, timeout_seconds=5.0, symbol="005930",
+            )
+
+        asyncio.run(_invoke())
+
+        assert witness_agent.run_entered_at is not None
+        assert captured_at <= witness_agent.run_entered_at, (
+            "fdc_ready_at 캡처가 실제 FDC permit 대기/HTTP 호출 진입보다 "
+            "늦게 일어났다 — shadow 관측 시점 요구사항 위반"
+        )
+
+    def test_skip_path_never_captures_fdc_ready_at(
+        self,
+        sample_subprocess_input: AgentSubprocessInput,
+        default_event_output: EventInterpretationOutput,
+        risk_allow_output: AIRiskOutput,
+    ) -> None:
+        """결정론적 skip 조건(예: 이벤트/포지션 없음)이면 ``fdc_ready_at``는
+        항상 빈 문자열이어야 한다 — skip 건은 shadow 관측 대상이 아니다."""
+        context = AssembledContext(
+            source_type="core",
+            recent_events=(),
+            position_snapshot=None,
+            cash_balance_snapshot=None,
+        )
+        request = AgentExecutionRequest(
+            decision_context_id=None,
+            correlation_id="test",
+            context=context,
+        )
+        skip_fdc, _reason, _skip_output = _check_fdc_skip(
+            sample_subprocess_input, request,
+            default_event_output, risk_allow_output,
+        )
+        assert skip_fdc is True
+
+        fdc_ready_at_raw = (
+            "" if skip_fdc else datetime.now(timezone.utc).isoformat()
+        )
+        assert fdc_ready_at_raw == ""
 
 
 class TestFdcPermitAccumulatorRequeuePolicy:

@@ -1515,45 +1515,60 @@ class DecisionOrchestratorService:
         request: SubmitOrderRequest,
         assembled_context: AssembledContext,
         resolved_context_id: UUID | None,
-        fdc_skipped: bool,
+        fdc_ready_at_raw: str,
     ) -> None:
         """FDC cycle-scoped batch queue **lifecycle shadow**(Phase 1,
-        관측 전용) — "13 RPM 공용 quota였다면 이 시점에 승인됐을까"만
-        기록한다.
+        관측 전용) — "같은 cycle 내 앞선 shadow FDC-ready job까지 포함한
+        FIFO 가상 13 RPM 큐에서 지금 승인 가능한가"를 기록한다.
 
         설계 근거: docs/40_action_plans/fdc_cycle_scoped_batch_queue_
-        gemini_shared_13rpm_quota_design_2026-08-25.md.
+        gemini_shared_13rpm_quota_design_2026-08-25.md §11(보정).
 
-        ``fdc_skipped``(``ai_call_path.fdc_skipped``, `_check_fdc_skip()`
-        의 결정론적 판정 결과)가 ``False``인 건만 대상으로 삼는다 — 이는
-        "FDC-ready"(결정론적 skip 조건에 걸리지 않아 실제로 FDC 호출이
-        시도된 건)를 뜻하며, 기존 strict limiter가 이후 그 호출을 실제로
-        승인했는지(성공) 거부했는지(``provider_queue_timeout``)와는
-        무관하다 — 양쪽 다 "FDC-ready였다"는 사실은 동일하기 때문이다.
+        ``fdc_ready_at_raw``는 ``AIDecisionInputs.fdc_ready_at``(ISO-8601
+        UTC 문자열)를 그대로 전달받는다 — 이 값은 `_check_fdc_skip()`
+        (subprocess 경로) 또는 `_should_skip_final_decision_composer()`
+        (in-process 경로)가 "FDC 호출이 필요하다"고 판정한 **직후, 실제
+        permit 대기/HTTP 호출이 시작되기 직전**에 캡처된다 — 즉 이
+        메서드 자체는 `assemble()` 끝(이미 FDC 호출이 끝나고 저장까지
+        완료된 시점)에서 호출되지만, 여기서 등록하는 shadow job의
+        논리적 "FDC-ready 시각"은 그보다 훨씬 이른, 실제 permit 대기
+        이전 시점으로 정확히 기록된다. 빈 문자열이면 그 건은
+        결정론적으로 skip된 것이라 FDC-ready가 아니므로 대상에서
+        제외한다(과거 ``fdc_skipped: bool`` 플래그를 대체).
 
         이 메서드는 새 `fdc_quota_coordinator.FdcQuotaCoordinator`의
-        ``mode='shadow'`` 경로만 호출한다 — 기존 `fdc_rate_limiter.py`의
-        실제 strict limiter, 실제 FDC HTTP 호출, `decision_type`/`side`/
-        주문 제출 경로는 전혀 참조하지도, 바꾸지도 않는다. coordinator
-        호출이 실패해도(DB 장애 등) 예외를 삼켜 기존 파이프라인에
-        영향을 주지 않는다(다른 shadow 관측 메서드와 동일한 안전 원칙).
+        ``mode='shadow'`` 가상 FIFO 큐만 호출한다 — 기존 `fdc_rate_
+        limiter.py`의 실제 strict limiter, 실제 FDC HTTP 호출,
+        `decision_type`/`side`/주문 제출 경로는 전혀 참조하지도, 바꾸지도
+        않는다. coordinator 호출이 실패해도(DB 장애 등) 예외를 삼켜
+        기존 파이프라인에 영향을 주지 않는다(다른 shadow 관측 메서드와
+        동일한 안전 원칙).
         """
         if not self._fdc_batch_queue_lifecycle_shadow_enabled:
             return
         if self._fdc_quota_coordinator is None:
             return
-        if fdc_skipped:
+        if not fdc_ready_at_raw:
             return
 
         try:
-            job_id = await self._fdc_quota_coordinator.create_shadow_job(
+            fdc_ready_at = datetime.fromisoformat(fdc_ready_at_raw)
+        except ValueError:
+            logger.warning(
+                "fdc_batch_queue_lifecycle_shadow: invalid fdc_ready_at=%r "
+                "symbol=%s — skipping shadow registration",
+                fdc_ready_at_raw,
+                request.symbol,
+            )
+            return
+
+        try:
+            result = await self._fdc_quota_coordinator.register_shadow_job_and_judge(
                 decision_cycle_id=request.correlation_id,
                 decision_context_id=resolved_context_id,
                 symbol=request.symbol,
                 source_type=(assembled_context.source_type or "core"),
-            )
-            result = await self._fdc_quota_coordinator.judge_shadow_reservation(
-                job_id=job_id,
+                fdc_ready_at=fdc_ready_at,
             )
             if isinstance(result, CoordinatorError):
                 logger.warning(
@@ -3336,7 +3351,7 @@ class DecisionOrchestratorService:
             request=request,
             assembled_context=assembled_context,
             resolved_context_id=resolved_context_id,
-            fdc_skipped=agent_bundle.ai_inputs.fdc_skipped,
+            fdc_ready_at_raw=agent_bundle.ai_inputs.fdc_ready_at,
         )
 
         # --- Generate decision_id if not provided ---

@@ -9,6 +9,13 @@
 -- 아직 연결되지 않는다(Phase 1: shadow 관측 전용, 실제 quota enforcement
 -- 아님). `mode` 컬럼('shadow'|'real')으로 향후 실제 dispatcher 전환 시의
 -- 통계와 이번 shadow 관측 값이 섞이지 않도록 분리한다.
+--
+-- 2026-08-25(같은 PR #351 내 보정, 아직 어떤 DB에도 미적용) —
+-- `fdc_queue_jobs`에 `quota_scope`/`fdc_ready_at`/`enqueue_sequence`를
+-- 추가했다. 최초 shadow 판단이 실제(mode='real') attempt를 세는
+-- 결함(항상 window_count=0 → 항상 SHADOW_WOULD_GRANT)이 있어, shadow
+-- 전용 가상 FIFO 13 RPM 큐(같은 quota_scope의 mode='shadow' 행만
+-- 집계)로 재설계했다.
 
 BEGIN;
 
@@ -26,14 +33,22 @@ VALUES ('gemini:shared-operational')
 ON CONFLICT (quota_scope) DO NOTHING;
 
 -- ── fdc_queue_jobs: FDC batch job의 최신 상태(설계 문서 §8) ─────────────
+-- `quota_scope`/`fdc_ready_at`/`enqueue_sequence`는 Phase 1 보정
+-- (가상 13 RPM shadow FIFO 큐)에서 추가됐다 — `enqueue_sequence`는
+-- BIGSERIAL(DB가 발급하는 monotonic 값)로, 여러 subprocess/코루틴이
+-- 동시에 등록해도 Python task 완료 순서가 아니라 실제 INSERT(=anchor
+-- 행 잠금 하에서 직렬화된) 순서를 그대로 반영한다.
 CREATE TABLE IF NOT EXISTS trading.fdc_queue_jobs (
     job_id UUID PRIMARY KEY,
     decision_cycle_id TEXT,
     decision_context_id UUID,
     symbol VARCHAR(64) NOT NULL,
     source_type VARCHAR(32) NOT NULL,
+    quota_scope TEXT,
     mode TEXT NOT NULL DEFAULT 'real' CHECK (mode IN ('shadow', 'real')),
     status TEXT NOT NULL,
+    fdc_ready_at TIMESTAMPTZ,
+    enqueue_sequence BIGSERIAL,
     queue_poll_count INTEGER NOT NULL DEFAULT 0,
     reservation_denied_count INTEGER NOT NULL DEFAULT 0,
     dispatch_attempt_no INTEGER NOT NULL DEFAULT 0,
@@ -57,6 +72,12 @@ CREATE INDEX IF NOT EXISTS idx_fdc_queue_jobs_status
 
 CREATE INDEX IF NOT EXISTS idx_fdc_queue_jobs_decision_cycle_id
     ON trading.fdc_queue_jobs (decision_cycle_id);
+
+-- shadow 가상 FIFO/sliding-window 판단 전용 인덱스 — quota_scope+mode로
+-- 좁힌 뒤 enqueue_sequence(FIFO 순서) 순으로 스캔한다.
+CREATE INDEX IF NOT EXISTS idx_fdc_queue_jobs_shadow_fifo
+    ON trading.fdc_queue_jobs (quota_scope, mode, enqueue_sequence)
+    WHERE mode = 'shadow';
 
 -- ── fdc_provider_attempts: append-only, reservation 1회=attempt 1행 ─────
 -- job_id는 nullable — 비운영 수동 호출(설계 문서 §11 A안)은 fdc_queue_jobs

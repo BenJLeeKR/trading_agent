@@ -2059,11 +2059,22 @@ ReservationResult = ReservationGrant | ReservationDenied | CoordinatorError
 
 @dataclass(frozen=True, slots=True)
 class ShadowJudgement:
-    """shadow 판단 결과 — 실제 quota를 소비하지 않는다."""
+    """shadow 가상 FIFO 큐 판단 결과 — 실제(mode='real') quota를 전혀
+    소비하지 않고, 같은 quota_scope의 다른 mode='shadow' 행만 본다.
 
+    ``would_grant=True``면 ``SHADOW_WOULD_GRANT``(가상 13 RPM 큐에서
+    지금 승인 가능), ``False``면 ``SHADOW_QUEUED``(앞선 shadow grant가
+    이미 window 용량을 다 써서 대기) — 이 상태는 실패나 timeout이
+    아니다(설계 문서 §11 보정 — 자동 시간 진행 dispatcher가 없는
+    Phase 1에서는 "즉시 승인 가능"과 "대기 상태" 두 가지만 신뢰성
+    있게 관측한다).
+    """
+
+    job_id: UUID
     would_grant: bool
     window_count: int
     attempt_id: UUID
+    enqueue_sequence: int
 
 
 ShadowJudgementResult = ShadowJudgement | CoordinatorError
@@ -2078,8 +2089,8 @@ class FdcQuotaRepository(Protocol):
     repository로 쪼개지 않는다.
 
     ``try_reserve()``는 Phase 1에서 실제 런타임 경로에 연결되지 않는다
-    (단위/통합 테스트 전용). ``create_shadow_job()``/``judge_shadow_
-    reservation()``만 Phase 1의 실제 관측 경로다.
+    (단위/통합 테스트 전용). ``register_shadow_job_and_judge()``만
+    Phase 1의 실제 관측 경로다.
     """
 
     async def try_reserve(
@@ -2104,29 +2115,33 @@ class FdcQuotaRepository(Protocol):
         """
         ...
 
-    async def create_shadow_job(
+    async def register_shadow_job_and_judge(
         self,
         *,
+        quota_scope: str,
+        target_rpm: int,
+        window_seconds: int,
         decision_cycle_id: str | None,
         decision_context_id: UUID | None,
         symbol: str,
         source_type: str,
-    ) -> UUID:
-        """FDC-ready로 확정된 건에 대해 ``mode='shadow'`` job row를 만든다."""
-        ...
-
-    async def judge_shadow_reservation(
-        self,
-        *,
-        job_id: UUID,
-        quota_scope: str,
-        target_rpm: int,
-        window_seconds: int,
+        fdc_ready_at: datetime,
         caller_id: str = "ops-scheduler",
+        lock_timeout_ms: int = 3000,
     ) -> ShadowJudgementResult:
-        """"13 RPM 공용 quota였다면 지금 승인됐을까"를 관측만 한다.
+        """FDC-ready job을 ``mode='shadow'`` FIFO 큐에 등록하고, "같은
+        cycle 내 앞선 shadow FDC-ready job까지 포함한 FIFO 가상 13 RPM
+        큐에서 지금 승인 가능한가"를 원자적으로 판단한다.
 
-        ``mode='real'`` 행만 집계하므로 기존 strict limiter/실제 quota에
-        전혀 영향을 주지 않는다.
+        등록(INSERT)과 판단(COUNT+상태 결정)을 하나의 트랜잭션으로
+        묶는다 — anchor 행 잠금으로 동시 등록을 직렬화해, "뒤에 도착한
+        job이 앞선 job보다 먼저 승인되는 새치기"를 원천 차단한다. FIFO
+        순서는 DB가 발급하는 ``enqueue_sequence``(BIGSERIAL)로 정의되며
+        Python 코루틴/subprocess의 완료 순서에 의존하지 않는다.
+        ``fdc_ready_at``은 sliding window 경계 계산에만 쓰인다(어느
+        60초 구간에 속하는지).
+
+        ``mode='real'`` 행은 전혀 보지 않으며, 이 메서드가 만드는 모든
+        행은 ``mode='shadow'``다 — 실제 quota를 절대 소비하지 않는다.
         """
         ...

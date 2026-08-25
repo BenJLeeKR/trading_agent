@@ -7,6 +7,7 @@ shared_13rpm_quota_design_2026-08-25.md §6·§8·§9.
 from __future__ import annotations
 
 import uuid
+from datetime import datetime
 
 import asyncpg
 
@@ -48,17 +49,16 @@ def _classify_error(exc: Exception) -> CoordinatorErrorClass:
 class PostgresFdcQuotaRepository:
     """``fdc_quota_state``/``fdc_queue_jobs``/``fdc_provider_attempts`` 구현.
 
-    ``create_shadow_job()``/``judge_shadow_reservation()``은 다른 저장소와
-    동일하게 생성자에 주입된 ambient ``tx``(요청 단위 공유 트랜잭션)를
-    사용한다 — 단순 관측 기록이라 별도 원자성이 필요 없다.
-
-    ``try_reserve()``만 예외적으로 **자신만의 독립 트랜잭션**을 새로
-    연다(``TransactionManager()`` 직접 생성) — 이 메서드의 존재 이유
-    자체가 "여러 동시 호출자 사이의 원자적 경쟁"이므로, 호출자의 ambient
-    트랜잭션(길게는 `assemble()` 전체 요청 범위)에 얹으면 anchor 행
-    잠금이 그 요청이 끝날 때까지 유지돼 다른 호출자를 불필요하게
-    막는다. Phase 1에서는 이 메서드가 실제 런타임 경로에서 호출되지
-    않으므로(단위/통합 테스트 전용) 이 설계 결정의 실제 영향은 없다.
+    ``try_reserve()``와 ``register_shadow_job_and_judge()`` 둘 다
+    생성자에 주입된 ambient ``tx``(요청 단위 공유 트랜잭션)를 쓰지
+    않고 **자신만의 독립 트랜잭션**을 새로 연다(``TransactionManager()``
+    직접 생성) — 두 메서드 모두 "여러 동시 호출자 사이의 원자적 FIFO
+    경쟁"이 존재 이유이므로, 호출자의 ambient 트랜잭션(길게는
+    `assemble()` 전체 요청 범위)에 얹으면 anchor 행 잠금이 그 요청이
+    끝날 때까지 유지돼 다른 호출자를 불필요하게 막는다. ``try_reserve()``
+    는 Phase 1에서 실제 런타임 경로에서 호출되지 않는다(단위/통합
+    테스트 전용). ``register_shadow_job_and_judge()``는 Phase 1의 실제
+    관측 경로다.
     """
 
     __slots__ = ("_tx",)
@@ -151,73 +151,102 @@ class PostgresFdcQuotaRepository:
         except (OSError, ConnectionError) as exc:
             return CoordinatorError(_classify_error(exc), str(exc))
 
-    async def create_shadow_job(
+    async def register_shadow_job_and_judge(
         self,
         *,
+        quota_scope: str,
+        target_rpm: int,
+        window_seconds: int,
         decision_cycle_id: str | None,
         decision_context_id: uuid.UUID | None,
         symbol: str,
         source_type: str,
-    ) -> uuid.UUID:
-        job_id = uuid.uuid4()
-        await self._tx.connection.execute(
-            "INSERT INTO trading.fdc_queue_jobs "
-            "(job_id, decision_cycle_id, decision_context_id, symbol, "
-            " source_type, mode, status) "
-            "VALUES ($1, $2, $3, $4, $5, 'shadow', 'QUEUED')",
-            job_id,
-            decision_cycle_id,
-            decision_context_id,
-            symbol,
-            source_type,
-        )
-        return job_id
-
-    async def judge_shadow_reservation(
-        self,
-        *,
-        job_id: uuid.UUID,
-        quota_scope: str,
-        target_rpm: int,
-        window_seconds: int,
+        fdc_ready_at: datetime,
         caller_id: str = "ops-scheduler",
+        lock_timeout_ms: int = 3000,
     ) -> ShadowJudgementResult:
         try:
-            window_count = await self._tx.connection.fetchval(
-                "SELECT count(*) FROM trading.fdc_provider_attempts "
-                "WHERE quota_scope = $1 AND mode = 'real' "
-                "AND outcome = ANY($2::text[]) "
-                "AND reserved_at > now() - make_interval(secs => $3)",
-                quota_scope,
-                list(_QUOTA_CONSUMING_OUTCOMES),
-                window_seconds,
-            )
-            would_grant = window_count < target_rpm
-            attempt_id = uuid.uuid4()
-            outcome = "shadow_would_grant" if would_grant else "shadow_denied"
-            await self._tx.connection.execute(
-                "INSERT INTO trading.fdc_provider_attempts "
-                "(attempt_id, job_id, quota_scope, caller_id, mode, "
-                " attempt_no, outcome, reserved_at) "
-                "VALUES ($1, $2, $3, $4, 'shadow', 1, $5, now())",
-                attempt_id,
-                job_id,
-                quota_scope,
-                caller_id,
-                outcome,
-            )
-            await self._tx.connection.execute(
-                "UPDATE trading.fdc_queue_jobs SET "
-                "status = $2, queue_poll_count = queue_poll_count + 1, "
-                "updated_at = now() WHERE job_id = $1",
-                job_id,
-                "SHADOW_WOULD_GRANT" if would_grant else "SHADOW_DENIED",
-            )
-            return ShadowJudgement(
-                would_grant=would_grant,
-                window_count=window_count,
-                attempt_id=attempt_id,
-            )
+            async with TransactionManager() as shadow_tx:
+                await shadow_tx.connection.execute(
+                    f"SET LOCAL lock_timeout = {int(lock_timeout_ms)}"
+                )
+                # 다른 shadow 등록(및 try_reserve)과 동일한 anchor 행을
+                # 잠가 FIFO 등록 순서를 직렬화한다 — 새치기 방지의 핵심.
+                await shadow_tx.connection.fetchrow(
+                    "SELECT quota_scope FROM trading.fdc_quota_state "
+                    "WHERE quota_scope = $1 FOR UPDATE",
+                    quota_scope,
+                )
+
+                job_id = uuid.uuid4()
+                inserted = await shadow_tx.connection.fetchrow(
+                    "INSERT INTO trading.fdc_queue_jobs "
+                    "(job_id, decision_cycle_id, decision_context_id, symbol, "
+                    " source_type, quota_scope, mode, status, fdc_ready_at) "
+                    "VALUES ($1, $2, $3, $4, $5, $6, 'shadow', 'SHADOW_QUEUED', $7) "
+                    "RETURNING enqueue_sequence",
+                    job_id,
+                    decision_cycle_id,
+                    decision_context_id,
+                    symbol,
+                    source_type,
+                    quota_scope,
+                    fdc_ready_at,
+                )
+                enqueue_sequence = inserted["enqueue_sequence"]
+
+                # FIFO 가상 sliding window: 나(enqueue_sequence 기준으로
+                # 나보다 앞선)보다 먼저 등록되고 이미 SHADOW_WOULD_GRANT로
+                # 확정된 job 중, 내 fdc_ready_at 기준 (t-window, t] 구간에
+                # 속하는 것만 센다. enqueue_sequence는 anchor 행 잠금 하에
+                # DB가 발급하므로 Python 완료 순서와 무관하게 실제 등록
+                # 순서를 그대로 반영한다.
+                window_count = await shadow_tx.connection.fetchval(
+                    "SELECT count(*) FROM trading.fdc_queue_jobs "
+                    "WHERE quota_scope = $1 AND mode = 'shadow' "
+                    "AND status = 'SHADOW_WOULD_GRANT' "
+                    "AND enqueue_sequence < $2 "
+                    "AND fdc_ready_at > $3::timestamptz - make_interval(secs => $4) "
+                    "AND fdc_ready_at <= $3::timestamptz",
+                    quota_scope,
+                    enqueue_sequence,
+                    fdc_ready_at,
+                    window_seconds,
+                )
+
+                would_grant = window_count < target_rpm
+                new_status = "SHADOW_WOULD_GRANT" if would_grant else "SHADOW_QUEUED"
+                await shadow_tx.connection.execute(
+                    "UPDATE trading.fdc_queue_jobs SET "
+                    "status = $2, queue_poll_count = queue_poll_count + 1, "
+                    "updated_at = now() WHERE job_id = $1",
+                    job_id,
+                    new_status,
+                )
+
+                attempt_id = uuid.uuid4()
+                outcome = "shadow_would_grant" if would_grant else "shadow_queued"
+                await shadow_tx.connection.execute(
+                    "INSERT INTO trading.fdc_provider_attempts "
+                    "(attempt_id, job_id, quota_scope, caller_id, mode, "
+                    " attempt_no, outcome, reserved_at) "
+                    "VALUES ($1, $2, $3, $4, 'shadow', 1, $5, $6)",
+                    attempt_id,
+                    job_id,
+                    quota_scope,
+                    caller_id,
+                    outcome,
+                    fdc_ready_at,
+                )
+
+                await shadow_tx.commit()
+                return ShadowJudgement(
+                    job_id=job_id,
+                    would_grant=would_grant,
+                    window_count=window_count,
+                    attempt_id=attempt_id,
+                    enqueue_sequence=enqueue_sequence,
+                )
         except asyncpg.PostgresError as exc:
             return CoordinatorError(_classify_error(exc), str(exc))
         except (OSError, ConnectionError) as exc:

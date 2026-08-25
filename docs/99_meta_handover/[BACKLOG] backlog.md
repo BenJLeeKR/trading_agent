@@ -8108,3 +8108,30 @@ shared_13rpm_quota_design_2026-08-25.md`(설계 문서 상단 상태 갱신).
   (`generate_structured_once()`), `LiveGeminiProviderClient`/
   `FakeProviderClient` 타입 분리, held_position lane 한정 실제 전환
   — 전부 후속 PR 대상, 이번 PR에서는 미착수.
+
+## FDC cycle-scoped batch queue Phase 1(lifecycle shadow) 보정 — PR #351 병합 전 수정(2026-08-25 KST)
+
+상세: `docs/30_work_log/2026-08-25_fdc_quota_lifecycle_shadow_phase1_
+correction.md`.
+
+- 위 Phase 1 초기 구현에 두 결함이 발견돼 같은 PR #351(같은 브랜치)에서
+  보정했다: (1) shadow 판정이 `mode='real'` attempt를 세는 바람에
+  window_count가 항상 0이 돼 모든 FDC-ready job이 무조건 `SHADOW_WOULD_
+  GRANT`로 기록되던 결함, (2) shadow 관측 시점이 `assemble()` 내부 기존
+  FDC 호출·permit 대기 **이후**였던 결함 — 13 RPM 가상 큐의 실제 도착
+  순서를 재현할 수 없었다.
+- 보정: `register_shadow_job_and_judge()`(신규 원자적 단일 메서드)가
+  오직 같은 `quota_scope`의 `mode='shadow'` 행만 보고, DB 발급
+  `enqueue_sequence`(anchor-row 잠금 트랜잭션 안에서 INSERT와 원자적
+  채번)를 FIFO 키로 사용. `fdc_ready_at` 캡처를 `run_agent_subprocess.
+  py`의 `_check_fdc_skip()` 반환 직후·permit 대기 시작 직전으로 이동해
+  subprocess 경계 너머로 전파(`AgentSubprocessOutput`→`AIDecisionInputs`).
+- 테스트로 13/14/40건 시나리오·FIFO 무순위변경·60초 경계·real/shadow
+  상호 무간섭·shadow 등록 시점이 permit 대기 이전임을 전부 확인
+  (`test_fdc_quota_coordinator.py::TestShadowFifoQueueLogic`,
+  `test_fdc_skip.py::TestFdcReadyAtCapturedBeforePermitWait`).
+- 기존 실제 FDC 호출/10 RPM strict limiter/provider 호출 수/주문
+  정책/EV gate/sizing/sell guard/주문 제출은 변경하지 않았다. shadow
+  기본값은 여전히 `false`. migration은 여전히 미적용.
+- 사용자 지시에 따라 새 PR을 만들지 않고 기존 PR #351을 같은 브랜치에서
+  갱신했으며, 이 턴에서 병합은 수행하지 않았다.

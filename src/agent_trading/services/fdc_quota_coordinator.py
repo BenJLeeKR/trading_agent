@@ -11,10 +11,12 @@ Phase 1(lifecycle shadow) 범위
 (architecture 계약: services 계층은 repositories 계층을 거쳐서만 DB에
 접근한다).
 
-- ``judge_shadow_reservation()`` / ``create_shadow_job()``: 실제로 운영
-  런타임에서 호출되는 **관측 전용** 경로. FDC-ready로 확정된 건에 한해
-  "13 RPM 공용 quota였다면 이 시점에 승인됐을까"만 판단하고
-  ``mode='shadow'``로 기록한다 — 실제 quota를 전혀 소비하지 않는다.
+- ``register_shadow_job_and_judge()``: 실제로 운영 런타임에서 호출되는
+  **관측 전용** 경로. FDC-ready로 확정된 건을 같은 quota_scope의
+  ``mode='shadow'`` 가상 FIFO 13 RPM 큐에 등록하고, "같은 cycle 내
+  앞선 shadow FDC-ready job까지 포함한 FIFO 큐에서 지금 승인
+  가능한가"를 판단한다 — ``mode='real'`` 행은 전혀 보지 않으므로
+  실제 quota를 절대 소비하지 않는다.
 - ``try_reserve()``: §6의 atomic reservation transaction 계약을 그대로
   구현한 **실제 quota 소비 경로**. Phase 1에서는 단위/통합 테스트로만
   검증되며, 실제 FDC 실행 경로(cycle-scoped dispatcher)에는 아직 연결
@@ -24,6 +26,7 @@ Phase 1(lifecycle shadow) 범위
 from __future__ import annotations
 
 import uuid
+from datetime import datetime
 
 from agent_trading.repositories.contracts import (
     CoordinatorError,
@@ -116,40 +119,33 @@ class FdcQuotaCoordinator:
     # shadow 관측 경로 — Phase 1에서 실제로 호출되는 유일한 경로
     # ------------------------------------------------------------------
 
-    async def create_shadow_job(
+    async def register_shadow_job_and_judge(
         self,
         *,
         decision_cycle_id: str | None,
         decision_context_id: uuid.UUID | None,
         symbol: str,
         source_type: str,
-    ) -> uuid.UUID:
-        """FDC-ready로 확정된 건에 대해 ``mode='shadow'`` job row를 만든다.
+        fdc_ready_at: datetime,
+        caller_id: str = "ops-scheduler",
+    ) -> ShadowJudgementResult:
+        """FDC-ready job을 shadow 가상 FIFO 13 RPM 큐에 등록하고, "같은
+        cycle 내 앞선 shadow FDC-ready job까지 포함한 FIFO 큐에서 지금
+        승인 가능한가"를 원자적으로 판단한다.
 
-        기존 런타임 동작에는 영향을 주지 않는 순수 관측 기록이다.
+        ``mode='real'`` 행은 전혀 보지 않으므로 기존 strict limiter/
+        실제 quota에 전혀 영향을 주지 않는다. 등록과 판단이 하나의
+        원자적 트랜잭션이라 동시 등록 시에도 새치기가 없다.
         """
-        return await self._repo.create_shadow_job(
+        return await self._repo.register_shadow_job_and_judge(
+            quota_scope=self._quota_scope,
+            target_rpm=self._target_rpm,
+            window_seconds=self._window_seconds,
             decision_cycle_id=decision_cycle_id,
             decision_context_id=decision_context_id,
             symbol=symbol,
             source_type=source_type,
-        )
-
-    async def judge_shadow_reservation(
-        self,
-        *,
-        job_id: uuid.UUID,
-        caller_id: str = "ops-scheduler",
-    ) -> ShadowJudgementResult:
-        """"13 RPM 공용 quota였다면 지금 승인됐을까"를 관측만 한다.
-
-        실제(``mode='real'``) 행만 집계 대상으로 삼으므로, 이 판단은
-        기존 strict limiter/실제 quota에 전혀 영향을 주지 않는다.
-        """
-        return await self._repo.judge_shadow_reservation(
-            job_id=job_id,
-            quota_scope=self._quota_scope,
-            target_rpm=self._target_rpm,
-            window_seconds=self._window_seconds,
+            fdc_ready_at=fdc_ready_at,
             caller_id=caller_id,
+            lock_timeout_ms=self._lock_timeout_ms,
         )

@@ -31,7 +31,7 @@ import os
 import sys
 import time
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 from decimal import Decimal
 from typing import Any
 from uuid import UUID
@@ -238,6 +238,10 @@ class AgentSubprocessOutput:
     ar_skipped: bool = False
     fdc_skipped: bool = False
     skip_reason_codes: tuple[str, ...] = ()
+    # FDC cycle-scoped batch queue lifecycle shadow(Phase 1) 전용 —
+    # AIDecisionInputs.fdc_ready_at와 동일한 의미(ISO-8601 UTC, 빈
+    # 문자열이면 fdc_skipped=True).
+    fdc_ready_at: str = ""
     # 2026-08-21 신설: strict FDC rate limiter + retry-inclusive permit
     # 관측성 필드. 새 DB 테이블/마이그레이션 없이, 이 subprocess ↔ 부모
     # 프로세스 간 기존 JSON round-trip 경로(``agent_runs.structured_
@@ -1387,6 +1391,17 @@ async def main() -> None:
             risk_output=risk_output,
         )
 
+        # FDC cycle-scoped batch queue lifecycle shadow(Phase 1) 전용 —
+        # "FDC 호출이 필요하다"는 결정론적 판정이 끝난 직후, 실제 permit
+        # 대기/HTTP 호출(아래 FDC 실행 블록)이 시작되기 **직전**에 캡처한
+        # 타임스탬프. 이 값이 shadow 가상 FIFO 큐의 "언제 이 job이
+        # FDC-ready였는지"를 결정한다 — 이 시점 이후 실제로 걸리는
+        # permit 대기/HTTP 시간은 이 값에 전혀 반영되지 않는다(의도적:
+        # shadow는 "가상 13 RPM 큐라면 이 시점에 승인 가능했을까"를
+        # 관측하는 것이지, 기존 10 RPM limiter의 실제 대기 시간을
+        # 관측하는 것이 아니다).
+        fdc_ready_at = "" if skip_fdc else datetime.now(timezone.utc).isoformat()
+
         # 2026-08-21: FDC가 생략되면 provider 호출/permit 대기가 전혀
         # 없으므로 관측성 필드는 모두 기본값(호출 없음)으로 남는다.
         fdc_provider_http_attempt_count = 0
@@ -1553,6 +1568,7 @@ async def main() -> None:
             ar_skipped=False,
             fdc_skipped=skip_fdc,
             skip_reason_codes=(skip_reason,) if skip_fdc and skip_reason else (),
+            fdc_ready_at=fdc_ready_at,
             rate_limiter_waited_seconds=fdc_rate_limiter_waited_seconds,
             rate_limiter_slot_acquired=fdc_rate_limiter_slot_acquired,
             rate_limiter_queue_timeout=fdc_rate_limiter_queue_timeout,

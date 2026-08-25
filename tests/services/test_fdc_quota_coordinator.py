@@ -104,16 +104,16 @@ class TestAtomicReservationLogic:
     async def test_job_counters_updated_with_reservation(self) -> None:
         """job_id가 있으면 queue_poll_count/dispatch_attempt_no/
         reservation_denied_count/permit_consumed_count가 갱신되고,
-        설계 문서 §9의 정합성 불변식을 만족한다."""
+        설계 문서 §9의 정합성 불변식을 만족한다. (real 경로 전용 —
+        shadow FIFO 큐와는 완전히 별개의 job 저장 구조를 쓴다.)"""
         repo = InMemoryFdcQuotaRepository()
         coordinator = _make_coordinator(repo=repo, target_rpm=1, quota_scope="scope-c")
 
-        job_id = await coordinator.create_shadow_job(
-            decision_cycle_id="cycle-1", decision_context_id=None,
-            symbol="TESTSYM", source_type="held_position",
-        )
-        # 직접 mode='real'로 취급되도록 job 상태만 재사용 — try_reserve는
-        # job_id가 repo._jobs에 존재하기만 하면 카운터를 갱신한다.
+        job_id = uuid4()
+        repo._jobs[job_id] = {  # type: ignore[attr-defined]
+            "queue_poll_count": 0, "reservation_denied_count": 0,
+            "dispatch_attempt_no": 0, "permit_consumed_count": 0,
+        }
         first = await coordinator.try_reserve(job_id=job_id, caller_id="test-caller")
         second = await coordinator.try_reserve(job_id=job_id, caller_id="test-caller")
 
@@ -130,65 +130,164 @@ class TestAtomicReservationLogic:
         )
 
 
-class TestShadowJudgementLogic:
-    @pytest.mark.asyncio
-    async def test_shadow_judgement_reads_real_window_only(self) -> None:
-        repo = InMemoryFdcQuotaRepository()
-        coordinator = _make_coordinator(repo=repo, target_rpm=1, quota_scope="scope-d")
+def _shadow_job(**overrides):
+    base = dict(
+        decision_cycle_id="cycle-1", decision_context_id=None,
+        symbol="005930", source_type="held_position",
+    )
+    base.update(overrides)
+    return base
 
-        granted = await coordinator.try_reserve(job_id=None, caller_id="ops-scheduler")
-        assert isinstance(granted, ReservationGrant)
 
-        job_id = await coordinator.create_shadow_job(
-            decision_cycle_id="cycle-1", decision_context_id=None,
-            symbol="005930", source_type="held_position",
-        )
-        judgement = await coordinator.judge_shadow_reservation(job_id=job_id)
-
-        assert isinstance(judgement, ShadowJudgement)
-        assert judgement.window_count == 1
-        assert judgement.would_grant is False
+class TestShadowFifoQueueLogic:
+    """가상 13 RPM shadow FIFO 큐 — 실제(mode='real') attempt는 전혀
+    보지 않고, 같은 quota_scope의 mode='shadow' 행만으로 판단한다."""
 
     @pytest.mark.asyncio
-    async def test_shadow_judgement_does_not_consume_real_quota(self) -> None:
-        """shadow 판단을 여러 번 반복해도 이후 실제 reservation의
-        window_count에 전혀 영향을 주지 않는다."""
+    async def test_13_same_instant_jobs_all_would_grant(self) -> None:
         repo = InMemoryFdcQuotaRepository()
-        coordinator = _make_coordinator(repo=repo, target_rpm=1, quota_scope="scope-e")
+        coordinator = _make_coordinator(repo=repo, target_rpm=13, quota_scope="scope-fifo-a")
+        t0 = datetime(2026, 8, 25, 9, 0, 0, tzinfo=timezone.utc)
 
-        job_id = await coordinator.create_shadow_job(
-            decision_cycle_id="cycle-1", decision_context_id=None,
-            symbol="005930", source_type="held_position",
+        results = [
+            await coordinator.register_shadow_job_and_judge(
+                **_shadow_job(), fdc_ready_at=t0,
+            )
+            for _ in range(13)
+        ]
+
+        assert all(isinstance(r, ShadowJudgement) for r in results)
+        assert all(r.would_grant for r in results), "13건 전부 SHADOW_WOULD_GRANT여야 한다"
+
+    @pytest.mark.asyncio
+    async def test_14th_same_instant_job_is_queued(self) -> None:
+        repo = InMemoryFdcQuotaRepository()
+        coordinator = _make_coordinator(repo=repo, target_rpm=13, quota_scope="scope-fifo-b")
+        t0 = datetime(2026, 8, 25, 9, 0, 0, tzinfo=timezone.utc)
+
+        results = [
+            await coordinator.register_shadow_job_and_judge(
+                **_shadow_job(), fdc_ready_at=t0,
+            )
+            for _ in range(14)
+        ]
+
+        assert all(r.would_grant for r in results[:13])
+        assert results[13].would_grant is False, "14번째는 SHADOW_QUEUED여야 한다"
+        assert results[13].window_count == 13
+
+    @pytest.mark.asyncio
+    async def test_40_concurrent_jobs_only_first_13_grant_no_timeout_state(self) -> None:
+        """40건이 동시에 등록돼도 처음 13건만 즉시 grant, 나머지는
+        queued — timeout/cancelled 같은 상태는 절대 나오지 않는다."""
+        repo = InMemoryFdcQuotaRepository()
+        coordinator = _make_coordinator(repo=repo, target_rpm=13, quota_scope="scope-fifo-c")
+        t0 = datetime(2026, 8, 25, 9, 0, 0, tzinfo=timezone.utc)
+
+        results = await asyncio.gather(
+            *[
+                coordinator.register_shadow_job_and_judge(**_shadow_job(), fdc_ready_at=t0)
+                for _ in range(40)
+            ]
         )
-        for _ in range(5):
-            judgement = await coordinator.judge_shadow_reservation(job_id=job_id)
-            assert isinstance(judgement, ShadowJudgement)
-            assert judgement.would_grant is True
 
+        assert all(isinstance(r, ShadowJudgement) for r in results), (
+            "CoordinatorError 없이 전부 ShadowJudgement여야 한다(timeout/cancelled 없음)"
+        )
+        granted = [r for r in results if r.would_grant]
+        queued = [r for r in results if not r.would_grant]
+        assert len(granted) == 13
+        assert len(queued) == 27
+
+    @pytest.mark.asyncio
+    async def test_fifo_no_queue_jumping(self) -> None:
+        """앞서 등록된(enqueue_sequence가 더 작은) job이 queued인 상태에서
+        뒤에 등록된 job이 먼저 grant되는 새치기가 없어야 한다."""
+        repo = InMemoryFdcQuotaRepository()
+        coordinator = _make_coordinator(repo=repo, target_rpm=1, quota_scope="scope-fifo-d")
+        t0 = datetime(2026, 8, 25, 9, 0, 0, tzinfo=timezone.utc)
+
+        first = await coordinator.register_shadow_job_and_judge(**_shadow_job(), fdc_ready_at=t0)
+        second = await coordinator.register_shadow_job_and_judge(**_shadow_job(), fdc_ready_at=t0)
+        third = await coordinator.register_shadow_job_and_judge(**_shadow_job(), fdc_ready_at=t0)
+
+        assert first.would_grant is True
+        assert second.would_grant is False
+        assert third.would_grant is False
+        assert first.enqueue_sequence < second.enqueue_sequence < third.enqueue_sequence
+
+    @pytest.mark.asyncio
+    async def test_exactly_60_seconds_old_shadow_grant_excluded(self) -> None:
+        """(t-60초, t] 반열림 — 정확히 60초 전 shadow grant는 window에서
+        제외된다(real 경로와 동일한 경계 규칙)."""
+        repo = InMemoryFdcQuotaRepository()
+        coordinator = _make_coordinator(repo=repo, target_rpm=1, quota_scope="scope-fifo-e")
+        t0 = datetime(2026, 8, 25, 9, 0, 0, tzinfo=timezone.utc)
+
+        first = await coordinator.register_shadow_job_and_judge(**_shadow_job(), fdc_ready_at=t0)
+        assert first.would_grant is True
+
+        exactly_60s_later = t0 + timedelta(seconds=60)
+        second = await coordinator.register_shadow_job_and_judge(
+            **_shadow_job(), fdc_ready_at=exactly_60s_later,
+        )
+        assert second.would_grant is True, (
+            "정확히 60초 뒤(=이전 grant가 정확히 60초 전)면 window에서 "
+            "제외돼 target_rpm=1이어도 승인돼야 한다"
+        )
+
+        just_under_60s_later = t0 + timedelta(seconds=59, milliseconds=999)
+        repo3 = InMemoryFdcQuotaRepository()
+        coordinator3 = _make_coordinator(repo=repo3, target_rpm=1, quota_scope="scope-fifo-e2")
+        await coordinator3.register_shadow_job_and_judge(**_shadow_job(), fdc_ready_at=t0)
+        third = await coordinator3.register_shadow_job_and_judge(
+            **_shadow_job(), fdc_ready_at=just_under_60s_later,
+        )
+        assert third.would_grant is False, "59.999초 전이면 아직 window 안이라 거부돼야 한다"
+
+    @pytest.mark.asyncio
+    async def test_shadow_does_not_consume_or_read_real_quota(self) -> None:
+        """shadow 등록/판단이 실제(mode='real') quota 집계에 전혀
+        영향을 주지 않고, 그 역도 마찬가지다."""
+        repo = InMemoryFdcQuotaRepository()
+        coordinator = _make_coordinator(repo=repo, target_rpm=1, quota_scope="scope-fifo-f")
+        t0 = datetime(2026, 8, 25, 9, 0, 0, tzinfo=timezone.utc)
+
+        # 실제 real quota를 먼저 채운다.
         real_result = await coordinator.try_reserve(job_id=None, caller_id="ops-scheduler")
         assert isinstance(real_result, ReservationGrant)
-        assert real_result.window_count_before_grant == 0, (
-            "앞선 5번의 shadow 판단이 실제 quota를 전혀 소비하지 않았어야 한다"
+
+        # shadow 판단은 real이 이미 가득 찼어도 영향받지 않는다(shadow
+        # 큐는 비어 있으므로 target_rpm=1에서도 승인돼야 한다).
+        shadow_result = await coordinator.register_shadow_job_and_judge(
+            **_shadow_job(), fdc_ready_at=t0,
         )
+        assert shadow_result.would_grant is True, "real quota가 shadow 판단에 영향을 주면 안 된다"
+
+        # 반대로 shadow 등록을 여러 번 더 해도 real 쪽 window_count는 그대로다.
+        for _ in range(5):
+            await coordinator.register_shadow_job_and_judge(**_shadow_job(), fdc_ready_at=t0)
+        real_result_2 = await coordinator.try_reserve(job_id=None, caller_id="ops-scheduler")
+        assert isinstance(real_result_2, ReservationDenied)
+        assert real_result_2.window_count == 1, "shadow 등록이 real window_count에 영향을 주면 안 된다"
 
     @pytest.mark.asyncio
-    async def test_shadow_rows_tagged_and_excluded_from_real_query(self) -> None:
+    async def test_shadow_rows_tagged_shadow_mode(self) -> None:
         repo = InMemoryFdcQuotaRepository()
-        coordinator = _make_coordinator(repo=repo, target_rpm=13, quota_scope="scope-f")
+        coordinator = _make_coordinator(repo=repo, target_rpm=13, quota_scope="scope-fifo-g")
+        t0 = datetime(2026, 8, 25, 9, 0, 0, tzinfo=timezone.utc)
 
-        job_id = await coordinator.create_shadow_job(
-            decision_cycle_id="cycle-1", decision_context_id=None,
-            symbol="005930", source_type="held_position",
-        )
-        await coordinator.judge_shadow_reservation(job_id=job_id)
+        result = await coordinator.register_shadow_job_and_judge(**_shadow_job(), fdc_ready_at=t0)
 
-        attempts = repo._attempts["scope-f"]  # type: ignore[attr-defined]
+        attempts = repo._attempts["scope-fifo-g"]  # type: ignore[attr-defined]
         assert len(attempts) == 1
         _, mode, outcome = attempts[0]
         assert mode == "shadow"
         assert outcome == "shadow_would_grant"
-        assert repo._jobs[job_id]["mode"] == "shadow"  # type: ignore[attr-defined]
-        assert repo._jobs[job_id]["status"] == "SHADOW_WOULD_GRANT"  # type: ignore[attr-defined]
+        shadow_jobs = repo._shadow_jobs["scope-fifo-g"]  # type: ignore[attr-defined]
+        assert shadow_jobs[0]["job_id"] == result.job_id
+        assert shadow_jobs[0]["status"] == "SHADOW_WOULD_GRANT"
+        assert shadow_jobs[0]["mode"] == "shadow"
 
 
 # ---------------------------------------------------------------------------
@@ -236,7 +335,7 @@ async def db_ready(quota_scope: str):
                 quota_scope,
             )
             await conn.execute(
-                "DELETE FROM trading.fdc_queue_jobs WHERE decision_cycle_id = $1",
+                "DELETE FROM trading.fdc_queue_jobs WHERE quota_scope = $1",
                 quota_scope,
             )
             await conn.execute(
@@ -335,3 +434,103 @@ class TestPostgresAtomicReservation:
         coordinator = _postgres_coordinator(quota_scope=quota_scope, target_rpm=13)
         result = await coordinator.try_reserve(job_id=None, caller_id="test-caller")
         assert isinstance(result, ReservationGrant)
+
+
+@pytestmark_db
+class TestPostgresShadowFifoQueue:
+    """가상 13 RPM shadow FIFO 큐 — singleton anchor 행 잠금/60초 경계/
+    동시성이 in-memory asyncio.Lock이 아니라 실제 PostgreSQL 행 잠금으로
+    보장되는지 검증한다."""
+
+    @pytest.mark.asyncio
+    async def test_13_same_instant_jobs_all_would_grant(
+        self, db_ready, quota_scope: str,
+    ) -> None:
+        coordinator = _postgres_coordinator(quota_scope=quota_scope, target_rpm=13)
+        t0 = datetime.now(timezone.utc)
+
+        results = [
+            await coordinator.register_shadow_job_and_judge(
+                decision_cycle_id="cycle-1", decision_context_id=None,
+                symbol="005930", source_type="held_position", fdc_ready_at=t0,
+            )
+            for _ in range(13)
+        ]
+        assert all(isinstance(r, ShadowJudgement) for r in results)
+        assert all(r.would_grant for r in results)
+
+    @pytest.mark.asyncio
+    async def test_14th_job_is_queued_not_granted(
+        self, db_ready, quota_scope: str,
+    ) -> None:
+        coordinator = _postgres_coordinator(quota_scope=quota_scope, target_rpm=13)
+        t0 = datetime.now(timezone.utc)
+
+        results = [
+            await coordinator.register_shadow_job_and_judge(
+                decision_cycle_id="cycle-1", decision_context_id=None,
+                symbol="005930", source_type="held_position", fdc_ready_at=t0,
+            )
+            for _ in range(14)
+        ]
+        assert all(r.would_grant for r in results[:13])
+        assert results[13].would_grant is False
+
+    @pytest.mark.asyncio
+    async def test_concurrent_registration_no_queue_jumping(
+        self, db_ready, quota_scope: str,
+    ) -> None:
+        """실제 anchor 행 잠금 하에서 동시 등록해도 새치기가 없는지 —
+        승인된 job 수가 정확히 target_rpm과 같아야 한다."""
+        coordinator = _postgres_coordinator(quota_scope=quota_scope, target_rpm=13)
+        t0 = datetime.now(timezone.utc)
+
+        results = await asyncio.gather(
+            *[
+                coordinator.register_shadow_job_and_judge(
+                    decision_cycle_id="cycle-1", decision_context_id=None,
+                    symbol="005930", source_type="held_position", fdc_ready_at=t0,
+                )
+                for _ in range(40)
+            ]
+        )
+        errors = [r for r in results if isinstance(r, CoordinatorError)]
+        assert not errors, f"unexpected coordinator errors: {errors}"
+        granted = [r for r in results if r.would_grant]
+        assert len(granted) == 13
+
+    @pytest.mark.asyncio
+    async def test_exactly_60_seconds_boundary(
+        self, db_ready, quota_scope: str,
+    ) -> None:
+        coordinator = _postgres_coordinator(quota_scope=quota_scope, target_rpm=1)
+        t0 = datetime.now(timezone.utc)
+
+        first = await coordinator.register_shadow_job_and_judge(
+            decision_cycle_id="cycle-1", decision_context_id=None,
+            symbol="005930", source_type="held_position", fdc_ready_at=t0,
+        )
+        assert first.would_grant is True
+
+        second = await coordinator.register_shadow_job_and_judge(
+            decision_cycle_id="cycle-1", decision_context_id=None,
+            symbol="005930", source_type="held_position",
+            fdc_ready_at=t0 + timedelta(seconds=60),
+        )
+        assert second.would_grant is True, "정확히 60초 뒤는 window 밖이라 승인돼야 한다"
+
+    @pytest.mark.asyncio
+    async def test_shadow_does_not_affect_real_and_vice_versa(
+        self, db_ready, quota_scope: str,
+    ) -> None:
+        coordinator = _postgres_coordinator(quota_scope=quota_scope, target_rpm=1)
+        t0 = datetime.now(timezone.utc)
+
+        real_result = await coordinator.try_reserve(job_id=None, caller_id="test-caller")
+        assert isinstance(real_result, ReservationGrant)
+
+        shadow_result = await coordinator.register_shadow_job_and_judge(
+            decision_cycle_id="cycle-1", decision_context_id=None,
+            symbol="005930", source_type="held_position", fdc_ready_at=t0,
+        )
+        assert shadow_result.would_grant is True, "real quota가 shadow 판단에 영향을 주면 안 된다"
