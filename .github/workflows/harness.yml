@@ -532,6 +532,12 @@ jobs:
 
       - name: Run PostgreSQL fixture loop-scope integration tests
         run: |
+          # GitHub Actions는 run: 블록을 기본적으로 `bash -e {0}`로
+          # 실행한다(shell: 미지정 시) — 그 -e가 이미 켜진 상태이므로
+          # 뒤의 `set -uo pipefail`만으로는 errexit이 꺼지지 않는다.
+          # 아래 for 루프가 한 파일 실패로 중간에 끊기지 않고 3개 파일
+          # 전부를 시도하도록 여기서 명시적으로 -e를 끈다.
+          set +e
           set -uo pipefail
           # 대표 3개 파일:
           #   - tests/repositories/test_postgres_fill_events.py — 로컬
