@@ -121,10 +121,49 @@ class TestSystemdServiceTemplate:
     def test_is_oneshot_type(self):
         assert "Type=oneshot" in self._read_service()
 
-    def test_execstart_uses_compose_run_rm_not_exec(self):
+    def _execstart_line(self) -> str:
         content = self._read_service()
-        assert "compose run --rm sppv3-oos-batch" in content
+        match = re.search(r"^ExecStart=(.+)$", content, re.MULTILINE)
+        assert match is not None, "ExecStart 라인을 찾지 못함"
+        return match.group(0)
+
+    def test_execstart_run_rm_not_exec(self):
+        content = self._read_service()
+        execstart = self._execstart_line()
+        assert "run --rm sppv3-oos-batch" in execstart
         assert re.search(r"^ExecStart=.*docker exec", content, re.MULTILINE) is None
+
+    def test_execstart_uses_docker_compose_env_wrapper_not_docker_compose_directly(self):
+        """2026-08-26 정정 — 표준 배포 래퍼(docker_compose_env.sh)를 반드시
+        경유해야 /etc/agent_trading/*.env가 Compose interpolation에
+        전달된다. 이 래퍼 없이 `docker compose`를 직접 부르면 KIS
+        live-info 자격증명이 빈 문자열로 치환된다."""
+        execstart = self._execstart_line()
+        assert "docker_compose_env.sh" in execstart
+        assert "docker compose " not in execstart
+
+    def test_execstart_passes_profile_flag(self):
+        execstart = self._execstart_line()
+        assert "--profile sppv3-oos-batch" in execstart
+
+    def test_no_docker_compose_bin_placeholder_remains(self):
+        """DOCKER_COMPOSE_BIN 자리표시자는 docker_compose_env.sh 경유
+        전환으로 더 이상 필요 없어져 제거됐다 — ExecStart를 포함한 실제
+        unit 지시문 라인에는 더 이상 등장하지 않아야 한다(정정 사유를
+        설명하는 주석 문장 자체는 허용)."""
+        content = self._read_service()
+        directive_lines = [
+            line
+            for line in content.splitlines()
+            if line and not line.lstrip().startswith("#") and "=" in line
+        ]
+        assert not any("__DOCKER_COMPOSE_BIN__" in line for line in directive_lines)
+
+    def test_path_environment_is_explicitly_set(self):
+        """systemd 최소 PATH에서 docker_compose_env.sh가 내부적으로
+        찾는 `docker` 바이너리를 못 찾는 사고를 구조적으로 방지한다."""
+        content = self._read_service()
+        assert re.search(r"^Environment=PATH=.*:/usr/bin:", content, re.MULTILINE) is not None
 
     def test_does_not_reference_ops_scheduler_container(self):
         assert "agent_trading-ops-scheduler" not in self._read_service()
@@ -182,3 +221,49 @@ class TestInstallScriptDefaultsToDryRun:
         assert "systemctl daemon-reload" not in pre_dry_run_section
         assert "systemctl enable" not in pre_dry_run_section
         assert "systemctl start" not in pre_dry_run_section
+
+    def test_no_docker_compose_bin_variable_remains(self):
+        """2026-08-26 정정 — ExecStart가 docker_compose_env.sh를 경유하도록
+        바뀌면서 DOCKER_COMPOSE_BIN 변수/치환이 더 이상 필요 없어졌다 —
+        실제 셸 코드(주석 아님)에서 변수로 쓰이지 않아야 한다."""
+        content = self._read_install_script()
+        code_lines = [
+            line for line in content.splitlines() if not line.lstrip().startswith("#")
+        ]
+        assert not any("DOCKER_COMPOSE_BIN" in line for line in code_lines)
+
+    def test_validates_rendered_execstart_uses_wrapper_before_apply(self):
+        """설치 스크립트 자신이 렌더링 직후 ExecStart가 docker_compose_env.sh를
+        경유하는지, docker compose를 직접 부르지 않는지 자체 검증해야 한다 —
+        템플릿을 손으로 고치다 회귀시키는 사고를 설치 시점에 잡기 위함."""
+        content = self._read_install_script()
+        assert "docker_compose_env.sh" in content
+        assert 'docker compose "* ]]' in content or "docker compose \"* ]]" in content
+
+
+class TestInstallScriptDryRunRendersWrapperExecStart:
+    """실제 설치 스크립트를 dry-run(--yes 없이) 서브프로세스로 실행해,
+    렌더링된 unit의 ExecStart가 wrapper 경유인지 확인한다. `--yes`를
+    붙이지 않으므로 daemon-reload/enable/start/파일 쓰기는 전혀
+    일어나지 않는다 — DB/네트워크 미사용."""
+
+    def test_dry_run_output_contains_wrapper_execstart_not_direct_docker_compose(self, tmp_path):
+        import subprocess
+
+        fake_repo = tmp_path / "fake_repo"
+        (fake_repo / "scripts" / "harness").mkdir(parents=True)
+        (fake_repo / "docker-compose.yml").write_text("services: {}\n")
+        (fake_repo / "scripts" / "harness" / "docker_compose_env.sh").write_text("#!/usr/bin/env bash\n")
+
+        install_script = os.path.join(_SYSTEMD_DIR, "install_sppv3_oos_batch_systemd.sh")
+        result = subprocess.run(
+            ["bash", install_script],
+            env={**os.environ, "AGENT_TRADING_REPO_ROOT": str(fake_repo)},
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        assert result.returncode == 0, result.stderr
+        assert "docker_compose_env.sh" in result.stdout
+        assert "--profile sppv3-oos-batch run --rm sppv3-oos-batch" in result.stdout
+        assert "dry-run 종료" in result.stdout

@@ -13,17 +13,26 @@
 # 승인 후 별도로 실행해야 한다 — 이 저장소의 어떤 CI/CD 경로도 이 파일을
 # 자동으로 설치하지 않는다.
 #
-# 설치 시 아래 두 자리표시자를 실제 값으로 치환해야 한다(설치 스크립트가
+# 설치 시 아래 자리표시자를 실제 값으로 치환해야 한다(설치 스크립트가
 # 자동 치환):
 #   __AGENT_TRADING_REPO_ROOT__  — 운영 checkout 절대경로
 #                                  (예: /workspace/agent_trading — 이
 #                                  개발 checkout(agent_trading_dev)이
 #                                  아니라 CI가 실제로 배포하는 운영
 #                                  checkout을 가리켜야 한다)
-#   __DOCKER_COMPOSE_BIN__       — `docker compose` 실행 경로
-#                                  (예: /usr/bin/docker, plugin 방식이면
-#                                  "docker compose"; `docker-compose`
-#                                  standalone 바이너리를 쓰면 그 경로)
+#
+# 2026-08-26 정정 — __DOCKER_COMPOSE_BIN__ 자리표시자를 제거했다
+# (§48 후속). 초판은 `ExecStart`가 `docker compose`를 직접 호출했는데,
+# 이 경로는 저장소 표준 배포 래퍼(`scripts/harness/docker_compose_
+# env.sh`)를 거치지 않아 `/etc/agent_trading/*.env`(KIS live-info
+# 자격증명 포함)가 Compose interpolation에 전혀 전달되지 않는
+# 결함이었다 — 그대로 설치했다면 `KIS_LIVE_INFO_APP_KEY` 등이 빈
+# 문자열로 치환돼, 배치가 매일 조용히 `skip_market_calendar_
+# unavailable`만 반복하고 실제로는 절대 동작하지 않았을 것이다.
+# 지금은 `docker_compose_env.sh`가 내부적으로 PATH에서 `docker`를
+# 찾아 그대로 `exec`하므로, 이 unit이 별도로 compose 바이너리 경로를
+# 알 필요가 없다 — 그래서 `__DOCKER_COMPOSE_BIN__` placeholder 자체가
+# 불필요해졌다.
 
 [Unit]
 Description=SPPV-3 OOS bar cache daily batch (one-shot, read-only KIS historical daily bar)
@@ -37,10 +46,25 @@ Wants=network-online.target
 [Service]
 Type=oneshot
 WorkingDirectory=__AGENT_TRADING_REPO_ROOT__
+# systemd 서비스는 로그인 셸이 아니라 이 PATH를 명시적으로 지정하지
+# 않으면 배포 환경에 따라 `docker`가 없는 최소 PATH로 뜰 수 있다 —
+# 표준 위치를 명시해 "PATH에 docker가 없어서 실패"를 구조적으로
+# 방지한다(systemd.exec(5) 기본 PATH와 동일한 값).
+Environment=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 # `docker exec`로 실행 중인 컨테이너에 진입하지 않는다 — 반드시
 # `compose run --rm`(ephemeral one-shot 컨테이너)만 쓴다. 이 서비스가
 # ops-scheduler 컨테이너 안에서 실행되는 일은 구조적으로 없다.
-ExecStart=__DOCKER_COMPOSE_BIN__ compose run --rm sppv3-oos-batch
+#
+# `docker compose`를 직접 부르지 않고 반드시 저장소 표준 배포 래퍼
+# `scripts/harness/docker_compose_env.sh`를 경유한다 — 이 래퍼가
+# `/etc/agent_trading/*.env`(KIS live-info 자격증명 포함)를
+# `--env-file`로 명시 전달해야만 Compose가 `${KIS_LIVE_INFO_APP_KEY}`
+# 등을 올바르게 치환한다(scripts/harness/README.md "Docker/배포 표준
+# 명령"). `--profile sppv3-oos-batch`를 명시해야 profile로 격리된 이
+# 서비스가 `run` 대상에 인식된다. 절대경로(`/bin/bash`, repo-root
+# 기준 절대경로 스크립트)를 사용해 systemd의 최소 PATH·상대경로
+# 해석 문제를 모두 피한다.
+ExecStart=/bin/bash __AGENT_TRADING_REPO_ROOT__/scripts/harness/docker_compose_env.sh --profile sppv3-oos-batch run --rm sppv3-oos-batch
 # 전체 timeout — wrapper 자체 timeout(기본 1800초)보다 여유를 둔다.
 TimeoutStartSec=2400
 # 실패해도 systemd 레벨에서 자동 재시작하지 않는다 — 재시도는 다음날
