@@ -8281,3 +8281,22 @@ validation.md` "46/47", `[PRIORITY_MAP]`의 같은 제목 항목.
   PASS). `accept` 계열 전부 PASS. 실제 KIS 호출·timer 등록·컨테이너
   재기동·DB write는 이번에도 미실행. 새 PR을 만들지 않고 기존
   PR #352 브랜치에 후속 커밋으로 추가.
+
+## PR #352 병합 후 systemd unit의 표준 배포 래퍼 우회 결함 수정(2026-08-26 KST) — **새 PR**
+
+상세: DESIGN 문서 "49", `[PRIORITY_MAP]`의 같은 제목 항목.
+
+- 운영 활성화 전 read-only 최종 점검에서 발견 — `ops/systemd/sppv3-
+  oos-batch.service`의 `ExecStart`가 `docker compose`를 직접 호출해
+  표준 배포 래퍼(`scripts/harness/docker_compose_env.sh`)를 우회,
+  `/etc/agent_trading/*.env`(KIS live-info 자격증명)가 Compose에
+  전달되지 않는 결함이었다. 그대로 설치했다면 배치가 매일
+  `skip_market_calendar_unavailable`만 반복하며 조용히 무동작했을
+  것이다(위험한 실패는 아님).
+- `ExecStart`를 `docker_compose_env.sh --profile sppv3-oos-batch
+  run --rm sppv3-oos-batch` 경유로 수정, `Environment=PATH=...` 명시,
+  불필요해진 `__DOCKER_COMPOSE_BIN__` 자리표시자 제거, 설치 스크립트에
+  wrapper 경유 여부 자체 검증 안전장치 추가.
+- 신규/수정 테스트 전부 PASS(DB/네트워크 미사용), `accept` 계열
+  전부 PASS. 실제 KIS 호출·systemd 설치·컨테이너 재기동·DB write·
+  운영 checkout 동기화는 이번에도 미실행.

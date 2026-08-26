@@ -12426,3 +12426,24 @@ validation.md` "46/47".
 - 신규 테스트로 076 장애 시 일봉 수집기 미호출을 검증(53건 전부
   PASS). `accept` 계열 전부 PASS. 실제 KIS 호출·timer 등록·컨테이너
   재기동·DB write는 이번에도 미실행.
+
+## PR #352 병합 후 systemd unit의 표준 배포 래퍼 우회 결함 수정(2026-08-26 KST, 새 PR)
+
+상세: DESIGN 문서 "49".
+
+- 운영 활성화 전 read-only 최종 점검에서 `ops/systemd/sppv3-oos-
+  batch.service`의 `ExecStart`가 `docker compose`를 직접 호출해
+  표준 배포 래퍼(`scripts/harness/docker_compose_env.sh`)를 우회하는
+  결함을 발견했다 — 그대로 설치했다면 `/etc/agent_trading/*.env`가
+  Compose interpolation에 전달되지 않아 KIS live-info 자격증명이
+  빈 문자열이 되고, 배치가 매일 `skip_market_calendar_unavailable`만
+  반복하는 조용한 무동작 상태가 됐을 것이다(위험한 실패는 아님).
+- `ExecStart`를 `docker_compose_env.sh --profile sppv3-oos-batch
+  run --rm sppv3-oos-batch` 경유로 수정, `Environment=PATH=...` 명시
+  추가, 더 이상 불필요해진 `__DOCKER_COMPOSE_BIN__` 자리표시자를
+  템플릿·설치 스크립트에서 제거, 설치 스크립트에 렌더링 직후 wrapper
+  경유 여부 자체 검증(안전장치)을 추가했다.
+- 신규/수정 테스트 전부 PASS, DB/네트워크 미사용. `accept env`/
+  `style`/`no-bypass`/`architecture`/`docs` 전부 PASS. 실제 KIS
+  호출·systemd 설치·컨테이너 재기동·DB write·운영 checkout 동기화는
+  이번에도 미실행.

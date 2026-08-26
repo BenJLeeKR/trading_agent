@@ -10963,3 +10963,62 @@ koreainvestment/holiday_client.py:85-86`).
 076 authoritative calendar에 위임하며, 그 076 응답 자체가 정확한지는
 KIS API 자체의 신뢰성 문제로 이 배치 코드가 별도로 검증할 수 있는
 범위 밖이다.
+
+## 49. PR #352 병합 후 발견 — systemd unit이 표준 배포 래퍼를 우회하던 결함 수정(2026-08-26 KST, read-only 최종 점검 후속, 새 PR)
+
+§47이 병합(PR #352, merge commit `8e0b5cff`)된 뒤, 운영 활성화 전
+read-only 최종 점검(별도 턴)에서 다음 결함이 발견됐다: `ops/systemd/
+sppv3-oos-batch.service`의 `ExecStart`가 `docker compose`를 **직접**
+호출하고 있어, 저장소 표준 배포 래퍼 `scripts/harness/docker_
+compose_env.sh`를 거치지 않았다. 이 래퍼가 `/etc/agent_trading/*.env`
+(KIS live-info 자격증명 포함)를 `--env-file`로 명시 전달해야만
+Compose가 `${KIS_LIVE_INFO_APP_KEY}` 등을 올바르게 치환하는 구조라,
+**그대로 설치·활성화했다면 자격증명이 빈 문자열로 치환돼 배치가 매일
+조용히 `skip_market_calendar_unavailable`만 반복하고 실제로는 절대
+동작하지 않았을 것이다.** 위험한 실패는 아니지만("빈 자격증명 →
+`build_authoritative_holiday_provider()`가 안전 skip" 그대로 작동)
+표본이 영원히 쌓이지 않는 조용한 무동작 상태였다.
+
+### 49.1 수정 내용
+
+- `ops/systemd/sppv3-oos-batch.service`의 `ExecStart`를
+  `/bin/bash __AGENT_TRADING_REPO_ROOT__/scripts/harness/docker_
+  compose_env.sh --profile sppv3-oos-batch run --rm sppv3-oos-batch`로
+  변경 — `docker compose`를 직접 부르지 않고 반드시 이 래퍼를
+  경유한다. `--profile sppv3-oos-batch`를 명시해야 profile로 격리된
+  이 서비스가 `run` 대상으로 인식된다.
+- `Environment=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:
+  /sbin:/bin`(systemd.exec(5) 기본값과 동일)을 명시 추가 — systemd
+  서비스가 최소 PATH로 뜰 때 `docker`를 못 찾는 사고를 구조적으로
+  방지한다.
+- `__DOCKER_COMPOSE_BIN__` 자리표시자를 템플릿과 설치 스크립트에서
+  제거했다 — `docker_compose_env.sh`가 내부적으로 PATH에서 `docker`를
+  찾아 `exec`하므로 이 unit이 compose 바이너리 경로를 별도로 알
+  필요가 없어졌다.
+- `ops/systemd/install_sppv3_oos_batch_systemd.sh`에 렌더링 직후
+  자체 안전장치를 추가했다 — `ExecStart`가 `docker_compose_env.sh`를
+  포함하지 않거나 `docker compose `를 직접 호출하는 것으로 보이면
+  `--yes`를 줬더라도 설치를 즉시 중단한다(향후 템플릿을 손으로 고치다
+  이 결함을 되돌리는 회귀를 설치 시점에 잡기 위함). `scripts/harness/
+  docker_compose_env.sh`가 대상 `REPO_ROOT`에 존재하는지도 사전 검증
+  한다(운영 checkout이 이 파일을 포함한 커밋까지 동기화됐는지 확인).
+
+### 49.2 검증
+
+dry-run(`--yes` 없이, `AGENT_TRADING_REPO_ROOT=/workspace/agent_trading`)
+으로 렌더링된 unit의 `ExecStart`가 `docker_compose_env.sh` 경유임을
+확인했다. 신규/수정 테스트(`tests/ops/test_sppv3_oos_batch_ops_
+contracts.py`, 실제 설치 스크립트를 fake repo 대상 서브프로세스로
+1회 dry-run 실행해 출력을 검증하는 테스트 포함) 전부 PASS, DB/네트워크
+미사용. 076 장애 시 안전 skip, 주문 scheduler 분리, lock/idempotency
+계약은 이번 수정에서 전혀 변경하지 않았고 기존 테스트가 그대로 통과함을
+재확인했다. `accept env`/`style`/`no-bypass`/`architecture`/`docs`
+전부 PASS.
+
+### 49.3 이번에도 수행하지 않은 것
+
+실제 KIS API 호출, DB write, systemd 설치·`daemon-reload`·`enable`·
+`start`, 운영 checkout(`/workspace/agent_trading`) 동기화, 컨테이너
+재기동, 주문 제출 — 전부 이번 후속 PR에서도 수행하지 않았다. 운영
+활성화 전 남은 선행 조건(운영 checkout이 아직 PR #352를 반영하지
+않음)은 이전 read-only 점검에서 이미 보고된 그대로 유효하다.
