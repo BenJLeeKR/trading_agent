@@ -128,6 +128,8 @@ VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)\
         instrument_id=instrument_id,
         symbol=f"BRK{uuid4().hex[:4].upper()}",
         market_code="KRX",
+        exchange_code="KRX",
+        market_segment="KOSPI",
         asset_class=AssetClass.KR_STOCK.value,
         currency="KRW",
         name="BrokerOrder Test Instrument",
