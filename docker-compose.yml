@@ -475,6 +475,56 @@ services:
     networks:
       - shared_net  # 추가됨
 
+  # ---- SPPV-3 OOS Bar Cache Batch (one-shot) -------------------------------
+  # docs/40_action_plans/sppv3_oos_daily_batch_design_2026-08-25.md §4/§45.
+  # 거래일 21:00 KST 1회, historical daily bar(inquire_daily_itemchartprice)
+  # read-only 수집 전용. 주문 `ops-scheduler`와 프로세스/장애 도메인을
+  # 완전히 분리한 one-shot 서비스다 — `restart` 정책 없음(long-lived
+  # 컨테이너가 아니다), `docker compose run --rm sppv3-oos-batch`로만
+  # 실행한다(systemd timer가 호출, `ops/systemd/` 템플릿 참고).
+  # DB 연결 설정·계좌/주문용 KIS 환경변수(KIS_APP_KEY/KIS_ACCOUNT_NO 등)는
+  # 의도적으로 추가하지 않는다 — 이 서비스가 하는 유일한 외부 호출은
+  # `_build_kis_live_quote_client()`(account_number="" 구조적 read-only)
+  # 경유 historical daily bar 조회뿐이다.
+  sppv3-oos-batch:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: agent_trading-app:latest
+    profiles:
+      - sppv3-oos-batch
+    command:
+      - "python3"
+      - "/app/scripts/run_sppv3_oos_batch.py"
+      - "--timeout-seconds"
+      - "${SPPV3_OOS_BATCH_TIMEOUT_SECONDS:-1800}"
+    environment:
+      TZ: "Asia/Seoul"
+      PYTHONPATH: "/app/src:/app/scripts"
+      # 이 서비스에서는 항상 "false"로 고정 배선한다(값을 오버라이드하지
+      # 않는다) — 076 국내휴장일조회 API를 호출하지 않고
+      # create_session_provider()가 FallbackSessionProvider(주말
+      # heuristic)로 폴백하게 만들어, 이 배치가 실제로 호출하는 KIS API를
+      # inquire_daily_itemchartprice 하나로 제한한다(설계 문서 §45.7).
+      KIS_LIVE_INFO_ENABLED: "false"
+      KIS_LIVE_INFO_APP_KEY: "${KIS_LIVE_INFO_APP_KEY:-}"
+      KIS_LIVE_INFO_APP_SECRET: "${KIS_LIVE_INFO_APP_SECRET:-}"
+      KIS_LIVE_INFO_BASE_URL: "${KIS_LIVE_INFO_BASE_URL:-}"
+      KIS_DISCLOSURE_TOKEN_CACHE_ENABLED: "${KIS_DISCLOSURE_TOKEN_CACHE_ENABLED:-true}"
+      KIS_DISCLOSURE_TOKEN_CACHE_PATH: "${KIS_DISCLOSURE_TOKEN_CACHE_PATH:-.cache/kis_disclosure_token.json}"
+    volumes:
+      - ./scripts:/app/scripts:ro
+      - ./src:/app/src:ro
+      - ./logs:/app/logs
+      - ./.cache:/app/.cache
+    cap_add:
+      - NET_ADMIN
+    security_opt:
+      - seccomp:unconfined
+      - apparmor:unconfined
+    networks:
+      - shared_net
+
   # ---- Reconciliation Worker --------------------------------------------------
   # Long-lived worker that consumes reconciliation runs created by Phase 18/19.
   # Polls for runs with status='started', inquires broker for truth,

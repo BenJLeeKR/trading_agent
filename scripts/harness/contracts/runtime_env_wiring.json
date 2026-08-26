@@ -37,6 +37,24 @@
       "services": ["ops-scheduler"],
       "required_in_compose": false,
       "note": "Stage A(정책평가 인프라, 2026-08-20) policy fingerprint. 관측성 전용(trade_decisions/guardrail_evaluations.policy_git_sha) — 판정 로직과 무관하며 값이 없어도 정상 동작하므로 하드 실패 대상이 아니다."
+    },
+    {
+      "key": "KIS_LIVE_INFO_ENABLED",
+      "services": ["sppv3-oos-batch"],
+      "required_in_compose": true,
+      "note": "SPPV-3 OOS 일봉 cache 배치(설계 문서 §45.7)에서는 항상 \"false\"로 고정 배선한다 — 076 국내휴장일조회 API를 호출하지 않고 create_session_provider()가 FallbackSessionProvider(주말 heuristic)로 폴백하게 만들어, 이 서비스가 실제로 호출하는 KIS API를 inquire_daily_itemchartprice 하나로 제한하기 위함이다."
+    },
+    {
+      "key": "KIS_LIVE_INFO_APP_KEY",
+      "services": ["sppv3-oos-batch"],
+      "required_in_compose": true,
+      "note": "SPPV-3 OOS 일봉 cache 배치가 read-only historical daily bar 조회에 쓰는 quote client(_build_kis_live_quote_client, account_number=\"\" 구조적 read-only) 자격증명. 누락되면 client=None이 되어 배치가 즉시 실패한다."
+    },
+    {
+      "key": "KIS_LIVE_INFO_APP_SECRET",
+      "services": ["sppv3-oos-batch"],
+      "required_in_compose": true,
+      "note": "위 KIS_LIVE_INFO_APP_KEY와 짝을 이루는 secret. 동일한 이유로 필요하다."
     }
   ]
 }

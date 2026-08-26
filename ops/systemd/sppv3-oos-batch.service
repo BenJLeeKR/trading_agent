@@ -1,0 +1,53 @@
+# SPPV-3 OOS 일봉 cache 일 1회 자동 수집 배치 — systemd oneshot 서비스 템플릿.
+#
+# docs/40_action_plans/sppv3_oos_daily_batch_design_2026-08-25.md §4/§45가
+# 정한 아키텍처를 그대로 반영한다. 실제 거래일/시간 판정은 이 서비스가
+# 아니라 `scripts/run_sppv3_oos_batch.py` wrapper가 컨테이너 내부에서
+# 최종 수행한다 — 이 unit은 "그 컨테이너를 21:00 KST 근처에 1회 깨우는"
+# 역할만 한다(정확한 거래일 여부는 wrapper가 스스로 다시 판정하므로,
+# systemd timer가 주말/휴장일을 몰라도 안전하다).
+#
+# **이 파일은 템플릿이다.** `/etc/systemd/system/`에 실제로 설치·
+# daemon-reload·enable·start하는 행위는 `ops/systemd/install_sppv3_
+# oos_batch_systemd.sh`가 수행하되, 그 스크립트 자체도 사용자가 명시적
+# 승인 후 별도로 실행해야 한다 — 이 저장소의 어떤 CI/CD 경로도 이 파일을
+# 자동으로 설치하지 않는다.
+#
+# 설치 시 아래 두 자리표시자를 실제 값으로 치환해야 한다(설치 스크립트가
+# 자동 치환):
+#   __AGENT_TRADING_REPO_ROOT__  — 운영 checkout 절대경로
+#                                  (예: /workspace/agent_trading — 이
+#                                  개발 checkout(agent_trading_dev)이
+#                                  아니라 CI가 실제로 배포하는 운영
+#                                  checkout을 가리켜야 한다)
+#   __DOCKER_COMPOSE_BIN__       — `docker compose` 실행 경로
+#                                  (예: /usr/bin/docker, plugin 방식이면
+#                                  "docker compose"; `docker-compose`
+#                                  standalone 바이너리를 쓰면 그 경로)
+
+[Unit]
+Description=SPPV-3 OOS bar cache daily batch (one-shot, read-only KIS historical daily bar)
+# 주문 ops-scheduler와 완전히 독립 — 어떤 관계도 선언하지 않는다
+# (After/Requires로 ops-scheduler에 묶지 않는다: 이 배치의 실패가
+# 주문 경로 기동/재기동에 영향을 주면 안 되고, 그 반대도 마찬가지다).
+After=docker.service network-online.target
+Requires=docker.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=__AGENT_TRADING_REPO_ROOT__
+# `docker exec`로 실행 중인 컨테이너에 진입하지 않는다 — 반드시
+# `compose run --rm`(ephemeral one-shot 컨테이너)만 쓴다. 이 서비스가
+# ops-scheduler 컨테이너 안에서 실행되는 일은 구조적으로 없다.
+ExecStart=__DOCKER_COMPOSE_BIN__ compose run --rm sppv3-oos-batch
+# 전체 timeout — wrapper 자체 timeout(기본 1800초)보다 여유를 둔다.
+TimeoutStartSec=2400
+# 실패해도 systemd 레벨에서 자동 재시작하지 않는다 — 재시도는 다음날
+# timer가 다시 트리거할 때, wrapper 자신의 idempotent skip/retry 로직
+# (§45.2/45.4)에 맡긴다. 즉시 재시작은 KIS에 짧은 시간 내 반복 호출을
+# 유발할 수 있어 의도적으로 금지한다.
+Restart=no
+
+[Install]
+WantedBy=multi-user.target

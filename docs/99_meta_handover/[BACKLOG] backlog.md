@@ -8238,3 +8238,29 @@ postgres_ci.md`.
   변경하지 않았고, FDC quota runtime 코드/migration/provider/limiter/
   dispatcher/주문 정책도 무변경. 새 PR을 만들지 않고 같은 브랜치에서
   갱신했으며, 이 턴에서도 병합은 수행하지 않았다.
+
+## SPPV-3 OOS 배치 정의 코드/systemd 템플릿 구현(2026-08-25/26 KST) — **배치 정의만 완료, 자동 실행 미활성화**
+
+상세: `docs/40_action_plans/sppv3_oos_daily_batch_design_2026-08-25.md`
+§8/§9, `docs/10_signal_research_sppv/[DESIGN] signal_predictive_power_
+validation.md` "46/47", `[PRIORITY_MAP]`의 같은 제목 항목.
+
+- 21:00 KST 단발 수동 관찰(2026-08-25 21:03 KST, 사용자 명시 승인 하
+  KIS read-only 1회 실행): 88/88 종목 당일 bar 확보, `ready_for_
+  oos=true`, base/기존 OOS cache 불변 확인. 1회 관찰이라 반복 검증
+  필요.
+- 위 관찰을 바탕으로 배치 wrapper(`scripts/run_sppv3_oos_batch.py`,
+  KST 21:00 시간 가드·휴장일 가드·중복 skip·flock lock·수집 성공
+  시에만 read-only 분석 후행 실행), Compose one-shot 서비스
+  (`sppv3-oos-batch`, 주문 `ops-scheduler`와 완전 분리), systemd
+  service/timer 템플릿(`ops/systemd/`, `Persistent=true` 채택 근거
+  포함), 설치 스크립트(`--yes` 없이는 dry-run)를 구현했다.
+- **이번 구현은 "배치 정의 추가"일 뿐 실제 자동 실행 활성화가
+  아니다** — 실제 KIS 호출, timer 등록·enable·start, 컨테이너
+  재기동, DB write, 주문 경로 변경 전부 미실행.
+- `latest` 포인터는 계속 미구현(최소 3~5회 성공 관측 후 별도 작업).
+- 신규 테스트 46건(DB/네트워크 미사용) 전부 PASS. `accept script-
+  file`/`env`/`style`/`no-bypass`/`architecture`/`docs` 전부 PASS.
+- **다음 단계(사용자 승인 필요)**: 운영 checkout에서
+  `install_sppv3_oos_batch_systemd.sh --yes` 실행, 21:00 자동 실행
+  반복 관찰.
