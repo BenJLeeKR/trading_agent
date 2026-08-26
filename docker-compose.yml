@@ -476,16 +476,20 @@ services:
       - shared_net  # 추가됨
 
   # ---- SPPV-3 OOS Bar Cache Batch (one-shot) -------------------------------
-  # docs/40_action_plans/sppv3_oos_daily_batch_design_2026-08-25.md §4/§45.
-  # 거래일 21:00 KST 1회, historical daily bar(inquire_daily_itemchartprice)
-  # read-only 수집 전용. 주문 `ops-scheduler`와 프로세스/장애 도메인을
-  # 완전히 분리한 one-shot 서비스다 — `restart` 정책 없음(long-lived
-  # 컨테이너가 아니다), `docker compose run --rm sppv3-oos-batch`로만
-  # 실행한다(systemd timer가 호출, `ops/systemd/` 템플릿 참고).
+  # docs/40_action_plans/sppv3_oos_daily_batch_design_2026-08-25.md §4/§45/§47.
+  # 거래일 21:00 KST 1회. 이 서비스가 호출을 허용하는 KIS API는 정확히
+  # 둘뿐이다: (1) historical daily bar(inquire_daily_itemchartprice) —
+  # OOS 일봉 수집, (2) 076 국내휴장일조회(KisHolidayProvider) — 거래일
+  # 판정. 주문 `ops-scheduler`와 프로세스/장애 도메인을 완전히 분리한
+  # one-shot 서비스다 — `restart` 정책 없음(long-lived 컨테이너가
+  # 아니다), `docker compose run --rm sppv3-oos-batch`로만 실행한다
+  # (systemd timer가 호출, `ops/systemd/` 템플릿 참고).
   # DB 연결 설정·계좌/주문용 KIS 환경변수(KIS_APP_KEY/KIS_ACCOUNT_NO 등)는
-  # 의도적으로 추가하지 않는다 — 이 서비스가 하는 유일한 외부 호출은
+  # 의도적으로 추가하지 않는다 — 이 서비스가 하는 외부 호출은
   # `_build_kis_live_quote_client()`(account_number="" 구조적 read-only)
-  # 경유 historical daily bar 조회뿐이다.
+  # 경유 historical daily bar 조회와, `KisHolidayProvider`
+  # (`KISHolidayClient` — "주문/잔고/체결 경로에 접근할 수 없다"고
+  # 스스로 문서화된 완전히 독립된 클라이언트) 경유 076 조회뿐이다.
   sppv3-oos-batch:
     build:
       context: .
@@ -501,12 +505,17 @@ services:
     environment:
       TZ: "Asia/Seoul"
       PYTHONPATH: "/app/src:/app/scripts"
-      # 이 서비스에서는 항상 "false"로 고정 배선한다(값을 오버라이드하지
-      # 않는다) — 076 국내휴장일조회 API를 호출하지 않고
-      # create_session_provider()가 FallbackSessionProvider(주말
-      # heuristic)로 폴백하게 만들어, 이 배치가 실제로 호출하는 KIS API를
-      # inquire_daily_itemchartprice 하나로 제한한다(설계 문서 §45.7).
-      KIS_LIVE_INFO_ENABLED: "false"
+      # 2026-08-25 초판은 이 값을 "false"로 고정해 076을 아예 호출하지
+      # 않고 FallbackSessionProvider(주말 heuristic)로 대체했으나, 평일
+      # 공휴일을 정확히 걸러내지 못해 폐기했다(§45.7 정정, §47.1). 지금은
+      # 항상 "true"로 고정 배선한다(호스트 env로 끌 수 없게 값을
+      # 오버라이드하지 않는다) — `run_sppv3_oos_batch.py`의
+      # `build_authoritative_holiday_provider()`가 이 값이 "false"이면
+      # weekday fallback으로 넘어가지 않고 즉시
+      # `skip_market_calendar_unavailable`로 안전하게 종료하도록
+      # 만들어져 있으므로, 이 값을 끄면 배치가 그냥 아무 일도 하지 않게
+      # 된다(휴장일 오판으로 이어지지 않는다).
+      KIS_LIVE_INFO_ENABLED: "true"
       KIS_LIVE_INFO_APP_KEY: "${KIS_LIVE_INFO_APP_KEY:-}"
       KIS_LIVE_INFO_APP_SECRET: "${KIS_LIVE_INFO_APP_SECRET:-}"
       KIS_LIVE_INFO_BASE_URL: "${KIS_LIVE_INFO_BASE_URL:-}"

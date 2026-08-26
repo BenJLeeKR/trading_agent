@@ -316,3 +316,34 @@ validation.md` §46).
   경로로 지정해 `install_sppv3_oos_batch_systemd.sh --yes` 실행, `latest` 포인터
   도입(§2.4의 유보 그대로 유지 — 최소 3~5회 성공 관측 후 별도 작업), 실제 21:00
   자동 실행을 며칠간 관찰해 §8의 "1회 관찰"을 반복 검증으로 격상.
+
+## 10. §9 정정 — 휴장일 판정을 weekday heuristic이 아닌 076 국내휴장일조회로 교체(2026-08-25/26 KST, PR #352 병합 전 후속 커밋)
+
+§9가 구현한 휴장일 가드는 `KIS_LIVE_INFO_ENABLED=false`를 고정 배선해
+076 API를 아예 호출하지 않고 항상 `FallbackSessionProvider`(주말
+heuristic)로 대체했다. **이 방식은 평일 공휴일을 정확히 걸러내지
+못한다는 문제가 병합 전 발견돼 폐기했다.**
+
+- 허용 API를 2개로 명시한다: (1) `inquire_daily_itemchartprice`(OOS
+  일봉 수집), (2) KIS 076 국내휴장일조회(`KisHolidayProvider`, 거래일
+  판정). 계좌·주문·잔고·체결 API는 계속 절대 금지.
+- `scripts/run_sppv3_oos_batch.py`에 `build_authoritative_holiday_
+  provider()`(신규)를 추가 — 076 자격증명 누락/비활성화 시 즉시
+  `MarketCalendarUnavailableError`를 던지고, `is_trading_day()` 호출이
+  실패(인증 오류/timeout 등 어떤 이유든)해도 **weekday heuristic으로
+  넘어가지 않는다**. 두 경우 모두 신규 action
+  `skip_market_calendar_unavailable`로 안전 종료하며 일봉 수집기는
+  호출되지 않는다.
+- `docker-compose.yml`의 `sppv3-oos-batch` 서비스에서
+  `KIS_LIVE_INFO_ENABLED`를 `"false"` 고정에서 `"true"` 고정으로
+  변경. 이 값을 끄면 배치는 휴장일 오판이 아니라 안전 skip으로
+  귀결되므로, 실수로 끄더라도 안전하다.
+- `runtime_env_wiring.json`의 관련 항목 설명을 정정했다.
+- 신규 테스트로 076 인증 실패/timeout 시 수집기 미호출, provider
+  정상 응답 시 기존 흐름 유지, disabled/자격증명 누락 시 네트워크
+  호출 없이 즉시 예외를 검증했다(53건 전부 PASS, DB/네트워크 미사용).
+  `accept` 계열 전부 PASS.
+- §8의 21:00 KST 단발 관찰(88/88 종목 당일 bar 확보)은 일봉 수집
+  시각에 대한 관찰이라 이번 정정과 독립적이며, 그대로 유효하다.
+- 실제 KIS 호출, systemd timer 등록·enable·start, 컨테이너 재기동,
+  DB write는 이번 후속 커밋에서도 전혀 수행하지 않았다.

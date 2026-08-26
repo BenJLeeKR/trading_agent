@@ -18,7 +18,9 @@ from scripts.run_sppv3_oos_batch import (
     FORBIDDEN_SOURCE_SUBSTRINGS,
     CacheDirState,
     LockAcquisitionError,
+    MarketCalendarUnavailableError,
     acquire_batch_lock,
+    build_authoritative_holiday_provider,
     build_batch_summary,
     decide_batch_action,
     inspect_cache_dir_state,
@@ -153,6 +155,48 @@ class TestAcquireBatchLock:
         with acquire_batch_lock(lock_path):
             content = open(lock_path, encoding="utf-8").read().strip()
             assert content == str(os.getpid())
+
+
+# ── 076 국내휴장일조회 provider 구성(weekday fallback 금지) ──────────────
+
+
+class TestBuildAuthoritativeHolidayProvider:
+    @pytest.mark.asyncio
+    async def test_disabled_flag_raises_without_calling_network(self, monkeypatch):
+        monkeypatch.setenv("KIS_LIVE_INFO_ENABLED", "false")
+        monkeypatch.setenv("KIS_LIVE_INFO_APP_KEY", "dummy")
+        monkeypatch.setenv("KIS_LIVE_INFO_APP_SECRET", "dummy")
+        with pytest.raises(MarketCalendarUnavailableError):
+            await build_authoritative_holiday_provider()
+
+    @pytest.mark.asyncio
+    async def test_missing_app_key_raises(self, monkeypatch):
+        monkeypatch.setenv("KIS_LIVE_INFO_ENABLED", "true")
+        monkeypatch.delenv("KIS_LIVE_INFO_APP_KEY", raising=False)
+        monkeypatch.setenv("KIS_LIVE_INFO_APP_SECRET", "dummy")
+        with pytest.raises(MarketCalendarUnavailableError):
+            await build_authoritative_holiday_provider()
+
+    @pytest.mark.asyncio
+    async def test_missing_app_secret_raises(self, monkeypatch):
+        monkeypatch.setenv("KIS_LIVE_INFO_ENABLED", "true")
+        monkeypatch.setenv("KIS_LIVE_INFO_APP_KEY", "dummy")
+        monkeypatch.delenv("KIS_LIVE_INFO_APP_SECRET", raising=False)
+        with pytest.raises(MarketCalendarUnavailableError):
+            await build_authoritative_holiday_provider()
+
+    @pytest.mark.asyncio
+    async def test_configured_env_constructs_kis_holiday_provider_without_network_call(self, monkeypatch):
+        monkeypatch.setenv("KIS_LIVE_INFO_ENABLED", "true")
+        monkeypatch.setenv("KIS_LIVE_INFO_APP_KEY", "dummy-key")
+        monkeypatch.setenv("KIS_LIVE_INFO_APP_SECRET", "dummy-secret")
+        monkeypatch.setenv("KIS_LIVE_INFO_BASE_URL", "https://example.invalid")
+        monkeypatch.setenv("KIS_DISCLOSURE_TOKEN_CACHE_ENABLED", "false")
+
+        from agent_trading.services.market_session import KisHolidayProvider
+
+        provider = await build_authoritative_holiday_provider()
+        assert isinstance(provider, KisHolidayProvider)
 
 
 # ── 요약 로그(민감정보 미노출) ───────────────────────────────────────────
@@ -449,4 +493,85 @@ class TestRunBatchOrchestration:
             return 0
 
         await self._run(tmp_path, is_trading=True, collector_main=collector_main, analyzer_main=analyzer_main)
+        assert calls["collector"] == 1
+
+    @pytest.mark.asyncio
+    async def test_market_calendar_unavailable_from_provider_construction_skips_before_collector(
+        self, tmp_path, capsys
+    ):
+        calls = {"collector": 0, "analyzer": 0}
+
+        async def failing_factory():
+            raise MarketCalendarUnavailableError("076 자격증명 미설정")
+
+        async def collector_main(argv):
+            calls["collector"] += 1
+            return 0
+
+        async def analyzer_main(argv):
+            calls["analyzer"] += 1
+            return 0
+
+        exit_code = await run_batch(
+            now_kst=_kst(21, 5),
+            repo_root=str(tmp_path),
+            session_provider_factory=failing_factory,
+            collector_main=collector_main,
+            analyzer_main=analyzer_main,
+        )
+        assert exit_code == 0
+        assert calls == {"collector": 0, "analyzer": 0}
+        summary = json.loads(capsys.readouterr().out.strip())
+        assert summary["action"] == "skip_market_calendar_unavailable"
+
+    @pytest.mark.asyncio
+    async def test_076_failure_on_is_trading_day_never_falls_back_to_weekday_heuristic(self, tmp_path, capsys):
+        """076 provider가 구성은 됐지만 is_trading_day() 호출이 실패(인증 오류/timeout
+        시뮬레이션)하면, weekday heuristic으로 넘어가지 않고 즉시 안전 skip해야 한다."""
+
+        class _ProviderThatFailsOnCall:
+            async def is_trading_day(self, target_date):
+                raise TimeoutError("076 API timeout(시뮬레이션)")
+
+        async def factory():
+            return _ProviderThatFailsOnCall()
+
+        calls = {"collector": 0, "analyzer": 0}
+
+        async def collector_main(argv):
+            calls["collector"] += 1
+            return 0
+
+        async def analyzer_main(argv):
+            calls["analyzer"] += 1
+            return 0
+
+        exit_code = await run_batch(
+            now_kst=_kst(21, 5),  # 화요일 21:05 — weekday heuristic이었다면 거래일로 통과했을 시각
+            repo_root=str(tmp_path),
+            session_provider_factory=factory,
+            collector_main=collector_main,
+            analyzer_main=analyzer_main,
+        )
+        assert exit_code == 0
+        assert calls == {"collector": 0, "analyzer": 0}, "076 실패 시 weekday fallback으로 수집기가 호출되면 안 된다"
+        summary = json.loads(capsys.readouterr().out.strip())
+        assert summary["action"] == "skip_market_calendar_unavailable"
+
+    @pytest.mark.asyncio
+    async def test_holiday_provider_success_path_still_reaches_collector(self, tmp_path):
+        """076 provider가 정상 응답하면(거래일=True) 기존 흐름 그대로 수집기까지 도달해야 한다."""
+        calls = {"collector": 0}
+
+        async def collector_main(argv):
+            calls["collector"] += 1
+            return 0
+
+        async def analyzer_main(argv):
+            return 0
+
+        exit_code = await self._run(
+            tmp_path, is_trading=True, collector_main=collector_main, analyzer_main=analyzer_main
+        )
+        assert exit_code == 0
         assert calls["collector"] == 1

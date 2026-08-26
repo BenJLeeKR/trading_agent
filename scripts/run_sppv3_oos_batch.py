@@ -12,13 +12,24 @@ Go/Watch/Hold/No-Go 판정·정책 반영을 전혀 수행하지 않는다 — �
 1회 실행하고, (5) 민감정보 없는 JSON 요약 로그 1건을 남기는 것까지만
 한다.
 
-허용된 KIS 호출은 ``inquire_daily_itemchartprice``(historical daily
-bar, read-only) 하나뿐이다. 이 wrapper가 쓰는 ``create_session_provider()``는
-이 배치의 compose 환경에서 ``KIS_LIVE_INFO_ENABLED``를 의도적으로
-``"false"``로 고정 배선해 항상 ``FallbackSessionProvider``(주말
-heuristic, KIS 미호출)로 폴백하게 만든다 — 076 국내휴장일조회 API를
-호출하지 않기 위함이다(§45.7). DB 연결·write, 계좌·주문 API 호출,
-`.env` 수정, 컨테이너 재기동은 이 wrapper 어디에서도 하지 않는다.
+허용된 KIS 호출은 정확히 둘뿐이다.
+
+1. ``inquire_daily_itemchartprice``(historical daily bar, read-only) —
+   OOS 일봉 수집.
+2. KIS 076 국내휴장일조회(``KisHolidayProvider``/``KISHolidayClient``) —
+   거래일/휴장일 판정.
+
+**2026-08-25 초판 설계는 ``KIS_LIVE_INFO_ENABLED=false``를 고정
+배선해 076을 아예 호출하지 않고 항상 ``FallbackSessionProvider``
+(주말 heuristic)로 대체하는 방식이었다 — 이후 이 방식은 평일
+공휴일을 정확히 걸러내지 못한다는 문제로 폐기했다(§45.7 정정,
+§47.1).** 지금은 ``build_authoritative_holiday_provider()``가 076
+API를 직접 호출해 거래일을 판정한다. 076 인증 실패·timeout 등
+어떤 이유로든 거래일을 확정하지 못하면 **weekday heuristic으로
+넘어가지 않고** ``skip_market_calendar_unavailable``로 안전하게
+종료하며, 이 경우 일봉 수집기(``collector_main``)는 호출조차 되지
+않는다. 계좌·주문·잔고·체결 API 호출, DB 연결·write, `.env` 수정,
+컨테이너 재기동은 이 wrapper 어디에서도 하지 않는다.
 
 cache immutability
 -------------------
@@ -114,6 +125,58 @@ def inspect_cache_dir_state(cache_dir: str) -> CacheDirState:
     except (OSError, json.JSONDecodeError):
         return CacheDirState(exists=True, manifest_exists=True, ready_for_oos=None)
     return CacheDirState(exists=True, manifest_exists=True, ready_for_oos=bool(manifest.get("ready_for_oos")))
+
+
+class MarketCalendarUnavailableError(RuntimeError):
+    """076 국내휴장일조회로 거래일을 확정할 수 없을 때 발생.
+
+    이 예외를 받은 호출자는 **weekday heuristic으로 넘어가지 않는다** —
+    ``skip_market_calendar_unavailable``로 안전하게 종료하고 일봉 수집을
+    호출하지 않는다.
+    """
+
+
+async def build_authoritative_holiday_provider():
+    """076 국내휴장일조회 기반 ``KisHolidayProvider``를 직접 구성한다.
+
+    ``agent_trading.services.market_session.create_session_provider()``와
+    달리 자격증명이 없거나 ``KIS_LIVE_INFO_ENABLED``가 꺼져 있을 때
+    ``FallbackSessionProvider``(주말 heuristic)로 자동 강등하지
+    **않는다** — 대신 ``MarketCalendarUnavailableError``를 던진다.
+    이 배치가 실제로 호출을 허용하는 두 KIS API(historical daily bar,
+    076 국내휴장일조회) 중 하나라도 확정적으로 쓸 수 없으면, 거래일
+    판정 자체를 내리지 않고 호출자가 안전하게 skip하도록 강제하기
+    위함이다.
+    """
+    enabled = os.getenv("KIS_LIVE_INFO_ENABLED", "false").strip().lower() == "true"
+    if not enabled:
+        raise MarketCalendarUnavailableError(
+            "KIS_LIVE_INFO_ENABLED=false — 이 배치는 weekday fallback을 쓰지 않으므로 "
+            "076 국내휴장일조회가 비활성화된 상태에서는 거래일을 판정할 수 없다"
+        )
+
+    app_key = os.getenv("KIS_LIVE_INFO_APP_KEY", "").strip()
+    app_secret = os.getenv("KIS_LIVE_INFO_APP_SECRET", "").strip()
+    if not app_key or not app_secret:
+        raise MarketCalendarUnavailableError(
+            "KIS_LIVE_INFO_APP_KEY/KIS_LIVE_INFO_APP_SECRET 미설정 — 076 조회 불가"
+        )
+    base_url = os.getenv("KIS_LIVE_INFO_BASE_URL", "").strip() or "https://openapi.koreainvestment.com:9443"
+    cache_enabled = os.getenv("KIS_DISCLOSURE_TOKEN_CACHE_ENABLED", "true").strip().lower() == "true"
+    cache_path = os.getenv("KIS_DISCLOSURE_TOKEN_CACHE_PATH", ".cache/kis_disclosure_token.json").strip()
+
+    from agent_trading.brokers.koreainvestment.holiday_client import KISHolidayClient
+    from agent_trading.services.market_session import KisHolidayProvider
+
+    client = KISHolidayClient(
+        app_key=app_key,
+        app_secret=app_secret,
+        base_url=base_url,
+        enable_token_cache=cache_enabled,
+        token_cache_path=cache_path,
+        share_rest_access_token_cache=True,
+    )
+    return KisHolidayProvider(holiday_client=client)
 
 
 def decide_batch_action(*, is_trading_day: bool, cache_state: CacheDirState) -> tuple[str, str]:
@@ -287,10 +350,37 @@ async def run_batch(
         return 0
 
     if session_provider_factory is None:
-        from agent_trading.services.market_session import create_session_provider as session_provider_factory  # type: ignore[assignment]
+        session_provider_factory = build_authoritative_holiday_provider
 
-    provider = await session_provider_factory()
-    is_trading = await provider.is_trading_day(now_kst.date())
+    try:
+        provider = await session_provider_factory()
+        is_trading = await provider.is_trading_day(now_kst.date())
+    except MarketCalendarUnavailableError as exc:
+        logger.warning("076 국내휴장일조회 비활성화/미설정 — 안전 skip: %s", exc)
+        summary = build_batch_summary(
+            run_at_kst_iso=run_at_kst_iso,
+            target_trade_date=target_trade_date,
+            action="skip_market_calendar_unavailable",
+            action_reason=str(exc),
+            manifest=None,
+            analyzer_status_by_candidate=None,
+            exit_code=0,
+        )
+        print(json.dumps(summary, ensure_ascii=False))
+        return 0
+    except Exception as exc:  # noqa: BLE001 - 076 인증 실패/timeout 등, 절대 weekday fallback으로 넘어가지 않는다
+        logger.warning("076 국내휴장일조회 실패(%s) — weekday fallback 없이 안전 skip", type(exc).__name__)
+        summary = build_batch_summary(
+            run_at_kst_iso=run_at_kst_iso,
+            target_trade_date=target_trade_date,
+            action="skip_market_calendar_unavailable",
+            action_reason=f"076 국내휴장일조회 오류: {type(exc).__name__}",
+            manifest=None,
+            analyzer_status_by_candidate=None,
+            exit_code=0,
+        )
+        print(json.dumps(summary, ensure_ascii=False))
+        return 0
 
     cache_dir = os.path.join(repo_root, "logs", f"{CACHE_DIR_PREFIX}{target_trade_date}")
     cache_state = inspect_cache_dir_state(cache_dir)

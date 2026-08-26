@@ -12409,3 +12409,20 @@ validation.md` "46/47".
 - **다음 단계(사용자 승인 필요)**: 운영 checkout에서
   `install_sppv3_oos_batch_systemd.sh --yes` 실행, 21:00 자동 실행
   반복 관찰.
+
+## SPPV-3 OOS 배치 휴장일 판정 정정 — 076 국내휴장일조회로 교체(2026-08-25/26 KST, PR #352 병합 전 후속 커밋)
+
+상세: `docs/40_action_plans/sppv3_oos_daily_batch_design_2026-08-25.md`
+§10, DESIGN 문서 "48".
+
+- 위 항목이 구현한 `KIS_LIVE_INFO_ENABLED=false` 고정(→weekday
+  heuristic 대체) 방식은 평일 공휴일을 정확히 걸러내지 못하는 결함이
+  있어 병합 전 발견돼 폐기했다.
+- 허용 API를 2개로 명시: `inquire_daily_itemchartprice`(일봉 수집) +
+  KIS 076 국내휴장일조회(거래일 판정). `KIS_LIVE_INFO_ENABLED`를
+  `"true"` 고정으로 전환, 076 인증 실패/timeout 시에도 weekday
+  fallback 없이 `skip_market_calendar_unavailable`로 안전 종료하도록
+  wrapper를 수정했다.
+- 신규 테스트로 076 장애 시 일봉 수집기 미호출을 검증(53건 전부
+  PASS). `accept` 계열 전부 PASS. 실제 KIS 호출·timer 등록·컨테이너
+  재기동·DB write는 이번에도 미실행.

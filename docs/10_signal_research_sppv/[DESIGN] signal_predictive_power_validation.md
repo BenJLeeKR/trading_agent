@@ -10874,3 +10874,92 @@ cache ID·OOS 표본 수·판정 상태를 담은 구조화 로그 1건으로 �
 - **다음 단계(사용자 승인 필요)**: 운영 checkout에서 설치 스크립트
   `--yes` 실행, `latest` 포인터는 계속 유보(최소 3~5회 성공 관측
   후), 실제 21:00 자동 실행 반복 관찰로 §46의 "1회 관찰"을 격상.
+
+## 48. §45.7/§47 정정 — 휴장일 판정을 weekday heuristic이 아닌 076 국내휴장일조회로 교체(2026-08-25/26 KST, read-only 구현 턴, PR #352 후속 커밋)
+
+§47.1이 구현한 휴장일 가드는 `KIS_LIVE_INFO_ENABLED=false`를 고정
+배선해 076 국내휴장일조회를 아예 호출하지 않고 항상
+`FallbackSessionProvider`(주말 heuristic)로 대체하는 방식이었다.
+**이 방식은 평일 공휴일(설/추석/신정 등)을 거래일로 잘못 판정해
+KIS를 호출할 위험이 있어 폐기한다.** 병합 전 발견돼 같은 PR #352
+브랜치에 후속 커밋으로 수정했다.
+
+### 48.1 정책 변경 — 허용 API 2개로 확장
+
+이 배치가 호출을 허용하는 KIS read-only API를 다음 둘로 명시한다
+(이전에는 1개였다).
+
+1. `inquire_daily_itemchartprice` — OOS 일봉 수집(기존과 동일).
+2. **KIS 076 국내휴장일조회**(`KisHolidayProvider`/`KISHolidayClient`) —
+   거래일/휴장일 판정(신규 허용).
+
+계좌·주문·잔고·체결 API는 계속 절대 금지한다 — `KISHolidayClient`는
+스스로 "주문/잔고/체결 경로에 접근할 수 없다"고 문서화된, `KISRestClient`
+(주문 클라이언트)와 완전히 독립된 클래스다(`src/agent_trading/brokers/
+koreainvestment/holiday_client.py:85-86`).
+
+### 48.2 코드 변경
+
+- `scripts/run_sppv3_oos_batch.py`에 `MarketCalendarUnavailableError`
+  (신규 예외)와 `build_authoritative_holiday_provider()`(신규 함수)를
+  추가했다. 이 함수는 `agent_trading.services.market_session.
+  create_session_provider()`와 달리 `KIS_LIVE_INFO_ENABLED=false`나
+  자격증명 누락 시 `FallbackSessionProvider`로 **자동 강등하지
+  않는다** — 대신 `MarketCalendarUnavailableError`를 던진다.
+- `run_batch()`의 거래일 판정 구간을 try/except로 감쌌다.
+  `MarketCalendarUnavailableError`(비활성화/자격증명 누락)와 그 외
+  모든 예외(076 인증 실패, timeout 등 — 타입 이름만 안전하게 로깅)
+  둘 다 동일하게 처리한다: **weekday heuristic으로 넘어가지 않고**
+  신규 action `skip_market_calendar_unavailable`로 안전 종료하며,
+  이 경우 일봉 수집기(`collector_main`)는 호출되지 않는다(exit 0 —
+  코드 결함이 아니라 외부 의존성 일시 불가로 취급).
+- `docker-compose.yml`의 `sppv3-oos-batch` 서비스에서
+  `KIS_LIVE_INFO_ENABLED`를 `"false"` 고정 배선에서 `"true"` 고정
+  배선으로 변경했다(호스트 env로 끌 수 없게 값을 오버라이드하지
+  않는 것은 동일 — 이제는 "끄지 못하게" 하는 이유가 반대로 "항상 076을
+  켜 두기 위함"으로 바뀌었다). 이 값을 끄면 배치는 휴장일 오판이
+  아니라 `skip_market_calendar_unavailable`로 그냥 아무 일도 하지
+  않게 되므로, 실수로 끄더라도 안전하다.
+- `scripts/harness/contracts/runtime_env_wiring.json`의
+  `KIS_LIVE_INFO_ENABLED`/`KIS_LIVE_INFO_APP_KEY` 항목 설명을
+  "076 항상 비활성화"에서 "076 항상 활성화, 실패 시 안전 skip"으로
+  정정했다.
+
+### 48.3 076 장애 시 안전 skip 검증
+
+신규 테스트로 다음을 확인했다(전부 DB/네트워크 미사용, 가짜 provider
+주입).
+
+- `KIS_LIVE_INFO_ENABLED=false`/자격증명 누락 시
+  `build_authoritative_holiday_provider()`가 네트워크 호출 없이
+  즉시 `MarketCalendarUnavailableError`를 던짐.
+- provider 생성 자체가 실패해도, provider는 생성됐지만
+  `is_trading_day()` 호출이 실패(`TimeoutError` 시뮬레이션)해도,
+  두 경우 모두 수집기(`collector_main`)가 **호출되지 않고** 즉시
+  `skip_market_calendar_unavailable`로 종료됨을 오케스트레이션
+  테스트로 검증(`test_market_calendar_unavailable_from_provider_
+  construction_skips_before_collector`,
+  `test_076_failure_on_is_trading_day_never_falls_back_to_weekday_
+  heuristic`).
+- 076 provider가 정상 응답(거래일=True)하면 기존과 동일하게
+  수집기까지 도달함을 회귀 테스트로 재확인.
+
+### 48.4 테스트·하네스 결과
+
+신규/수정 테스트 53건(`tests/scripts/test_run_sppv3_oos_batch.py`
+35건 + `tests/ops/test_sppv3_oos_batch_ops_contracts.py` 18건, 기존
+`KIS_LIVE_INFO_ENABLED` 기대값을 `"false"`→`"true"`로 수정한 1건
+포함) 전부 PASS. `accept script-file`/`env`/`style`/`no-bypass`
+(hard_bypass_count=0)/`architecture`/`docs` 전부 PASS. 실제 KIS
+호출, systemd timer 등록·enable·start, 컨테이너 재기동, DB write는
+이번 후속 커밋에서도 전혀 수행하지 않았다.
+
+### 48.5 §46의 21:00 KST 단발 관찰과의 관계
+
+§46의 관찰(21:03 KST, 88/88 종목 당일 bar 확보)은 **일봉 수집 시각**에
+대한 것이고, 이번 정정은 **거래일 판정 방법**에 대한 것이라 서로
+독립적이다 — §46의 결론(1회 관찰이라 반복 검증 필요)은 그대로
+유지되며, 이번 정정으로 무효화되지 않는다. 휴장일 정확성은 이제
+076 authoritative calendar에 위임하며, 그 076 응답 자체가 정확한지는
+KIS API 자체의 신뢰성 문제로 이 배치 코드가 별도로 검증할 수 있는
+범위 밖이다.

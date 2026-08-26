@@ -77,10 +77,12 @@ class TestComposeServiceEnvMinimality:
         overlap = declared_keys & set(self._FORBIDDEN_ENV_KEYS)
         assert not overlap, f"금지된 env 키가 배선됨: {overlap}"
 
-    def test_kis_live_info_enabled_is_hardcoded_false(self):
-        """076 API를 호출하지 않도록 항상 \"false\"로 고정 배선해야 한다(§45.7)."""
+    def test_kis_live_info_enabled_is_hardcoded_true(self):
+        """076 국내휴장일조회로 거래일을 확정 판정하려면 항상 "true"로 고정
+        배선해야 한다(§45.7 정정, §47.1) — 2026-08-25 초판의 "false 고정"은
+        평일 공휴일을 걸러내지 못해 폐기됐다."""
         service = _sppv3_service()
-        assert service["environment"]["KIS_LIVE_INFO_ENABLED"] == "false"
+        assert service["environment"]["KIS_LIVE_INFO_ENABLED"] == "true"
 
     def test_quote_client_credentials_are_wired(self):
         service = _sppv3_service()
