@@ -11,6 +11,7 @@ from decimal import Decimal
 from uuid import UUID, uuid4
 
 import pytest
+import pytest_asyncio
 
 from agent_trading.domain.entities import (
     AccountEntity,
@@ -56,7 +57,7 @@ def order_request_id() -> UUID:
     return uuid4()
 
 
-@pytest.fixture
+@pytest_asyncio.fixture(loop_scope="function")
 async def seeded_postgres_data(
     postgres_repos: RepositoryContainer,
     client_id: UUID,
@@ -64,7 +65,14 @@ async def seeded_postgres_data(
     account_id: UUID,
     instrument_id: UUID,
 ) -> dict[str, UUID]:
-    """Insert prerequisite rows (client, broker_account, account, instrument)."""
+    """Insert prerequisite rows (client, broker_account, account, instrument).
+
+    ``loop_scope="function"``(2026-08-26 보정): 이 파일이 로컬로 재정의한
+    ``seeded_postgres_data``는 conftest.py의 동명 fixture를 가리므로,
+    conftest.py 쪽만 고쳐서는 이 파일에 아무 효과가 없다 — 여기서도
+    똑같이 override해야 한다(``postgres_repos`` fixture의 docstring
+    참고, 실제 CI에서 "attached to a different loop"로 재현 확인함).
+    """
     now = datetime.now(timezone.utc)
     conn = postgres_repos.unit_of_work.transaction.connection  # type: ignore[union-attr]
 
@@ -119,6 +127,8 @@ VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)\
         instrument_id=instrument_id,
         symbol=f"FILL{uuid4().hex[:4].upper()}",
         market_code="KRX",
+        exchange_code="KRX",
+        market_segment="KOSPI",
         asset_class=AssetClass.KR_STOCK.value,
         currency="KRW",
         name="FillEvent Test Instrument",
@@ -136,7 +146,7 @@ VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)\
     }
 
 
-@pytest.fixture
+@pytest_asyncio.fixture(loop_scope="function")
 async def seeded_broker_order(
     postgres_repos: RepositoryContainer,
     order_request_id: UUID,

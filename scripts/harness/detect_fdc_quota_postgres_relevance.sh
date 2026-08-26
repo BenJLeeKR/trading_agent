@@ -12,7 +12,14 @@
 #   git 저장소를 만들어 그대로 재현·검증할 수 있다.
 #
 # Usage:
-#   detect_fdc_quota_postgres_relevance.sh <event_name> <base_ref> [head_ref=HEAD] [repo_dir=.]
+#   detect_fdc_quota_postgres_relevance.sh <event_name> <base_ref> [head_ref=HEAD] [repo_dir=.] [pattern_override]
+#
+# [pattern_override](5번째 인자, 선택)를 주면 기본 FDC quota 패턴 대신
+# 그 정규식으로 관련 파일을 판정한다 — 판정 로직(이벤트별 base ref 처리,
+# 보수적 fallback 등)은 완전히 재사용하면서 다른 좁은 PostgreSQL CI job
+# (예: `postgres_fixture_loop_scope_integration`)의 relevance 판정에도
+# 그대로 쓸 수 있게 하기 위함이다. 생략하면 기존 FDC quota 판정과 100%
+# 동일하게 동작한다(하위 호환).
 #
 # <base_ref>가 빈 문자열이거나 로컬에서 찾을 수 없으면(예: fetch-depth
 # 부족, 최초 push의 all-zero SHA) **fail-open(relevant=0)하지 않고**
@@ -36,8 +43,10 @@ head_ref="${3:-HEAD}"
 repo_dir="${4:-.}"
 
 # 이 PR/PostgreSQL 전용 job과 직접 관련된 파일만 대상으로 한다 — 기존
-# 판정 로직(1차 구현)과 동일한 패턴을 그대로 유지한다.
-pattern='^(db/migrations/.*fdc_quota.*\.sql|src/agent_trading/repositories/postgres/fdc_quota\.py|src/agent_trading/repositories/(memory|contracts)\.py|src/agent_trading/services/fdc_quota_coordinator\.py|tests/services/test_fdc_quota_coordinator\.py|\.github/workflows/harness\.yml)$'
+# 판정 로직(1차 구현)과 동일한 패턴을 그대로 유지한다. 5번째 인자로
+# override가 오면 그 패턴을 대신 쓴다(다른 좁은 PostgreSQL CI job 재사용).
+default_pattern='^(db/migrations/.*fdc_quota.*\.sql|src/agent_trading/repositories/postgres/fdc_quota\.py|src/agent_trading/repositories/(memory|contracts)\.py|src/agent_trading/services/fdc_quota_coordinator\.py|tests/services/test_fdc_quota_coordinator\.py|\.github/workflows/harness\.yml)$'
+pattern="${5:-$default_pattern}"
 
 _emit_fallback() {
   local reason="$1"

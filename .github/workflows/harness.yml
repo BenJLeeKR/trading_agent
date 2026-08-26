@@ -434,6 +434,196 @@ jobs:
         if: always()
         run: docker rm -f trading_db_fdc_quota_ci >/dev/null 2>&1 || true
 
+  postgres_fixture_loop_scope_relevant:
+    name: PostgreSQL fixture loop-scope relevance detector
+    runs-on: ubuntu-latest
+    outputs:
+      relevant: ${{ steps.detect.outputs.relevant }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Detect PostgreSQL fixture loop-scope-relevant changes
+        id: detect
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          # tests/conftest.py의 공용 postgres_repos/seeded_postgres_data
+          # fixture와, 이를 소비하는 로컬 async fixture(예: test_postgres_
+          # fill_events.py/test_postgres_broker_orders.py의 로컬
+          # seeded_postgres_data override + 체이닝된 하위 fixture)의
+          # event-loop scope 위험을 재현·검증하는 job이다(2026-08-26).
+          # FDC quota 전용 job(fdc_quota_postgres_relevant/_integration)과
+          # 역할을 분리하되, 이벤트별 base ref 계산·보수적 fallback 판정
+          # 로직은 그대로 재사용한다 — detect_fdc_quota_postgres_relevance.sh
+          # 의 5번째 인자(pattern override)로 이 job 전용 패턴만 넘긴다.
+          event_name="${{ github.event_name }}"
+          case "$event_name" in
+            pull_request)
+              base_ref="${{ github.event.pull_request.base.sha }}"
+              ;;
+            push)
+              base_ref="${{ github.event.before }}"
+              ;;
+            *)
+              base_ref=""
+              ;;
+          esac
+
+          pattern='^(tests/conftest\.py|tests/repositories/test_postgres_fill_events\.py|tests/repositories/test_postgres_broker_orders\.py|tests/repositories/test_external_events\.py|src/agent_trading/db/(connection|transaction)\.py|\.github/workflows/harness\.yml|scripts/harness/detect_fdc_quota_postgres_relevance\.sh)$'
+
+          bash scripts/harness/detect_fdc_quota_postgres_relevance.sh \
+            "$event_name" "$base_ref" "HEAD" "." "$pattern" | tee /tmp/pg_fixture_relevance.log
+
+          grep '^relevant=' /tmp/pg_fixture_relevance.log >> "$GITHUB_OUTPUT"
+
+  postgres_fixture_loop_scope_integration:
+    name: PostgreSQL fixture loop-scope integration tests
+    runs-on: ubuntu-latest
+    needs: [postgres_fixture_loop_scope_relevant]
+    if: needs.postgres_fixture_loop_scope_relevant.outputs.relevant == '1'
+    env:
+      HARNESS_CI: "1"
+      HARNESS_SAFE_TIMEOUT_SECONDS: "180"
+      PIP_DISABLE_PIP_VERSION_CHECK: "1"
+      # CI 전용 ephemeral PostgreSQL 컨테이너 접속 정보 — 운영 DB/컨테이너와
+      # 무관하며, 이 job이 끝나면 컨테이너 자체가 폐기된다. FDC quota 전용
+      # job과 컨테이너 이름을 다르게 써서 서로 겹치지 않는다(어차피 서로
+      # 다른 러너에서 실행되지만 명확성을 위해 분리).
+      DATABASE_HOST: "127.0.0.1"
+      DATABASE_PORT: "5432"
+      DATABASE_USER: "trading"
+      DATABASE_PASSWORD: "trading"
+      DATABASE_NAME: "trading"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version-file: .python-version
+
+      - name: Install backend dependencies
+        run: python3 -m pip install --constraint requirements.lock -e ".[dev]"
+
+      - name: Start CI-only ephemeral PostgreSQL container
+        run: |
+          POSTGRES_VERSION="$(cat .postgres-version)"
+          docker run --detach --name trading_db_pg_fixture_ci \
+            --publish 127.0.0.1:5432:5432 \
+            --env POSTGRES_USER=trading \
+            --env POSTGRES_PASSWORD=trading \
+            --env POSTGRES_DB=trading \
+            "postgres:${POSTGRES_VERSION}"
+          for attempt in {1..30}; do
+            if docker exec trading_db_pg_fixture_ci pg_isready -U trading -d trading >/dev/null 2>&1; then
+              exit 0
+            fi
+            sleep 1
+          done
+          docker logs trading_db_pg_fixture_ci
+          exit 1
+
+      - name: Run PostgreSQL fixture loop-scope integration tests
+        run: |
+          # GitHub Actions는 run: 블록을 기본적으로 `bash -e {0}`로
+          # 실행한다(shell: 미지정 시) — 그 -e가 이미 켜진 상태이므로
+          # 뒤의 `set -uo pipefail`만으로는 errexit이 꺼지지 않는다.
+          # 아래 for 루프가 한 파일 실패로 중간에 끊기지 않고 3개 파일
+          # 전부를 시도하도록 여기서 명시적으로 -e를 끈다 — 목적은 오직
+          # "여러 파일의 결과를 전부 모으기" 위함이고, 마지막에는 모은
+          # 실패를 전부 합산해 non-zero로 종료한다(아래 판정 기준 참고).
+          set +e
+          set -uo pipefail
+          # 대표 3개 파일 — 전부 exit code 0, failed=0, error=0, skip=0
+          # 이어야 이 job이 통과한다(2026-08-26 3차 보정. "loop-scope
+          # 오류 문자열만 없으면 통과"로 완화했던 이전 판정은 실제
+          # exit code 1을 성공 처리하는 은폐였다 — 폐기):
+          #   - tests/repositories/test_postgres_fill_events.py — 로컬
+          #     seeded_postgres_data override + 체이닝된 seeded_broker_order
+          #   - tests/repositories/test_postgres_broker_orders.py — 로컬
+          #     seeded_postgres_data override + 체이닝된 seeded_order_request
+          #   - tests/repositories/test_external_events.py — 로컬 fixture
+          #     없이 conftest.py 공용 postgres_repos만 직접 소비(대조군)
+          # migration은 이 CI 전용 컨테이너에만 적용된다(postgres_repos
+          # fixture가 create_pool()+run_all_migrations()를 호출).
+          #
+          # instruments.exchange_code/market_segment NOT NULL 위반(별개로
+          # 발견된 사전 존재 결함, db/migrations/0001_initial_schema.sql
+          # 부터 있었음)은 이 PR에서 test_postgres_fill_events.py/test_
+          # postgres_broker_orders.py의 로컬 seeded_postgres_data fixture
+          # 데이터만 보정해 함께 해소했다 — schema/migration/도메인
+          # 런타임 계약은 바꾸지 않았다. 따라서 세 파일 모두 아래에서
+          # 100% green을 요구한다.
+          #
+          # "attached to a different loop" 검사는 진단 목적으로만
+          # 남긴다(성공/실패 판정에는 쓰지 않는다) — 실패 시 loop-scope
+          # 회귀인지 다른 원인인지 로그에서 바로 구분하기 위함이다.
+          overall_status=0
+          for f in \
+            tests/repositories/test_postgres_fill_events.py \
+            tests/repositories/test_postgres_broker_orders.py \
+            tests/repositories/test_external_events.py \
+          ; do
+            echo "::group::test-file $f"
+            log_file="/tmp/pg_fixture_$(basename "$f" .py).log"
+            bash scripts/harness/run.sh test-file "$f" 2>&1 | tee "$log_file"
+            status="${PIPESTATUS[0]}"
+
+            skipped_line="$(grep -oE '[0-9]+ skipped' "$log_file" | tail -1 || true)"
+            skipped_count="$(printf '%s' "$skipped_line" | grep -oE '^[0-9]+' || true)"
+            skipped_count="${skipped_count:-0}"
+            failed_line="$(grep -oE '[0-9]+ failed' "$log_file" | tail -1 || true)"
+            failed_count="$(printf '%s' "$failed_line" | grep -oE '^[0-9]+' || true)"
+            failed_count="${failed_count:-0}"
+            error_line="$(grep -oE '[0-9]+ error' "$log_file" | tail -1 || true)"
+            error_count="$(printf '%s' "$error_line" | grep -oE '^[0-9]+' || true)"
+            error_count="${error_count:-0}"
+            summary_line="$(grep -E '^[0-9]+ (passed|failed|error)' "$log_file" | tail -1 || true)"
+            # 진단 전용 지표(성공/실패 판정에는 쓰지 않음) — 실제 예외
+            # 시그니처만 찾는다. fixture docstring 설명 문구가 pytest의
+            # ERROR/FAILED 트레이스백 컨텍스트에 함께 출력되면서 단순
+            # substring grep이 오탐(false positive)하는 것을 실제 CI
+            # 실행에서 확인했으므로, "RuntimeError:" 접두어가 붙은 줄만
+            # 센다.
+            loop_scope_error_count="$(grep -c 'RuntimeError:.*attached to a different loop' "$log_file" || true)"
+
+            echo "file=$f exit_status=$status skipped_count=$skipped_count failed_count=$failed_count error_count=$error_count loop_scope_error_count=$loop_scope_error_count(diagnostic-only) summary=$summary_line"
+
+            if [ "$status" != "0" ]; then
+              echo "::error::$f — exit_status=$status(0이 아님). skip/failed/error 여부와 무관하게 이 자체로 job을 실패시킨다."
+              overall_status=1
+            fi
+            if [ "$skipped_count" != "0" ]; then
+              echo "::error::$f — PostgreSQL 통합 테스트가 ${skipped_count}건 skip됐습니다."
+              overall_status=1
+            fi
+            if [ "$failed_count" != "0" ]; then
+              echo "::error::$f — ${failed_count}건 failed."
+              overall_status=1
+            fi
+            if [ "$error_count" != "0" ]; then
+              echo "::error::$f — ${error_count}건 error."
+              overall_status=1
+            fi
+            echo "::endgroup::"
+          done
+
+          if [ "$overall_status" != "0" ]; then
+            echo "::error::PostgreSQL fixture loop-scope 통합 테스트 판정 실패 — 위 그룹별 요약을 확인하세요."
+          fi
+          exit "$overall_status"
+
+      - name: Stop CI-only ephemeral PostgreSQL container
+        if: always()
+        run: docker rm -f trading_db_pg_fixture_ci >/dev/null 2>&1 || true
+
   market_hours_guard:
     name: Market-hours deploy guard
     runs-on: ubuntu-latest

@@ -7,6 +7,7 @@ from decimal import Decimal
 from uuid import UUID, uuid4
 
 import pytest
+import pytest_asyncio
 from dotenv import load_dotenv
 
 # Auto-load .env from project root so that smoke tests and other test suites
@@ -170,7 +171,7 @@ async def seeded_repos(
 #   4. Tests are repeatable — no side effects persist between runs.
 
 
-@pytest.fixture
+@pytest_asyncio.fixture(loop_scope="function")
 async def postgres_repos() -> AsyncIterator[RepositoryContainer]:
     """PostgreSQL-backed repositories for integration tests.
 
@@ -186,6 +187,16 @@ async def postgres_repos() -> AsyncIterator[RepositoryContainer]:
     Migrations are applied automatically on entry.
     The transaction is always rolled back on exit (``force_rollback=True``)
     so that no side effects persist between tests.
+
+    ``loop_scope="function"``(2026-08-26 보정): 프로젝트 전역
+    ``asyncio_default_fixture_loop_scope="module"``(pyproject.toml)을
+    그대로 따르면 이 fixture가 만드는 asyncpg pool/connection이 "module"
+    이벤트 루프에 묶이는데, 이 fixture를 쓰는 test 함수 자체는
+    pytest-asyncio 기본값인 "function" 루프에서 돈다 — 서로 다른 루프에
+    묶인 객체를 섞어 쓰면 ``RuntimeError: ... attached to a different
+    loop``가 난다. 실제 CI(ephemeral PostgreSQL)에서 이 오류를 직접
+    재현해 확인했다(PR #355). 전역 설정은 다른 모든 async fixture에도
+    영향을 주므로 바꾸지 않고, 이 fixture에만 좁게 override한다.
     """
     from agent_trading.db.connection import create_pool, close_pool
     from agent_trading.db.migrations.run import run_all_migrations
@@ -207,7 +218,7 @@ async def postgres_repos() -> AsyncIterator[RepositoryContainer]:
         await close_pool()
 
 
-@pytest.fixture
+@pytest_asyncio.fixture(loop_scope="function")
 async def seeded_postgres_data(
     postgres_repos: RepositoryContainer,
     sample_client: ClientEntity,
