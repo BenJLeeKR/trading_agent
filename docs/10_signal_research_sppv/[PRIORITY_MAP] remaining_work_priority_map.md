@@ -12385,3 +12385,44 @@ power_validation.md` "44. SPPV-3 신호 재설계 후보 독립 OOS 성과
   cron/systemd timer/기존 컨테이너 서브프로세스 중 택일), 배치
   wrapper 구현, 실제 KIS 호출을 주기적으로 실행하는 등록 작업 —
   이 문서에 나열된 항목 전부는 이번 턴에서 착수하지 않았다.
+
+## SPPV-3 OOS 배치 정의 코드/systemd 템플릿 구현(2026-08-25/26 KST) — **배치 정의만 완료, 자동 실행 미활성화**
+
+상세: `docs/40_action_plans/sppv3_oos_daily_batch_design_2026-08-25.md`
+§8/§9, `docs/10_signal_research_sppv/[DESIGN] signal_predictive_power_
+validation.md` "46/47".
+
+- 21:00 KST 단발 수동 관찰(2026-08-25 21:03 KST, 사용자 명시 승인
+  하 KIS read-only 1회 실행): 88/88 종목 당일 bar 확보,
+  `ready_for_oos=true`, base/기존 OOS cache 불변 확인. **1회 관찰이라
+  반복 검증 필요** — §45.1의 "미확정"을 완전히 해소하지 않는다.
+- 위 관찰을 바탕으로 배치 wrapper(`scripts/run_sppv3_oos_batch.py`),
+  Compose one-shot 서비스(`sppv3-oos-batch`), systemd
+  service/timer 템플릿(`ops/systemd/`), 설치 스크립트를 구현했다.
+  **이번 구현은 "배치 정의 추가"일 뿐 실제 자동 실행 활성화가
+  아니다** — 실제 KIS 호출, timer 등록·enable·start, 컨테이너
+  재기동, DB write, 주문 경로 변경 전부 미실행.
+- `latest` 포인터는 계속 미구현(§2.4 유보 그대로 — 최소 3~5회 성공
+  관측 후 별도 작업).
+- 신규 테스트 46건(DB/네트워크 미사용) 전부 PASS. `accept` 계열
+  전부 PASS.
+- **다음 단계(사용자 승인 필요)**: 운영 checkout에서
+  `install_sppv3_oos_batch_systemd.sh --yes` 실행, 21:00 자동 실행
+  반복 관찰.
+
+## SPPV-3 OOS 배치 휴장일 판정 정정 — 076 국내휴장일조회로 교체(2026-08-25/26 KST, PR #352 병합 전 후속 커밋)
+
+상세: `docs/40_action_plans/sppv3_oos_daily_batch_design_2026-08-25.md`
+§10, DESIGN 문서 "48".
+
+- 위 항목이 구현한 `KIS_LIVE_INFO_ENABLED=false` 고정(→weekday
+  heuristic 대체) 방식은 평일 공휴일을 정확히 걸러내지 못하는 결함이
+  있어 병합 전 발견돼 폐기했다.
+- 허용 API를 2개로 명시: `inquire_daily_itemchartprice`(일봉 수집) +
+  KIS 076 국내휴장일조회(거래일 판정). `KIS_LIVE_INFO_ENABLED`를
+  `"true"` 고정으로 전환, 076 인증 실패/timeout 시에도 weekday
+  fallback 없이 `skip_market_calendar_unavailable`로 안전 종료하도록
+  wrapper를 수정했다.
+- 신규 테스트로 076 장애 시 일봉 수집기 미호출을 검증(53건 전부
+  PASS). `accept` 계열 전부 PASS. 실제 KIS 호출·timer 등록·컨테이너
+  재기동·DB write는 이번에도 미실행.

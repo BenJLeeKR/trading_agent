@@ -27,6 +27,7 @@ HARNESS_SCRIPT_ALLOWLIST=(
   "scripts/run_realized_pnl_recompute_worker.py"
   "scripts/run_reconciliation_worker.py"
   "scripts/run_snapshot_sync_loop.py"
+  "scripts/run_sppv3_oos_batch.py"
   "scripts/sync_kis_instrument_master.py"
 )
 

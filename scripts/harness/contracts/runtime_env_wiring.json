@@ -37,6 +37,24 @@
       "services": ["ops-scheduler"],
       "required_in_compose": false,
       "note": "Stage A(정책평가 인프라, 2026-08-20) policy fingerprint. 관측성 전용(trade_decisions/guardrail_evaluations.policy_git_sha) — 판정 로직과 무관하며 값이 없어도 정상 동작하므로 하드 실패 대상이 아니다."
+    },
+    {
+      "key": "KIS_LIVE_INFO_ENABLED",
+      "services": ["sppv3-oos-batch"],
+      "required_in_compose": true,
+      "note": "2026-08-25 초판(설계 문서 §45.7)은 이 값을 \"false\"로 고정해 076 국내휴장일조회를 아예 호출하지 않고 FallbackSessionProvider(주말 heuristic)로 대체했으나, 평일 공휴일을 정확히 걸러내지 못해 폐기했다(§45.7 정정, §47.1). 지금은 항상 \"true\"로 고정 배선한다 — run_sppv3_oos_batch.py의 build_authoritative_holiday_provider()가 이 값이 false면 weekday fallback으로 넘어가지 않고 skip_market_calendar_unavailable로 안전 종료하도록 만들어져 있다."
+    },
+    {
+      "key": "KIS_LIVE_INFO_APP_KEY",
+      "services": ["sppv3-oos-batch"],
+      "required_in_compose": true,
+      "note": "SPPV-3 OOS 일봉 cache 배치가 두 용도로 공유하는 자격증명 — (1) read-only historical daily bar 조회(_build_kis_live_quote_client, account_number=\"\" 구조적 read-only), (2) 076 국내휴장일조회(KisHolidayProvider/KISHolidayClient, 주문/잔고/체결 경로 접근 불가). 누락되면 두 경로 모두 즉시 실패(전자는 client=None, 후자는 MarketCalendarUnavailableError로 skip)한다."
+    },
+    {
+      "key": "KIS_LIVE_INFO_APP_SECRET",
+      "services": ["sppv3-oos-batch"],
+      "required_in_compose": true,
+      "note": "위 KIS_LIVE_INFO_APP_KEY와 짝을 이루는 secret. 동일한 이유로 필요하다."
     }
   ]
 }
