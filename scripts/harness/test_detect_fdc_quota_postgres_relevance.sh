@@ -190,6 +190,28 @@ else
   _pass "시나리오7: 출력에 URL/비밀값 문자열 없음"
 fi
 
+# ============================================================================
+# 시나리오 8(추가, 2026-08-26): 5번째 인자로 pattern override를 주면
+# 기본 FDC quota 패턴 대신 그 패턴으로 판정해야 한다 — 다른 좁은
+# PostgreSQL CI job(postgres_fixture_loop_scope_integration)이 이
+# 스크립트를 재사용할 수 있는 근거.
+# ============================================================================
+scenario8_base="$(git -C "$repo_dir" rev-parse HEAD)"
+echo "conftest change" > "$repo_dir/docs/conftest_marker.md"
+git -C "$repo_dir" add docs/conftest_marker.md
+git -C "$repo_dir" commit -q -m "docs: fdc quota와 무관한 변경(기본 패턴은 매칭하면 안 됨)"
+
+custom_pattern='^docs/conftest_marker\.md$'
+out8_default="$(bash "$SCRIPT_UNDER_TEST" "pull_request" "$scenario8_base" "HEAD" "$repo_dir")"
+out8_custom="$(bash "$SCRIPT_UNDER_TEST" "pull_request" "$scenario8_base" "HEAD" "$repo_dir" "$custom_pattern")"
+relevant8_default="$(_get "$out8_default" relevant)"
+relevant8_custom="$(_get "$out8_custom" relevant)"
+if [ "$relevant8_default" = "0" ] && [ "$relevant8_custom" = "1" ]; then
+  _pass "시나리오8: 5번째 인자(pattern override)로 다른 판정 기준을 재사용 가능(기본 패턴=0, override 패턴=1)"
+else
+  _fail "시나리오8: relevant8_default=$relevant8_default relevant8_custom=$relevant8_custom (기대값 0/1)"
+fi
+
 echo ""
 echo "==== 결과: pass=$pass_count fail=$fail_count ===="
 [[ "$fail_count" -eq 0 ]]
