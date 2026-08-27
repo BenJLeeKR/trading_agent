@@ -499,6 +499,10 @@ async def db_ready(quota_scope: str):
         await close_pool()
 
 
+async def _always_allow_manual_call_policy() -> bool:
+    return True
+
+
 def _postgres_coordinator(*, quota_scope: str, target_rpm: int = 13, lock_timeout_ms: int = 3000):
     from agent_trading.db.transaction import TransactionManager
     from agent_trading.repositories.postgres.fdc_quota import PostgresFdcQuotaRepository
@@ -508,6 +512,7 @@ def _postgres_coordinator(*, quota_scope: str, target_rpm: int = 13, lock_timeou
     return FdcQuotaCoordinator(
         repo=repo, target_rpm=target_rpm, quota_scope=quota_scope,
         lock_timeout_ms=lock_timeout_ms,
+        manual_call_policy=_always_allow_manual_call_policy,
     )
 
 
