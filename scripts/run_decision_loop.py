@@ -1337,6 +1337,7 @@ async def _build_core_risk_off_apply_overrides_for_cycle(
             fdc_batch_queue_lifecycle_shadow_enabled=(
                 settings.fdc_batch_queue_lifecycle_shadow_enabled
             ),
+            fdc_actual_dispatch_enabled=settings.fdc_actual_dispatch_enabled,
         )
         for item in universe:
             if item.source_type != "core":
@@ -2021,6 +2022,7 @@ async def _run_one_cycle(
                 fdc_batch_queue_lifecycle_shadow_enabled=(
                     settings.fdc_batch_queue_lifecycle_shadow_enabled
                 ),
+                fdc_actual_dispatch_enabled=settings.fdc_actual_dispatch_enabled,
             )
             reconciliation_service = ReconciliationService(repos=repos)
             order_manager = OrderManager(

@@ -15,6 +15,7 @@ from agent_trading.config.settings import (
     AppSettings,
     KIS_DEFAULT_REST_URLS,
     KIS_DEFAULT_WS_URLS,
+    _resolve_fdc_actual_dispatch_enabled,
     _resolve_kis_api_key,
     _resolve_kis_api_secret,
     _resolve_kis_account_number,
@@ -160,6 +161,37 @@ class TestResolveProviderTimeout:
         monkeypatch.setenv("LLM_PROVIDER", "gemini")
         monkeypatch.setenv("GEMINI_TIMEOUT_SECONDS", "45")
         assert _resolve_provider_timeout() == 45
+
+
+class TestResolveFdcActualDispatchEnabled:
+    """2026-08-27: ``_resolve_fdc_actual_dispatch_enabled()`` 기본값
+    False, ``FDC_ACTUAL_DISPATCH_ENABLED`` env로만 True 전환."""
+
+    def test_default_is_false(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.delenv("FDC_ACTUAL_DISPATCH_ENABLED", raising=False)
+        assert _resolve_fdc_actual_dispatch_enabled() is False
+
+    def test_true_string_enables(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("FDC_ACTUAL_DISPATCH_ENABLED", "true")
+        assert _resolve_fdc_actual_dispatch_enabled() is True
+
+    def test_false_string_stays_disabled(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("FDC_ACTUAL_DISPATCH_ENABLED", "false")
+        assert _resolve_fdc_actual_dispatch_enabled() is False
+
+    def test_case_insensitive(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("FDC_ACTUAL_DISPATCH_ENABLED", "TRUE")
+        assert _resolve_fdc_actual_dispatch_enabled() is True
+
+    def test_app_settings_field_wires_to_resolver(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("FDC_ACTUAL_DISPATCH_ENABLED", "true")
+        assert AppSettings().fdc_actual_dispatch_enabled is True
+        monkeypatch.setenv("FDC_ACTUAL_DISPATCH_ENABLED", "false")
+        assert AppSettings().fdc_actual_dispatch_enabled is False
 
 
 # ===========================================================================

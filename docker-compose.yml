@@ -401,6 +401,11 @@ services:
       # limiter(10 RPM)/주문 제출에는 전혀 개입하지 않는다. 기본값 false는
       # 기존 운영 동작을 그대로 유지한다.
       FDC_BATCH_QUEUE_LIFECYCLE_SHADOW_ENABLED: "${FDC_BATCH_QUEUE_LIFECYCLE_SHADOW_ENABLED:-false}"
+      # FDC 실제 dispatch 전환 스위치(2026-08-27) — true여도 held_position
+      # lane의 REDUCE_CANDIDATE/SELL_CANDIDATE(보유 포지션 존재)에만
+      # 영향을 준다. 실행 경로 선택 키이므로 배선 누락을 accept env가
+      # 하드 실패로 검사한다(runtime_env_wiring.json required_in_compose).
+      FDC_ACTUAL_DISPATCH_ENABLED: "${FDC_ACTUAL_DISPATCH_ENABLED:-false}"
       FDC_PROVIDER_TARGET_RPM: "${FDC_PROVIDER_TARGET_RPM:-13}"
       FDC_PROVIDER_RATE_WINDOW_SECONDS: "${FDC_PROVIDER_RATE_WINDOW_SECONDS:-60}"
       GEMINI_PROVIDER_DECLARED_RPM_LIMIT: "${GEMINI_PROVIDER_DECLARED_RPM_LIMIT:-15}"

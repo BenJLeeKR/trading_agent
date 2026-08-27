@@ -155,6 +155,7 @@ class DecisionAgentRunner:
         provider_base_url: str = "",
         provider_model_id: str = "",
         provider_timeout_seconds: int = 60,
+        fdc_actual_dispatch_enabled: bool = False,
     ) -> None:
         self._repos = repos
         self._ei_agent = event_interpretation_agent
@@ -171,6 +172,11 @@ class DecisionAgentRunner:
             "provider_model_id": provider_model_id,
             "provider_timeout_seconds": provider_timeout_seconds,
         }
+        # FDC 실제 dispatch 전환 스위치(2026-08-27, AppSettings.fdc_actual_
+        # dispatch_enabled를 그대로 전달받음 — 다른 shadow 플래그와 동일한
+        # constructor-injection 패턴). subprocess 경로에서만 의미가 있다
+        # (in-process 경로 run_agents()는 이번 범위 밖, 변경 없음).
+        self._fdc_actual_dispatch_enabled = fdc_actual_dispatch_enabled
 
     # ------------------------------------------------------------------
     # AI Agent execution — in-process
@@ -684,6 +690,7 @@ class DecisionAgentRunner:
             context=assembled_context,
             score=None,
             provider_runtime=self._provider_runtime,
+            fdc_actual_dispatch_enabled=self._fdc_actual_dispatch_enabled,
         ).encode("utf-8")
 
         # ── 2. Combined timeout ─────────────────────────────────────────

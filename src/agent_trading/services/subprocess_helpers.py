@@ -42,6 +42,7 @@ def serialize_agent_input(
     score: ScoreResult | None,
     positional_args: tuple[Any, ...] = (),
     provider_runtime: dict[str, Any] | None = None,
+    fdc_actual_dispatch_enabled: bool = False,
 ) -> str:
     """Serialize agent input for subprocess execution.
 
@@ -49,6 +50,12 @@ def serialize_agent_input(
     dataclass in ``scripts/run_agent_subprocess.py``.
 
     Extracted from DecisionOrchestratorService._serialize_agent_input().
+
+    ``fdc_actual_dispatch_enabled``: 호출자(``DecisionAgentRunner``)가
+    ``AppSettings.fdc_actual_dispatch_enabled``를 그대로 전달한다(다른
+    shadow 플래그들과 동일한 constructor-injection 패턴 — 이 모듈이
+    직접 env를 읽지 않는다). 기본값 ``False``는 기존 동작(플래그 미지정
+    호출자)과 100% 동일하게 유지된다.
     """
     resolved_provider_runtime = provider_runtime or resolve_provider_runtime_config()
     payload = {
@@ -68,6 +75,12 @@ def serialize_agent_input(
         "provider_base_url": resolved_provider_runtime["provider_base_url"],
         "provider_model_id": resolved_provider_runtime["provider_model_id"],
         "provider_timeout_seconds": resolved_provider_runtime["provider_timeout_seconds"],
+
+        # FDC 실제 dispatch 전환 스위치(2026-08-27, held_position lane
+        # REDUCE_CANDIDATE/SELL_CANDIDATE 전용) — 최종 lane/후보 판별은
+        # run_agent_subprocess.py가 이 값과 context.deterministic_trigger를
+        # 함께 봐서 결정한다.
+        "fdc_actual_dispatch_enabled": fdc_actual_dispatch_enabled,
 
         # Legacy top-level keys (consumed by _reconstruct_context)
         "score": dataclass_to_dict(score) if score is not None else None,

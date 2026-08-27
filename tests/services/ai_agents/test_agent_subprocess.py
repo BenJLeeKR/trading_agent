@@ -165,6 +165,42 @@ class TestSerializeAgentInput:
         # Should not raise
         json.loads(result)
 
+    def test_fdc_actual_dispatch_enabled_defaults_to_false(
+        self, sample_context: AssembledContext,
+    ) -> None:
+        """2026-08-27: 인자를 넘기지 않으면 기존 호출자와 100% 동일하게
+        False로 직렬화된다(하위 호환)."""
+        request = AgentExecutionRequest(
+            decision_context_id=None,
+            correlation_id="test-fdc-flag-default",
+            context=sample_context,
+        )
+        result = serialize_agent_input(
+            request=request,
+            context=sample_context,
+            score=None,
+        )
+        payload = json.loads(result)
+        assert payload["fdc_actual_dispatch_enabled"] is False
+
+    def test_fdc_actual_dispatch_enabled_passthrough(
+        self, sample_context: AssembledContext,
+    ) -> None:
+        """2026-08-27: 호출자가 True를 넘기면 그대로 직렬화된다."""
+        request = AgentExecutionRequest(
+            decision_context_id=None,
+            correlation_id="test-fdc-flag-true",
+            context=sample_context,
+        )
+        result = serialize_agent_input(
+            request=request,
+            context=sample_context,
+            score=None,
+            fdc_actual_dispatch_enabled=True,
+        )
+        payload = json.loads(result)
+        assert payload["fdc_actual_dispatch_enabled"] is True
+
 
 # =========================================================================
 # dict_to_dataclass tests

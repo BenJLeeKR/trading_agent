@@ -154,6 +154,52 @@
 > 정밀 기록용)이 §18에 새로 추가됐다 — 둘 다 최초 설계 문서에는 없던
 > 내용이며, PR A 리뷰에서 발견된 결함(coordinator 우회 가능성,
 > `http_started_at` 부정확 기록)을 보정하며 확정됐다.
+>
+> **상태(2026-08-27 4차, "좁은 PR B" 실제 구현 — §17 전체가 아닌 부분
+> 구현으로 범위를 좁힘)**: 사용자가 §22 "PR B(전부 한 PR)" 대신, **held_
+> position lane의 REDUCE_CANDIDATE/SELL_CANDIDATE에 한정한 실제 dispatch
+> 전환만** 요청했다. 조사 결과, 이 좁은 범위에서는 §17이 요구하는
+> subprocess 분리(`--mode pre_fdc`/`--mode fdc_only`, dispatcher 본체,
+> `pending_fdc_dispatch_sink`, carryover, §17.7 recovery scan)가
+> **불필요**하다는 것이 확인됐다 — 근거:
+>
+> 1. `deterministic_trigger.primary_candidate`(REDUCE_CANDIDATE/
+>    SELL_CANDIDATE 판정)는 `decision_orchestrator.py`가 agent subprocess를
+>    호출하기 **전에** 이미 계산되어 stdin payload(`AgentSubprocessInput.
+>    context`)에 포함된다 — "FDC 이전 상태를 나중에 재개하기 위한 별도
+>    프로세스"가 필요 없다.
+> 2. `deterministic_trigger_engine.py`상 `SELL_CANDIDATE`/`REDUCE_
+>    CANDIDATE`는 `source_type == "held_position"`일 때만 생성되므로,
+>    별도 lane 식별자 없이 `primary_candidate` 값 하나로 lane+후보 범위를
+>    안전하게 특정할 수 있다.
+> 3. `run_agent_subprocess.py`의 EI/AR/AC는 전부 deterministic bot(LLM
+>    미사용)이라 `_build_agent_triplet(provider_client=..., acquire_
+>    permit=...)`은 사실상 FDC에만 영향을 준다 — 같은 단일 subprocess
+>    호출 안에서 FDC의 provider client만 (`OpenAICompatibleClient` + 기존
+>    10 RPM limiter) → (PR A의 `CoordinatedFdcProviderClient` + coordinator)
+>    로 교체하는 것으로 충분하다.
+>
+> **실제 구현 범위**(브랜치 `feat/fdc-actual-dispatch-held-position-
+> 2026-08-27`): `scripts/run_agent_subprocess.py::main()`에
+> `_is_fdc_actual_dispatch_target()`(순수 판별 함수)와
+> `_build_actual_dispatch_fdc_client()`(coordinator/repo/DB pool 구성,
+> PR A의 `ar_fdc_provider_validation.py`와 동일한 `create_pool()`/
+> `close_pool()` lifecycle)를 신설하고, `FDC_ACTUAL_DISPATCH_ENABLED`
+> (기본값 `false`)와 대상 lane/후보 판정이 **둘 다** 참일 때만 이 경로로
+> 분기한다. `caller_id="ops-scheduler:held_position_reduce_sell"`
+> (`"manual:"` 접두사 아님)을 써서 §11 fail-closed 정책(manual 전용)의
+> 대상이 되지 않게 했다 — PR A에서 이미 "비-manual 호출자는 완전히
+> 우회한다"고 확정된 계약을 그대로 재사용.
+>
+> **이번 범위에 포함하지 않은 것(§17 전체 중 여전히 미구현)**: `--mode
+> pre_fdc`/`--mode fdc_only` 신설, dispatcher 본체(§4/§6/§7의 batch
+> queue/worker pool), carryover 계약(§17.3), 재기동/프로세스 종료 복구
+> scan(§17.7), 진입점 #1·#2(운영 부트스트랩/subprocess FDC 호출)의 core
+> lane 전환, `assemble()`의 `assemble_pre_fdc()`/`assemble_post_fdc()`
+> 분리. 이들은 held_position lane 범위를 넘어 **core lane까지 포함한
+> 전체 dispatcher**가 필요해질 때(§15 "③ 전체 lane 전환" 단계) 별도 PR로
+> 진행한다 — 이번 PR은 §15 "② held_position lane 한정 실전 전환" 단계만
+> 코드 수준으로 구현했다.
 
 ## 1. 배경과 문제 정의
 

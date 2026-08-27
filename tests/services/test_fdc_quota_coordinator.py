@@ -755,6 +755,78 @@ class TestPostgresCallWithCoordinatorLifecycle:
         assert row["completed_at"] is not None
 
     @pytest.mark.asyncio
+    async def test_non_manual_caller_id_succeeds_without_manual_call_policy(
+        self, db_ready, quota_scope: str,
+    ) -> None:
+        """2026-08-27(held_position 실제 dispatch): ``manual:`` 접두사가
+        아닌 caller_id(ops-scheduler 운영 경로)는 ``manual_call_policy``를
+        주입하지 않아도(=``None``) 실제 PostgreSQL 위에서 정상적으로
+        reservation/기록이 되는지 확인한다 — §11 fail-closed 정책은
+        ``manual:`` 접두사 caller에만 적용되고, 비-manual 호출자는 완전히
+        영향받지 않는다는 계약을 InMemory(``TestManualCallPolicy``)뿐
+        아니라 실제 lock/transaction 경로에서도 재확인한다."""
+        from dataclasses import dataclass
+
+        from agent_trading.db.connection import connection
+        from agent_trading.db.transaction import TransactionManager
+        from agent_trading.repositories.postgres.fdc_quota import (
+            PostgresFdcQuotaRepository,
+        )
+        from agent_trading.services.ai_agents.base import RawProviderResponse
+        from scripts.fdc_manual_provider_gate import call_with_coordinator
+
+        @dataclass(slots=True, frozen=True)
+        class _Output:
+            symbol: str = "005930"
+
+        class _FakeLiveClient:
+            def __init__(self) -> None:
+                self.calls = 0
+
+            async def generate_structured_once(self, grant, *, on_http_start=None, **kwargs):
+                if on_http_start is not None:
+                    await on_http_start()
+                self.calls += 1
+                return RawProviderResponse(
+                    parsed=_Output(), raw_content="{}",
+                    http_attempt_count=1, http_429_count=0,
+                )
+
+        # manual_call_policy를 명시적으로 주입하지 않는다(None) —
+        # scripts/run_agent_subprocess.py::_build_actual_dispatch_fdc_
+        # client()가 실제로 그렇게 구성한다(ops-scheduler 운영 경로는
+        # §11 fail-closed 정책의 대상이 아니므로). 이 파일의 다른 대부분
+        # 테스트가 쓰는 ``_postgres_coordinator()`` 헬퍼는 always-allow
+        # 정책을 기본 주입하므로 여기서는 일부러 쓰지 않는다.
+        tx = TransactionManager()
+        repo = PostgresFdcQuotaRepository(tx)
+        coordinator = FdcQuotaCoordinator(
+            repo=repo, target_rpm=13, quota_scope=quota_scope,
+        )
+        fake_client = _FakeLiveClient()
+
+        result = await call_with_coordinator(
+            coordinator=coordinator, client=fake_client,
+            caller_id="ops-scheduler:held_position_reduce_sell",
+            manual_run_id="cycle-corr-1", model_id="m", system_prompt="s",
+            user_prompt="u", response_format=_Output,
+        )
+
+        assert result.parsed.symbol == "005930"
+        assert fake_client.calls == 1
+
+        async with connection() as conn:
+            row = await conn.fetchrow(
+                "SELECT outcome, http_started_at, completed_at "
+                "FROM trading.fdc_provider_attempts WHERE quota_scope = $1",
+                quota_scope,
+            )
+        assert row is not None
+        assert row["outcome"] == "http_succeeded"
+        assert row["http_started_at"] is not None
+        assert row["completed_at"] is not None
+
+    @pytest.mark.asyncio
     async def test_429_retry_creates_new_attempt_row_per_reservation(
         self, db_ready, quota_scope: str,
     ) -> None:

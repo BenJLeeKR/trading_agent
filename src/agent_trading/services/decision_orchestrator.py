@@ -362,6 +362,8 @@ class DecisionOrchestratorService:
         held_position_reduce_skip_shadow_enabled: bool = False,
         # --- FDC cycle-scoped batch queue lifecycle shadow (Phase 1, 관측 전용, 결정 미개입) ---
         fdc_batch_queue_lifecycle_shadow_enabled: bool = False,
+        # --- FDC 실제 dispatch 전환 (2026-08-27, held_position lane REDUCE/SELL_CANDIDATE 한정) ---
+        fdc_actual_dispatch_enabled: bool = False,
     ) -> None:
         self._repos = repos
         self._decision_context_service = DecisionContextService(repos)
@@ -453,6 +455,12 @@ class DecisionOrchestratorService:
             fdc_batch_queue_lifecycle_shadow_enabled
         )
         self.pending_fdc_ready_shadow_event: FdcReadyShadowEvent | None = None
+        # FDC 실제 dispatch 전환 스위치(2026-08-27) — subprocess 경로에서만
+        # 의미가 있고(DecisionAgentRunner에 그대로 전달), held_position
+        # lane의 REDUCE_CANDIDATE/SELL_CANDIDATE(보유 포지션 존재)에 한해서만
+        # 영향을 준다. 최종 lane/후보 판별은 run_agent_subprocess.py가
+        # context.deterministic_trigger로 직접 확인한다.
+        self._fdc_actual_dispatch_enabled = fdc_actual_dispatch_enabled
         # --- Execution Service (execution pipeline state: sell guard, quote CB, fresh check) ---
         self._execution_service = ExecutionService(
             repos=repos,
@@ -476,6 +484,7 @@ class DecisionOrchestratorService:
             provider_base_url=self._provider_base_url,
             provider_model_id=self._provider_model_id,
             provider_timeout_seconds=self._provider_timeout_seconds,
+            fdc_actual_dispatch_enabled=self._fdc_actual_dispatch_enabled,
         )
 
     def _check_held_position_sell_override(

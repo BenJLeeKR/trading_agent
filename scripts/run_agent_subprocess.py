@@ -212,6 +212,14 @@ class AgentSubprocessInput:
     score: dict[str, Any] | None = None
     positional_args: tuple[Any, ...] = ()
 
+    # FDC 실제 dispatch 전환 스위치(2026-08-27, AppSettings.fdc_actual_
+    # dispatch_enabled 그대로 전달). 기본값 False — 구버전 부모 프로세스가
+    # 이 키 없이 payload를 보내도(하위 호환) 기존 동작과 100% 동일하다.
+    # 최종 lane/후보 판별(REDUCE_CANDIDATE/SELL_CANDIDATE + 보유 포지션)은
+    # 이 값과 별개로 main()이 context.deterministic_trigger를 직접 읽어
+    # 판단한다.
+    fdc_actual_dispatch_enabled: bool = False
+
 
 @dataclass(slots=True, frozen=True)
 class AgentSubprocessOutput:
@@ -860,6 +868,120 @@ def _reconstruct_request(
 
 
 # ---------------------------------------------------------------------------
+# FDC 실제 dispatch 대상 판별 + coordinator 기반 client 구성
+# (2026-08-27, held_position lane REDUCE_CANDIDATE/SELL_CANDIDATE 한정)
+# ---------------------------------------------------------------------------
+# 설계 근거: docs/40_action_plans/fdc_cycle_scoped_batch_queue_gemini_
+# shared_13rpm_quota_design_2026-08-25.md §15 "② held_position lane 한정
+# 실전 전환" 단계를 코드 수준에서 강제하는 좁은 구현. §17(subprocess
+# 분리·dispatcher·carryover·recovery)은 이 좁은 범위에서는 불필요하다 —
+# primary_candidate가 EI/AR/AC 실행 전에 이미 계산돼 stdin payload에
+# 포함되므로(decision_orchestrator.py의 deterministic_trigger 계산이
+# subprocess 호출보다 먼저 일어남), 같은 subprocess 호출 안에서 FDC
+# client만 교체하는 것으로 충분하다. EI/AR/AC는 이번 전환 대상이 아니다
+# (둘 다 deterministic bot이라 provider_client 자체가 없음).
+
+
+def _is_fdc_actual_dispatch_target(request: AgentExecutionRequest) -> bool:
+    """held_position lane의 REDUCE_CANDIDATE/SELL_CANDIDATE(보유 포지션
+    존재) 조건을 만족하는지만 판정한다 — ``FDC_ACTUAL_DISPATCH_ENABLED``
+    자체는 호출부가 별도로 AND 한다(이 함수는 그 값을 모른다).
+
+    ``deterministic_trigger_engine.py``의 후보 생성 로직상
+    ``SELL_CANDIDATE``/``REDUCE_CANDIDATE``는 ``source_type ==
+    "held_position"``일 때만 생성되므로, 별도 lane 식별자 없이
+    ``primary_candidate`` 값 하나만으로 lane+후보 범위를 안전하게
+    특정할 수 있다.
+    """
+    context = request.context
+    has_position = (
+        context.position_snapshot is not None
+        and context.position_snapshot.quantity is not None
+        and context.position_snapshot.quantity > 0
+    )
+    primary_candidate = (
+        getattr(context.deterministic_trigger, "primary_candidate", "") or ""
+    ).strip().upper()
+    source_type = (context.source_type or request.source_type or "").strip().lower()
+    return (
+        source_type == "held_position"
+        and has_position
+        and primary_candidate in ("REDUCE_CANDIDATE", "SELL_CANDIDATE")
+    )
+
+
+async def _build_actual_dispatch_fdc_client(
+    inp: AgentSubprocessInput,
+) -> tuple[Any, Any]:
+    """FDC 실제 dispatch 대상 건에서 쓸 coordinator 기반 provider client를
+    구성한다. **호출 전에 DB pool이 이미 초기화돼 있어야 한다**(``main()``이
+    ``create_pool()``을 먼저 호출하고, 그 직후 정리 플래그를 세운 뒤에만
+    이 함수를 호출한다 — pool은 열렸는데 이 함수 내부에서 실패해 정리
+    플래그가 세워지지 못하는 leak을 피하기 위함). 실패(repo/coordinator
+    구성 실패 등)는 그대로 예외를 전파한다 — ``main()``의 기존 top-level
+    ``except Exception``이 이미 subprocess 실패를 안전하게 처리하므로
+    (부모가 fallback bundle로 대체), 여기서 별도로 catch해 레거시 10 RPM
+    경로로 조용히 폴백하지 않는다("실패를 성공으로 바꾸거나 조용히
+    누락하지 않는다" 원칙).
+
+    Returns
+    -------
+    (client, coordinator)
+        ``client``는 ``FinalDecisionComposerAgent``가 기대하는
+        ``generate_structured()`` Protocol을 만족하는
+        ``CoordinatedFdcProviderClient``. ``coordinator``는 관측/로깅
+        용도로 함께 반환한다(현재는 사용하지 않지만 호출자가 필요시
+        확장할 수 있게 남겨둔다).
+    """
+    from agent_trading.config.settings import (
+        _resolve_fdc_provider_rate_window_seconds,
+        _resolve_fdc_provider_target_rpm,
+        _resolve_gemini_provider_declared_rpm_limit,
+    )
+    from agent_trading.db.transaction import TransactionManager
+    from agent_trading.repositories.postgres.fdc_quota import (
+        PostgresFdcQuotaRepository,
+    )
+    from agent_trading.services.ai_agents.provider_client import (
+        LiveGeminiProviderClient,
+    )
+    from agent_trading.services.fdc_quota_coordinator import FdcQuotaCoordinator
+    from scripts.fdc_manual_provider_gate import CoordinatedFdcProviderClient
+
+    # ambient transaction은 repo 생성자를 채우는 용도로만 잠깐 열고 즉시
+    # 닫는다(PostgresFdcQuotaRepository.try_reserve()/record_attempt_
+    # outcome()은 각자 독립 transaction을 새로 연다 — PR A와 동일 패턴).
+    async with TransactionManager() as ambient_tx:
+        repo = PostgresFdcQuotaRepository(ambient_tx)
+    coordinator = FdcQuotaCoordinator(
+        repo=repo,
+        target_rpm=_resolve_fdc_provider_target_rpm(),
+        window_seconds=_resolve_fdc_provider_rate_window_seconds(),
+        declared_rpm_limit=_resolve_gemini_provider_declared_rpm_limit(),
+        # manual_call_policy는 주입하지 않는다 — caller_id가 "manual:"
+        # 접두사가 아니므로(아래 참고) §11 fail-closed 정책의 대상이
+        # 애초에 아니다(비-manual 호출자는 이 체크를 완전히 우회함,
+        # PR A에서 이미 검증된 계약).
+    )
+    live_client = LiveGeminiProviderClient(
+        coordinator=coordinator,
+        api_key=inp.provider_api_key,
+        base_url=inp.provider_base_url,
+        timeout_seconds=inp.provider_timeout_seconds,
+    )
+    client = CoordinatedFdcProviderClient(
+        coordinator=coordinator,
+        live_client=live_client,
+        # "manual:" 접두사를 쓰지 않는다 — ops-scheduler 운영 경로이므로
+        # PR A의 수동 호출 fail-closed 정책 대상이 아니다(운영 시간에도
+        # 정상 호출돼야 함).
+        caller_id="ops-scheduler:held_position_reduce_sell",
+        manual_run_id=inp.correlation_id,
+    )
+    return client, coordinator
+
+
+# ---------------------------------------------------------------------------
 # FDC Skip Logic — 비행동(non-actionable) 조건에서 FDC 호출 생략
 # ---------------------------------------------------------------------------
 # 관찰된 병목: FDC(FinalDecisionComposer)가 50-80s 소요.
@@ -1215,6 +1337,7 @@ async def main() -> None:
     _diag("main() started")
 
     # ── 1. Read & parse input ──────────────────────────────────────────
+    fdc_actual_dispatch_pool_opened = False
     try:
         raw = sys.stdin.buffer.read()
         data: dict[str, Any] = json.loads(raw)
@@ -1225,51 +1348,85 @@ async def main() -> None:
         _write_error_output(f"Failed to parse input: {exc}")
         sys.exit(1)
 
-    # ── 1b. Create provider client (if configured) ─────────────────────
-    provider_client: AIProviderClient | None = None
-    if inp.provider_api_key and inp.provider_base_url:
-        from agent_trading.services.ai_agents import OpenAICompatibleClient
-        logger.info(
-            "Creating OpenAICompatibleClient: base_url=%s model_id=%s timeout=%s",
-            inp.provider_base_url,
-            inp.provider_model_id or _resolve_provider_model_id(),
-            inp.provider_timeout_seconds,
-        )
-        _diag("Creating OpenAICompatibleClient ...")
-        provider_client = OpenAICompatibleClient(
-            api_key=inp.provider_api_key,
-            base_url=inp.provider_base_url,
-            model_id=inp.provider_model_id or _resolve_provider_model_id(),
-            timeout_seconds=inp.provider_timeout_seconds,
-        )
-        _diag("OpenAICompatibleClient created")
-    else:
-        logger.info(
-            "No provider client created: api_key=%s base_url=%s",
-            "set" if inp.provider_api_key else "not set",
-            "set" if inp.provider_base_url else "not set",
-        )
-        _diag("No provider client created")
-    # 2026-08-21: FDC 1회 호출(최초 요청 + 재시도 전부) 동안의 permit
-    # 판정을 누적할 accumulator. provider 미설정(Stub 경로)이면 애초에
-    # HTTP 호출이 없으므로 만들지 않는다 — Stub은 permit 대기 없이
-    # 기존 동작을 그대로 유지한다.
-    fdc_permit_accumulator = (
-        _FdcPermitAccumulator(lane=inp.source_type or "unknown")
-        if provider_client is not None else None
-    )
-    ei_agent, ar_agent, ac_agent, fdc_agent = _build_agent_triplet(
-        provider_client=provider_client,
-        model_id=inp.provider_model_id,
-        acquire_permit=(
-            fdc_permit_accumulator.acquire
-            if fdc_permit_accumulator is not None
-            else None
-        ),
-    )
-
-    # ── 2. Run agents sequentially ─────────────────────────────────────
+    # 2026-08-27: step 1b/1c(provider client + FDC 실제 dispatch client
+    # 구성, DB pool 생성 포함)와 agent triplet 구성을 이 try 블록 안으로
+    # 옮겼다 — 이전에는 두 번째 try(2. Run agents sequentially) 앞의
+    # 무방비 구간이라, create_pool()/coordinator 구성 실패가 main()의
+    # 기존 top-level except를 우회해 close_pool()이 호출되지 않고
+    # RuntimeError가 그대로 새 나갈 수 있었다(leak 위험). 로직 자체는
+    # 변경하지 않았다 — 순수 위치 이동.
     try:
+        # ── 1b. Create provider client (if configured) ─────────────────
+        provider_client: AIProviderClient | None = None
+        fdc_actual_dispatch_client: AIProviderClient | None = None
+        if inp.provider_api_key and inp.provider_base_url:
+            from agent_trading.services.ai_agents import OpenAICompatibleClient
+            logger.info(
+                "Creating OpenAICompatibleClient: base_url=%s model_id=%s timeout=%s",
+                inp.provider_base_url,
+                inp.provider_model_id or _resolve_provider_model_id(),
+                inp.provider_timeout_seconds,
+            )
+            _diag("Creating OpenAICompatibleClient ...")
+            provider_client = OpenAICompatibleClient(
+                api_key=inp.provider_api_key,
+                base_url=inp.provider_base_url,
+                model_id=inp.provider_model_id or _resolve_provider_model_id(),
+                timeout_seconds=inp.provider_timeout_seconds,
+            )
+            _diag("OpenAICompatibleClient created")
+
+            # ── 1c. FDC 실제 dispatch 대상 판별 (2026-08-27) ────────────
+            # flag=false면 이 블록 전체가 스킵되어 기존 동작과 100% 동일.
+            if inp.fdc_actual_dispatch_enabled:
+                _early_request = _reconstruct_request(inp)
+                if _is_fdc_actual_dispatch_target(_early_request):
+                    _diag(
+                        "FDC actual-dispatch target detected — building "
+                        "coordinator-gated client"
+                    )
+                    from agent_trading.db.connection import create_pool
+
+                    await create_pool()
+                    # pool 생성 직후 즉시 플래그를 세운다 — 이후 repo/
+                    # coordinator/client 구성이 실패해도 finally에서
+                    # 반드시 close_pool()이 호출되도록 leak 창을 없앤다.
+                    fdc_actual_dispatch_pool_opened = True
+                    fdc_actual_dispatch_client, _ = await _build_actual_dispatch_fdc_client(inp)
+                    _diag("FDC actual-dispatch client ready (DB pool opened)")
+        else:
+            logger.info(
+                "No provider client created: api_key=%s base_url=%s",
+                "set" if inp.provider_api_key else "not set",
+                "set" if inp.provider_base_url else "not set",
+            )
+            _diag("No provider client created")
+        # 2026-08-21: FDC 1회 호출(최초 요청 + 재시도 전부) 동안의 permit
+        # 판정을 누적할 accumulator. provider 미설정(Stub 경로)이면 애초에
+        # HTTP 호출이 없으므로 만들지 않는다 — Stub은 permit 대기 없이
+        # 기존 동작을 그대로 유지한다. FDC 실제 dispatch 대상(coordinator
+        # 경로)은 기존 10 RPM strict limiter를 아예 거치지 않으므로
+        # accumulator를 만들지 않는다.
+        fdc_permit_accumulator = (
+            _FdcPermitAccumulator(lane=inp.source_type or "unknown")
+            if provider_client is not None and fdc_actual_dispatch_client is None
+            else None
+        )
+        ei_agent, ar_agent, ac_agent, fdc_agent = _build_agent_triplet(
+            provider_client=(
+                fdc_actual_dispatch_client
+                if fdc_actual_dispatch_client is not None
+                else provider_client
+            ),
+            model_id=inp.provider_model_id,
+            acquire_permit=(
+                fdc_permit_accumulator.acquire
+                if fdc_permit_accumulator is not None
+                else None
+            ),
+        )
+
+        # ── 2. Run agents sequentially ───────────────────────────────────
         # --- 2a. Event Interpretation Agent ---
         logger.info("Starting EventInterpretationAgent.run() ...")
         _diag("Starting EventInterpretationAgent.run() ...")
@@ -1597,6 +1754,13 @@ async def main() -> None:
         logger.exception("Agent subprocess failed after %.2fs", duration)
         _write_error_output(str(exc), duration=duration)
         sys.exit(1)
+    finally:
+        # FDC 실제 dispatch 대상 건에서만 pool을 열었으므로, 연 경우에만
+        # 정리한다(정상/예외/sys.exit(1) 모든 경로에서 finally가 실행됨).
+        if fdc_actual_dispatch_pool_opened:
+            from agent_trading.db.connection import close_pool
+            await close_pool()
+            _diag("FDC actual-dispatch DB pool closed")
 
 
 def _write_output(output: AgentSubprocessOutput) -> None:
