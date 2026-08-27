@@ -566,6 +566,228 @@ class TestPostgresRecordAttemptOutcome:
             )
         assert after == before == 1
 
+    @pytest.mark.asyncio
+    async def test_reservation_row_starts_with_null_http_started_at(
+        self, db_ready, quota_scope: str,
+    ) -> None:
+        """2026-08-27 리뷰 보정 검증: ``try_reserve()`` 직후(HTTP를 시작
+        하기 전)에는 ``http_started_at``이 NULL이어야 한다 — 실제로
+        HTTP를 시작하지 못한 경우에만 이 상태로 남는다는 계약의 기준선."""
+        from agent_trading.db.connection import connection
+
+        coordinator = _postgres_coordinator(quota_scope=quota_scope, target_rpm=13)
+        grant = await coordinator.try_reserve(job_id=None, caller_id="test-caller")
+        assert isinstance(grant, ReservationGrant)
+
+        async with connection() as conn:
+            row = await conn.fetchrow(
+                "SELECT http_started_at, outcome FROM trading.fdc_provider_attempts "
+                "WHERE attempt_id = $1",
+                grant.reservation_id,
+            )
+        assert row is not None
+        assert row["http_started_at"] is None
+        assert row["outcome"] == "reservation_granted"
+
+    @pytest.mark.asyncio
+    async def test_unknown_reservation_id_raises_value_error(
+        self, db_ready, quota_scope: str,
+    ) -> None:
+        """2026-08-27 리뷰 보정: 대응 행이 없는 ``reservation_id``로
+        outcome을 기록하려 하면 조용히 0행 갱신하고 성공한 척하지 않고
+        명시적으로 실패한다(감사 기록 누락 은폐 방지)."""
+        coordinator = _postgres_coordinator(quota_scope=quota_scope, target_rpm=13)
+
+        with pytest.raises(ValueError, match="no fdc_provider_attempts row"):
+            await coordinator.record_attempt_outcome(
+                reservation_id=uuid4(), outcome="http_succeeded",
+            )
+
+
+@pytestmark_db
+class TestPostgresCallWithCoordinatorLifecycle:
+    """``scripts/fdc_manual_provider_gate.py::call_with_coordinator()``가
+    실제 PostgreSQL 위에서 attempt별로 정확한 lifecycle을 기록하는지
+    검증한다(2026-08-27 리뷰 보정 핵심 — 이전 permit adapter 방식은 이
+    수준의 정확도를 낼 수 없었다). 실제 HTTP는 fake client(duck-typed
+    ``generate_structured_once()``)로 대체한다 — 외부 Gemini 호출 없음.
+    """
+
+    @pytest.mark.asyncio
+    async def test_success_records_http_started_at_and_completed_at(
+        self, db_ready, quota_scope: str,
+    ) -> None:
+        from dataclasses import dataclass
+
+        from agent_trading.db.connection import connection
+        from agent_trading.services.ai_agents.base import RawProviderResponse
+        from scripts.fdc_manual_provider_gate import call_with_coordinator
+
+        @dataclass(slots=True, frozen=True)
+        class _Output:
+            symbol: str = "AAPL"
+
+        class _FakeLiveClient:
+            def __init__(self) -> None:
+                self.calls = 0
+
+            async def generate_structured_once(self, grant, **kwargs):
+                self.calls += 1
+                return RawProviderResponse(
+                    parsed=_Output(), raw_content="{}",
+                    http_attempt_count=1, http_429_count=0,
+                )
+
+        coordinator = _postgres_coordinator(quota_scope=quota_scope, target_rpm=13)
+        fake_client = _FakeLiveClient()
+
+        result = await call_with_coordinator(
+            coordinator=coordinator, client=fake_client, caller_id="manual:test",
+            manual_run_id="run-pg-1", model_id="m", system_prompt="s",
+            user_prompt="u", response_format=_Output,
+        )
+
+        assert result.parsed.symbol == "AAPL"
+        assert fake_client.calls == 1
+
+        async with connection() as conn:
+            row = await conn.fetchrow(
+                "SELECT outcome, http_started_at, completed_at "
+                "FROM trading.fdc_provider_attempts WHERE quota_scope = $1",
+                quota_scope,
+            )
+        assert row is not None
+        assert row["outcome"] == "http_succeeded"
+        assert row["http_started_at"] is not None
+        assert row["completed_at"] is not None
+
+    @pytest.mark.asyncio
+    async def test_429_retry_creates_new_attempt_row_per_reservation(
+        self, db_ready, quota_scope: str,
+    ) -> None:
+        """429 재시도 시 같은 grant를 재사용하지 않고 매번 새 reservation
+        (=새 ``fdc_provider_attempts`` 행)을 얻는지, 각 행의
+        outcome/429/timestamp가 정확한지 검증한다."""
+        from dataclasses import dataclass
+
+        import httpx
+
+        from agent_trading.db.connection import connection
+        from agent_trading.services.ai_agents.base import RawProviderResponse
+        from scripts.fdc_manual_provider_gate import call_with_coordinator
+
+        @dataclass(slots=True, frozen=True)
+        class _Output:
+            symbol: str = "AAPL"
+
+        def _make_429() -> httpx.HTTPStatusError:
+            req = httpx.Request("POST", "https://x/v1/chat/completions")
+            resp = httpx.Response(429, request=req)
+            exc = httpx.HTTPStatusError("429", request=req, response=resp)
+            exc.http_attempt_count = 1  # type: ignore[attr-defined]
+            exc.http_429_count = 1  # type: ignore[attr-defined]
+            return exc
+
+        class _FakeLiveClient:
+            def __init__(self) -> None:
+                self._outcomes = [_make_429(), RawProviderResponse(
+                    parsed=_Output(), raw_content="{}",
+                    http_attempt_count=1, http_429_count=0,
+                )]
+                self.grants_seen = []
+
+            async def generate_structured_once(self, grant, **kwargs):
+                self.grants_seen.append(grant.reservation_id)
+                outcome = self._outcomes.pop(0)
+                if isinstance(outcome, Exception):
+                    raise outcome
+                return outcome
+
+        coordinator = _postgres_coordinator(quota_scope=quota_scope, target_rpm=13)
+        fake_client = _FakeLiveClient()
+
+        result = await call_with_coordinator(
+            coordinator=coordinator, client=fake_client, caller_id="manual:test",
+            manual_run_id="run-pg-2", model_id="m", system_prompt="s",
+            user_prompt="u", response_format=_Output, max_attempts=3,
+        )
+
+        assert result.parsed.symbol == "AAPL"
+        assert len(fake_client.grants_seen) == 2
+        assert fake_client.grants_seen[0] != fake_client.grants_seen[1]  # 새 reservation
+
+        async with connection() as conn:
+            rows = await conn.fetch(
+                "SELECT attempt_id, outcome, http_status, http_429_observed, "
+                "http_started_at, completed_at FROM trading.fdc_provider_attempts "
+                "WHERE quota_scope = $1 ORDER BY attempt_no",
+                quota_scope,
+            )
+        assert len(rows) == 2  # 재시도마다 별도 행
+
+        first, second = rows
+        assert first["attempt_id"] == fake_client.grants_seen[0]
+        assert first["outcome"] == "http_failed_retryable"
+        assert first["http_status"] == 429
+        assert first["http_429_observed"] is True
+        assert first["http_started_at"] is not None
+        assert first["completed_at"] is not None
+
+        assert second["attempt_id"] == fake_client.grants_seen[1]
+        assert second["outcome"] == "http_succeeded"
+        assert second["http_429_observed"] is False
+        assert second["http_started_at"] is not None
+        assert second["completed_at"] is not None
+
+    @pytest.mark.asyncio
+    async def test_non_retryable_failure_records_http_started_at_not_null(
+        self, db_ready, quota_scope: str,
+    ) -> None:
+        """HTTP 시작 **후** 실패(non-retryable 4xx 등)는 http_started_at
+        이 NULL이 아니어야 한다 — reservation만 받고 HTTP 자체를 시도조차
+        못한 경우(별도 시나리오, RESERVED_BUT_HTTP_NOT_STARTED 계열)와
+        구분된다."""
+        from dataclasses import dataclass
+
+        import httpx
+
+        from agent_trading.db.connection import connection
+        from scripts.fdc_manual_provider_gate import call_with_coordinator
+
+        @dataclass(slots=True, frozen=True)
+        class _Output:
+            symbol: str = "AAPL"
+
+        class _FakeLiveClient:
+            async def generate_structured_once(self, grant, **kwargs):
+                req = httpx.Request("POST", "https://x/v1/chat/completions")
+                resp = httpx.Response(400, request=req)
+                exc = httpx.HTTPStatusError("400", request=req, response=resp)
+                exc.http_attempt_count = 1  # type: ignore[attr-defined]
+                exc.http_429_count = 0  # type: ignore[attr-defined]
+                raise exc
+
+        coordinator = _postgres_coordinator(quota_scope=quota_scope, target_rpm=13)
+
+        with pytest.raises(httpx.HTTPStatusError):
+            await call_with_coordinator(
+                coordinator=coordinator, client=_FakeLiveClient(), caller_id="manual:test",
+                manual_run_id="run-pg-3", model_id="m", system_prompt="s",
+                user_prompt="u", response_format=_Output, max_attempts=3,
+            )
+
+        async with connection() as conn:
+            row = await conn.fetchrow(
+                "SELECT outcome, http_status, http_started_at, completed_at "
+                "FROM trading.fdc_provider_attempts WHERE quota_scope = $1",
+                quota_scope,
+            )
+        assert row is not None
+        assert row["outcome"] == "http_failed_final"
+        assert row["http_status"] == 400
+        assert row["http_started_at"] is not None
+        assert row["completed_at"] is not None
+
 
 @pytestmark_db
 class TestPostgresShadowFifoQueue:

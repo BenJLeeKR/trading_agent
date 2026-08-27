@@ -517,6 +517,35 @@ class LiveGeminiProviderClient(OpenAICompatibleClient):
     def coordinator(self) -> FdcQuotaCoordinator:
         return self._coordinator
 
+    async def generate_structured(  # type: ignore[override]
+        self,
+        *,
+        model_id: str,
+        system_prompt: str,
+        user_prompt: str,
+        response_format: type,
+        temperature: float = 0.0,
+        seed: int | None = None,
+        acquire_permit: PermitCallback | None = None,
+    ) -> RawProviderResponse:
+        """상속받은 부모 메서드를 **의도적으로 차단**한다(2026-08-27
+        PR A 리뷰 보정) — 그대로 두면 호출자가 reservation 없이 이
+        메서드를 직접 호출해 FDC quota coordinator를 완전히 우회하는
+        live HTTP를 보낼 수 있었다(§12 fail-closed 경계의 허점).
+
+        FDC live HTTP의 유일한 경로는 ``generate_structured_once(grant,
+        ...)``다 — coordinator가 발급한 ``ReservationGrant``를 소비하지
+        않고는 이 클래스로 HTTP를 보낼 방법이 없다. HTTP 요청은 이
+        예외가 발생하기 전에 전혀 나가지 않는다.
+        """
+        raise RuntimeError(
+            "LiveGeminiProviderClient.generate_structured()는 사용할 수 "
+            "없다 — FDC live HTTP는 반드시 generate_structured_once(grant, "
+            "...)를 통해 coordinator가 발급한 reservation을 소비해야 한다. "
+            "reservation 없는 일반 generate_structured() 호출로 quota를 "
+            "우회할 수 없다."
+        )
+
     async def generate_structured_once(
         self,
         grant: ReservationGrant,

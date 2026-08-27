@@ -16,14 +16,33 @@
    설계 문서 §11이 의도한 "운영 시간 판정"의 근사이며, 분 단위 장운영
    phase가 필요하면 별도 설계/163 WS 재도입이 선행돼야 한다는 한계를
    명시적으로 남긴다.
-2. **비운영 시간 공용 quota coordinator 경로**: HTTP 시도마다 새
-   ``FdcQuotaCoordinator.try_reserve()``를 얻어(§7 "HTTP 시도마다
+2. **비운영 시간 공용 quota coordinator 경로 — FDC 전용**: HTTP 시도마다
+   새 ``FdcQuotaCoordinator.try_reserve()``를 얻어(§7 "HTTP 시도마다
    reservation") ``LiveGeminiProviderClient.generate_structured_once()``
    를 호출하고, 성공/실패/429/HTTP 시작 전 실패를
    ``coordinator.record_attempt_outcome()``으로 ``fdc_provider_attempts``
    에 감사 가능하게 남긴다. reservation 거부·coordinator 오류 시 HTTP를
    전혀 보내지 않는다. ``fdc_queue_jobs`` row는 만들지 않는다
    (``job_id=None``, ``manual_run_id``만 사용 — 설계 문서 §11 A안).
+
+**AR/FDC quota 적용 범위(2026-08-27 리뷰 보정으로 확정)**: 이 공용
+coordinator는 **FDC live provider 호출에만** 적용한다 — AR live
+provider 호출은 production에서도 이 quota의 대상이 아니다
+(``AIRiskAgent.run()``이 ``acquire_permit``을 전혀 쓰지 않음, §1
+배경 문서가 "FDC provider(Gemini) 호출"만 명시). 이 모듈의 함수는
+전부 FDC 전용이며, AR 호출에는 절대 쓰지 않는다 — AR은 일반
+``OpenAICompatibleClient``(coordinator 없음)를 그대로 쓴다.
+
+**HTTP 실행 경로 두 가지**:
+- ``call_with_coordinator()``: `generate_structured_once()`를 직접
+  호출하는 명시적 attempt loop(``ar_fdc_provider_validation.py``의
+  FDC 호출이 직접 사용).
+- ``CoordinatedFdcProviderClient``: 위 함수를 감싸 ``AIProviderClient``
+  Protocol을 만족시키는 wrapper — ``FinalDecisionComposerAgent.run()``
+  같은 기존 고수준 인터페이스를 바꾸지 않고 재사용해야 할 때
+  (``ar_fdc_output_measurement.py``의 FDC 호출이 사용) 쓴다. 둘 다
+  내부적으로 동일한 attempt-loop 구현 하나만 쓰므로 lifecycle 기록
+  로직이 중복되지 않는다.
 """
 
 from __future__ import annotations
@@ -43,20 +62,18 @@ from agent_trading.services.ai_agents.base import RawProviderResponse
 from agent_trading.services.ai_agents.provider_client import (
     LiveGeminiProviderClient,
     PermitCallback,
-    PermitResult,
     _is_retryable_http_status,
 )
 from agent_trading.services.fdc_quota_coordinator import FdcQuotaCoordinator
 from agent_trading.services.market_session import create_session_provider
 
 __all__ = [
+    "CoordinatedFdcProviderClient",
     "MarketHoursBlockedError",
     "QuotaUnavailableError",
     "assert_not_market_hours",
     "build_manual_run_id",
     "call_with_coordinator",
-    "finalize_permit_adapter_outcomes",
-    "make_coordinator_permit_adapter",
 ]
 
 
@@ -214,76 +231,69 @@ async def call_with_coordinator(
     raise last_exc
 
 
-def make_coordinator_permit_adapter(
-    *,
-    coordinator: FdcQuotaCoordinator,
-    caller_id: str,
-    manual_run_id: str,
-) -> tuple[PermitCallback, list[uuid.UUID]]:
-    """``agent.run()``처럼 이미 완성된 고수준 인터페이스(내부적으로
-    기존 ``generate_structured()``의 retry 루프를 그대로 쓰는 경로)를
-    바꾸지 않고도, 그 retry 루프의 기존 ``acquire_permit`` 훅에 꽂아
-    HTTP 시도마다 공용 quota reservation을 받게 하는 어댑터를 만든다
-    (``scripts/ar_fdc_output_measurement.py``처럼 ``FinalDecisionComposerAgent``
-    를 직접 생성해 ``agent.run(request)``를 호출하는 경로 전용 — 직접
-    ``generate_structured_once()``를 호출하는 ``call_with_coordinator()``
-    와는 다른 통합 지점이다).
+class CoordinatedFdcProviderClient:
+    """``AIProviderClient`` Protocol(``generate_structured()`` 시그니처)을
+    만족하는 wrapper — ``FinalDecisionComposerAgent.run()`` 같은 기존
+    고수준 인터페이스를 전혀 바꾸지 않고도, 내부적으로는 매 HTTP 시도를
+    ``call_with_coordinator()``(정확한 attempt별 lifecycle 기록)로
+    대체한다(2026-08-27 리뷰 보정).
 
-    반환되는 리스트에는 실제로 승인된 reservation들의 ``reservation_id``
-    가 시도 순서대로 쌓인다 — 이 어댑터 자체는 permit 콜백(HTTP 시작
-    **전**에만 호출됨)이라 HTTP 결과를 알 수 없으므로, 호출자가
-    ``agent.run()`` 완료 후 ``finalize_permit_adapter_outcomes()``로
-    이 리스트를 outcome 기록에 넘겨야 한다.
+    **이전 설계(``make_coordinator_permit_adapter()`` +
+    ``finalize_permit_adapter_outcomes()``, 제거됨)의 결함**: 그 방식은
+    reservation ID만 모아뒀다가 ``agent.run()`` 종료 **후** 일괄
+    outcome을 기록했다 — 그 결과 실제 HTTP가 성공/실패했는데도
+    ``http_started_at``이 채워지지 않거나, 개별 attempt의 HTTP status/
+    429 여부/예외 유형을 전혀 알 수 없는 부정확한 감사 행이 생겼다.
+    이 wrapper는 그 대신 ``call_with_coordinator()``를 그대로 호출해
+    (중복 구현 없음), HTTP 시작 직전 타임스탬프와 attempt별 정확한
+    결과를 실시간으로 기록한다 — ``acquire_permit``은 아예 받지 않는다
+    (기존 10 RPM strict limiter와 무관, coordinator가 전담).
     """
-    attempt_no_counter = [0]
-    granted_reservations: list[uuid.UUID] = []
 
-    async def _acquire_permit() -> PermitResult:
-        attempt_no_counter[0] += 1
-        result = await coordinator.try_reserve(
-            job_id=None,
-            caller_id=caller_id,
-            mode="real",
-            manual_run_id=manual_run_id,
-            attempt_no=attempt_no_counter[0],
+    def __init__(
+        self,
+        *,
+        coordinator: FdcQuotaCoordinator,
+        live_client: LiveGeminiProviderClient,
+        caller_id: str,
+        manual_run_id: str,
+        max_attempts: int = 3,
+    ) -> None:
+        self._coordinator = coordinator
+        self._live_client = live_client
+        self._caller_id = caller_id
+        self._manual_run_id = manual_run_id
+        self._max_attempts = max_attempts
+
+    async def generate_structured(
+        self,
+        *,
+        model_id: str,
+        system_prompt: str,
+        user_prompt: str,
+        response_format: type,
+        temperature: float = 0.0,
+        seed: int | None = None,
+        acquire_permit: PermitCallback | None = None,
+    ) -> RawProviderResponse:
+        if acquire_permit is not None:
+            raise ValueError(
+                "CoordinatedFdcProviderClient.generate_structured()는 "
+                "acquire_permit을 받지 않는다 — 기존 10 RPM strict "
+                "limiter 대신 공용 FDC quota coordinator가 매 HTTP 시도를 "
+                "전담한다(레거시 permit 어댑터를 실수로 재사용하지 않게 "
+                "막는 방어적 가드)."
+            )
+        return await call_with_coordinator(
+            coordinator=self._coordinator,
+            client=self._live_client,
+            caller_id=self._caller_id,
+            manual_run_id=self._manual_run_id,
+            model_id=model_id,
+            system_prompt=system_prompt,
+            user_prompt=user_prompt,
+            response_format=response_format,
+            temperature=temperature,
+            seed=seed,
+            max_attempts=self._max_attempts,
         )
-        if isinstance(result, ReservationDenied):
-            return PermitResult(granted=False, denial_reason="quota_denied")
-        if isinstance(result, CoordinatorError):
-            return PermitResult(granted=False, denial_reason="coordinator_error")
-        granted_reservations.append(result.reservation_id)
-        return PermitResult(granted=True)
-
-    return _acquire_permit, granted_reservations
-
-
-async def finalize_permit_adapter_outcomes(
-    *,
-    coordinator: FdcQuotaCoordinator,
-    reservation_ids: list[uuid.UUID],
-    succeeded: bool,
-) -> None:
-    """``make_coordinator_permit_adapter()``가 쌓아둔 reservation들의
-    최종 outcome을 기록한다.
-
-    마지막 reservation만 이번 ``agent.run()`` 호출의 최종 결과(성공/
-    실패)를 반영한다. 그 이전(재시도로 버려진) reservation들은 전부
-    ``http_failed_retryable``로 기록한다 — 기존 ``generate_structured()``
-    의 retry 루프가 실제로 그렇게 처리했기 때문이다(마지막 시도 전까지는
-    전부 retryable 실패였으니 다음 attempt로 넘어갔다).
-    """
-    if not reservation_ids:
-        return
-    now = datetime.now(timezone.utc)
-    for reservation_id in reservation_ids[:-1]:
-        await coordinator.record_attempt_outcome(
-            reservation_id=reservation_id,
-            outcome="http_failed_retryable",
-            completed_at=now,
-        )
-    last = reservation_ids[-1]
-    await coordinator.record_attempt_outcome(
-        reservation_id=last,
-        outcome="http_succeeded" if succeeded else "http_failed_final",
-        completed_at=now,
-    )

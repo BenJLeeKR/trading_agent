@@ -9,12 +9,29 @@
 
 from __future__ import annotations
 
+import inspect
 import json
 
 import pytest
 
 from scripts import ar_fdc_provider_validation as script
 from scripts.fdc_manual_provider_gate import MarketHoursBlockedError
+
+
+class TestArFdcQuotaScopeSeparation:
+    """2026-08-27 리뷰 보정: AR 호출은 FDC 공용 13 RPM coordinator의
+    대상이 아니다 — ``_call_ar()``의 시그니처 자체가 coordinator를
+    받지 않도록 구조적으로 강제한다(실수로 다시 연결할 방법이 없다)."""
+
+    def test_call_ar_has_no_coordinator_parameter(self) -> None:
+        sig = inspect.signature(script._call_ar)
+        assert "coordinator" not in sig.parameters
+        assert "manual_run_id" not in sig.parameters
+
+    def test_call_fdc_still_requires_coordinator(self) -> None:
+        sig = inspect.signature(script._call_fdc)
+        assert "coordinator" in sig.parameters
+        assert "manual_run_id" in sig.parameters
 
 
 @pytest.mark.asyncio

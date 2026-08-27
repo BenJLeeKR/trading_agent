@@ -41,7 +41,10 @@ except ImportError:
 from agent_trading.config.settings import AppSettings
 from agent_trading.db.transaction import TransactionManager
 from agent_trading.repositories.postgres.fdc_quota import PostgresFdcQuotaRepository
-from agent_trading.services.ai_agents.provider_client import LiveGeminiProviderClient
+from agent_trading.services.ai_agents.provider_client import (
+    LiveGeminiProviderClient,
+    OpenAICompatibleClient,
+)
 from agent_trading.services.fdc_quota_coordinator import FdcQuotaCoordinator
 from scripts.fdc_manual_provider_gate import (
     MarketHoursBlockedError,
@@ -85,25 +88,28 @@ def _is_fdc_fallback(parsed: Any) -> bool:
 
 
 async def _call_ar(
-    client: LiveGeminiProviderClient,
-    coordinator: FdcQuotaCoordinator,
-    manual_run_id: str,
+    client: OpenAICompatibleClient,
     user_prompt: str,
     system_prompt: str,
     label: str,
     model_id: str,
 ) -> dict[str, Any]:
-    """AR provider 호출(공용 quota coordinator 경유) + fallback 감지 +
-    used_fallback 포함 반환."""
+    """AR provider 호출 + fallback 감지 + used_fallback 포함 반환.
+
+    2026-08-27 리뷰 보정: AR live provider 호출은 FDC 공용 13 RPM
+    coordinator의 대상이 **아니다**(production에서도 ``AIRiskAgent.
+    run()``이 ``acquire_permit``을 쓰지 않음 — §1 배경 문서가 "FDC
+    provider(Gemini) 호출"만 quota 대상으로 명시). 따라서 여기서는
+    coordinator를 거치지 않는 일반 ``OpenAICompatibleClient``를 그대로
+    쓴다 — FDC 전용 ``LiveGeminiProviderClient``를 억지로 재사용하지
+    않는다(그 클래스의 ``generate_structured()``는 애초에 차단돼
+    있어 호출해도 실패한다).
+    """
     from agent_trading.services.ai_agents.schemas import AIRiskOutput
 
     start = time.monotonic()
     try:
-        response = await call_with_coordinator(
-            coordinator=coordinator,
-            client=client,
-            caller_id=f"manual:{SCRIPT_NAME}",
-            manual_run_id=manual_run_id,
+        response = await client.generate_structured(
             model_id=model_id,
             system_prompt=system_prompt,
             user_prompt=user_prompt,
@@ -402,6 +408,15 @@ async def main() -> int:
     calls: list[dict[str, Any]] = []
     start_total = time.monotonic()
 
+    # AR과 FDC는 서로 다른 quota 정책을 따르므로 provider client도
+    # 분리한다 — AR은 coordinator 없는 일반 클라이언트, FDC만 coordinator
+    # 필수인 LiveGeminiProviderClient(2026-08-27 리뷰 보정).
+    ar_client = OpenAICompatibleClient(
+        api_key=settings.provider_api_key,
+        base_url=settings.provider_base_url,
+        timeout_seconds=CLIENT_TIMEOUT,
+    )
+
     async with TransactionManager() as ambient_tx:
         repo = PostgresFdcQuotaRepository(ambient_tx)
         coordinator = FdcQuotaCoordinator(
@@ -410,7 +425,7 @@ async def main() -> int:
             window_seconds=settings.fdc_provider_rate_window_seconds,
             declared_rpm_limit=settings.gemini_provider_declared_rpm_limit,
         )
-        client = LiveGeminiProviderClient(
+        fdc_client = LiveGeminiProviderClient(
             coordinator=coordinator,
             api_key=settings.provider_api_key,
             base_url=settings.provider_base_url,
@@ -419,25 +434,23 @@ async def main() -> int:
         manual_run_id = build_manual_run_id(script_name=SCRIPT_NAME)
 
         try:
-            # 4. Call provider for each prompt (순차 호출, 매 시도마다 reservation)
-            # AR OLD
+            # 4. Call provider for each prompt (순차 호출)
+            # AR OLD/NEW — coordinator를 거치지 않는다(FDC quota 대상 아님).
             calls.append(await _call_ar(
-                client, coordinator, manual_run_id, prompts.get("ar_old_prompt", ""),
+                ar_client, prompts.get("ar_old_prompt", ""),
                 system_prompts.get("ar", ""), "ar-old-1", model_id))
 
-            # AR NEW
             calls.append(await _call_ar(
-                client, coordinator, manual_run_id, prompts.get("ar_new_prompt", ""),
+                ar_client, prompts.get("ar_new_prompt", ""),
                 system_prompts.get("ar", ""), "ar-new-1", model_id))
 
-            # FDC OLD
+            # FDC OLD/NEW — 매 HTTP 시도마다 공용 quota reservation을 얻는다.
             calls.append(await _call_fdc(
-                client, coordinator, manual_run_id, prompts.get("fdc_old_prompt", ""),
+                fdc_client, coordinator, manual_run_id, prompts.get("fdc_old_prompt", ""),
                 system_prompts.get("fdc", ""), "fdc-old-1", model_id))
 
-            # FDC NEW
             calls.append(await _call_fdc(
-                client, coordinator, manual_run_id, prompts.get("fdc_new_prompt", ""),
+                fdc_client, coordinator, manual_run_id, prompts.get("fdc_new_prompt", ""),
                 system_prompts.get("fdc", ""), "fdc-new-1", model_id))
 
         except asyncio.TimeoutError:
@@ -446,7 +459,8 @@ async def main() -> int:
             _save_results(calls, artifact, total_duration)
             return 1
         finally:
-            await client.close()
+            await ar_client.close()
+            await fdc_client.close()
 
     total_duration = time.monotonic() - start_total
 

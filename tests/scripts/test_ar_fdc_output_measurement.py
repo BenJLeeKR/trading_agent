@@ -9,10 +9,26 @@ fake clock/fake DB만 사용 — 실제 sleep/DB/HTTP 없음.
 
 from __future__ import annotations
 
+import inspect
+
 import pytest
 
 from scripts import ar_fdc_output_measurement as script
 from scripts.fdc_manual_provider_gate import MarketHoursBlockedError
+
+
+class TestArFdcQuotaScopeSeparation:
+    """2026-08-27 리뷰 보정: AR과 FDC는 서로 다른 provider client
+    파라미터를 쓴다 — ``measure_symbol()``의 시그니처 자체가 단일
+    ``provider_client``(AR/FDC 공용)로 되돌아가지 않도록 구조적으로
+    강제한다."""
+
+    def test_measure_symbol_has_separate_ar_and_fdc_client_params(self) -> None:
+        sig = inspect.signature(script.measure_symbol)
+        assert "ar_provider_client" in sig.parameters
+        assert "fdc_provider_client" in sig.parameters
+        assert "provider_client" not in sig.parameters  # 옛 단일 파라미터 제거됨
+        assert "coordinator" not in sig.parameters  # AR 경로에 노출되지 않음
 
 
 @pytest.mark.asyncio

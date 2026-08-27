@@ -705,11 +705,57 @@ class TestLiveGeminiProviderClientConstruction:
         assert client.coordinator is not None
 
     def test_is_subclass_of_openai_compatible_client(self) -> None:
-        """부모 클래스의 ``generate_structured()``(변경 없음)를 그대로
-        상속해, 비운영 시간 수동 스크립트가 acquire_permit 어댑터와
-        함께 재사용할 수 있어야 한다."""
+        """``isinstance`` 관계는 유지되지만(코드 재사용 목적),
+        ``generate_structured()``는 아래 ``TestGenerateStructuredBlocked``
+        가 검증하듯 의도적으로 차단돼 있다 — AR 같은 non-FDC 호출이
+        이 클래스를 상속 관계만으로 "우연히" 재사용하면 안 된다는
+        신호이기도 하다(2026-08-27 리뷰 보정)."""
         client = LiveGeminiProviderClient(coordinator=_make_coordinator(), api_key="k")
         assert isinstance(client, OpenAICompatibleClient)
+
+
+class TestGenerateStructuredBlocked:
+    """2026-08-27 리뷰 보정: ``LiveGeminiProviderClient``가 상속받은
+    ``generate_structured()``를 그대로 노출하면, 호출자가 reservation
+    없이 이 메서드를 직접 호출해 FDC quota coordinator를 완전히
+    우회하는 live HTTP를 보낼 수 있었다. 이제 이 메서드는 HTTP 요청
+    **전**에 항상 예외를 던진다."""
+
+    @pytest.mark.asyncio
+    async def test_raises_before_any_http_request(self) -> None:
+        call_count = 0
+
+        def handler(req: httpx.Request) -> httpx.Response:
+            nonlocal call_count
+            call_count += 1
+            return _ok_response({"choices": [{"message": {"content": "{}"}}]})
+
+        client = _make_live_client(httpx.MockTransport(handler))
+
+        with pytest.raises(RuntimeError, match="generate_structured_once"):
+            await client.generate_structured(
+                model_id="test-model", system_prompt="s", user_prompt="u",
+                response_format=_FakeOutput,
+            )
+
+        assert call_count == 0
+
+    @pytest.mark.asyncio
+    async def test_raises_even_with_acquire_permit_supplied(self) -> None:
+        """acquire_permit을 넘겨도(레거시 permit 어댑터를 실수로 재사용
+        하려는 시도) 차단은 그대로 유지된다."""
+        client = _make_live_client(
+            httpx.MockTransport(lambda req: _ok_response({"choices": [{"message": {"content": "{}"}}]}))
+        )
+
+        async def _always_granted() -> PermitResult:
+            return PermitResult(granted=True)
+
+        with pytest.raises(RuntimeError, match="generate_structured_once"):
+            await client.generate_structured(
+                model_id="test-model", system_prompt="s", user_prompt="u",
+                response_format=_FakeOutput, acquire_permit=_always_granted,
+            )
 
 
 class TestGenerateStructuredOnce:

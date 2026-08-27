@@ -185,15 +185,24 @@ class PostgresFdcQuotaRepository:
         — quota window 판단은 ``outcome`` 값 자체(``_QUOTA_CONSUMING_
         OUTCOMES``)로만 이뤄지므로, 이미 ``reservation_granted``로
         window를 소비한 행의 ``outcome`` 문자열만 갱신하면 충분하다.
+
+        2026-08-27 리뷰 보정: 대응하는 attempt 행이 없으면(``reservation_
+        id``가 실제 ``try_reserve()``가 발급한 값이 아니거나 이미
+        삭제됐다면) ``UPDATE``가 조용히 0행을 갱신하고 성공한 것처럼
+        반환했었다 — 이는 감사 기록 누락을 숨기는 것과 같으므로,
+        ``RETURNING``으로 실제 갱신 행 수를 확인해 정확히 1행이
+        아니면 명시적으로 실패시킨다(HTTP 재시도나 성공 처리로
+        이어지지 않는다 — 순수하게 기록 정합성만 검증한다).
         """
         async with TransactionManager() as outcome_tx:
-            await outcome_tx.connection.execute(
+            updated_id = await outcome_tx.connection.fetchval(
                 "UPDATE trading.fdc_provider_attempts SET "
                 "outcome = $2, http_status = $3, error_class = $4, "
                 "http_429_observed = $5, http_started_at = "
                 "COALESCE($6, http_started_at), completed_at = "
                 "COALESCE($7, completed_at) "
-                "WHERE attempt_id = $1",
+                "WHERE attempt_id = $1 "
+                "RETURNING attempt_id",
                 reservation_id,
                 outcome,
                 http_status,
@@ -202,6 +211,14 @@ class PostgresFdcQuotaRepository:
                 http_started_at,
                 completed_at,
             )
+            if updated_id is None:
+                await outcome_tx.rollback()
+                raise ValueError(
+                    f"record_attempt_outcome: no fdc_provider_attempts row "
+                    f"for attempt_id={reservation_id!r} — nothing updated "
+                    "(reservation_id must come from a prior try_reserve() "
+                    "grant)"
+                )
             await outcome_tx.commit()
 
     async def register_shadow_job_and_judge(

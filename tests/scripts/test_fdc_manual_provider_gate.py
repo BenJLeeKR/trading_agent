@@ -157,74 +157,70 @@ class TestCallWithCoordinator:
         assert _attempt_outcome(coordinator, grant.reservation_id) == "http_failed_final"
 
 
-class TestMakeCoordinatorPermitAdapter:
+class TestCoordinatedFdcProviderClient:
+    """2026-08-27 리뷰 보정으로 신설 — ``make_coordinator_permit_adapter()``
+    /``finalize_permit_adapter_outcomes()``(부정확한 사후 일괄 기록)를
+    대체한다. ``AIProviderClient`` Protocol을 만족하는 wrapper이며,
+    내부적으로 이미 검증된 ``call_with_coordinator()``만 위임 호출한다
+    (중복 구현 없음 — 정확성은 ``TestCallWithCoordinator``가 이미 증명)."""
+
     @pytest.mark.asyncio
-    async def test_grants_permit_and_tracks_reservation(self) -> None:
+    async def test_delegates_to_call_with_coordinator(self) -> None:
         coordinator = _make_coordinator()
-        adapter, reservations = gate.make_coordinator_permit_adapter(
-            coordinator=coordinator, caller_id="manual:test", manual_run_id="run-5",
+        fake_live_client = _FakeClient([_success_response()])
+        wrapper = gate.CoordinatedFdcProviderClient(
+            coordinator=coordinator, live_client=fake_live_client,
+            caller_id="manual:test", manual_run_id="run-7",
         )
 
-        permit = await adapter()
+        result = await wrapper.generate_structured(
+            model_id="m", system_prompt="s", user_prompt="u",
+            response_format=_FakeOutput,
+        )
 
-        assert permit.granted is True
-        assert len(reservations) == 1
+        assert result.parsed.symbol == "AAPL"
+        assert len(fake_live_client.calls) == 1
+        grant, _ = fake_live_client.calls[0]
+        assert _attempt_outcome(coordinator, grant.reservation_id) == "http_succeeded"
 
     @pytest.mark.asyncio
-    async def test_denied_returns_not_granted_and_untracked(self) -> None:
+    async def test_rejects_acquire_permit_argument(self) -> None:
+        """레거시 permit 어댑터를 실수로 다시 연결하려는 시도를 방어적으로
+        막는다 — coordinator가 매 HTTP 시도를 전담하므로 별도 permit
+        콜백이 끼어들면 안 된다."""
+        coordinator = _make_coordinator()
+        wrapper = gate.CoordinatedFdcProviderClient(
+            coordinator=coordinator, live_client=_FakeClient([_success_response()]),
+            caller_id="manual:test", manual_run_id="run-8",
+        )
+
+        async def _dummy_permit():
+            raise AssertionError("호출되면 안 된다")
+
+        with pytest.raises(ValueError, match="acquire_permit"):
+            await wrapper.generate_structured(
+                model_id="m", system_prompt="s", user_prompt="u",
+                response_format=_FakeOutput, acquire_permit=_dummy_permit,
+            )
+
+    @pytest.mark.asyncio
+    async def test_quota_denied_propagates_and_sends_no_http(self) -> None:
         coordinator = _make_coordinator(target_rpm=1)
         filler = await coordinator.try_reserve(job_id=None, caller_id="filler")
         assert isinstance(filler, ReservationGrant)
-
-        adapter, reservations = gate.make_coordinator_permit_adapter(
-            coordinator=coordinator, caller_id="manual:test", manual_run_id="run-6",
+        fake_live_client = _FakeClient([_success_response()])
+        wrapper = gate.CoordinatedFdcProviderClient(
+            coordinator=coordinator, live_client=fake_live_client,
+            caller_id="manual:test", manual_run_id="run-9",
         )
-        permit = await adapter()
 
-        assert permit.granted is False
-        assert permit.denial_reason == "quota_denied"
-        assert reservations == []
-
-
-class TestFinalizePermitAdapterOutcomes:
-    @pytest.mark.asyncio
-    async def test_marks_last_success_others_retryable(self) -> None:
-        coordinator = _make_coordinator()
-        ids = []
-        for i in range(3):
-            r = await coordinator.try_reserve(
-                job_id=None, caller_id="manual:test", attempt_no=i + 1,
+        with pytest.raises(gate.QuotaUnavailableError):
+            await wrapper.generate_structured(
+                model_id="m", system_prompt="s", user_prompt="u",
+                response_format=_FakeOutput,
             )
-            assert isinstance(r, ReservationGrant)
-            ids.append(r.reservation_id)
 
-        await gate.finalize_permit_adapter_outcomes(
-            coordinator=coordinator, reservation_ids=ids, succeeded=True,
-        )
-
-        assert _attempt_outcome(coordinator, ids[0]) == "http_failed_retryable"
-        assert _attempt_outcome(coordinator, ids[1]) == "http_failed_retryable"
-        assert _attempt_outcome(coordinator, ids[2]) == "http_succeeded"
-
-    @pytest.mark.asyncio
-    async def test_marks_last_failed_final_on_failure(self) -> None:
-        coordinator = _make_coordinator()
-        r = await coordinator.try_reserve(job_id=None, caller_id="manual:test")
-        assert isinstance(r, ReservationGrant)
-
-        await gate.finalize_permit_adapter_outcomes(
-            coordinator=coordinator, reservation_ids=[r.reservation_id], succeeded=False,
-        )
-
-        assert _attempt_outcome(coordinator, r.reservation_id) == "http_failed_final"
-
-    @pytest.mark.asyncio
-    async def test_empty_list_is_a_noop(self) -> None:
-        coordinator = _make_coordinator()
-        # 예외 없이 조용히 반환돼야 한다.
-        await gate.finalize_permit_adapter_outcomes(
-            coordinator=coordinator, reservation_ids=[], succeeded=True,
-        )
+        assert fake_live_client.calls == []
 
 
 class TestAssertNotMarketHours:

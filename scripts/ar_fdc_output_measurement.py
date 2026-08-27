@@ -57,11 +57,10 @@ from agent_trading.services.ai_agents.schemas import (
 )
 from agent_trading.services.decision_orchestrator import AssembledContext, ScoreResult
 from scripts.fdc_manual_provider_gate import (
+    CoordinatedFdcProviderClient,
     MarketHoursBlockedError,
     assert_not_market_hours,
     build_manual_run_id,
-    finalize_permit_adapter_outcomes,
-    make_coordinator_permit_adapter,
 )
 
 SCRIPT_NAME = "ar_fdc_output_measurement"
@@ -753,9 +752,8 @@ async def measure_symbol(
     now: datetime,
     since: datetime,
     with_provider: bool = False,
-    provider_client: Any = None,
-    coordinator: Any = None,
-    manual_run_id: str | None = None,
+    ar_provider_client: Any = None,
+    fdc_provider_client: Any = None,
 ) -> dict[str, Any]:
     """Measure AR/FDC prompt quality for a single symbol."""
     print(f"\n{SEP}")
@@ -925,14 +923,15 @@ async def measure_symbol(
     #  선택적 Provider 호출 (030200 only, 2-3회 반복)
     # ====================================================================
     provider_results: dict[str, Any] = {"ar": [], "fdc": []}
-    if with_provider and provider_client is not None and symbol == "030200":
+    if with_provider and ar_provider_client is not None and fdc_provider_client is not None and symbol == "030200":
         print(f"\n  ── Provider 호출 (탐색적 관찰, 030200 only) ──")
         print(f"  NOTE: Results are non-deterministic. 2-3회 반복, 인과 주장 금지.")
 
-        # ── AR: OLD-style 2회 ──
+        # ── AR: OLD-style 2회 ── (coordinator를 거치지 않는다 — AR은
+        # production에서도 FDC 13 RPM quota의 대상이 아니다.)
         print(f"\n  [AR] OLD-style provider 호출 (2회, approximate reconstruction):")
         for i in range(2):
-            ar_old = _OldStyleAIRiskAgent(provider_client=provider_client)
+            ar_old = _OldStyleAIRiskAgent(provider_client=ar_provider_client)
             result = await _call_provider_ar(ar_old, request_with_ei, f"ar-old-{i+1}")
             provider_results["ar"].append(result)
             print(f"    run ar-old-{i+1}: opinion={result.get('risk_opinion')}, "
@@ -941,29 +940,20 @@ async def measure_symbol(
         # ── AR: NEW-style 2회 ──
         print(f"\n  [AR] NEW-style provider 호출 (2회, provenance-rich):")
         for i in range(2):
-            ar_new = AIRiskAgent(provider_client=provider_client)
+            ar_new = AIRiskAgent(provider_client=ar_provider_client)
             result = await _call_provider_ar(ar_new, request_with_ei, f"ar-new-{i+1}")
             provider_results["ar"].append(result)
             print(f"    run ar-new-{i+1}: opinion={result.get('risk_opinion')}, "
                   f"score={result.get('risk_score')}, success={result.get('success')}")
 
-        # ── FDC: OLD-style 2회 ── (공용 quota coordinator 경유 — FDC만
-        # 13 RPM quota 대상이다. AR은 production에서도 이 quota의 대상이
-        # 아니므로 위 AR 호출은 그대로 둔다.)
+        # ── FDC: OLD-style 2회 ── (fdc_provider_client는
+        # CoordinatedFdcProviderClient — 매 HTTP 시도마다 공용 quota
+        # reservation을 얻고 attempt별 정확한 lifecycle을 기록한다.
+        # acquire_permit은 넘기지 않는다 — coordinator가 전담.)
         print(f"\n  [FDC] OLD-style provider 호출 (2회, approximate reconstruction):")
         for i in range(2):
-            adapter, reservations = make_coordinator_permit_adapter(
-                coordinator=coordinator, caller_id=f"manual:{SCRIPT_NAME}",
-                manual_run_id=manual_run_id,
-            )
-            fdc_old = _OldStyleFinalDecisionComposerAgent(
-                provider_client=provider_client, acquire_permit=adapter,
-            )
+            fdc_old = _OldStyleFinalDecisionComposerAgent(provider_client=fdc_provider_client)
             result = await _call_provider_fdc(fdc_old, request_full, f"fdc-old-{i+1}")
-            await finalize_permit_adapter_outcomes(
-                coordinator=coordinator, reservation_ids=reservations,
-                succeeded=result.get("success", False),
-            )
             provider_results["fdc"].append(result)
             print(f"    run fdc-old-{i+1}: decision={result.get('decision_type')}, "
                   f"confidence={result.get('confidence')}, success={result.get('success')}")
@@ -971,18 +961,8 @@ async def measure_symbol(
         # ── FDC: NEW-style 2회 ──
         print(f"\n  [FDC] NEW-style provider 호출 (2회, provenance-rich):")
         for i in range(2):
-            adapter, reservations = make_coordinator_permit_adapter(
-                coordinator=coordinator, caller_id=f"manual:{SCRIPT_NAME}",
-                manual_run_id=manual_run_id,
-            )
-            fdc_new = FinalDecisionComposerAgent(
-                provider_client=provider_client, acquire_permit=adapter,
-            )
+            fdc_new = FinalDecisionComposerAgent(provider_client=fdc_provider_client)
             result = await _call_provider_fdc(fdc_new, request_full, f"fdc-new-{i+1}")
-            await finalize_permit_adapter_outcomes(
-                coordinator=coordinator, reservation_ids=reservations,
-                succeeded=result.get("success", False),
-            )
             provider_results["fdc"].append(result)
             print(f"    run fdc-new-{i+1}: decision={result.get('decision_type')}, "
                   f"confidence={result.get('confidence')}, success={result.get('success')}")
@@ -1103,50 +1083,63 @@ async def main() -> int:
     async with postgres_runtime() as runtime:
         repos = runtime["repositories"]
 
-        # Provider client (선택적) — FDC 전용 quota coordinator를 통과하는
-        # LiveGeminiProviderClient로 생성한다(§19 진입점 #4). AR 호출은
-        # production에서도 이 quota의 대상이 아니므로(AIRiskAgent.run()이
-        # acquire_permit을 전혀 쓰지 않음) 그대로 둔다 — FDC 호출만
-        # coordinator 기반 permit adapter를 acquire_permit으로 주입한다.
-        provider_client = None
-        coordinator = None
-        manual_run_id = None
+        # Provider client (선택적) — AR과 FDC는 서로 다른 quota 정책을
+        # 따르므로 클라이언트를 분리한다(2026-08-27 리뷰 보정). AR은
+        # production에서도 FDC 13 RPM quota 대상이 아니므로
+        # (AIRiskAgent.run()이 acquire_permit을 전혀 쓰지 않음) 일반
+        # OpenAICompatibleClient를 그대로 쓴다. FDC만
+        # CoordinatedFdcProviderClient(LiveGeminiProviderClient +
+        # coordinator를 감싼 AIProviderClient wrapper, §19 진입점 #4)로
+        # 매 HTTP 시도마다 공용 quota reservation을 얻는다.
+        ar_provider_client = None
+        fdc_provider_client = None
         if args.with_provider:
             try:
                 from agent_trading.config.settings import AppSettings
                 from agent_trading.services.ai_agents.provider_client import (
                     LiveGeminiProviderClient,
+                    OpenAICompatibleClient,
                 )
                 from agent_trading.services.fdc_quota_coordinator import (
                     FdcQuotaCoordinator,
                 )
                 settings = AppSettings()
+                ar_provider_client = OpenAICompatibleClient(
+                    api_key=settings.provider_api_key,
+                    base_url=settings.provider_base_url,
+                    timeout_seconds=settings.provider_timeout_seconds,
+                )
                 coordinator = FdcQuotaCoordinator(
                     repo=repos.fdc_quota,
                     target_rpm=settings.fdc_provider_target_rpm,
                     window_seconds=settings.fdc_provider_rate_window_seconds,
                     declared_rpm_limit=settings.gemini_provider_declared_rpm_limit,
                 )
-                provider_client = LiveGeminiProviderClient(
+                live_fdc_client = LiveGeminiProviderClient(
                     coordinator=coordinator,
                     api_key=settings.provider_api_key,
                     base_url=settings.provider_base_url,
                     timeout_seconds=settings.provider_timeout_seconds,
                 )
-                manual_run_id = build_manual_run_id(script_name=SCRIPT_NAME)
-                print("  Provider client initialized (LiveGeminiProviderClient, coordinator-gated).")
+                fdc_provider_client = CoordinatedFdcProviderClient(
+                    coordinator=coordinator,
+                    live_client=live_fdc_client,
+                    caller_id=f"manual:{SCRIPT_NAME}",
+                    manual_run_id=build_manual_run_id(script_name=SCRIPT_NAME),
+                )
+                print("  Provider clients initialized (AR: plain, FDC: coordinator-gated).")
             except (ImportError, AttributeError) as e:
                 print(f"  ⚠️ Provider client not available: {e}. Skipping provider calls.")
-                provider_client = None
+                ar_provider_client = None
+                fdc_provider_client = None
 
         all_results: list[dict[str, Any]] = []
         for symbol in SYMBOLS:
             result = await measure_symbol(
                 repos, symbol, now, since,
                 with_provider=args.with_provider,
-                provider_client=provider_client,
-                coordinator=coordinator,
-                manual_run_id=manual_run_id,
+                ar_provider_client=ar_provider_client,
+                fdc_provider_client=fdc_provider_client,
             )
             all_results.append(result)
 
@@ -1234,7 +1227,7 @@ async def main() -> int:
                 print(f"    - FDC provenance < 80%")
 
         # Provider 결과 (있을 경우)
-        if args.with_provider and provider_client is not None:
+        if args.with_provider and ar_provider_client is not None and fdc_provider_client is not None:
             print(f"\n{DASH}")
             print("  Provider 호출 결과 (참고용, 탐색적 관찰)")
             print(DASH)

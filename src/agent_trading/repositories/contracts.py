@@ -2133,6 +2133,13 @@ class FdcQuotaRepository(Protocol):
         retryable``/``http_failed_final``/``reserved_but_http_not_
         started``)를 그대로 쓴다. 새 reservation을 발급하지 않으며,
         이미 소비된 window 슬롯의 상태만 갱신한다.
+
+        Raises
+        ------
+        ValueError
+            ``reservation_id``에 대응하는 attempt 행이 존재하지 않아
+            갱신된 행이 0개일 때(2026-08-27 리뷰 보정) — 감사 기록
+            누락을 조용히 성공으로 위장하지 않는다.
         """
         ...
 
