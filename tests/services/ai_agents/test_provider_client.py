@@ -863,6 +863,115 @@ class TestGenerateStructuredOnce:
         assert "acquire_permit" not in sig.parameters
 
 
+class TestOnHttpStartHook:
+    """2026-08-27 2차 리뷰 보정: ``on_http_start`` 훅이 실제
+    ``client.post()`` 직전에만, 정확히 1회 호출되는지 검증한다."""
+
+    @pytest.mark.asyncio
+    async def test_hook_called_immediately_before_post(self) -> None:
+        call_order: list[str] = []
+
+        def handler(req: httpx.Request) -> httpx.Response:
+            call_order.append("post")
+            return _ok_response({"choices": [{"message": {"content": "{}"}}]})
+
+        client = _make_live_client(httpx.MockTransport(handler))
+        coordinator = _make_coordinator()
+        grant = await coordinator.try_reserve(job_id=None, caller_id="test")
+        assert isinstance(grant, ReservationGrant)
+
+        async def _on_http_start() -> None:
+            call_order.append("hook")
+
+        await client.generate_structured_once(
+            grant, expected_job_id=None, expected_attempt_no=1,
+            model_id="test-model", system_prompt="s", user_prompt="u",
+            response_format=_FakeOutput, on_http_start=_on_http_start,
+        )
+
+        assert call_order == ["hook", "post"]
+
+    @pytest.mark.asyncio
+    async def test_hook_not_called_when_omitted_preserves_default_behavior(self) -> None:
+        """``on_http_start=None``(기본값)이면 훅 없이 기존과 동일하게
+        동작한다 — ``generate_structured()``의 기존 retry 루프가 이
+        인자를 넘기지 않으므로 외부 동작이 그대로 보존된다."""
+        call_count = 0
+
+        def handler(req: httpx.Request) -> httpx.Response:
+            nonlocal call_count
+            call_count += 1
+            return _ok_response({"choices": [{"message": {"content": "{}"}}]})
+
+        client = _make_live_client(httpx.MockTransport(handler))
+        coordinator = _make_coordinator()
+        grant = await coordinator.try_reserve(job_id=None, caller_id="test")
+        assert isinstance(grant, ReservationGrant)
+
+        result = await client.generate_structured_once(
+            grant, expected_job_id=None, expected_attempt_no=1,
+            model_id="test-model", system_prompt="s", user_prompt="u",
+            response_format=_FakeOutput,
+        )
+
+        assert call_count == 1
+        assert result.parsed is not None
+
+    @pytest.mark.asyncio
+    async def test_hook_failure_prevents_post_entirely(self) -> None:
+        """훅이 예외를 던지면 ``client.post()``는 전혀 호출되지 않는다
+        (감사 기록 실패를 무시하고 HTTP를 보내지 않는다는 계약)."""
+        post_called = False
+
+        def handler(req: httpx.Request) -> httpx.Response:
+            nonlocal post_called
+            post_called = True
+            return _ok_response({"choices": [{"message": {"content": "{}"}}]})
+
+        client = _make_live_client(httpx.MockTransport(handler))
+        coordinator = _make_coordinator()
+        grant = await coordinator.try_reserve(job_id=None, caller_id="test")
+        assert isinstance(grant, ReservationGrant)
+
+        async def _failing_hook() -> None:
+            raise RuntimeError("audit db write failed")
+
+        with pytest.raises(RuntimeError, match="audit db write failed"):
+            await client.generate_structured_once(
+                grant, expected_job_id=None, expected_attempt_no=1,
+                model_id="test-model", system_prompt="s", user_prompt="u",
+                response_format=_FakeOutput, on_http_start=_failing_hook,
+            )
+
+        assert post_called is False
+
+    @pytest.mark.asyncio
+    async def test_grant_mismatch_fails_before_hook_is_ever_called(self) -> None:
+        """body 조립/client 준비 이전 단계(grant 검증)의 실패는 훅보다
+        먼저 발생해야 한다 — 훅이 호출되지 않았음을 직접 증명한다."""
+        client = _make_live_client(
+            httpx.MockTransport(lambda req: _ok_response({"choices": [{"message": {"content": "{}"}}]}))
+        )
+        coordinator = _make_coordinator()
+        grant = await coordinator.try_reserve(job_id=None, caller_id="test")
+        assert isinstance(grant, ReservationGrant)
+
+        hook_called = False
+
+        async def _hook() -> None:
+            nonlocal hook_called
+            hook_called = True
+
+        with pytest.raises(ValueError, match="grant mismatch"):
+            await client.generate_structured_once(
+                grant, expected_job_id=None, expected_attempt_no=99,
+                model_id="test-model", system_prompt="s", user_prompt="u",
+                response_format=_FakeOutput, on_http_start=_hook,
+            )
+
+        assert hook_called is False
+
+
 class TestSingleHttpAttemptExtractionRegression:
     """2026-08-27 PR A: ``generate_structured()``의 retry 루프 안에 있던
     "요청 1회 전송 + 성공 파싱"을 ``_single_http_attempt()``로 추출했다

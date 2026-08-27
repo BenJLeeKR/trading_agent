@@ -193,7 +193,20 @@ class PostgresFdcQuotaRepository:
         ``RETURNING``으로 실제 갱신 행 수를 확인해 정확히 1행이
         아니면 명시적으로 실패시킨다(HTTP 재시도나 성공 처리로
         이어지지 않는다 — 순수하게 기록 정합성만 검증한다).
+
+        2026-08-27 2차 리뷰 보정: ``outcome="http_started"``(실제
+        ``client.post()`` 직전에 기록되는 HTTP 시작 마커, provider_
+        client.py의 ``on_http_start`` 콜백이 호출)는 **``http_started_
+        at``이 아직 NULL인 행에만** 적용되도록 ``WHERE`` 절에 추가
+        조건을 건다 — "하나의 reservation은 하나의 실제 실행 기회에만
+        대응해야 한다"는 계약을 DB 수준에서 fail-closed로 강제한다.
+        같은 reservation에 HTTP 시작을 두 번 기록하려 하면(이미
+        ``http_started_at``이 채워진 행) 이 조건에 걸려 0행이 갱신되고
+        ``ValueError``를 던진다. 다른 outcome(성공/실패 최종 기록)은
+        이 조건 없이 그대로 갱신한다 — HTTP 시작 이후 그 행의 최종
+        상태를 채우는 것이 정상 흐름이기 때문이다.
         """
+        extra_guard = " AND http_started_at IS NULL" if outcome == "http_started" else ""
         async with TransactionManager() as outcome_tx:
             updated_id = await outcome_tx.connection.fetchval(
                 "UPDATE trading.fdc_provider_attempts SET "
@@ -201,7 +214,7 @@ class PostgresFdcQuotaRepository:
                 "http_429_observed = $5, http_started_at = "
                 "COALESCE($6, http_started_at), completed_at = "
                 "COALESCE($7, completed_at) "
-                "WHERE attempt_id = $1 "
+                f"WHERE attempt_id = $1{extra_guard} "
                 "RETURNING attempt_id",
                 reservation_id,
                 outcome,
@@ -213,6 +226,23 @@ class PostgresFdcQuotaRepository:
             )
             if updated_id is None:
                 await outcome_tx.rollback()
+                if outcome == "http_started":
+                    # 행 자체가 없는지, 이미 http_started_at이 찍혀 있어
+                    # 가드에 걸린 것인지 구분해 더 정확한 오류를 낸다.
+                    async with TransactionManager() as check_tx:
+                        existing = await check_tx.connection.fetchval(
+                            "SELECT http_started_at FROM trading.fdc_provider_attempts "
+                            "WHERE attempt_id = $1",
+                            reservation_id,
+                        )
+                        await check_tx.rollback()
+                    if existing is not None:
+                        raise ValueError(
+                            f"record_attempt_outcome: attempt_id={reservation_id!r} "
+                            f"already has http_started_at={existing!r} — refusing to "
+                            "record a second HTTP start for the same reservation "
+                            "(one reservation = one real execution attempt)"
+                        )
                 raise ValueError(
                     f"record_attempt_outcome: no fdc_provider_attempts row "
                     f"for attempt_id={reservation_id!r} — nothing updated "

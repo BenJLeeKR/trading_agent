@@ -153,12 +153,37 @@ async def call_with_coordinator(
       (``CoordinatorError``)면 ``QuotaUnavailableError``를 던지고 HTTP는
       전혀 보내지 않는다.
     - 승인되면 ``LiveGeminiProviderClient.generate_structured_once()``를
-      **정확히 1회** 호출하고, 결과(성공/실패)를
-      ``coordinator.record_attempt_outcome()``으로 즉시 기록한다.
+      **정확히 1회** 호출한다.
     - retryable 실패(429/5xx/네트워크/timeout)이고 시도 횟수가 남았으면
       **새 reservation**을 다시 얻어 재시도한다(같은 grant를 재사용하지
       않는다 — one-shot은 grant를 소비하면 끝이다).
     - non-retryable 실패는 즉시 원본 예외를 던진다.
+
+    **``http_started_at`` 정밀 기록(2026-08-27 2차 리뷰 보정)**: 이
+    함수는 더 이상 ``generate_structured_once()`` 호출 *전*에 타임스탬프를
+    직접 잡지 않는다 — 그러면 client 준비/body 조립 단계의 실패까지
+    "HTTP가 시작됐다"고 잘못 기록할 수 있었다. 대신 ``on_http_start``
+    콜백을 넘겨, ``provider_client.py``가 실제 ``client.post()`` 바로
+    직전에만 이를 호출하게 한다:
+
+    - 콜백이 성공적으로 실행되면(=실제 HTTP가 시작된 것으로 간주)
+      ``coordinator.record_attempt_outcome(outcome="http_started",
+      http_started_at=now())``으로 즉시 기록하고, 이후 결과 기록에서는
+      ``http_started_at``을 다시 넘기지 않는다(이미 기록된 값을
+      ``COALESCE``가 보존).
+    - 콜백의 DB 기록 자체가 실패하면(예: coordinator/DB 오류) 그
+      예외가 ``generate_structured_once()``를 통해 그대로 전파되고,
+      **``client.post()``는 호출되지 않는다** — "감사 기록 실패를
+      무시하고 HTTP를 보내면 안 된다"는 계약을 코드 구조로 강제한다.
+    - 콜백이 아예 호출되지 못한 경우(client 준비/body 조립 단계 실패,
+      또는 콜백 자체의 DB 기록 실패) — 즉 HTTP가 실제로 시작되지
+      못한 경우 — 이 함수는 설계 문서 기존 어휘의
+      ``outcome="reserved_but_http_not_started"``로 기록한다(새 상태를
+      만들지 않는다). 이 실패도 retryable로 간주해 새 reservation으로
+      재시도한다.
+    - 콜백이 성공한 뒤(HTTP가 실제로 시작된 뒤) 발생한 실패만 기존
+      ``http_failed_retryable``/``http_failed_final`` 규칙을 그대로
+      따른다.
     """
     last_exc: Exception | None = None
     for attempt_no in range(1, max_attempts + 1):
@@ -181,7 +206,17 @@ async def call_with_coordinator(
             )
 
         grant: ReservationGrant = result
-        started_at = datetime.now(timezone.utc)
+        http_started = False
+
+        async def _on_http_start(_grant: ReservationGrant = grant) -> None:
+            nonlocal http_started
+            await coordinator.record_attempt_outcome(
+                reservation_id=_grant.reservation_id,
+                outcome="http_started",
+                http_started_at=datetime.now(timezone.utc),
+            )
+            http_started = True
+
         try:
             response = await client.generate_structured_once(
                 grant,
@@ -193,9 +228,24 @@ async def call_with_coordinator(
                 response_format=response_format,
                 temperature=temperature,
                 seed=seed,
+                on_http_start=_on_http_start,
             )
         except Exception as exc:  # noqa: BLE001 — 아래에서 재시도 여부만 분류
             completed_at = datetime.now(timezone.utc)
+            if not http_started:
+                # HTTP 시작 전 실패(client 준비/body 조립 실패, 또는
+                # on_http_start 콜백 자체의 DB 기록 실패) — client.post()는
+                # 호출되지 않았다.
+                await coordinator.record_attempt_outcome(
+                    reservation_id=grant.reservation_id,
+                    outcome="reserved_but_http_not_started",
+                    error_class=type(exc).__name__,
+                    completed_at=completed_at,
+                )
+                last_exc = exc
+                if attempt_no < max_attempts:
+                    continue
+                raise
             retryable = _is_retryable_exception(exc)
             is_429 = (
                 isinstance(exc, httpx.HTTPStatusError)
@@ -210,7 +260,6 @@ async def call_with_coordinator(
                 ),
                 error_class=type(exc).__name__,
                 http_429_observed=is_429,
-                http_started_at=started_at,
                 completed_at=completed_at,
             )
             last_exc = exc
@@ -222,7 +271,6 @@ async def call_with_coordinator(
             await coordinator.record_attempt_outcome(
                 reservation_id=grant.reservation_id,
                 outcome="http_succeeded",
-                http_started_at=started_at,
                 completed_at=completed_at,
             )
             return response

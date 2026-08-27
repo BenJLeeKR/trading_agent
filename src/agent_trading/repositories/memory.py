@@ -3145,12 +3145,17 @@ class _InMemoryFdcAttempt:
     ``try_reserve()``가 발급하는 ``reservation_id``를 ``attempt_id``로
     그대로 저장해, 이후 ``record_attempt_outcome()``이 같은 행을 다시
     찾아 ``outcome``만 갱신할 수 있게 한다 — 기존 tuple 저장 방식은
-    id를 전혀 보관하지 않아 발급 후 재조회가 불가능했다."""
+    id를 전혀 보관하지 않아 발급 후 재조회가 불가능했다.
+
+    ``http_started_at``(2026-08-27 2차 리뷰 보정 신설): "HTTP 시작
+    전/후" 구분과 중복 시작 fail-closed 가드를 단위 테스트(Postgres
+    없이)로도 검증할 수 있도록 Postgres와 동일한 필드를 추가했다."""
 
     attempt_id: UUID
     reserved_at: datetime
     mode: str
     outcome: str
+    http_started_at: datetime | None = None
 
 
 class InMemoryFdcQuotaRepository:
@@ -3251,13 +3256,20 @@ class InMemoryFdcQuotaRepository:
         http_started_at: datetime | None = None,
         completed_at: datetime | None = None,
     ) -> None:
-        """``try_reserve()``가 발급한 행의 ``outcome``만 갱신한다(PR A
-        신설). Postgres 구현과 동일하게 새 reservation을 발급하지
-        않는다. ``http_status``/``error_class``/`http_429_observed``/
-        타임스탬프는 in-memory 테스트에서는 저장하지 않는다(window
-        판단은 ``outcome``에만 의존하므로 최소 구현으로 충분) — 이
-        값들 자체를 검증해야 하는 테스트는 Postgres 통합 테스트(§
-        21)에서 수행한다.
+        """``try_reserve()``가 발급한 행의 ``outcome``(및
+        ``http_started_at``)을 갱신한다(PR A 신설, 2026-08-27 2차
+        리뷰 보정으로 ``http_started_at`` 추적 추가). Postgres 구현과
+        동일하게 새 reservation을 발급하지 않는다. ``http_status``/
+        ``error_class``/``http_429_observed``/``completed_at``은
+        in-memory 테스트에서는 저장하지 않는다(window 판단·pre/post
+        HTTP 구분에는 ``outcome``/``http_started_at``만 필요하므로
+        최소 구현으로 충분) — 나머지 필드 값 자체를 검증해야 하는
+        테스트는 Postgres 통합 테스트(§21)에서 수행한다.
+
+        2026-08-27 2차 리뷰 보정: Postgres 구현과 동일하게,
+        ``outcome="http_started"``는 ``http_started_at``이 아직
+        ``None``인 행에만 적용된다(fail-closed) — 같은 reservation에
+        HTTP 시작을 두 번 기록하려 하면 ``ValueError``.
         """
         async with self._lock:
             entry = self._attempts_by_id.get(reservation_id)
@@ -3266,6 +3278,15 @@ class InMemoryFdcQuotaRepository:
                     f"record_attempt_outcome: unknown reservation_id={reservation_id!r} "
                     "(no matching attempt from try_reserve())"
                 )
+            if outcome == "http_started" and entry.http_started_at is not None:
+                raise ValueError(
+                    f"record_attempt_outcome: attempt_id={reservation_id!r} "
+                    f"already has http_started_at={entry.http_started_at!r} — "
+                    "refusing to record a second HTTP start for the same "
+                    "reservation (one reservation = one real execution attempt)"
+                )
+            if http_started_at is not None:
+                entry.http_started_at = http_started_at
             entry.outcome = outcome
 
     async def register_shadow_job_and_judge(

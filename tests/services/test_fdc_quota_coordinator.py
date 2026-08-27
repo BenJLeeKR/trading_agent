@@ -631,7 +631,9 @@ class TestPostgresCallWithCoordinatorLifecycle:
             def __init__(self) -> None:
                 self.calls = 0
 
-            async def generate_structured_once(self, grant, **kwargs):
+            async def generate_structured_once(self, grant, *, on_http_start=None, **kwargs):
+                if on_http_start is not None:
+                    await on_http_start()
                 self.calls += 1
                 return RawProviderResponse(
                     parsed=_Output(), raw_content="{}",
@@ -696,7 +698,9 @@ class TestPostgresCallWithCoordinatorLifecycle:
                 )]
                 self.grants_seen = []
 
-            async def generate_structured_once(self, grant, **kwargs):
+            async def generate_structured_once(self, grant, *, on_http_start=None, **kwargs):
+                if on_http_start is not None:
+                    await on_http_start()
                 self.grants_seen.append(grant.reservation_id)
                 outcome = self._outcomes.pop(0)
                 if isinstance(outcome, Exception):
@@ -759,7 +763,9 @@ class TestPostgresCallWithCoordinatorLifecycle:
             symbol: str = "AAPL"
 
         class _FakeLiveClient:
-            async def generate_structured_once(self, grant, **kwargs):
+            async def generate_structured_once(self, grant, *, on_http_start=None, **kwargs):
+                if on_http_start is not None:
+                    await on_http_start()
                 req = httpx.Request("POST", "https://x/v1/chat/completions")
                 resp = httpx.Response(400, request=req)
                 exc = httpx.HTTPStatusError("400", request=req, response=resp)
@@ -787,6 +793,98 @@ class TestPostgresCallWithCoordinatorLifecycle:
         assert row["http_status"] == 400
         assert row["http_started_at"] is not None
         assert row["completed_at"] is not None
+
+    @pytest.mark.asyncio
+    async def test_on_http_start_hook_db_failure_sends_zero_http(
+        self, db_ready, quota_scope: str,
+    ) -> None:
+        """``on_http_start`` 콜백(coordinator DB 기록) 자체가 실패하면
+        실제 HTTP 요청에 해당하는 실행이 **0회**여야 하고, 그 attempt는
+        ``reserved_but_http_not_started``로 기록되며 ``http_started_at``
+        은 NULL이어야 한다."""
+        from dataclasses import dataclass
+
+        from agent_trading.db.connection import connection
+        from agent_trading.services.ai_agents.base import RawProviderResponse
+        from scripts.fdc_manual_provider_gate import call_with_coordinator
+
+        @dataclass(slots=True, frozen=True)
+        class _Output:
+            symbol: str = "AAPL"
+
+        class _FailingHookThenSuccessClient:
+            """1번째 attempt는 on_http_start 훅 자체가 예외를 던지도록
+            강제하고(coordinator DB 기록 실패를 시뮬레이션), 2번째
+            attempt는 정상 진행한다."""
+
+            def __init__(self) -> None:
+                self.attempt_index = 0
+                self.http_post_equivalent_calls = 0
+
+            async def generate_structured_once(self, grant, *, on_http_start=None, **kwargs):
+                self.attempt_index += 1
+                if self.attempt_index == 1:
+                    # 훅 자체를 실패시킨다 — call_with_coordinator가 넘긴
+                    # 실제 on_http_start(coordinator.record_attempt_outcome)
+                    # 대신, DB 기록이 실패한 상황을 그대로 재현하기 위해
+                    # 원래 훅을 호출하지 않고 즉시 예외를 던진다.
+                    raise RuntimeError("simulated on_http_start DB failure")
+                if on_http_start is not None:
+                    await on_http_start()
+                self.http_post_equivalent_calls += 1
+                return RawProviderResponse(
+                    parsed=_Output(), raw_content="{}",
+                    http_attempt_count=1, http_429_count=0,
+                )
+
+        coordinator = _postgres_coordinator(quota_scope=quota_scope, target_rpm=13)
+        fake_client = _FailingHookThenSuccessClient()
+
+        result = await call_with_coordinator(
+            coordinator=coordinator, client=fake_client, caller_id="manual:test",
+            manual_run_id="run-pg-5", model_id="m", system_prompt="s",
+            user_prompt="u", response_format=_Output, max_attempts=3,
+        )
+
+        assert result.parsed.symbol == "AAPL"
+        assert fake_client.http_post_equivalent_calls == 1  # 1번째는 HTTP 실행 자체가 없었다
+
+        async with connection() as conn:
+            rows = await conn.fetch(
+                "SELECT outcome, http_started_at, completed_at "
+                "FROM trading.fdc_provider_attempts WHERE quota_scope = $1 "
+                "ORDER BY attempt_no",
+                quota_scope,
+            )
+        assert len(rows) == 2
+        failed_row, success_row = rows
+        assert failed_row["outcome"] == "reserved_but_http_not_started"
+        assert failed_row["http_started_at"] is None
+        assert success_row["outcome"] == "http_succeeded"
+        assert success_row["http_started_at"] is not None
+
+    @pytest.mark.asyncio
+    async def test_duplicate_http_started_recording_fails_closed_on_postgres(
+        self, db_ready, quota_scope: str,
+    ) -> None:
+        """실제 PostgreSQL 위에서도 같은 reservation에 HTTP 시작을 두 번
+        기록하려 하면 명시적으로 실패한다."""
+        from datetime import datetime, timezone
+
+        coordinator = _postgres_coordinator(quota_scope=quota_scope, target_rpm=13)
+        grant = await coordinator.try_reserve(job_id=None, caller_id="manual:test")
+        assert isinstance(grant, ReservationGrant)
+
+        await coordinator.record_attempt_outcome(
+            reservation_id=grant.reservation_id, outcome="http_started",
+            http_started_at=datetime.now(timezone.utc),
+        )
+
+        with pytest.raises(ValueError, match="already has http_started_at"):
+            await coordinator.record_attempt_outcome(
+                reservation_id=grant.reservation_id, outcome="http_started",
+                http_started_at=datetime.now(timezone.utc),
+            )
 
 
 @pytestmark_db

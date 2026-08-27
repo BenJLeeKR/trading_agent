@@ -64,6 +64,12 @@ class PermitResult:
 
 PermitCallback = Callable[[], Awaitable[PermitResult]]
 
+# 2026-08-27 2차 리뷰 보정: 실제 client.post() 직전에 호출되는 최소
+# lifecycle hook. ``PermitCallback``과 마찬가지로 이 모듈은 실제 구현
+# (coordinator/repository)을 전혀 모른다 — 호출 가능한 무인자 코루틴
+# 이라는 얕은 모양만 안다(계층 결합 최소화, 위 설계 원칙과 동일).
+HttpStartCallback = Callable[[], Awaitable[None]]
+
 
 class PermitDeniedError(Exception):
     """rate limiter permit을 얻지 못해 HTTP 요청을 보내지 않고 중단했다.
@@ -288,6 +294,7 @@ class OpenAICompatibleClient:
         *,
         http_attempt_count: int,
         http_429_count: int,
+        on_http_start: "HttpStartCallback | None" = None,
     ) -> RawProviderResponse:
         """정확히 HTTP 요청 1회를 보내고 파싱한다(2026-08-27 PR A 추출 —
         ``generate_structured()``의 retry 루프 안에 있던 "요청 1회
@@ -299,7 +306,19 @@ class OpenAICompatibleClient:
 
         ``http_attempt_count``/``http_429_count``는 호출자가 계산해
         넘긴 값을 그대로 성공 응답에 실어 반환할 뿐, 이 메서드 내부에서
-        증가시키지 않는다(카운팅 책임은 호출자에게 있다)."""
+        증가시키지 않는다(카운팅 책임은 호출자에게 있다).
+
+        ``on_http_start``(2026-08-27 2차 리뷰 보정 신설): 넘겨지면
+        ``client.post()`` **바로 직전**(client 준비·body 조립이 전부
+        끝난 뒤)에 정확히 1회 호출된다. ``generate_structured()``의
+        기존 retry 루프는 이 인자를 넘기지 않으므로(``None``) 동작이
+        완전히 그대로 보존된다 — ``generate_structured_once()``만
+        이를 이용해 실제 HTTP 시작 직전 시각을 감사 기록에 남긴다.
+        콜백이 예외를 던지면 ``client.post()``는 **절대 호출되지
+        않는다**(감사 기록 실패를 무시하고 HTTP를 보내지 않는다는
+        계약)."""
+        if on_http_start is not None:
+            await on_http_start()
         response = await client.post("/v1/chat/completions", json=body)
         response.raise_for_status()
         data = response.json()
@@ -482,12 +501,25 @@ class LiveGeminiProviderClient(OpenAICompatibleClient):
     본체를 구현할 때 비로소 이 클래스로 전환된다. PR A에서 실제로
     이 클래스를 쓰는 것은 독립 분석 스크립트 2개
     (``scripts/ar_fdc_provider_validation.py``,
-    ``scripts/ar_fdc_output_measurement.py`` — §19 진입점 #3·#4)뿐이며,
-    두 스크립트는 ``generate_structured()``(부모 클래스, 변경 없음)를
-    ``acquire_permit``에 coordinator 기반 어댑터를 주입해 그대로
-    재사용한다 — dispatcher가 아직 없으므로 ``generate_structured_
-    once()``는 이 시점에 아무도 호출하지 않는다(PR B의 dispatcher가
-    유일한 호출자가 될 예정).
+    ``scripts/ar_fdc_output_measurement.py`` — §19 진입점 #3·#4)뿐이다.
+
+    **``generate_structured()``는 의도적으로 차단돼 있다**(아래
+    참고, 2026-08-27 리뷰 보정) — 상속받은 이 메서드를 그대로 두면
+    coordinator reservation 없이 live HTTP를 보낼 수 있는 우회로가
+    생기기 때문이다. 두 수동 스크립트의 **FDC** 호출은
+    ``generate_structured_once(grant, ...)``만 사용한다:
+    ``ar_fdc_provider_validation.py``는 이를 직접(``scripts/
+    fdc_manual_provider_gate.py::call_with_coordinator()``를 통해)
+    호출하고, ``ar_fdc_output_measurement.py``는
+    ``FinalDecisionComposerAgent.run()`` 같은 기존 고수준 인터페이스를
+    유지하기 위해 ``AIProviderClient`` Protocol을 만족하는
+    ``CoordinatedFdcProviderClient`` wrapper(같은 모듈)를 거쳐
+    간접 호출한다 — 두 경로 모두 내부적으로 하나의
+    ``call_with_coordinator()`` 구현만 공유한다(옛 permit-adapter
+    방식은 attempt별 정확한 lifecycle을 기록할 수 없어 제거됨). **AR**
+    호출은 이 클래스를 전혀 쓰지 않는다 — production에서도 FDC 13 RPM
+    quota 대상이 아니므로 일반 ``OpenAICompatibleClient``를 그대로
+    쓴다.
     """
 
     def __init__(
@@ -558,6 +590,7 @@ class LiveGeminiProviderClient(OpenAICompatibleClient):
         response_format: type,
         temperature: float = 0.0,
         seed: int | None = None,
+        on_http_start: "HttpStartCallback | None" = None,
     ) -> RawProviderResponse:
         """dispatcher(PR B)가 이미 발급받은 ``grant``를 검증·소비해 HTTP를
         **정확히 1회만** 실행한다.
@@ -571,6 +604,12 @@ class LiveGeminiProviderClient(OpenAICompatibleClient):
         - retry가 필요하면 호출자(dispatcher)가 새 reservation을 받아
           이 메서드를 다시 호출해야 한다 — 이 메서드 자신은 재시도
           루프를 갖지 않는다.
+        - client 준비(``_get_client()``)와 body 조립(``_build_chat_
+          body()``)을 **먼저 전부 끝낸 뒤**, ``on_http_start``가 있으면
+          실제 ``client.post()`` 바로 직전에 정확히 1회 호출한다
+          (2026-08-27 2차 리뷰 보정) — 호출자(``call_with_coordinator()``)
+          가 이 시점에 ``http_started_at``을 감사 기록에 남긴다. 이
+          콜백이 예외를 던지면 ``client.post()``는 호출되지 않는다.
 
         Raises
         ------
@@ -595,6 +634,7 @@ class LiveGeminiProviderClient(OpenAICompatibleClient):
             return await self._single_http_attempt(
                 client, body, response_format,
                 http_attempt_count=1, http_429_count=0,
+                on_http_start=on_http_start,
             )
         except httpx.HTTPStatusError as e:
             is_429 = e.response.status_code == 429

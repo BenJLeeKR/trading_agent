@@ -37,16 +37,40 @@ def _make_coordinator(*, target_rpm: int = 13) -> FdcQuotaCoordinator:
 
 class _FakeClient:
     """``call_with_coordinator()``가 요구하는 최소 duck-typed 인터페이스
-    (``generate_structured_once()``)만 흉내낸다 — 실제 HTTP 없음."""
+    (``generate_structured_once()``)만 흉내낸다 — 실제 HTTP 없음.
 
-    def __init__(self, outcomes: list[Any]) -> None:
+    ``on_http_start`` 훅을 실제 ``LiveGeminiProviderClient``와 동일한
+    계약으로 시뮬레이션한다: ``client.post()``에 해당하는 "실행"
+    직전에 정확히 1회 호출하고, 훅이 예외를 던지면 그 "실행"(=이번
+    테스트에서는 ``outcomes``에서 결과를 꺼내는 것) 자체를 하지 않는다
+    (2026-08-27 2차 리뷰 보정)."""
+
+    def __init__(
+        self,
+        outcomes: list[Any],
+        *,
+        on_http_start_failures: list[Exception | None] | None = None,
+    ) -> None:
         # 각 원소가 예외 인스턴스면 raise, 아니면 RawProviderResponse로 반환.
         self._outcomes = list(outcomes)
+        # outcomes와 병렬로 소비된다 — None이면 훅이 정상 실행됨.
+        self._on_http_start_failures = list(on_http_start_failures or [])
         self.calls: list[tuple[ReservationGrant, int]] = []
+        self.http_started_count = 0
 
     async def generate_structured_once(
-        self, grant: ReservationGrant, *, expected_job_id, expected_attempt_no, **kwargs
+        self, grant: ReservationGrant, *, expected_job_id, expected_attempt_no,
+        on_http_start=None, **kwargs,
     ) -> RawProviderResponse:
+        hook_failure = (
+            self._on_http_start_failures.pop(0) if self._on_http_start_failures else None
+        )
+        if on_http_start is not None:
+            if hook_failure is not None:
+                raise hook_failure
+            await on_http_start()
+            self.http_started_count += 1
+
         self.calls.append((grant, expected_attempt_no))
         outcome = self._outcomes.pop(0)
         if isinstance(outcome, Exception):
@@ -82,6 +106,11 @@ def _non_retryable_400() -> httpx.HTTPStatusError:
 def _attempt_outcome(coordinator: FdcQuotaCoordinator, reservation_id: UUID) -> str:
     """InMemory 내부를 직접 들여다봐서 기록된 outcome을 확인한다(테스트 전용)."""
     return coordinator._repo._attempts_by_id[reservation_id].outcome  # type: ignore[attr-defined]
+
+
+def _attempt_http_started_at(coordinator: FdcQuotaCoordinator, reservation_id: UUID):
+    """InMemory 내부의 ``http_started_at``을 직접 조회한다(테스트 전용)."""
+    return coordinator._repo._attempts_by_id[reservation_id].http_started_at  # type: ignore[attr-defined]
 
 
 class TestCallWithCoordinator:
@@ -155,6 +184,101 @@ class TestCallWithCoordinator:
         assert len(client.calls) == 1  # 재시도하지 않음
         grant, _ = client.calls[0]
         assert _attempt_outcome(coordinator, grant.reservation_id) == "http_failed_final"
+
+    @pytest.mark.asyncio
+    async def test_success_records_http_started_at_before_completion(self) -> None:
+        """2026-08-27 2차 리뷰 보정: 성공 시 ``http_started_at``이
+        실제로 기록되는지(이전에는 전혀 기록되지 않는 경로가 있었다)."""
+        coordinator = _make_coordinator()
+        client = _FakeClient([_success_response()])
+
+        await gate.call_with_coordinator(
+            coordinator=coordinator, client=client, caller_id="manual:test",
+            manual_run_id="run-5", model_id="m", system_prompt="s",
+            user_prompt="u", response_format=_FakeOutput,
+        )
+
+        grant, _ = client.calls[0]
+        assert _attempt_http_started_at(coordinator, grant.reservation_id) is not None
+        assert client.http_started_count == 1
+
+    @pytest.mark.asyncio
+    async def test_pre_http_failure_records_reserved_but_http_not_started_and_retries(
+        self,
+    ) -> None:
+        """HTTP 시작 훅(client.post() 직전) 자체가 실패하면(예: 감사
+        기록 DB 오류) client.post()에 해당하는 실행이 전혀 일어나지
+        않아야 하고, 그 attempt는 ``reserved_but_http_not_started``로
+        기록돼야 하며, ``http_started_at``은 그대로 NULL이어야 한다.
+        새 reservation으로 재시도한다."""
+        coordinator = _make_coordinator()
+        client = _FakeClient(
+            [_success_response()],
+            on_http_start_failures=[RuntimeError("hook db write failed")],
+        )
+
+        result = await gate.call_with_coordinator(
+            coordinator=coordinator, client=client, caller_id="manual:test",
+            manual_run_id="run-6", model_id="m", system_prompt="s",
+            user_prompt="u", response_format=_FakeOutput, max_attempts=3,
+        )
+
+        assert result.parsed.symbol == "AAPL"
+        # 훅이 실패한 첫 attempt는 client.calls에 기록되지 않는다(실행 자체가
+        # 없었다는 뜻 — 이 fake의 "실행"은 outcome을 꺼내 반환/raise하는 것).
+        assert len(client.calls) == 1
+        assert client.http_started_count == 1  # 두 번째(성공) attempt만 훅 성공
+
+        # 첫 reservation(실패한 것)은 client.calls에 없으므로 별도로 조회해야
+        # 한다 — coordinator 내부 전체 attempt 목록에서 찾는다.
+        all_attempts = list(
+            coordinator._repo._attempts["test:manual-gate"]  # type: ignore[attr-defined]
+        )
+        assert len(all_attempts) == 2  # 실패 1건 + 성공 1건 = 별도 reservation 2개
+        failed_entry = next(a for a in all_attempts if a.outcome != "http_succeeded")
+        assert failed_entry.outcome == "reserved_but_http_not_started"
+        assert failed_entry.http_started_at is None  # HTTP가 실제로 시작되지 않았다
+
+    @pytest.mark.asyncio
+    async def test_pre_http_failure_all_attempts_exhausted_raises(self) -> None:
+        coordinator = _make_coordinator()
+        client = _FakeClient(
+            [_success_response(), _success_response()],
+            on_http_start_failures=[
+                RuntimeError("fail-1"), RuntimeError("fail-2"),
+            ],
+        )
+
+        with pytest.raises(RuntimeError, match="fail-2"):
+            await gate.call_with_coordinator(
+                coordinator=coordinator, client=client, caller_id="manual:test",
+                manual_run_id="run-6b", model_id="m", system_prompt="s",
+                user_prompt="u", response_format=_FakeOutput, max_attempts=2,
+            )
+
+        assert client.calls == []  # client.post()에 해당하는 실행이 단 한 번도 없었다
+
+    @pytest.mark.asyncio
+    async def test_duplicate_http_started_recording_is_fail_closed(self) -> None:
+        """같은 reservation에 ``outcome="http_started"``를 두 번 기록하려
+        하면 명시적으로 실패한다(하나의 reservation은 하나의 실제
+        실행 기회에만 대응해야 한다는 계약)."""
+        coordinator = _make_coordinator()
+        grant = await coordinator.try_reserve(job_id=None, caller_id="manual:test")
+        assert isinstance(grant, ReservationGrant)
+
+        from datetime import datetime, timezone
+
+        await coordinator.record_attempt_outcome(
+            reservation_id=grant.reservation_id, outcome="http_started",
+            http_started_at=datetime.now(timezone.utc),
+        )
+
+        with pytest.raises(ValueError, match="already has http_started_at"):
+            await coordinator.record_attempt_outcome(
+                reservation_id=grant.reservation_id, outcome="http_started",
+                http_started_at=datetime.now(timezone.utc),
+            )
 
 
 class TestCoordinatedFdcProviderClient:
