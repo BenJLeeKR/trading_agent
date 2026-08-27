@@ -7,6 +7,7 @@ sleep, 실제 DB, 실제 Gemini/KIS 호출은 전혀 하지 않는다.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from typing import Any
 from unittest.mock import AsyncMock
 from uuid import UUID
@@ -475,3 +476,249 @@ class TestBuildManualRunId:
         id2 = gate.build_manual_run_id(script_name="ar_fdc_output_measurement")
 
         assert id1.split(":")[0] != id2.split(":")[0]
+
+
+class _RecordingSleep:
+    """실제 sleep 없이 대기 호출 횟수/인자를 기록하는 fake clock. 특정
+    호출 시점에 side effect(quota 회복 시뮬레이션 등)를 실행할 수 있다."""
+
+    def __init__(self, *, on_call: Any = None) -> None:
+        self.calls: list[float] = []
+        self._on_call = on_call
+
+    async def __call__(self, seconds: float) -> None:
+        self.calls.append(seconds)
+        if self._on_call is not None:
+            self._on_call(len(self.calls))
+
+
+class TestRunRealDispatchJob:
+    """``run_real_dispatch_job()``(2026-08-27 신설, PR #359 리뷰 보정) —
+    실제 dispatcher job 하나의 FIFO 대기 + provider one-shot 실행을
+    검증한다. fake clock(``sleep_fn``)만 쓰고 실제 sleep은 전혀 하지
+    않는다."""
+
+    @pytest.mark.asyncio
+    async def test_immediate_grant_succeeds_without_waiting(self) -> None:
+        coordinator = _make_coordinator(target_rpm=13)
+        job_id = await coordinator._repo.register_real_job(  # type: ignore[attr-defined]
+            decision_cycle_id="c1", decision_context_id=None, symbol="005930",
+            source_type="held_position", quota_scope="test:manual-gate",
+            fdc_ready_at=datetime.now(
+                timezone.utc
+            ),
+        )
+        client = _FakeClient([_success_response()])
+        sleep = _RecordingSleep()
+
+        result = await gate.run_real_dispatch_job(
+            coordinator=coordinator, client=client, job_id=job_id,
+            caller_id="ops-scheduler:held_position_reduce_sell",
+            manual_run_id="cycle-1", model_id="m", system_prompt="s",
+            user_prompt="u", response_format=_FakeOutput, sleep_fn=sleep,
+        )
+
+        assert result.parsed.symbol == "AAPL"
+        assert len(client.calls) == 1
+        assert sleep.calls == []  # 대기 없이 즉시 grant
+
+    @pytest.mark.asyncio
+    async def test_quota_full_waits_then_succeeds_after_capacity_frees(self) -> None:
+        """quota가 가득 차면 fallback HOLD로 즉시 포기하지 않고, 대기
+        후 재시도해 결국 승인·성공한다(§4 "순번 탈락 금지" 핵심 검증)."""
+        coordinator = _make_coordinator(target_rpm=1)
+        # window를 가득 채운다.
+        filler = await coordinator.try_reserve(job_id=None, caller_id="filler")
+        assert isinstance(filler, ReservationGrant)
+
+        job_id = await coordinator._repo.register_real_job(  # type: ignore[attr-defined]
+            decision_cycle_id="c1", decision_context_id=None, symbol="005930",
+            source_type="held_position", quota_scope="test:manual-gate",
+            fdc_ready_at=datetime.now(
+                timezone.utc
+            ),
+        )
+        client = _FakeClient([_success_response()])
+
+        def _free_capacity_on_first_wait(call_count: int) -> None:
+            if call_count == 1:
+                # "60초 창이 지나 slot이 회복됐다"를 시뮬레이션 —
+                # filler attempt를 window 밖으로 밀어낸다.
+                coordinator._repo._attempts["test:manual-gate"].clear()  # type: ignore[attr-defined]
+
+        sleep = _RecordingSleep(on_call=_free_capacity_on_first_wait)
+
+        result = await gate.run_real_dispatch_job(
+            coordinator=coordinator, client=client, job_id=job_id,
+            caller_id="ops-scheduler:held_position_reduce_sell",
+            manual_run_id="cycle-1", model_id="m", system_prompt="s",
+            user_prompt="u", response_format=_FakeOutput, sleep_fn=sleep,
+            poll_interval_seconds=1.0,
+        )
+
+        assert result.parsed.symbol == "AAPL"
+        assert len(sleep.calls) == 1  # 정확히 1번 대기 후 성공
+        assert len(client.calls) == 1  # HTTP는 승인된 뒤 정확히 1회
+
+    @pytest.mark.asyncio
+    async def test_later_job_waits_for_earlier_job_fifo(self) -> None:
+        """14번째 이후 job이 fallback HOLD로 끝나지 않고 FIFO 순서로
+        대기하다가, 앞선 job이 종결되면 승인·성공하는지 검증한다."""
+        coordinator = _make_coordinator(target_rpm=13)
+        job_a = await coordinator._repo.register_real_job(  # type: ignore[attr-defined]
+            decision_cycle_id="c1", decision_context_id=None, symbol="A",
+            source_type="held_position", quota_scope="test:manual-gate",
+            fdc_ready_at=datetime.now(
+                timezone.utc
+            ),
+        )
+        job_b = await coordinator._repo.register_real_job(  # type: ignore[attr-defined]
+            decision_cycle_id="c1", decision_context_id=None, symbol="B",
+            source_type="held_position", quota_scope="test:manual-gate",
+            fdc_ready_at=datetime.now(
+                timezone.utc
+            ),
+        )
+        client_b = _FakeClient([_success_response()])
+
+        def _resolve_job_a_on_first_wait(call_count: int) -> None:
+            if call_count == 1:
+                # job A가 처리 완료돼 더 이상 QUEUED가 아니게 됐다고
+                # 가정한다 — B의 순번이 돌아온다.
+                coordinator._repo._jobs[job_a]["status"] = "FDC_SUCCEEDED"  # type: ignore[attr-defined]
+
+        sleep = _RecordingSleep(on_call=_resolve_job_a_on_first_wait)
+
+        result = await gate.run_real_dispatch_job(
+            coordinator=coordinator, client=client_b, job_id=job_b,
+            caller_id="ops-scheduler:held_position_reduce_sell",
+            manual_run_id="cycle-1", model_id="m", system_prompt="s",
+            user_prompt="u", response_format=_FakeOutput, sleep_fn=sleep,
+            poll_interval_seconds=1.0,
+        )
+
+        assert result.parsed.symbol == "AAPL"
+        assert len(sleep.calls) == 1  # A가 해소될 때까지 정확히 1번 대기
+        assert len(client_b.calls) == 1
+
+    @pytest.mark.asyncio
+    async def test_coordinator_error_backs_off_then_recovers(self) -> None:
+        """coordinator 오류(DB unavailable 등)는 HTTP 0회로 fail-closed
+        하고, 지수 backoff 후 재시도해 DB가 복구되면 즉시 정상 재개된다."""
+        coordinator = _make_coordinator(target_rpm=13)
+        job_id = await coordinator._repo.register_real_job(  # type: ignore[attr-defined]
+            decision_cycle_id="c1", decision_context_id=None, symbol="005930",
+            source_type="held_position", quota_scope="test:manual-gate",
+            fdc_ready_at=datetime.now(
+                timezone.utc
+            ),
+        )
+        client = _FakeClient([_success_response()])
+
+        real_try_reserve = coordinator.try_reserve
+        call_count = 0
+
+        async def _flaky_try_reserve(**kwargs):
+            nonlocal call_count
+            call_count += 1
+            if call_count <= 2:
+                from agent_trading.repositories.contracts import (
+                    CoordinatorError,
+                    CoordinatorErrorClass,
+                )
+                return CoordinatorError(
+                    CoordinatorErrorClass.COORDINATOR_UNAVAILABLE, "simulated DB down"
+                )
+            return await real_try_reserve(**kwargs)
+
+        coordinator.try_reserve = _flaky_try_reserve  # type: ignore[method-assign]
+
+        sleep = _RecordingSleep()
+
+        result = await gate.run_real_dispatch_job(
+            coordinator=coordinator, client=client, job_id=job_id,
+            caller_id="ops-scheduler:held_position_reduce_sell",
+            manual_run_id="cycle-1", model_id="m", system_prompt="s",
+            user_prompt="u", response_format=_FakeOutput, sleep_fn=sleep,
+            coordinator_error_backoff_initial_seconds=1.0,
+            coordinator_error_backoff_max_seconds=30.0,
+        )
+
+        assert result.parsed.symbol == "AAPL"
+        assert len(client.calls) == 1  # coordinator 오류 동안 HTTP 0회
+        # 2번의 coordinator 오류 → backoff 1초, 2초(지수 증가)로 대기.
+        assert sleep.calls == [1.0, 2.0]
+
+    @pytest.mark.asyncio
+    async def test_provider_retryable_failure_uses_new_reservation(self) -> None:
+        coordinator = _make_coordinator(target_rpm=13)
+        job_id = await coordinator._repo.register_real_job(  # type: ignore[attr-defined]
+            decision_cycle_id="c1", decision_context_id=None, symbol="005930",
+            source_type="held_position", quota_scope="test:manual-gate",
+            fdc_ready_at=datetime.now(
+                timezone.utc
+            ),
+        )
+        client = _FakeClient([_retryable_429(), _success_response()])
+        sleep = _RecordingSleep()
+
+        result = await gate.run_real_dispatch_job(
+            coordinator=coordinator, client=client, job_id=job_id,
+            caller_id="ops-scheduler:held_position_reduce_sell",
+            manual_run_id="cycle-1", model_id="m", system_prompt="s",
+            user_prompt="u", response_format=_FakeOutput, sleep_fn=sleep,
+        )
+
+        assert result.parsed.symbol == "AAPL"
+        assert len(client.calls) == 2
+        grant1, _ = client.calls[0]
+        grant2, _ = client.calls[1]
+        assert grant1.reservation_id != grant2.reservation_id  # 새 reservation
+
+    @pytest.mark.asyncio
+    async def test_provider_exhausted_raises_original_exception(self) -> None:
+        coordinator = _make_coordinator(target_rpm=13)
+        job_id = await coordinator._repo.register_real_job(  # type: ignore[attr-defined]
+            decision_cycle_id="c1", decision_context_id=None, symbol="005930",
+            source_type="held_position", quota_scope="test:manual-gate",
+            fdc_ready_at=datetime.now(
+                timezone.utc
+            ),
+        )
+        client = _FakeClient([_retryable_429(), _retryable_429(), _retryable_429()])
+        sleep = _RecordingSleep()
+
+        with pytest.raises(httpx.HTTPStatusError):
+            await gate.run_real_dispatch_job(
+                coordinator=coordinator, client=client, job_id=job_id,
+                caller_id="ops-scheduler:held_position_reduce_sell",
+                manual_run_id="cycle-1", model_id="m", system_prompt="s",
+                user_prompt="u", response_format=_FakeOutput, sleep_fn=sleep,
+                max_provider_attempts=3,
+            )
+
+        assert len(client.calls) == 3
+
+    @pytest.mark.asyncio
+    async def test_non_retryable_failure_raises_immediately_no_wait(self) -> None:
+        coordinator = _make_coordinator(target_rpm=13)
+        job_id = await coordinator._repo.register_real_job(  # type: ignore[attr-defined]
+            decision_cycle_id="c1", decision_context_id=None, symbol="005930",
+            source_type="held_position", quota_scope="test:manual-gate",
+            fdc_ready_at=datetime.now(
+                timezone.utc
+            ),
+        )
+        client = _FakeClient([_non_retryable_400()])
+        sleep = _RecordingSleep()
+
+        with pytest.raises(httpx.HTTPStatusError):
+            await gate.run_real_dispatch_job(
+                coordinator=coordinator, client=client, job_id=job_id,
+                caller_id="ops-scheduler:held_position_reduce_sell",
+                manual_run_id="cycle-1", model_id="m", system_prompt="s",
+                user_prompt="u", response_format=_FakeOutput, sleep_fn=sleep,
+            )
+
+        assert len(client.calls) == 1
+        assert sleep.calls == []

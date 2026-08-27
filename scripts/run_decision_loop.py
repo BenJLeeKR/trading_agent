@@ -3329,6 +3329,36 @@ async def _run_loop(
                 logger.debug("Seed already exists (skipped).")
             await tx.commit()
 
+        # ── FDC 실제 dispatch 재기동 recovery scan(§17.7, 2026-08-27 신설
+        # — PR #359 리뷰 보정) ────────────────────────────────────────
+        # 이 프로세스(run_decision_loop.py)는 ops-scheduler가 cycle마다
+        # 새로 spawn하는 subprocess다 — 이전 invocation이 FDC 실제
+        # dispatch 대기 도중 강제 종료됐다면(예: scheduler timeout),
+        # 그 job의 in-memory carryover는 소실됐지만 DB의 fdc_queue_jobs
+        # row는 non-terminal 상태로 남아있을 수 있다. 이 스캔이 그런
+        # job을 CANCELLED(reason=process_terminated_carryover_lost)로
+        # 정리한다 — idempotent(이미 terminal인 job은 건드리지 않음).
+        # flag가 꺼져 있으면(이 기능을 아예 쓰지 않으면) 스캔도 생략한다.
+        from agent_trading.config.settings import AppSettings as _AppSettingsForRecovery
+        from agent_trading.services.fdc_quota_coordinator import DEFAULT_QUOTA_SCOPE
+
+        if _AppSettingsForRecovery().fdc_actual_dispatch_enabled:
+            async with _db_transaction() as recovery_tx:
+                recovery_repos = build_postgres_repositories(recovery_tx)
+                cancelled_count = await recovery_repos.fdc_quota.cancel_stale_real_jobs(
+                    quota_scope=DEFAULT_QUOTA_SCOPE,
+                )
+                await recovery_tx.commit()
+            if cancelled_count:
+                logger.warning(
+                    "FDC actual-dispatch recovery scan: cancelled %d "
+                    "stale non-terminal real job(s) from a previous "
+                    "process (reason=process_terminated_carryover_lost).",
+                    cancelled_count,
+                )
+            else:
+                logger.debug("FDC actual-dispatch recovery scan: no stale jobs.")
+
         while not _shutdown_event.is_set():
             # Check cycle limit
             if max_cycles > 0 and cycle_count >= max_cycles:

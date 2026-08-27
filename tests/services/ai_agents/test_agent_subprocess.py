@@ -165,14 +165,14 @@ class TestSerializeAgentInput:
         # Should not raise
         json.loads(result)
 
-    def test_fdc_actual_dispatch_enabled_defaults_to_false(
+    def test_mode_defaults_to_full(
         self, sample_context: AssembledContext,
     ) -> None:
         """2026-08-27: 인자를 넘기지 않으면 기존 호출자와 100% 동일하게
-        False로 직렬화된다(하위 호환)."""
+        mode="full"로 직렬화된다(하위 호환)."""
         request = AgentExecutionRequest(
             decision_context_id=None,
-            correlation_id="test-fdc-flag-default",
+            correlation_id="test-mode-default",
             context=sample_context,
         )
         result = serialize_agent_input(
@@ -181,25 +181,36 @@ class TestSerializeAgentInput:
             score=None,
         )
         payload = json.loads(result)
-        assert payload["fdc_actual_dispatch_enabled"] is False
+        assert payload["mode"] == "full"
+        assert payload["event_interpretation_output"] is None
+        assert payload["ai_risk_output"] is None
+        assert payload["ai_compliance_output"] is None
 
-    def test_fdc_actual_dispatch_enabled_passthrough(
+    def test_mode_and_carryover_passthrough(
         self, sample_context: AssembledContext,
     ) -> None:
-        """2026-08-27: 호출자가 True를 넘기면 그대로 직렬화된다."""
+        """2026-08-27(held_position 실제 dispatcher 신설): 호출자가
+        mode="fdc_only"와 pre_fdc carryover(ei/ar/ac output)를 넘기면
+        그대로 직렬화된다."""
         request = AgentExecutionRequest(
             decision_context_id=None,
-            correlation_id="test-fdc-flag-true",
+            correlation_id="test-mode-fdc-only",
             context=sample_context,
         )
         result = serialize_agent_input(
             request=request,
             context=sample_context,
             score=None,
-            fdc_actual_dispatch_enabled=True,
+            mode="fdc_only",
+            event_interpretation_output={"symbol": "005930"},
+            ai_risk_output={"risk_opinion": "allow"},
+            ai_compliance_output={"compliance_opinion": "allow"},
         )
         payload = json.loads(result)
-        assert payload["fdc_actual_dispatch_enabled"] is True
+        assert payload["mode"] == "fdc_only"
+        assert payload["event_interpretation_output"] == {"symbol": "005930"}
+        assert payload["ai_risk_output"] == {"risk_opinion": "allow"}
+        assert payload["ai_compliance_output"] == {"compliance_opinion": "allow"}
 
 
 # =========================================================================
@@ -578,6 +589,7 @@ class TestWriteAgentSubprocessOutputRoundTrip:
             rate_limiter_final_waited_seconds=0.0,
             rate_limiter_queue_deadline_exceeded=False,
             fdc_ready_at="",
+            requires_fdc_dispatch=False,
         )
 
         stream = StringIO()
@@ -650,6 +662,7 @@ class TestWriteAgentSubprocessOutputRoundTrip:
             rate_limiter_final_waited_seconds=0.0,
             rate_limiter_queue_deadline_exceeded=False,
             fdc_ready_at="",
+            requires_fdc_dispatch=False,
         )
 
         stream = StringIO()
@@ -731,6 +744,7 @@ class TestWriteAgentSubprocessOutputRoundTrip:
                 rate_limiter_final_waited_seconds=0.0,
                 rate_limiter_queue_deadline_exceeded=False,
                 fdc_ready_at="",
+                requires_fdc_dispatch=False,
             )
             stream = StringIO()
             write_agent_subprocess_output(fake_output, stream)
@@ -789,6 +803,7 @@ class TestWriteAgentSubprocessOutputRoundTrip:
             rate_limiter_final_waited_seconds=0.0,
             rate_limiter_queue_deadline_exceeded=False,
             fdc_ready_at="",
+            requires_fdc_dispatch=False,
         )
 
         stream = StringIO()
@@ -872,6 +887,7 @@ class TestProviderObservabilityRoundTrip:
             "rate_limiter_final_waited_seconds": 8.75,
             "rate_limiter_queue_deadline_exceeded": True,
             "fdc_ready_at": "2026-08-27T01:00:00+00:00",
+            "requires_fdc_dispatch": False,
         }
         base_observability.update(observability_overrides)
         return SimpleNamespace(
@@ -1100,6 +1116,7 @@ class TestFdcReadyAtRoundTrip:
             rate_limiter_final_waited_seconds=0.0,
             rate_limiter_queue_deadline_exceeded=False,
             fdc_ready_at=sample_fdc_ready_at,
+            requires_fdc_dispatch=False,
         )
 
         stream = StringIO()
@@ -1182,6 +1199,7 @@ class TestFdcReadyAtRoundTrip:
             rate_limiter_final_waited_seconds=0.0,
             rate_limiter_queue_deadline_exceeded=False,
             fdc_ready_at=sample_fdc_ready_at,
+            requires_fdc_dispatch=False,
         )
 
         stream = StringIO()

@@ -3218,7 +3218,21 @@ class InMemoryFdcQuotaRepository:
             )
             if job_id is not None and job_id in self._jobs:
                 self._jobs[job_id]["queue_poll_count"] += 1
-            if window_count >= target_rpm:
+
+            # FIFO 공정성(2026-08-27, Postgres 구현과 동일한 계약) — job_id가
+            # 있는 호출에 한해, 나보다 먼저 등록됐고 아직 QUEUED인 job이
+            # 있으면 window에 여유가 있어도 순번을 양보한다.
+            not_my_turn = False
+            if job_id is not None and job_id in self._jobs:
+                my_sequence = self._jobs[job_id]["enqueue_sequence"]
+                not_my_turn = any(
+                    other["status"] == "QUEUED"
+                    and other["enqueue_sequence"] < my_sequence
+                    for other in self._jobs.values()
+                    if other["quota_scope"] == quota_scope
+                )
+
+            if window_count >= target_rpm or not_my_turn:
                 if job_id is not None and job_id in self._jobs:
                     self._jobs[job_id]["reservation_denied_count"] += 1
                 return ReservationDenied(quota_scope=quota_scope, window_count=window_count)
@@ -3359,3 +3373,69 @@ class InMemoryFdcQuotaRepository:
                 attempt_id=attempt_id,
                 enqueue_sequence=enqueue_sequence,
             )
+
+    async def register_real_job(
+        self,
+        *,
+        decision_cycle_id: str | None,
+        decision_context_id: UUID | None,
+        symbol: str,
+        source_type: str,
+        quota_scope: str,
+        fdc_ready_at: datetime,
+    ) -> UUID:
+        async with self._lock:
+            self._enqueue_sequence_counter += 1
+            job_id = uuid4()
+            self._jobs[job_id] = {
+                "job_id": job_id,
+                "decision_cycle_id": decision_cycle_id,
+                "decision_context_id": decision_context_id,
+                "symbol": symbol,
+                "source_type": source_type,
+                "quota_scope": quota_scope,
+                "mode": "real",
+                "status": "QUEUED",
+                "fdc_ready_at": fdc_ready_at,
+                "enqueue_sequence": self._enqueue_sequence_counter,
+                "queue_poll_count": 0,
+                "reservation_denied_count": 0,
+                "dispatch_attempt_no": 0,
+                "permit_consumed_count": 0,
+                "failure_or_cancel_reason": None,
+            }
+            return job_id
+
+    async def cancel_stale_real_jobs(
+        self,
+        *,
+        quota_scope: str,
+        reason: str = "process_terminated_carryover_lost",
+    ) -> int:
+        async with self._lock:
+            terminal = {"FDC_SUCCEEDED", "FDC_FAILED_FINAL", "CANCELLED"}
+            affected = 0
+            for job in self._jobs.values():
+                if job["quota_scope"] != quota_scope:
+                    continue
+                if job["mode"] != "real":
+                    continue
+                if job["status"] in terminal:
+                    continue
+                job["status"] = "CANCELLED"
+                job["failure_or_cancel_reason"] = reason
+                affected += 1
+            return affected
+
+    async def mark_job_terminal(
+        self, *, job_id: UUID, status: str, reason: str | None = None,
+    ) -> None:
+        async with self._lock:
+            if job_id in self._jobs:
+                self._jobs[job_id]["status"] = status
+                self._jobs[job_id]["failure_or_cancel_reason"] = reason
+
+    async def mark_job_status(self, *, job_id: UUID, status: str) -> None:
+        async with self._lock:
+            if job_id in self._jobs:
+                self._jobs[job_id]["status"] = status

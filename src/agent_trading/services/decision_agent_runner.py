@@ -79,6 +79,34 @@ def _should_skip_event_interpretation(
     return True
 
 
+def _is_fdc_actual_dispatch_target(assembled_context: AIPolicyContextView) -> bool:
+    """held_position lane의 REDUCE_CANDIDATE/SELL_CANDIDATE(보유 포지션
+    존재) 조건을 만족하는지만 판정한다(2026-08-27, held_position 실제
+    dispatcher — PR #359 리뷰 보정). ``FDC_ACTUAL_DISPATCH_ENABLED``
+    자체는 호출부가 별도로 AND 한다.
+
+    ``deterministic_trigger_engine.py``의 후보 생성 로직상
+    ``SELL_CANDIDATE``/``REDUCE_CANDIDATE``는 ``source_type ==
+    "held_position"``일 때만 생성되므로, 별도 lane 식별자 없이
+    ``primary_candidate`` 값 하나만으로 lane+후보 범위를 안전하게
+    특정할 수 있다."""
+    source_type = (assembled_context.source_type or "core").strip().lower()
+    position_snapshot = assembled_context.position_snapshot
+    has_position = (
+        position_snapshot is not None
+        and position_snapshot.quantity is not None
+        and position_snapshot.quantity > 0
+    )
+    primary_candidate = (
+        getattr(assembled_context.deterministic_trigger, "primary_candidate", "") or ""
+    ).strip().upper()
+    return (
+        source_type == "held_position"
+        and has_position
+        and primary_candidate in ("REDUCE_CANDIDATE", "SELL_CANDIDATE")
+    )
+
+
 def _should_skip_final_decision_composer(
     assembled_context: AIPolicyContextView,
     risk_output: AIRiskOutput,
@@ -682,7 +710,23 @@ class DecisionAgentRunner:
         ----------------
         The combined timeout covers all 3 agents plus subprocess
         creation/teardown overhead.
+
+        FDC 실제 dispatch(2026-08-27, held_position lane REDUCE_CANDIDATE/
+        SELL_CANDIDATE 한정 — PR #359 리뷰 보정): flag가 켜져 있고
+        ``assembled_context``가 대상 lane/후보(``_is_fdc_actual_dispatch_
+        target()``)면 이 메서드는 이 아래 단일-subprocess 경로(``mode=
+        "full"``) 대신 ``_run_agents_in_subprocess_with_actual_dispatch()``
+        (§17 pre_fdc/fdc_only 분리 + 실제 quota reservation/FIFO 대기)로
+        위임한다. flag=false이거나 비대상 lane이면 이 분기 자체가 평가되지
+        않으므로(``_is_fdc_actual_dispatch_target()``가 호출되지 않음)
+        기존 동작과 100% 동일하다.
         """
+        if self._fdc_actual_dispatch_enabled and _is_fdc_actual_dispatch_target(
+            assembled_context,
+        ):
+            return await self._run_agents_in_subprocess_with_actual_dispatch(
+                request, assembled_context,
+            )
 
         # ── 1. Serialize input ────────────────────────────────────────
         input_bytes = serialize_agent_input(
@@ -690,18 +734,36 @@ class DecisionAgentRunner:
             context=assembled_context,
             score=None,
             provider_runtime=self._provider_runtime,
-            fdc_actual_dispatch_enabled=self._fdc_actual_dispatch_enabled,
         ).encode("utf-8")
 
-        # ── 2. Combined timeout ─────────────────────────────────────────
-        # The outer timeout covers 3 sequential agent API calls (EI, AR,
-        # FDC) plus subprocess startup/teardown overhead.  It is NOT
-        # configurable per-agent — each agent uses the httpx client timeout
-        # (provider_timeout_seconds) internally.  The outer timeout should
-        # be generous enough to allow 3× provider_timeout with headroom.
+        result, stdout = await self._spawn_agent_subprocess(
+            input_bytes, request=request,
+        )
+        if result is None:
+            return build_fallback_bundle()
+
+        return self._finalize_subprocess_result(
+            result, stdout, request=request, assembled_context=assembled_context,
+        )
+
+    async def _spawn_agent_subprocess(
+        self, input_bytes: bytes, *, request: AgentExecutionRequest,
+    ) -> tuple[dict | None, bytes]:
+        """subprocess를 스폰하고 timeout/SIGTERM/SIGKILL을 관리한다
+        (2026-08-27 추출 — ``run_agents_in_subprocess()``의 기존 2~5단계를
+        순수 이동. 로직 변경 없음, ``_run_agents_in_subprocess_with_
+        actual_dispatch()``가 pre_fdc/fdc_only 두 번의 spawn에 재사용하기
+        위해 별도 메서드로 뺐다).
+
+        Returns
+        -------
+        (result, stdout)
+            ``result``는 파싱된 stdout JSON dict — timeout이거나 파싱
+            실패면 ``None``. ``stdout``은 원본 bytes(성공 시
+            ``deserialize_agent_output()``에 그대로 재사용).
+        """
         _SUBPROCESS_TIMEOUT = self._subprocess_timeout
 
-        # ── 3. Create subprocess ──────────────────────────────────────
         proc = await asyncio.create_subprocess_exec(
             sys.executable, "-m", "scripts.run_agent_subprocess",
             stdin=asyncio.subprocess.PIPE,
@@ -709,16 +771,12 @@ class DecisionAgentRunner:
             stderr=asyncio.subprocess.PIPE,
         )
 
-        # ── 4. Communicate with timeout ───────────────────────────────
         try:
             stdout, stderr = await asyncio.wait_for(
                 proc.communicate(input_bytes),
                 timeout=_SUBPROCESS_TIMEOUT,
             )
         except asyncio.TimeoutError:
-            # ── Capture stderr before killing ─────────────────────────────
-            # This is critical for diagnosing subprocess hangs. On timeout,
-            # communicate() was cancelled but the pipe may still have data.
             stderr_hint = ""
             try:
                 stderr_data = await asyncio.wait_for(
@@ -729,12 +787,10 @@ class DecisionAgentRunner:
             except (asyncio.TimeoutError, ProcessLookupError, Exception):
                 pass
 
-            # SIGTERM first (10s grace period)
             try:
                 proc.terminate()
                 await asyncio.wait_for(proc.wait(), timeout=10.0)
             except (asyncio.TimeoutError, ProcessLookupError):
-                # SIGKILL — forcibly terminate C-level blocking
                 try:
                     proc.kill()
                     await proc.wait()
@@ -750,9 +806,8 @@ class DecisionAgentRunner:
                 request.correlation_id,
                 f" stderr_hint={stderr_hint}" if stderr_hint else "",
             )
-            return build_fallback_bundle()
+            return None, b""
 
-        # ── 5. Log subprocess stderr (diagnostics) ────────────────────
         if stderr and stderr.strip():
             logger.info(
                 "Agent subprocess stderr (decision_context_id=%s): %s",
@@ -760,26 +815,8 @@ class DecisionAgentRunner:
                 stderr.decode("utf-8", errors="replace")[:2000],
             )
 
-        # ── 6. Parse output ───────────────────────────────────────────
         try:
             result = json.loads(stdout)
-            if not result.get("success"):
-                logger.warning(
-                    "Agent subprocess reported failure: %s — "
-                    "using fallback output. decision_context_id=%s",
-                    result.get("error", "unknown error"),
-                    request.decision_context_id,
-                )
-                return self._apply_expected_value_anchor(
-                    build_fallback_bundle(),
-                    assembled_context=assembled_context,
-                )
-
-            return self._apply_expected_value_anchor(
-                deserialize_agent_output(stdout),
-                assembled_context=assembled_context,
-            )
-
         except (json.JSONDecodeError, KeyError, TypeError) as exc:
             logger.error(
                 "Failed to parse agent subprocess output: %s — "
@@ -789,8 +826,219 @@ class DecisionAgentRunner:
                 request.decision_context_id,
                 stdout[:500] if stdout else "(empty)",
             )
+            return None, b""
+
+        return result, stdout
+
+    def _finalize_subprocess_result(
+        self,
+        result: dict,
+        stdout: bytes,
+        *,
+        request: AgentExecutionRequest,
+        assembled_context: AIPolicyContextView,
+    ) -> AgentExecutionBundle:
+        """파싱된 subprocess 결과를 ``AgentExecutionBundle``로 변환하고
+        EV anchor를 적용한다(2026-08-27 추출 — 기존 6단계 순수 이동)."""
+        if not result.get("success"):
+            logger.warning(
+                "Agent subprocess reported failure: %s — "
+                "using fallback output. decision_context_id=%s",
+                result.get("error", "unknown error"),
+                request.decision_context_id,
+            )
             return self._apply_expected_value_anchor(
                 build_fallback_bundle(),
+                assembled_context=assembled_context,
+            )
+
+        return self._apply_expected_value_anchor(
+            deserialize_agent_output(stdout),
+            assembled_context=assembled_context,
+        )
+
+    async def _run_agents_in_subprocess_with_actual_dispatch(
+        self,
+        request: AgentExecutionRequest,
+        assembled_context: AIPolicyContextView,
+    ) -> AgentExecutionBundle:
+        """held_position REDUCE_CANDIDATE/SELL_CANDIDATE 실제 FDC dispatch
+        (2026-08-27 신설 — PR #359 리뷰 보정, 설계 문서 §17).
+
+        1. ``mode="pre_fdc"`` subprocess로 EI/AR/AC + FDC skip 판정만
+           받는다. FDC가 결정론적으로 skip됐으면(``requires_fdc_
+           dispatch=False``) 그 결과를 그대로 최종 결과로 쓴다(기존
+           ``--mode full``의 skip 경로와 동일한 산출물).
+        2. FDC-ready면 ``self._repos.fdc_quota``에 실제(``mode='real'``)
+           job을 등록하고, quota reservation이 발급될 때까지 대기한다
+           (deadline 없음, §4 "순번 탈락 금지" — quota가 가득 차거나
+           FIFO 순번이 아니면 poll interval만큼 대기 후 재시도, DB/
+           coordinator 오류는 지수 backoff).
+        3. 발급되면 ``mode="fdc_only"`` subprocess를 스폰해 그 grant로
+           HTTP one-shot만 실행한다. provider가 retryable 실패(429/5xx/
+           timeout)면 **새 reservation**으로 재시도한다(최대
+           ``max_provider_attempts``회) — 같은 grant를 재사용하지 않는다.
+        4. 종결(성공/최종 실패)되면 job을 ``FDC_SUCCEEDED``/``FDC_FAILED_
+           FINAL``로 표시하고, pre_fdc의 EI/AR/AC 결과와 fdc_only의 FDC
+           결과를 병합해 최종 ``AgentExecutionBundle``을 만든다.
+
+        ``request``/``assembled_context``가 이미 대상 lane임을
+        ``run_agents_in_subprocess()``가 확인했다는 전제로 호출된다.
+        """
+        from agent_trading.config.settings import (
+            _resolve_fdc_provider_rate_window_seconds,
+            _resolve_fdc_provider_target_rpm,
+            _resolve_gemini_provider_declared_rpm_limit,
+        )
+        from agent_trading.repositories.contracts import (
+            CoordinatorError,
+            ReservationDenied,
+        )
+        from agent_trading.services.fdc_quota_coordinator import (
+            DEFAULT_QUOTA_SCOPE,
+            FdcQuotaCoordinator,
+        )
+
+        caller_id = "ops-scheduler:held_position_reduce_sell"
+        manual_run_id = request.correlation_id
+        quota_scope = DEFAULT_QUOTA_SCOPE
+        max_provider_attempts = 3
+        poll_interval_seconds = 2.0
+        coordinator_error_backoff_initial_seconds = 1.0
+        coordinator_error_backoff_max_seconds = 30.0
+
+        # ── 1. pre_fdc ────────────────────────────────────────────────
+        pre_fdc_input = serialize_agent_input(
+            request=request, context=assembled_context, score=None,
+            provider_runtime=self._provider_runtime, mode="pre_fdc",
+        ).encode("utf-8")
+        pre_fdc_result, pre_fdc_stdout = await self._spawn_agent_subprocess(
+            pre_fdc_input, request=request,
+        )
+        if pre_fdc_result is None:
+            return build_fallback_bundle()
+        if not pre_fdc_result.get("requires_fdc_dispatch"):
+            # 결정론적 skip이거나 subprocess 실패 — 기존 산출물을 그대로 쓴다.
+            return self._finalize_subprocess_result(
+                pre_fdc_result, pre_fdc_stdout,
+                request=request, assembled_context=assembled_context,
+            )
+
+        # ── 2. 실제 job 등록 ──────────────────────────────────────────
+        coordinator = FdcQuotaCoordinator(
+            repo=self._repos.fdc_quota,
+            target_rpm=_resolve_fdc_provider_target_rpm(),
+            window_seconds=_resolve_fdc_provider_rate_window_seconds(),
+            declared_rpm_limit=_resolve_gemini_provider_declared_rpm_limit(),
+            quota_scope=quota_scope,
+        )
+        fdc_ready_at_raw = pre_fdc_result.get("fdc_ready_at") or ""
+        try:
+            fdc_ready_at = (
+                datetime.fromisoformat(fdc_ready_at_raw)
+                if fdc_ready_at_raw else datetime.now(timezone.utc)
+            )
+        except ValueError:
+            fdc_ready_at = datetime.now(timezone.utc)
+        job_id = await self._repos.fdc_quota.register_real_job(
+            decision_cycle_id=request.correlation_id,
+            decision_context_id=request.decision_context_id,
+            symbol=request.symbol or "",
+            source_type=request.source_type or "held_position",
+            quota_scope=quota_scope,
+            fdc_ready_at=fdc_ready_at,
+        )
+
+        provider_attempt_no = 1
+        coordinator_error_backoff = coordinator_error_backoff_initial_seconds
+
+        while True:
+            # ── 3. reservation 대기(FIFO, deadline 없음) ─────────────
+            result = await coordinator.try_reserve(
+                job_id=job_id, caller_id=caller_id, mode="real",
+                manual_run_id=manual_run_id, attempt_no=provider_attempt_no,
+            )
+            if isinstance(result, ReservationDenied):
+                await asyncio.sleep(poll_interval_seconds)
+                continue
+            if isinstance(result, CoordinatorError):
+                await asyncio.sleep(coordinator_error_backoff)
+                coordinator_error_backoff = min(
+                    coordinator_error_backoff * 2,
+                    coordinator_error_backoff_max_seconds,
+                )
+                continue
+            coordinator_error_backoff = coordinator_error_backoff_initial_seconds
+            grant = result
+
+            # ── 4. fdc_only 1회 HTTP 시도 ─────────────────────────────
+            fdc_only_input = serialize_agent_input(
+                request=request, context=assembled_context, score=None,
+                provider_runtime=self._provider_runtime, mode="fdc_only",
+                event_interpretation_output=pre_fdc_result.get("event_output"),
+                ai_risk_output=pre_fdc_result.get("risk_output"),
+                ai_compliance_output=pre_fdc_result.get("compliance_output"),
+            )
+            fdc_only_payload = json.loads(fdc_only_input)
+            fdc_only_payload["reservation_id"] = str(grant.reservation_id)
+            fdc_only_payload["reservation_job_id"] = str(job_id)
+            fdc_only_payload["reservation_attempt_no"] = grant.attempt_no
+            fdc_only_payload["reservation_quota_scope"] = grant.quota_scope
+            fdc_only_payload["reservation_window_count_before_grant"] = (
+                grant.window_count_before_grant
+            )
+            fdc_only_result, fdc_only_stdout = await self._spawn_agent_subprocess(
+                json.dumps(fdc_only_payload).encode("utf-8"), request=request,
+            )
+
+            if fdc_only_result is None or not fdc_only_result.get("success"):
+                # subprocess timeout/crash — retryable(새 reservation).
+                if provider_attempt_no < max_provider_attempts:
+                    provider_attempt_no += 1
+                    continue
+                await self._repos.fdc_quota.mark_job_terminal(
+                    job_id=job_id, status="FDC_FAILED_FINAL",
+                    reason="fdc_only_subprocess_exhausted",
+                )
+                return self._apply_expected_value_anchor(
+                    build_fallback_bundle(), assembled_context=assembled_context,
+                )
+
+            provider_final_status = fdc_only_result.get("provider_final_status", "")
+            retryable_statuses = {
+                "provider_rate_limit", "provider_error", "provider_timeout",
+            }
+            if (
+                provider_final_status in retryable_statuses
+                and provider_attempt_no < max_provider_attempts
+            ):
+                provider_attempt_no += 1
+                continue
+
+            merged = dict(pre_fdc_result)
+            merged["composer_output"] = fdc_only_result.get("composer_output", {})
+            merged["provider_http_attempt_count"] = fdc_only_result.get(
+                "provider_http_attempt_count", 0
+            )
+            merged["provider_http_429_count"] = fdc_only_result.get(
+                "provider_http_429_count", 0
+            )
+            merged["provider_execution_seconds"] = fdc_only_result.get(
+                "provider_execution_seconds", 0.0
+            )
+            merged["provider_final_status"] = provider_final_status
+
+            terminal_status = (
+                "FDC_SUCCEEDED"
+                if provider_final_status in ("", "success")
+                else "FDC_FAILED_FINAL"
+            )
+            await self._repos.fdc_quota.mark_job_terminal(
+                job_id=job_id, status=terminal_status,
+                reason=None if terminal_status == "FDC_SUCCEEDED" else provider_final_status,
+            )
+            return self._apply_expected_value_anchor(
+                deserialize_agent_output(json.dumps(merged).encode("utf-8")),
                 assembled_context=assembled_context,
             )
 

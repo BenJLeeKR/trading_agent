@@ -113,7 +113,31 @@ class PostgresFdcQuotaRepository:
                     window_seconds,
                 )
 
-                if window_count >= target_rpm:
+                # FIFO 공정성(2026-08-27, held_position 실제 dispatcher 신설
+                # — PR #359 리뷰 보정): job_id가 있는 호출(=dispatcher가
+                # 관리하는 real job)에 한해, 나보다 먼저 등록됐고 아직
+                # QUEUED 상태인(=아직 grant를 못 받은) job이 있으면 이번
+                # window에 여유가 있어도 순번을 양보한다 — 동시에 여러
+                # symbol의 coroutine이 각자 try_reserve()를 폴링해도
+                # "늦게 등록된 job이 먼저 grant받는" 새치기를 anchor 행
+                # 잠금 하에 원천 차단한다. job_id가 없는 호출(기존 manual
+                # 스크립트 경로)은 이 검사 대상이 아니다 — 하위 호환.
+                not_my_turn = False
+                if job_id is not None:
+                    earlier_queued = await reservation_tx.connection.fetchval(
+                        "SELECT EXISTS(SELECT 1 FROM trading.fdc_queue_jobs "
+                        "WHERE quota_scope = $1 AND mode = 'real' "
+                        "AND status = 'QUEUED' "
+                        "AND enqueue_sequence < ("
+                        "  SELECT enqueue_sequence FROM trading.fdc_queue_jobs "
+                        "  WHERE job_id = $2"
+                        "))",
+                        quota_scope,
+                        job_id,
+                    )
+                    not_my_turn = bool(earlier_queued)
+
+                if window_count >= target_rpm or not_my_turn:
                     if job_id is not None:
                         await reservation_tx.connection.execute(
                             "UPDATE trading.fdc_queue_jobs SET "
@@ -363,3 +387,88 @@ class PostgresFdcQuotaRepository:
             return CoordinatorError(_classify_error(exc), str(exc))
         except (OSError, ConnectionError) as exc:
             return CoordinatorError(_classify_error(exc), str(exc))
+
+    async def register_real_job(
+        self,
+        *,
+        decision_cycle_id: str | None,
+        decision_context_id: uuid.UUID | None,
+        symbol: str,
+        source_type: str,
+        quota_scope: str,
+        fdc_ready_at: datetime,
+    ) -> uuid.UUID:
+        job_id = uuid.uuid4()
+        async with TransactionManager() as reg_tx:
+            await reg_tx.connection.execute(
+                "INSERT INTO trading.fdc_queue_jobs "
+                "(job_id, decision_cycle_id, decision_context_id, symbol, "
+                " source_type, quota_scope, mode, status, fdc_ready_at) "
+                "VALUES ($1, $2, $3, $4, $5, $6, 'real', 'QUEUED', $7)",
+                job_id,
+                decision_cycle_id,
+                decision_context_id,
+                symbol,
+                source_type,
+                quota_scope,
+                fdc_ready_at,
+            )
+            await reg_tx.commit()
+        return job_id
+
+    async def cancel_stale_real_jobs(
+        self,
+        *,
+        quota_scope: str,
+        reason: str = "process_terminated_carryover_lost",
+    ) -> int:
+        async with TransactionManager() as scan_tx:
+            result = await scan_tx.connection.execute(
+                "UPDATE trading.fdc_queue_jobs SET "
+                "status = 'CANCELLED', failure_or_cancel_reason = $2, "
+                "completed_at = now(), updated_at = now() "
+                "WHERE quota_scope = $1 AND mode = 'real' "
+                "AND status NOT IN ('FDC_SUCCEEDED', 'FDC_FAILED_FINAL', 'CANCELLED')",
+                quota_scope,
+                reason,
+            )
+            await scan_tx.commit()
+        # asyncpg execute()는 "UPDATE N" 형태의 status string을 반환한다.
+        try:
+            return int(result.split()[-1])
+        except (IndexError, ValueError):
+            return 0
+
+    async def mark_job_terminal(
+        self,
+        *,
+        job_id: uuid.UUID,
+        status: str,
+        reason: str | None = None,
+    ) -> None:
+        """job을 종결 상태(``FDC_SUCCEEDED``/``FDC_FAILED_FINAL``/
+        ``CANCELLED``)로 전이시킨다 — dispatcher가 attempt 단위
+        accounting(``try_reserve()``/``record_attempt_outcome()``)과는
+        별개로, job 단위 최종 상태를 명시적으로 기록하기 위한 헬퍼다."""
+        async with TransactionManager() as term_tx:
+            await term_tx.connection.execute(
+                "UPDATE trading.fdc_queue_jobs SET "
+                "status = $2, failure_or_cancel_reason = $3, "
+                "completed_at = now(), updated_at = now() WHERE job_id = $1",
+                job_id,
+                status,
+                reason,
+            )
+            await term_tx.commit()
+
+    async def mark_job_status(self, *, job_id: uuid.UUID, status: str) -> None:
+        """job의 비종결(non-terminal) 상태 전이(``RETRY_QUEUED`` 등)를
+        기록한다 — ``completed_at``은 건드리지 않는다."""
+        async with TransactionManager() as status_tx:
+            await status_tx.connection.execute(
+                "UPDATE trading.fdc_queue_jobs SET "
+                "status = $2, updated_at = now() WHERE job_id = $1",
+                job_id,
+                status,
+            )
+            await status_tx.commit()

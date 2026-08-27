@@ -63,8 +63,10 @@ provider 호출은 production에서도 이 quota의 대상이 아니다
 
 from __future__ import annotations
 
+import asyncio
 import socket
 import uuid
+from collections.abc import Awaitable, Callable
 from datetime import date, datetime, timezone
 
 import httpx
@@ -94,6 +96,9 @@ __all__ = [
     "build_manual_call_policy",
     "build_manual_run_id",
     "call_with_coordinator",
+    "execute_fdc_one_shot_attempt",
+    "run_real_dispatch_job",
+    "PreGrantedFdcProviderClient",
 ]
 
 
@@ -188,6 +193,7 @@ async def call_with_coordinator(
     temperature: float = 0.0,
     seed: int | None = None,
     max_attempts: int = 3,
+    job_id: uuid.UUID | None = None,
 ) -> RawProviderResponse:
     """HTTP 시도마다 새 reservation을 얻어 one-shot HTTP를 실행한다.
 
@@ -226,11 +232,17 @@ async def call_with_coordinator(
     - 콜백이 성공한 뒤(HTTP가 실제로 시작된 뒤) 발생한 실패만 기존
       ``http_failed_retryable``/``http_failed_final`` 규칙을 그대로
       따른다.
+
+    ``job_id``(2026-08-27, held_position 실제 dispatcher 신설 — PR #359
+    리뷰 보정): 기본값 ``None``(기존 manual 스크립트 동작 100% 보존).
+    dispatcher가 관리하는 real job이면 그 ``job_id``를 전달해 매
+    ``try_reserve()`` 호출이 ``fdc_queue_jobs`` accounting(FIFO 순번
+    포함)에 정확히 반영되게 한다.
     """
     last_exc: Exception | None = None
     for attempt_no in range(1, max_attempts + 1):
         result = await coordinator.try_reserve(
-            job_id=None,
+            job_id=job_id,
             caller_id=caller_id,
             mode="real",
             manual_run_id=manual_run_id,
@@ -247,78 +259,212 @@ async def call_with_coordinator(
                 f"manual_run_id={manual_run_id!r}"
             )
 
-        grant: ReservationGrant = result
-        http_started = False
-
-        async def _on_http_start(_grant: ReservationGrant = grant) -> None:
-            nonlocal http_started
-            await coordinator.record_attempt_outcome(
-                reservation_id=_grant.reservation_id,
-                outcome="http_started",
-                http_started_at=datetime.now(timezone.utc),
-            )
-            http_started = True
-
         try:
-            response = await client.generate_structured_once(
-                grant,
-                expected_job_id=None,
-                expected_attempt_no=attempt_no,
-                model_id=model_id,
-                system_prompt=system_prompt,
-                user_prompt=user_prompt,
-                response_format=response_format,
-                temperature=temperature,
+            return await execute_fdc_one_shot_attempt(
+                coordinator=coordinator, client=client, grant=result,
+                job_id=job_id, attempt_no=attempt_no, model_id=model_id,
+                system_prompt=system_prompt, user_prompt=user_prompt,
+                response_format=response_format, temperature=temperature,
                 seed=seed,
-                on_http_start=_on_http_start,
             )
-        except Exception as exc:  # noqa: BLE001 — 아래에서 재시도 여부만 분류
-            completed_at = datetime.now(timezone.utc)
-            if not http_started:
-                # HTTP 시작 전 실패(client 준비/body 조립 실패, 또는
-                # on_http_start 콜백 자체의 DB 기록 실패) — client.post()는
-                # 호출되지 않았다.
-                await coordinator.record_attempt_outcome(
-                    reservation_id=grant.reservation_id,
-                    outcome="reserved_but_http_not_started",
-                    error_class=type(exc).__name__,
-                    completed_at=completed_at,
-                )
-                last_exc = exc
-                if attempt_no < max_attempts:
-                    continue
-                raise
-            retryable = _is_retryable_exception(exc)
-            is_429 = (
-                isinstance(exc, httpx.HTTPStatusError)
-                and exc.response.status_code == 429
-            )
-            await coordinator.record_attempt_outcome(
-                reservation_id=grant.reservation_id,
-                outcome="http_failed_retryable" if retryable else "http_failed_final",
-                http_status=(
-                    exc.response.status_code
-                    if isinstance(exc, httpx.HTTPStatusError) else None
-                ),
-                error_class=type(exc).__name__,
-                http_429_observed=is_429,
-                completed_at=completed_at,
-            )
-            last_exc = exc
-            if retryable and attempt_no < max_attempts:
+        except _RetryableAttemptError as exc:
+            last_exc = exc.__cause__
+            if attempt_no < max_attempts:
                 continue
+            raise last_exc from None
+        except Exception:
             raise
-        else:
-            completed_at = datetime.now(timezone.utc)
-            await coordinator.record_attempt_outcome(
-                reservation_id=grant.reservation_id,
-                outcome="http_succeeded",
-                completed_at=completed_at,
-            )
-            return response
 
     assert last_exc is not None  # pragma: no cover — 루프는 항상 return/raise로 끝난다
     raise last_exc
+
+
+class _RetryableAttemptError(Exception):
+    """``execute_fdc_one_shot_attempt()`` 내부 전용 마커 — 원본 예외를
+    ``__cause__``에 담아 "이 실패는 새 reservation으로 재시도해도 되는
+    실패"임을 호출자에게 알린다. 공개 API로 노출하지 않는다."""
+
+
+async def execute_fdc_one_shot_attempt(
+    *,
+    coordinator: FdcQuotaCoordinator,
+    client: LiveGeminiProviderClient,
+    grant: ReservationGrant,
+    job_id: uuid.UUID | None,
+    attempt_no: int,
+    model_id: str,
+    system_prompt: str,
+    user_prompt: str,
+    response_format: type,
+    temperature: float,
+    seed: int | None,
+) -> RawProviderResponse:
+    """이미 발급된 ``grant`` 하나로 provider one-shot HTTP를 실행하고
+    ``fdc_provider_attempts``에 결과를 기록한다(``call_with_coordinator()``
+    와 ``run_real_dispatch_job()``이 공유하는 단일 attempt 실행 로직,
+    2026-08-27 리뷰 보정으로 추출 — 중복 구현 없음).
+
+    성공하면 ``RawProviderResponse``를 반환한다. 실패는 재시도 가능
+    여부에 따라 두 가지로 구분한다:
+
+    - 재시도 가능(pre-HTTP 실패, 또는 post-HTTP retryable 실패):
+      ``_RetryableAttemptError``(원본 예외를 ``__cause__``에 담음)를
+      던진다 — 호출자가 새 reservation으로 재시도할지 결정한다.
+    - 재시도 불가(non-retryable): 원본 예외를 그대로 던진다.
+    """
+    http_started = False
+
+    async def _on_http_start(_grant: ReservationGrant = grant) -> None:
+        nonlocal http_started
+        await coordinator.record_attempt_outcome(
+            reservation_id=_grant.reservation_id,
+            outcome="http_started",
+            http_started_at=datetime.now(timezone.utc),
+        )
+        http_started = True
+
+    try:
+        response = await client.generate_structured_once(
+            grant,
+            expected_job_id=job_id,
+            expected_attempt_no=attempt_no,
+            model_id=model_id,
+            system_prompt=system_prompt,
+            user_prompt=user_prompt,
+            response_format=response_format,
+            temperature=temperature,
+            seed=seed,
+            on_http_start=_on_http_start,
+        )
+    except Exception as exc:  # noqa: BLE001 — 아래에서 재시도 여부만 분류
+        completed_at = datetime.now(timezone.utc)
+        if not http_started:
+            # HTTP 시작 전 실패(client 준비/body 조립 실패, 또는
+            # on_http_start 콜백 자체의 DB 기록 실패) — client.post()는
+            # 호출되지 않았다.
+            await coordinator.record_attempt_outcome(
+                reservation_id=grant.reservation_id,
+                outcome="reserved_but_http_not_started",
+                error_class=type(exc).__name__,
+                completed_at=completed_at,
+            )
+            raise _RetryableAttemptError() from exc
+        retryable = _is_retryable_exception(exc)
+        is_429 = (
+            isinstance(exc, httpx.HTTPStatusError)
+            and exc.response.status_code == 429
+        )
+        await coordinator.record_attempt_outcome(
+            reservation_id=grant.reservation_id,
+            outcome="http_failed_retryable" if retryable else "http_failed_final",
+            http_status=(
+                exc.response.status_code
+                if isinstance(exc, httpx.HTTPStatusError) else None
+            ),
+            error_class=type(exc).__name__,
+            http_429_observed=is_429,
+            completed_at=completed_at,
+        )
+        if retryable:
+            raise _RetryableAttemptError() from exc
+        raise
+    else:
+        completed_at = datetime.now(timezone.utc)
+        await coordinator.record_attempt_outcome(
+            reservation_id=grant.reservation_id,
+            outcome="http_succeeded",
+            completed_at=completed_at,
+        )
+        return response
+
+
+async def run_real_dispatch_job(
+    *,
+    coordinator: FdcQuotaCoordinator,
+    client: LiveGeminiProviderClient,
+    job_id: uuid.UUID,
+    caller_id: str,
+    manual_run_id: str,
+    model_id: str,
+    system_prompt: str,
+    user_prompt: str,
+    response_format: type,
+    temperature: float = 0.0,
+    seed: int | None = None,
+    max_provider_attempts: int = 3,
+    poll_interval_seconds: float = 2.0,
+    coordinator_error_backoff_initial_seconds: float = 1.0,
+    coordinator_error_backoff_max_seconds: float = 30.0,
+    sleep_fn: Callable[[float], Awaitable[None]] | None = None,
+) -> RawProviderResponse:
+    """실제(``mode='real'``) dispatcher job 하나를 끝까지 처리한다
+    (2026-08-27 신설, PR #359 리뷰 보정 — held_position 실제 dispatcher).
+
+    ``call_with_coordinator()``와 달리 ``ReservationDenied``를 즉시
+    실패로 취급하지 않는다 — 설계 문서 §4/§5의 "순번 탈락 금지"
+    원칙대로, quota가 가득 찼거나(``ReservationDenied``) 아직 내 차례가
+    아니면(FIFO, §6 보정) ``poll_interval_seconds``만큼 대기한 뒤 계속
+    재시도한다(deadline 없음 — 명시적 취소만 종료 사유, §4). coordinator
+    오류(``CoordinatorError``)는 지수 backoff(§6 "coordinator 오류
+    경로")로 재시도한다.
+
+    provider HTTP 재시도(429/5xx/timeout)는 매번 **새 reservation**을
+    얻는다(§7) — ``max_provider_attempts``에 도달하면 최종 실패로
+    예외를 전파한다.
+
+    ``sleep_fn``(테스트 전용, 기본 ``None``이면 ``asyncio.sleep``)을
+    주입하면 fake clock으로 실제 sleep 없이 대기 로직을 검증할 수 있다.
+    """
+    if sleep_fn is None:
+        sleep_fn = asyncio.sleep
+
+    coordinator_error_backoff = coordinator_error_backoff_initial_seconds
+    provider_attempt_no = 1
+    last_exc: Exception | None = None
+
+    while True:
+        result = await coordinator.try_reserve(
+            job_id=job_id,
+            caller_id=caller_id,
+            mode="real",
+            manual_run_id=manual_run_id,
+            attempt_no=provider_attempt_no,
+        )
+        if isinstance(result, ReservationDenied):
+            # 순번 대기(FIFO) 또는 window 포화 — 탈락이 아니다. 다음
+            # window 회복을 기다린다.
+            await sleep_fn(poll_interval_seconds)
+            continue
+        if isinstance(result, CoordinatorError):
+            # DB/coordinator 오류 — fail-closed(HTTP 미호출), 지수
+            # backoff 후 재시도. queue_poll_count 등 영속 카운터는 전혀
+            # 건드리지 않는다(coordinator 자체가 응답하지 못했으므로).
+            await sleep_fn(coordinator_error_backoff)
+            coordinator_error_backoff = min(
+                coordinator_error_backoff * 2,
+                coordinator_error_backoff_max_seconds,
+            )
+            continue
+
+        # 정상 응답(GRANTED/DENIED)을 받았으므로 backoff을 초기화한다.
+        coordinator_error_backoff = coordinator_error_backoff_initial_seconds
+
+        try:
+            return await execute_fdc_one_shot_attempt(
+                coordinator=coordinator, client=client, grant=result,
+                job_id=job_id, attempt_no=provider_attempt_no,
+                model_id=model_id, system_prompt=system_prompt,
+                user_prompt=user_prompt, response_format=response_format,
+                temperature=temperature, seed=seed,
+            )
+        except _RetryableAttemptError as exc:
+            last_exc = exc.__cause__
+            if provider_attempt_no < max_provider_attempts:
+                provider_attempt_no += 1
+                continue
+            raise last_exc from None
+        except Exception:
+            raise
 
 
 class CoordinatedFdcProviderClient:
@@ -387,3 +533,69 @@ class CoordinatedFdcProviderClient:
             seed=seed,
             max_attempts=self._max_attempts,
         )
+
+
+class PreGrantedFdcProviderClient:
+    """``AIProviderClient`` Protocol을 만족하는 wrapper — 이미 확보된
+    ``ReservationGrant``로 정확히 1회 HTTP 시도만 실행한다(2026-08-27
+    신설, held_position 실제 dispatcher — PR #359 리뷰 보정).
+
+    ``CoordinatedFdcProviderClient``와 달리 ``try_reserve()``를 직접
+    호출하지 않는다 — reservation은 dispatcher(부모 프로세스,
+    ``DecisionAgentRunner``)가 이미 얻어 이 client 생성 시점에 주입한다.
+    ``--mode fdc_only`` subprocess가 이 client를
+    ``FinalDecisionComposerAgent``에 주입해 기존 ``run()``(정규화,
+    held_position decision_type guard 포함)을 그대로 재사용한다 —
+    agent 로직을 복제하지 않는다.
+
+    실패하면(재시도 불가/가능 모두) 원본 예외를 그대로 던진다 — 이
+    client는 재시도하지 않는다(``max_attempts=1`` 고정, 재시도는
+    dispatcher가 새 grant로 새 subprocess를 스폰해 수행한다).
+    """
+
+    def __init__(
+        self,
+        *,
+        coordinator: FdcQuotaCoordinator,
+        live_client: LiveGeminiProviderClient,
+        grant: ReservationGrant,
+        job_id: uuid.UUID | None,
+    ) -> None:
+        self._coordinator = coordinator
+        self._live_client = live_client
+        self._grant = grant
+        self._job_id = job_id
+
+    async def generate_structured(
+        self,
+        *,
+        model_id: str,
+        system_prompt: str,
+        user_prompt: str,
+        response_format: type,
+        temperature: float = 0.0,
+        seed: int | None = None,
+        acquire_permit: PermitCallback | None = None,
+    ) -> RawProviderResponse:
+        if acquire_permit is not None:
+            raise ValueError(
+                "PreGrantedFdcProviderClient.generate_structured()는 "
+                "acquire_permit을 받지 않는다 — 이미 확보된 reservation "
+                "grant 하나로만 동작한다."
+            )
+        try:
+            return await execute_fdc_one_shot_attempt(
+                coordinator=self._coordinator,
+                client=self._live_client,
+                grant=self._grant,
+                job_id=self._job_id,
+                attempt_no=self._grant.attempt_no,
+                model_id=model_id,
+                system_prompt=system_prompt,
+                user_prompt=user_prompt,
+                response_format=response_format,
+                temperature=temperature,
+                seed=seed,
+            )
+        except _RetryableAttemptError as exc:
+            raise exc.__cause__ from None

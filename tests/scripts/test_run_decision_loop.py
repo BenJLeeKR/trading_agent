@@ -6000,3 +6000,86 @@ class TestReplayFdcReadyShadowEventsForCycle:
             if entry.mode == "real"
         ]
         assert real_attempts == []
+
+
+class TestFdcActualDispatchRecoveryScan:
+    """2026-08-27 신설(§17.7, PR #359 리뷰 보정) — ``_run_loop()`` 진입
+    시(최초 seed 직후, cycle 루프 진입 전) FDC 실제 dispatch 재기동
+    recovery scan이 정확히 1회 호출되는지, flag=false면 전혀 호출되지
+    않는지 검증한다."""
+
+    def _run_loop_kwargs(self) -> dict[str, object]:
+        return dict(
+            interval=0, max_cycles=1, submit=False, dry_run=True,
+            allow_general_submit=True, max_general_submits_this_cycle=0,
+            output="text",
+        )
+
+    async def _run_with_mocks(
+        self, *, fdc_actual_dispatch_enabled: bool, monkeypatch: pytest.MonkeyPatch,
+    ) -> MagicMock:
+        import scripts.run_decision_loop as module
+
+        monkeypatch.setenv(
+            "FDC_ACTUAL_DISPATCH_ENABLED",
+            "true" if fdc_actual_dispatch_enabled else "false",
+        )
+
+        @asynccontextmanager
+        async def _mock_runtime(run_migrations: bool = False) -> AsyncIterator[dict[str, Any]]:
+            yield {"repositories": MagicMock()}
+
+        class _DummyTx:
+            async def commit(self) -> None:
+                return None
+
+        @asynccontextmanager
+        async def _mock_tx() -> AsyncIterator[_DummyTx]:
+            yield _DummyTx()
+
+        fake_fdc_quota = MagicMock()
+        fake_fdc_quota.cancel_stale_real_jobs = AsyncMock(return_value=0)
+        fake_repos = MagicMock()
+        fake_repos.fdc_quota = fake_fdc_quota
+
+        original_shutdown_event = module._shutdown_event
+        module._shutdown_event = asyncio.Event()
+        try:
+            with (
+                patch("scripts.run_decision_loop._install_signal_handlers", return_value=None),
+                patch(
+                    "scripts.run_decision_loop._load_trading_universe_with_anchor",
+                    AsyncMock(return_value=((), UniverseAnchorMetadata(source="test"))),
+                ),
+                patch("scripts.run_decision_loop.postgres_runtime", new=_mock_runtime),
+                patch("scripts.run_decision_loop._seed_if_empty", AsyncMock(return_value=False)),
+                patch("scripts.run_decision_loop._run_precheck", AsyncMock(return_value=None)),
+                patch("agent_trading.db.transaction.transaction", new=_mock_tx),
+                patch(
+                    "agent_trading.repositories.postgres.bootstrap.build_postgres_repositories",
+                    return_value=fake_repos,
+                ),
+            ):
+                await module._run_loop(**self._run_loop_kwargs())
+        finally:
+            module._shutdown_event = original_shutdown_event
+
+        return fake_fdc_quota
+
+    @pytest.mark.asyncio
+    async def test_recovery_scan_called_once_when_flag_enabled(
+        self, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        fake_fdc_quota = await self._run_with_mocks(
+            fdc_actual_dispatch_enabled=True, monkeypatch=monkeypatch,
+        )
+        fake_fdc_quota.cancel_stale_real_jobs.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_recovery_scan_not_called_when_flag_disabled(
+        self, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        fake_fdc_quota = await self._run_with_mocks(
+            fdc_actual_dispatch_enabled=False, monkeypatch=monkeypatch,
+        )
+        fake_fdc_quota.cancel_stale_real_jobs.assert_not_awaited()

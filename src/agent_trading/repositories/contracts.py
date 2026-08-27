@@ -2180,3 +2180,66 @@ class FdcQuotaRepository(Protocol):
         행은 ``mode='shadow'``다 — 실제 quota를 절대 소비하지 않는다.
         """
         ...
+
+    async def register_real_job(
+        self,
+        *,
+        decision_cycle_id: str | None,
+        decision_context_id: UUID | None,
+        symbol: str,
+        source_type: str,
+        quota_scope: str,
+        fdc_ready_at: datetime,
+    ) -> UUID:
+        """실제(``mode='real'``) FDC dispatch 대상 job을 ``QUEUED``
+        상태로 ``fdc_queue_jobs``에 등록한다(2026-08-27, held_position
+        실제 dispatcher 신설).
+
+        이 메서드가 반환하는 ``job_id``는 이후 ``try_reserve(job_id=...)``
+        에 그대로 전달돼야 한다 — ``job_id=None``으로 ``try_reserve()``를
+        호출하면 이 job의 accounting(``queue_poll_count``/
+        ``reservation_denied_count``/``dispatch_attempt_no``)이 전혀
+        기록되지 않는다(§9 계약 위반).
+        """
+        ...
+
+    async def cancel_stale_real_jobs(
+        self,
+        *,
+        quota_scope: str,
+        reason: str = "process_terminated_carryover_lost",
+    ) -> int:
+        """재기동 recovery scan(§17.7) — 이 ``quota_scope``의 ``mode=
+        'real'`` job 중 terminal 상태(``FDC_SUCCEEDED``/``FDC_FAILED_
+        FINAL``/``CANCELLED``)가 아닌 모든 job을 ``CANCELLED``(사유는
+        ``reason``, 기본값은 §5가 확정한 "프로세스 종료" 사유)로
+        전이시킨다.
+
+        idempotent — 이미 terminal인 job은 건드리지 않으므로, 두 번
+        연속 호출해도 두 번째 호출의 영향 행 수는 0이다.
+        reservation/attempt accounting 카운터(§9)는 전혀 변경하지
+        않는다 — ``status``와 ``failure_or_cancel_reason``만 갱신한다.
+
+        Returns
+        -------
+        int
+            이번 호출로 ``CANCELLED``로 전이된 행 수.
+        """
+        ...
+
+    async def mark_job_terminal(
+        self,
+        *,
+        job_id: UUID,
+        status: str,
+        reason: str | None = None,
+    ) -> None:
+        """job을 종결 상태(``FDC_SUCCEEDED``/``FDC_FAILED_FINAL``/
+        ``CANCELLED``)로 전이시킨다. attempt 단위 accounting과는 별개로
+        job 단위 최종 상태만 기록한다."""
+        ...
+
+    async def mark_job_status(self, *, job_id: UUID, status: str) -> None:
+        """job의 비종결(non-terminal) 상태 전이(``RETRY_QUEUED`` 등)를
+        기록한다."""
+        ...

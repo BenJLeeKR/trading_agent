@@ -200,6 +200,55 @@
 > 전체 dispatcher**가 필요해질 때(§15 "③ 전체 lane 전환" 단계) 별도 PR로
 > 진행한다 — 이번 PR은 §15 "② held_position lane 한정 실전 전환" 단계만
 > 코드 수준으로 구현했다.
+>
+> **상태(2026-08-27 5차, 독립 리뷰 결함 지적 후 실제 dispatcher로 보완 —
+> PR #359 리뷰 보정)**: 4차 구현은 실제로는 **단발 quota 검사**였다 —
+> 13 RPM이 찬 경우 `ReservationDenied` 후 FIFO 대기·재등록·다음 slot
+> 재시도가 없어 14번째 이후 job이 FDC 판단 없이 fallback HOLD로 끝날 수
+> 있었고, `job_id=None`/`manual_run_id` 재사용으로 거부·재시도·최종
+> 결과를 job 단위로 감사할 수 없었다(§4 "순번 탈락 금지"와 §17이 요구하는
+> job lifecycle 계약 위반). 이 결함을 5차 보정으로 해소했다 —
+> **"§17의 문자 그대로"가 아니라 "§17이 보장하려는 계약(FIFO 대기,
+> job 단위 감사, subprocess 격리 보존)"을 다른 경계에서 구현**했다:
+>
+> - **`assemble()`은 여전히 건드리지 않는다.** 830줄짜리 안전 필수 메서드
+>   내부 분리 대신, `DecisionAgentRunner.run_agents_in_subprocess()`
+>   (기존에도 "agent를 실행하고 bundle을 반환하는" 불투명한 단일 진입점)
+>   내부에서만 오케스트레이션한다 — `assemble()`은 이 메서드를 호출해
+>   `AgentExecutionBundle`을 받는 기존 코드 그대로다.
+> - `run_agent_subprocess.py`에 실제로 `mode="full"`(기존)/`mode=
+>   "pre_fdc"`(EI/AR/AC + FDC skip 판정까지만)/`mode="fdc_only"`(이미
+>   확보한 grant로 FDC one-shot만) 3가지를 신설했다 — §17.2가 요구한
+>   두 CLI 진입점을 그대로 구현했다.
+> - **FIFO 대기는 중앙 dispatcher 루프가 아니라 `try_reserve()` 자체의
+>   FIFO 인지 admission 규칙**으로 구현했다(신규) — `job_id`가 있는 호출은
+>   자신보다 먼저 등록되고 아직 `QUEUED`인 job이 있으면 window에 여유가
+>   있어도 거부된다(anchor 행 잠금 하에 원자적으로 판정). 이 덕분에 여러
+>   symbol의 코루틴이 각자 독립적으로 `try_reserve()`를 폴링해도(중앙
+>   집중 dispatcher 없이) 새치기가 원천 차단된다 — `fdc_queue_jobs`에
+>   `register_real_job()`으로 실제 job을 등록하고(§17 요구), `mark_job_
+>   terminal()`/`cancel_stale_real_jobs()`로 상태를 관리한다.
+> - `DecisionAgentRunner._run_agents_in_subprocess_with_actual_
+>   dispatch()`가 pre_fdc → (reservation 대기, deadline 없음, coordinator
+>   오류는 지수 backoff) → fdc_only → 병합을 오케스트레이션한다. quota가
+>   가득 차거나 순번이 아니면 fallback으로 포기하지 않고 계속 재시도한다
+>   (§4 "순번 탈락 금지" 직접 준수). provider retryable 실패는 새
+>   reservation(=새 `fdc_only` subprocess spawn)을 쓴다(§7).
+> - **재기동 recovery scan(§17.7)을 실제로 구현했다** — `run_decision_
+>   loop.py::_run_loop()`(ops-scheduler가 cycle마다 새로 spawn하는
+>   subprocess의 진입점) 시작 시 1회, flag가 켜져 있으면
+>   `cancel_stale_real_jobs()`를 호출해 이전 invocation이 강제 종료돼
+>   carryover를 잃은 non-terminal real job을 `CANCELLED(reason=
+>   process_terminated_carryover_lost)`로 정리한다(idempotent).
+>
+> **여전히 포함하지 않은 것**: `pending_fdc_dispatch_sink`/전 cycle
+> 단위의 중앙 집중 batch dispatcher(§4/§6/§7의 "worker slot" 개념 —
+> FIFO 인지 `try_reserve()`가 그 역할을 대체), `assemble_pre_fdc()`/
+> `assemble_post_fdc()` 분리(불필요해짐), 진입점 #1·#2의 core lane 전환.
+> core lane까지 포함한 전체 dispatcher가 필요해지면(§15 "③ 전체 lane
+> 전환") 이 FIFO 인지 `try_reserve()` 설계를 그대로 재사용할 수 있다 —
+> job 등록 대상만 core lane까지 넓히면 되고, 새 아키텍처가 필요하지
+> 않다.
 
 ## 1. 배경과 문제 정의
 
