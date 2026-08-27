@@ -1129,16 +1129,18 @@ job만 `CANCELLED(reason=process_terminated_carryover_lost)`로 전이하는지,
 
 - `provider_client.py::OpenAICompatibleClient.generate_structured()`(255-412행)의
   retry 루프(`for attempt in range(MAX_RETRIES)`, 335행)를 **단일 시도 내부
-  헬퍼**(`_generate_structured_single_attempt()`, 신규 private 메서드)로 추출한다
-  — HTTP 요청 1회, 응답 파싱, 에러 분류(retryable/non-retryable)까지만 담당하고
-  retry 여부 판단은 하지 않는다.
+  헬퍼**(초기 설계 명칭은 `_generate_structured_single_attempt()`였으나, 실제
+  구현에서는 `_single_http_attempt()`라는 이름으로 신설된 private 메서드다 —
+  이하 본문은 실제 식별자를 쓴다)로 추출한다 — HTTP 요청 1회, 응답 파싱,
+  에러 분류(retryable/non-retryable)까지만 담당하고 retry 여부 판단은 하지
+  않는다.
 - 기존 `generate_structured()`는 이 헬퍼를 `MAX_RETRIES`만큼 루프 호출하는
   **얇은 wrapper**로 재정의한다 — 외부에서 관측 가능한 동작(재시도 횟수, backoff,
   `acquire_permit` 호출 시점)은 **1바이트도 바뀌지 않는다**(순수 내부 추출
   리팩터링, §16 "공용 `generate_structured()` 불변" 계약 그대로 준수).
 - 신규 `generate_structured_once(grant: ReservationGrant, ...)`(`LiveGemini
-  ProviderClient` 전용 메서드, §12)는 `_generate_structured_single_attempt()`를
-  **정확히 1회** 호출하고 끝낸다 — retry 루프 없음, `acquire_permit` 호출 없음
+  ProviderClient` 전용 메서드, §12)는 `_single_http_attempt()`를 **정확히
+  1회** 호출하고 끝낸다 — retry 루프 없음, `acquire_permit` 호출 없음
   (기존 10 RPM strict limiter를 아예 거치지 않는다 — 13 RPM coordinator가
   이를 대체).
 - `MAX_RETRIES`라는 이름은 **변경하지 않는다**(§16 "구현 후 실측 필요"의
@@ -1265,7 +1267,7 @@ xxx()` 함수 + dataclass field)을 그대로 따르되, 위 보정을 반영한
    limiter.py`의 `DEFAULT_MAX_WAIT_SECONDS=18.0`/`DEFAULT_MAX_REQUEUE_
    COUNT=1` 탈락 경로가 신규 dispatcher 경로에서는 전혀 쓰이지 않음을 확인)
    — **PR B**(dispatcher 본체 대상)
-7. `generate_structured_once()`가 `_generate_structured_single_attempt()`를
+7. `generate_structured_once()`가 `_single_http_attempt()`를
    정확히 1회만 호출하고(§18), 기존 `generate_structured()`의 외부 동작이
    리팩터링 전후로 완전히 동일한지(회귀 테스트) — **PR A**(§18은 PR A
    범위, dispatcher 없이 독립 검증 가능)
