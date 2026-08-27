@@ -472,3 +472,15 @@ class PostgresFdcQuotaRepository:
                 status,
             )
             await status_tx.commit()
+
+    async def get_attempt_http_started_at(
+        self, *, reservation_id: uuid.UUID,
+    ) -> datetime | None:
+        async with TransactionManager() as read_tx:
+            value = await read_tx.connection.fetchval(
+                "SELECT http_started_at FROM trading.fdc_provider_attempts "
+                "WHERE attempt_id = $1",
+                reservation_id,
+            )
+            await read_tx.commit()
+        return value

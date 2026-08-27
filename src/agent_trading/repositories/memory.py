@@ -3439,3 +3439,10 @@ class InMemoryFdcQuotaRepository:
         async with self._lock:
             if job_id in self._jobs:
                 self._jobs[job_id]["status"] = status
+
+    async def get_attempt_http_started_at(
+        self, *, reservation_id: UUID,
+    ) -> datetime | None:
+        async with self._lock:
+            entry = self._attempts_by_id.get(reservation_id)
+            return entry.http_started_at if entry is not None else None

@@ -293,6 +293,21 @@ class SubmitResult:
     error_phase: str | None = None
     decision_context_id: UUID | None = None
 
+    # ── FDC 실제 dispatch pending 전용(2026-08-27 신설 — PR #359 2차
+    # 리뷰 보정) ── status="FDC_ACTUAL_DISPATCH_PENDING"일 때만 채워진다.
+    # symbol coroutine이 quota reservation을 기다리며 asyncio.gather()를
+    # 막지 않도록, pre_fdc 단계 결과와 job_id만 담아 즉시 반환한다 —
+    # 호출자(run_decision_loop.py)가 이 값을 post-gather dispatcher의
+    # pending sink에 적재한다.
+    fdc_dispatch_job_id: UUID | None = None
+    fdc_dispatch_pre_fdc_result: dict[str, Any] | None = None
+    # pre_fdc가 평가된 바로 그 context — post-gather dispatcher가 EV
+    # anchor 계산에 그대로 재사용한다(새로 재조회한 context를 쓰면
+    # 실제 EI/AR/AC 평가 시점과 어긋난다).
+    fdc_dispatch_assembled_context: AIPolicyContextView | None = None
+    fdc_dispatch_provider_runtime: dict[str, Any] | None = None
+    fdc_dispatch_subprocess_timeout: int | None = None
+
     @classmethod
     def build(
         cls,

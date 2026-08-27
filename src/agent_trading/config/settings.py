@@ -723,6 +723,15 @@ def _resolve_gemini_provider_declared_rpm_limit() -> int:
     return max(1, int(os.getenv("GEMINI_PROVIDER_DECLARED_RPM_LIMIT", "15")))
 
 
+def _resolve_fdc_worker_concurrency() -> int:
+    """``FDC_WORKER_CONCURRENCY`` env — post-gather FDC 실제 dispatch
+    worker의 동시 실행 수(2026-08-27 2차 리뷰 보정, PR #359). 기본값
+    ``5``(설계 문서 §13 "실측 전 보수적 시작값"). symbol 처리용
+    ``asyncio.Semaphore``(``_SEMAPHORE_MAX``)와는 별도의 semaphore로,
+    FDC quota reservation 대기 + fdc_only 실행만 이 값으로 제한한다."""
+    return max(1, int(os.getenv("FDC_WORKER_CONCURRENCY", "5")))
+
+
 def _resolve_kis_fill_incremental_append_enabled() -> bool:
     """KIS 누적 체결량(``TOT_CCLD_QTY``)을 증분으로 해석해 실제
     ``fill_events``에 append할지 여부를 ``KIS_FILL_INCREMENTAL_APPEND_

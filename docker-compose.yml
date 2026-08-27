@@ -409,6 +409,7 @@ services:
       FDC_PROVIDER_TARGET_RPM: "${FDC_PROVIDER_TARGET_RPM:-13}"
       FDC_PROVIDER_RATE_WINDOW_SECONDS: "${FDC_PROVIDER_RATE_WINDOW_SECONDS:-60}"
       GEMINI_PROVIDER_DECLARED_RPM_LIMIT: "${GEMINI_PROVIDER_DECLARED_RPM_LIMIT:-15}"
+      FDC_WORKER_CONCURRENCY: "${FDC_WORKER_CONCURRENCY:-5}"
       # KIS 누적 체결량(TOT_CCLD_QTY) → 증분 fill 해석 shadow 스위치(설계
       # 문서 14번 6.1절) — 위 loss-cut shadow와 같은 이유로 이 화이트리스트에
       # 미리 선언해 둔다. run_post_submit_sync_loop.py는 ops-scheduler의

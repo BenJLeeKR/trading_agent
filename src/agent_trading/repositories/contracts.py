@@ -2243,3 +2243,21 @@ class FdcQuotaRepository(Protocol):
         """job의 비종결(non-terminal) 상태 전이(``RETRY_QUEUED`` 등)를
         기록한다."""
         ...
+
+    async def get_attempt_http_started_at(
+        self, *, reservation_id: UUID,
+    ) -> datetime | None:
+        """이 reservation의 ``fdc_provider_attempts.http_started_at``을
+        조회한다(2026-08-27 2차 리뷰 보정 — PR #359, subprocess crash 후
+        attempt lifecycle 판별용).
+
+        ``fdc_only`` subprocess가 결과 없이 crash/timeout됐을 때, 이
+        값으로 "HTTP가 실제로 시작됐는지"를 판별한다 — ``None``이면
+        (행이 없거나 아직 ``http_started_at``이 채워지지 않았으면)
+        HTTP가 시작되지 않은 것으로 간주해 새 reservation으로 안전하게
+        재시도할 수 있다. 값이 있으면 HTTP가 실제로 나갔을 수 있으므로
+        결과를 모르는 채 자동 재시도(중복 호출 위험)하지 않는다 — 호출자가
+        이 값으로 그 판단만 내리고, 이 메서드 자체는 어떤 상태도 갱신하지
+        않는다(read-only).
+        """
+        ...
