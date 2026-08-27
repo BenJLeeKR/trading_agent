@@ -74,6 +74,71 @@
 > 범위다. `SHADOW_QUEUED`는 실패·timeout이 아니다. 상세는 `docs/30_
 > work_log/2026-08-25_fdc_quota_lifecycle_shadow_phase1_correction_2.md`
 > 참고.
+>
+> **상태(2026-08-27, Phase 1 운영 실측 완료)**: PR #351/#355로 병합된 Phase 1
+> shadow 관측이 `fdc_ready_at` subprocess payload 누락 결함(PR #356으로 수정)
+> 때문에 한동안 `fdc_queue_jobs`가 0행으로 남아 있었으나, PR #356 배포 이후
+> 정상 거래일 장중 연속 5개 cycle(총 96건 FDC-ready)에서 shadow FIFO/전역
+> sliding 60초 13 RPM 판정이 **완전히 정확함**을 read-only 실측으로 확인했다
+> (FDC-ready↔shadow 1:1 정합성 100%, FIFO 시간 역전 0건, 재계산 판정 불일치
+> 0건, `mode='real'` row 0건). 이로써 §6/§9/§14의 coordinator 판단 로직·
+> accounting·감사 SQL 설계가 실제 운영 데이터로 검증됐다 — 이 문서의 판정
+> 로직 자체(§4~§14)는 더 이상 가설이 아니라 **실측 확인된 계약**이다.
+>
+> **상태(2026-08-27, 후속 PR 설계 착수 — 구현 전 조사에서 새 제약 발견)**:
+> Phase 2(실제 dispatcher 구현) 착수를 위해 코드베이스를 조사한 결과, 이
+> 문서 §4 "사이클 초반에 종목별 EI/AR/AC/deterministic_trigger를 먼저 전부
+> 실행(기존과 동일, 변경 없음)"이라는 전제가 **틀렸다**는 사실이 드러났다 —
+> 실제로는 EI/AR/AC/FDC 4개 agent가 전부 **단일 subprocess**(`scripts/
+> run_agent_subprocess.py::main()`) 안에서 한 번의 stdin/stdout 왕복으로
+> 순차 실행되며, 서비스 레이어(`decision_orchestrator.assemble()`)가 아니라
+> **subprocess 프로세스 경계 자체**가 pre-FDC와 FDC를 분리하지 못하게 막고
+> 있다. 이는 "최소 리팩터링"이 아니라 subprocess 아키텍처의 실질적 재설계를
+> 요구하므로, 이 문서에 새 **§17 Pre-FDC/FDC subprocess 분리 설계**를
+> 신설해 이 공백을 메운다. §17 이후 §18~§22도 함께 신설했다(provider
+> one-shot 리팩터링 상세, live provider 진입점별 게이팅, feature flag 배선,
+> 테스트 계획 통합, PR 실행 계획). §4~§16은 dispatcher/coordinator/
+> accounting 설계로서는 그대로 유효하며 변경하지 않는다 — §17이 그 앞단
+> (pre-FDC/FDC 분리)을 보강할 뿐이다.
+>
+> **상태(2026-08-27 2차, PR #357 리뷰 보정 — §17~§22 내부 설계 충돌 3건
+> 해소)**: §17~§22 최초 작성분에서 다음 3개 결함이 발견돼 보정했다.
+>
+> 1. **PR A/PR B 순서 충돌**: 최초 작성분은 §19(live provider 게이팅)를
+>    PR A에 배정하면서도, 게이팅 대상 중 하나(진입점 #2, subprocess FDC
+>    호출)가 §17(PR B 범위)에서 신설되는 `--mode fdc_only`에서만 존재하는
+>    모순이 있었다. 이대로면 PR A가 병합되는 순간 "FDC live provider는
+>    coordinator 없이 생성 불가"라는 게이팅이 적용되는데, 정작 그 시점의
+>    운영 FDC 호출은 여전히 `--mode full`(레거시 경로, 아직 coordinator를
+>    쓰지 않음)이라 **레거시 FDC 경로 자체가 막히는 회귀**가 발생했을
+>    것이다. **보정**: `LiveGeminiProviderClient` 클래스 신설과 coordinator
+>    필수화는 PR A에서 "아직 아무 운영 경로도 쓰지 않는 추가적(dormant)
+>    구현체"로만 도입하고, **레거시 `--mode full`의 FDC 호출부(진입점 #2)를
+>    이 클래스로 전환하는 것은 PR B**(§17 `--mode fdc_only` 신설과 동시)로
+>    옮겼다. "모든 live FDC 호출이 coordinator를 거친다"는 계약은 **PR B
+>    병합 + `FDC_ACTUAL_DISPATCH_ENABLED=true` 별도 승인 활성화 이후에만
+>    성립**함을 §19·§22에 명시했다. §19·§22·§21이 이번 보정의 영향을
+>    받는다.
+> 2. **carryover 재기동/프로세스 종료 계약 누락**: 최초 작성분은 carryover를
+>    "in-memory로만 보관"한다고만 서술하고, dispatcher 프로세스가 죽거나
+>    재시작될 때 DB에 남은 미종결 job(`QUEUED`/`RESERVATION_GRANTED`/
+>    `FDC_RUNNING`/`RETRY_QUEUED`)을 어떻게 처리하는지 정의하지 않았다.
+>    **보정**: 신규 §17.7(재기동/프로세스 종료 복구 계약)을 추가해, carryover가
+>    소실된 미종결 job을 recovery scan이 기존 §5 `CANCELLED` 3사유 중
+>    "프로세스 종료"를 구체화한 `reason=process_terminated_carryover_lost`로
+>    1회성·idempotent하게 정리하도록 확정했다. 새 `CANCELLED` 사유 범주를
+>    추가하지 않았다(기존 3종 유지). §17·§21이 이번 보정의 영향을 받는다.
+> 3. **`FDC_ACTUAL_DISPATCH_ENABLED`의 `runtime_env_wiring.json` 등록값
+>    오류**: 최초 작성분은 이 키를 "관측 전용 키"에 준해 `required_in_
+>    compose: false`로 제안했으나, 이 키는 실제로 dispatcher 분기와 provider
+>    호출 방식(레거시 `--mode full` vs `--mode fdc_only`)을 바꾸는 **런타임
+>    실행 경로 선택 키**다(기본값이 `false`라는 것과 "관측 전용"이라는 것은
+>    다른 개념이다 — 혼동한 것이 결함이었다). **보정**: `required_in_compose:
+>    true`로 정정하고, `settings.py`/`.env.example`/`docker-compose.yml`/
+>    `runtime_env_wiring.json` 4곳이 함께 변경돼야 하며 `accept env`가 이
+>    배선을 강제 검증해야 함을 명시했다. §20이 이번 보정의 영향을 받으며,
+>    §20 전체를 PR B 범위로 재배정했다(1번 보정과 일관성 유지 — flag가
+>    실제로 소비되는 시점과 같은 PR에서 도입).
 
 ## 1. 배경과 문제 정의
 
@@ -825,3 +890,430 @@ decision·order 영향/lane 공정성)을 수행한다.
 subprocess.py`의 기존 경로를 즉시 제거하지 않고 병행 가능(①단계 shadow 방식) —
 문제 발생 시 신규 dispatcher 호출부만 되돌리면 기존 경로로 즉시 복귀 가능하다(구현
 PR에서 feature flag로 전환 여부를 감쌀 것을 권고).
+
+---
+
+## 17. Pre-FDC/FDC subprocess 분리 설계(신설, 2026-08-27)
+
+### 17.1 현재 구조(코드 근거)
+
+- `decision_orchestrator.py:2946` — `assemble()`이 `self._run_agents_in_
+  subprocess(request=agent_request, assembled_context=ai_policy_context)`를
+  호출한다. subprocess 미사용 시 대안 경로는 `2959`행 `self._run_agents(...)`
+  (in-process, `AGENT_SUBPROCESS_ISOLATION=0`일 때만 — 운영 기본값은 `"1"`).
+- `_run_agents_in_subprocess()`(`decision_orchestrator.py:3687-3696`)는 얇은
+  wrapper로 `DecisionAgentRunner.run_agents_in_subprocess()`(`decision_
+  agent_runner.py:654-788`)에 위임한다. 이 메서드가 입력 전체를 직렬화(682행)해
+  `python -m scripts.run_agent_subprocess`를 **단일 subprocess로 1회** spawn(698행)
+  하고 `proc.communicate()`로 stdin/stdout 전체를 주고받는다(706-710행).
+- `scripts/run_agent_subprocess.py::main()`(1212행~) 내부에서 **EI(1273-1315)
+  → AR(1317-1347) → AC(1349-1384) → FDC skip 판정(`_check_fdc_skip()`, 1387행)
+  → (skip 아니면) FDC 실제 HTTP 호출(1460행대)**이 전부 한 프로세스 안에서
+  순차 실행된다.
+- 즉 오늘 기준으로 "pre-FDC(EI/AR/AC)만 먼저 끝내고 FDC는 나중에"라는 개념이
+  **프로세스 수준에서 물리적으로 존재하지 않는다** — 한 번의 subprocess
+  invocation이 EI/AR/AC/FDC를 통째로 처리하고 끝난다.
+
+### 17.2 확정 아키텍처: 두 개의 CLI 진입점
+
+기존 `run_agent_subprocess.py`를 폐기하지 않고, **동일 파일 안에** 두 번째
+진입점을 신설한다(완전히 새 파일로 쪼개면 EI/AR/AC 실행 코드를 중복해야 하므로
+"최소 변경"에 위배된다).
+
+- **`run_agent_subprocess.py --mode pre_fdc`**(신규 인자, 기본값 `full`=기존
+  동작 그대로 보존): EI(1273-1315) → AR(1317-1347) → AC(1349-1384) →
+  `_check_fdc_skip()`(1387)까지만 실행하고, **FDC skip이면 기존과 동일하게
+  결정론적 fallback까지 끝내 최종 output을 반환**(FDC-ready가 아니므로 분리할
+  이유가 없다). **FDC-ready(skip 아님)면 FDC를 호출하지 않고 즉시 반환** —
+  대신 `AgentSubprocessOutput`에 신규 필드 `pre_fdc_carryover: dict | None`을
+  추가해, FDC 재개에 필요한 최소 상태(17.3)를 JSON-safe dict로 담아 반환한다.
+- **`run_agent_subprocess.py --mode fdc_only`**(신규): stdin으로 `pre_fdc_
+  carryover` dict + FDC 실행에 필요한 provider 설정(기존과 동일하게 stdin으로
+  전달)을 받아, `_run_fdc_with_outer_timeout()`(1138-1200, 기존 함수 그대로
+  재사용)부터 시작해 FDC 결과만 담은 `AgentSubprocessOutput`을 반환한다.
+  EI/AR/AC 관련 필드는 호출자가 `pre_fdc` 단계의 output과 병합하므로 이
+  모드에서는 채우지 않는다(또는 placeholder로 채워 스키마를 그대로 재사용).
+- **`--mode full`**(기존 동작, 신규 feature flag가 꺼져 있을 때 유일하게
+  쓰이는 경로): 오늘과 완전히 동일 — EI→AR→AC→FDC를 한 번에 실행. **분리
+  모드는 신규 feature flag(§20)가 켜졌을 때만 선택된다.**
+
+### 17.3 pre-FDC 결과 보관에 필요한 최소 상태(carryover 계약)
+
+`decision_orchestrator.py`의 `assemble()` 문맥 조사(2867-2946행)로 확정한
+최소 집합 — 전부 이미 JSON-safe 직렬화 헬퍼(`serialize_agent_input`/
+`dataclass_to_dict`, `subprocess_helpers.py`)가 존재하는 타입이다.
+
+| 필드 | 출처 | 비고 |
+|---|---|---|
+| `event_output`/`risk_output`/`compliance_output` | EI/AR/AC의 structured output | 기존 `AgentExecutionBundle` 필드와 동일 dict 형태 |
+| `ei_skipped`/`ar_skipped`/`skip_reason_codes` | 기존 skip 관측 필드 | 그대로 유지 |
+| `decision_context_id`/`correlation_id` | `AgentExecutionRequest` | pre-FDC 단계에서 이미 확정 |
+| `assembled_context` 직렬화본 | `AssembledContext`(2867/2889행 조립) | position/cash/risk snapshot·recent_events·score 등 전체 — 이미 `dataclass_to_dict()`로 JSON 변환 가능한지 확인 필요(구현 PR에서 non-serializable 필드 존재 시 최소 변환 헬퍼 추가) |
+| `derivation` 요약 | `_derive_deterministic_context_components()`(2834행) 결과 | override/guard 판정에 필요한 부분만 |
+| `fdc_ready_at` | 기존 필드(PR #356으로 이미 payload에 포함됨) | FIFO 정렬 키, 변경 없음 |
+
+**설계 결정**: carryover는 FDC dispatcher가 job과 함께 **in-memory**로 들고
+있는다(cycle 안에서만 존재, DB에 저장하지 않음) — `fdc_queue_jobs`는 기존
+설계(§8)대로 job 메타데이터만 갖고, EI/AR/AC의 전체 output까지 DB에 넣지
+않는다(스키마 팽창 방지, §8 변경 불필요).
+
+### 17.4 dispatcher 통합 지점(§15 재사용)
+
+`run_decision_loop.py`의 기존 Pass 1.5/Pass 2 패턴(`_run_general_lane_
+pass2`/`_submit_general_lane_candidate`, 2967-3250행)을 뼈대로 재사용한다 —
+"cycle 전체 `asyncio.gather()` 완료 직후(3639-3644행) → 보류 상태 수집 →
+정렬/우선순위화 → 순차 후속 처리"라는 흐름은 동일하되, Pass2가 이미 FDC까지
+끝난 `intent`를 보관하는 것과 달리, 신규 dispatcher는 **FDC 이전** 상태
+(carryover)를 보관한다:
+
+```
+_process_one() 각 심볼(§17.2 --mode pre_fdc)
+  → FDC-ready면 carryover를 pending_fdc_dispatch_sink에 적재(기존
+    pending_general_candidates와 동형의 sink)
+  → FDC skip이면 기존과 동일하게 즉시 assemble() 경로로 저장
+
+asyncio.gather() 완료(3639-3644행, 기존 지점 그대로)
+  → (신규) FDC dispatcher 실행: pending_fdc_dispatch_sink의 모든 job을
+    §4/§7 계약대로 처리(worker slot → reservation → --mode fdc_only
+    subprocess 실행 → 결과 수신)
+  → job이 종결(FDC_SUCCEEDED/FDC_FAILED_FINAL)되는 즉시 carryover와 FDC
+    output을 병합해 decision_orchestrator의 override→EV→sizing→submit
+    경로(2976행 이후, 기존 코드 그대로 재사용)를 호출 — 배치 전체 종료를
+    기다리지 않는다(§7 "즉시 저장" 원칙)
+  → 전 job 종결까지 다음 cycle 시작 안 함(§4 "사이클 종료" 조건 그대로)
+```
+
+override→EV→sizing→submit 경로(2976행 이후)를 재사용하려면 이 경로가 현재
+`assemble()` 내부에 있으므로, **`assemble()`을 두 개의 public 메서드로
+분리**해야 한다: `assemble_pre_fdc()`(EI/AR/AC 호출까지, carryover 반환)와
+`assemble_post_fdc(carryover, fdc_output)`(override 이후 로직, 기존 2976행
+이후 코드를 그대로 이동). 이 분리는 서비스 레이어 코드 이동이며 로직 변경이
+아니다.
+
+### 17.5 EI/AR/AC 재실행 방지 보장 방법
+
+- `--mode pre_fdc`는 EI/AR/AC를 **정확히 1회만** 실행하고 그 output을
+  carryover에 담아 반환한다. `--mode fdc_only`는 EI/AR/AC 관련 코드를 전혀
+  import·호출하지 않는다(파일은 공유하지만 실행 경로가 분기됨, 17.2).
+  retry로 FIFO tail에 재등록되는 것은 **FDC job만**(§5 상태 전이도의
+  `RETRY_QUEUED`)이며, carryover는 최초 pre-FDC 단계에서 만든 것을 재사용하지
+  다시 만들지 않는다 — dispatcher가 `job_id`로 carryover를 계속 들고 있다가
+  재시도 시 그대로 재사용한다.
+- 이 보장의 테스트 가능성: `--mode fdc_only`가 EI/AR/AC 관련 함수를 호출하지
+  않는다는 것은 **모듈 수준에서 직접 검증 가능**하다(fdc_only 실행 경로에서
+  `EventInterpretationAgent`/`AIRiskAgent`/`AIComplianceAgent` 클래스의 `run()`이
+  전혀 호출되지 않음을 mock/spy로 확인) — §21 테스트 계획에 명시.
+
+### 17.6 위험과 대안 비교
+
+| 대안 | 평가 |
+|---|---|
+| **두 CLI 진입점 분리(채택)** | subprocess 격리 원칙(§1 배경의 프로세스 크래시 격리 목적) 유지, 기존 EI/AR/AC 코드 재사용(중복 없음), `--mode full` 기본 보존으로 flag off 시 완전 무변경 |
+| in-process로 EI/AR/AC/FDC 전체 재작성(subprocess 제거) | subprocess 격리가 존재하는 이유(개별 agent 크래시가 전체 cycle을 죽이지 않게 하기 위함으로 추정)를 되돌리는 것 — 이번 문서 조사 범위에서 원 설계 의도를 확정할 근거가 부족해 채택하지 않음 |
+| 매 FDC retry마다 EI/AR/AC까지 통째로 재실행 | 요구사항("EI/AR/AC 재실행 방지")에 정면 위배, 비용·지연 모두 악화 — 기각 |
+
+### 17.7 재기동/프로세스 종료 복구 계약(신설, 2026-08-27 2차 보정)
+
+carryover는 17.3에서 확정한 대로 **in-memory 전용**이다 — dispatcher 프로세스가
+죽으면 그 프로세스가 들고 있던 모든 carryover도 함께 소실된다. 반면 job의
+lifecycle 상태(§5)는 DB(`fdc_queue_jobs`)에 영속돼 있으므로, 재기동 직후 DB에는
+"아직 진행 중인 것처럼 보이지만 실제로는 재개할 수단이 없는" job이 남을 수
+있다. 이 절이 그 처리를 확정한다.
+
+**recovery scan 계약(확정)**:
+
+- **실행 주체**: dispatcher를 구동하는 프로세스(`ops-scheduler`)의 **시작
+  루틴**(cycle 루프 진입 전, 1회) — 별도 상시 프로세스나 cron이 아니다.
+- **대상**: `fdc_queue_jobs`에서 `mode='real'` AND `quota_scope`가 이
+  dispatcher가 다루는 scope AND `status`가 **terminal 상태가 아닌 것**
+  (`QUEUED`, `RESERVATION_GRANTED`, `FDC_RUNNING`, `RETRY_QUEUED`,
+  `RESERVED_BUT_HTTP_NOT_STARTED` — §5 상태 전이도에서 terminal이 아닌
+  전부. terminal은 `FDC_SUCCEEDED`/`FDC_FAILED_FINAL`/`CANCELLED`).
+- **처리**: 위 대상 전원을 `CANCELLED`로 전이시키되, 사유는 §5가 이미 확정한
+  3종 `CANCELLED` 사유 중 **"프로세스 종료"를 구체화**한
+  `reason=process_terminated_carryover_lost`를 쓴다 — 새로운 4번째
+  `CANCELLED` 범주를 만들지 않는다(사용자 지침 그대로 준수).
+- **idempotency**: recovery scan은 `status NOT IN (terminal states)`
+  조건으로만 동작하므로, 두 번 연속 실행해도(예: 재기동 직후 다시 크래시)
+  두 번째 실행은 첫 번째 실행이 이미 `CANCELLED`로 바꿔놓은 행을 다시
+  건드리지 않는다(WHERE 절 자체가 0 rows를 반환) — 별도의 lock이나
+  실행 이력 테이블이 필요 없다.
+- **이미 terminal인 job은 건드리지 않는다**: `FDC_SUCCEEDED`/`FDC_FAILED_
+  FINAL`로 이미 종결된 job, 그리고 이전 recovery scan이 이미 `CANCELLED`
+  처리한 job은 이번 scan의 UPDATE 대상에서 자동 제외된다.
+
+**accounting 정합성(reservation은 소비됐으나 HTTP가 시작되지 않은 경우)**:
+
+- 크래시 시점에 이미 `RESERVATION_GRANTED`(§6 트랜잭션이 grant를 발급하고
+  commit까지 끝난 상태)였다면, 그 reservation은 §7이 이미 정의한 대로 **그
+  60초 window에서 소비된 것으로 유지**한다 — recovery scan이 `fdc_provider_
+  attempts`의 `reserved_at`이나 quota 소비 기록을 소급 취소하지 않는다(quota
+  계산의 감사 가능성을 보존하기 위함 — §14 감사 SQL이 "그 시점에 실제로
+  reservation이 있었다"는 사실을 그대로 봐야 한다).
+- `pre_http_execution_failure_count`/`RESERVED_BUT_HTTP_NOT_STARTED` 관련
+  카운터(§9)도 recovery scan이 **증가시키지 않는다** — 이 카운터들은 "같은
+  프로세스가 살아있는 동안 재시도가 실패한 횟수"를 뜻하는데, 프로세스 종료는
+  재시도 실패가 아니라 완전히 다른 종결 경로(`CANCELLED`)이기 때문이다.
+  recovery scan은 오직 `status` 컬럼과 `failure_or_cancel_reason`만 갱신한다.
+
+**"순번 탈락 금지" 원칙과의 구분**: 이 recovery 경로는 §1/§4가 금지하는 "순번이
+늦어서 탈락"과 **무관**하다 — 취소 사유가 순번(FIFO 대기 시간)이 아니라 "그
+job의 실행 컨텍스트(carryover)를 들고 있던 프로세스 자체가 더 이상 존재하지
+않는다"는 물리적 사실이기 때문이다. §5가 이미 "프로세스 종료"를 3대 `CANCELLED`
+허용 사유 중 하나로 확정해뒀으므로, 이 절은 그 사유를 구체화할 뿐 새 예외를
+만들지 않는다.
+
+**다음 cycle과의 관계(재시도 vs 재평가 구분)**:
+
+- **같은 job의 재시도**(§5 `RETRY_QUEUED`, 프로세스가 살아있는 동안)는 carryover를
+  메모리에서 그대로 재사용하며 EI/AR/AC를 재실행하지 않는다(17.5 그대로).
+- **다음 cycle의 동일 종목 재평가**는 **완전히 새로운 `job_id`**로 시작하는
+  독립적인 pre-FDC 실행이다 — 이전 job이 `CANCELLED`(recovery로든, 시장
+  마감으로든)였는지 `FDC_SUCCEEDED`였는지와 무관하게, 새 cycle은 그 종목을
+  처음부터(EI/AR/AC부터) 다시 평가한다. 즉 "다음 cycle의 재평가"는 이전 job의
+  재시도가 **아니며**, `job_id`로 서로 연결되지 않는다.
+
+**신규 테스트 항목**(§21에 병합): recovery scan이 non-terminal `mode='real'`
+job만 `CANCELLED(reason=process_terminated_carryover_lost)`로 전이하는지,
+이미 terminal인 job은 건드리지 않는지, 연속 2회 실행 시 두 번째 실행의 영향
+행 수가 0인지(idempotency), recovery scan이 reservation/attempt accounting
+카운터를 전혀 변경하지 않는지, 다음 cycle에서 생성되는 새 job이 이전
+`CANCELLED` job과 `job_id`로 연결되지 않는 독립 행인지.
+
+### 17.8 미확인 사항(구현 후 확인 필요)
+
+- `AssembledContext`(position/cash/risk snapshot 포함)가 `dataclass_to_dict()`로
+  완전히 JSON 직렬화 가능한지, 아니면 non-serializable 필드(예: 커넥션 핸들,
+  Decimal 등 커스텀 인코더 필요)가 있는지는 실제 구현 시점에 해당 dataclass
+  전체를 읽고 확인이 필요하다(이번 설계 문서 조사 범위에서 필드 단위까지
+  전수 확인하지 않음).
+- `--mode pre_fdc`/`--mode fdc_only`로 subprocess를 2회 spawn하는 것이 기존
+  1회 대비 프로세스 생성 오버헤드(수십~수백 ms 추정)를 cycle 전체에 얼마나
+  더하는지는 구현 후 실측 필요.
+
+## 18. Provider one-shot 리팩터링 상세(신설, 2026-08-27)
+
+> **PR 배정(§22 2차 보정과 일관)**: 이 절 전체는 **PR A** 범위다.
+> `generate_structured_once()`는 `LiveGeminiProviderClient`(§19에서 PR A가
+> 신설하는 dormant 클래스)의 메서드로 추가되지만, PR A 시점에는 dispatcher도
+> `--mode fdc_only`도 없으므로 **아무 운영 경로도 이 메서드를 호출하지
+> 않는다** — PR B가 §17을 구현할 때 비로소 실제로 호출된다.
+
+- `provider_client.py::OpenAICompatibleClient.generate_structured()`(255-412행)의
+  retry 루프(`for attempt in range(MAX_RETRIES)`, 335행)를 **단일 시도 내부
+  헬퍼**(`_generate_structured_single_attempt()`, 신규 private 메서드)로 추출한다
+  — HTTP 요청 1회, 응답 파싱, 에러 분류(retryable/non-retryable)까지만 담당하고
+  retry 여부 판단은 하지 않는다.
+- 기존 `generate_structured()`는 이 헬퍼를 `MAX_RETRIES`만큼 루프 호출하는
+  **얇은 wrapper**로 재정의한다 — 외부에서 관측 가능한 동작(재시도 횟수, backoff,
+  `acquire_permit` 호출 시점)은 **1바이트도 바뀌지 않는다**(순수 내부 추출
+  리팩터링, §16 "공용 `generate_structured()` 불변" 계약 그대로 준수).
+- 신규 `generate_structured_once(grant: ReservationGrant, ...)`(`LiveGemini
+  ProviderClient` 전용 메서드, §12)는 `_generate_structured_single_attempt()`를
+  **정확히 1회** 호출하고 끝낸다 — retry 루프 없음, `acquire_permit` 호출 없음
+  (기존 10 RPM strict limiter를 아예 거치지 않는다 — 13 RPM coordinator가
+  이를 대체).
+- `MAX_RETRIES`라는 이름은 **변경하지 않는다**(§16 "구현 후 실측 필요"의
+  "리네이밍 영향 범위 확인" 항목은 이번 설계로 "리네이밍하지 않는다"로
+  확정 — 참조처가 많고(§16 위험 인지) 이름 자체는 여전히 정확하므로 무근거
+  변경 금지 원칙에 따라 그대로 둔다).
+
+## 19. Live provider 진입점별 게이팅 계획(2026-08-27 2차 보정 — PR 배정 정정)
+
+> **보정 사유**: 최초 작성분은 5개 진입점 전부를 PR A에 일괄 배정했으나,
+> 진입점 #2(subprocess FDC 호출)는 §17(PR B 범위)에서 신설되는 `--mode
+> fdc_only`가 존재해야만 게이팅 지점이 실존한다 — PR A 시점에는 아직
+> `--mode full`(레거시, coordinator 미사용)만 있으므로 #2를 PR A에서
+> 게이팅하면 **레거시 FDC 경로 자체가 막힌다**. 아래 표는 이 모순을
+> 제거하고 진입점별 **PR 배정**을 명시적으로 분리했다.
+
+조사로 확인된 5개 provider 생성 진입점과 각각의 처리 방침:
+
+| # | 진입점 | 현재 상태 | 처리 방침 | PR 배정 |
+|---|---|---|---|---|
+| 1 | `src/agent_trading/runtime/bootstrap.py:466` | 정상 운영 부트스트랩 | `LiveGeminiProviderClient` **클래스 자체**는 PR A에서 신설(coordinator 필수 생성자)하되, 이 경로가 실제로 그 클래스를 **사용하도록 전환**하는 것은 dispatcher 본체가 coordinator를 필요로 하는 시점(PR B)까지 미룬다 — PR A 시점에는 아직 아무도 호출하지 않는 dormant 클래스일 뿐이다 | 클래스 신설: **PR A** / 실제 사용 전환: **PR B** |
+| 2 | `scripts/run_agent_subprocess.py:1239` | subprocess에서 stdin의 api_key/base_url로 직접 생성, `--mode full`(레거시)의 FDC 호출이 여기를 그대로 지나감 | `--mode fdc_only`(§17.2, PR B 신설)에서만 `LiveGeminiProviderClient`를 생성하도록 제한한다. **`--mode full`은 PR B 병합 후에도 이 진입점을 그대로 쓰며(플레인 `OpenAICompatibleClient`, 기존 10 RPM limiter 경유), `FDC_ACTUAL_DISPATCH_ENABLED=true`로 활성화되기 전까지는 게이팅의 영향을 전혀 받지 않는다** — PR A에서는 이 진입점을 손대지 않는다 | **PR B 전용** — PR A에서 변경 없음 |
+| 3 | `scripts/ar_fdc_provider_validation.py:362` | coordinator 의존 없이 live HTTP 가능, ops-scheduler 런타임과 무관한 독립 분석 스크립트 | §11 정책대로 비운영 시간 수동 호출 경로로 전환 — `LiveGeminiProviderClient` 생성 시 coordinator를 필수로 전달하도록 스크립트 수정. **이 스크립트는 `FDC_ACTUAL_DISPATCH_ENABLED`가 제어하는 운영 런타임 경로가 아니므로**, PR A에서 즉시 전환해도 "flag=false 시 레거시 동작 보존" 계약과 충돌하지 않는다 | **PR A** |
+| 4 | `scripts/ar_fdc_output_measurement.py:1071` | 위와 동일 | 위와 동일 | **PR A** |
+| 5 | `scripts/verify_ei_subprocess_failure.py:32` | EI(FDC 아님) 검증 스크립트 | **FDC 전용 게이팅 대상 아님** — EI는 Gemini 13 RPM quota 대상이 아니므로(§1 배경, FDC만 대상) 변경 불필요. 다만 같은 `OpenAICompatibleClient`를 쓴다면 `LiveGeminiProviderClient`와는 별도 클래스(§12 "fake/test provider는 별도 구현체")이므로 영향 없음을 구현 PR에서 재확인 | 해당 없음(변경 불필요) |
+
+**flag=false 레거시 동작 보존 근거(핵심)**: PR A가 병합돼도 진입점 #2(운영
+FDC 호출의 유일한 실제 경로)는 전혀 손대지 않으므로, `--mode full`은 PR A
+병합 전후로 바이트 단위까지 동일하게 동작한다 — coordinator 의존성도, 새
+클래스 사용도 없다. PR B가 병합돼도 `FDC_ACTUAL_DISPATCH_ENABLED=false`인
+동안은 §17.2의 분기가 항상 `--mode full`을 선택하므로(§17.2 "분리 모드는
+신규 feature flag가 켜졌을 때만 선택된다") 마찬가지로 동작이 보존된다. 즉
+"모든 live FDC 호출이 coordinator를 거친다"는 계약은 **PR B 병합 AND
+`FDC_ACTUAL_DISPATCH_ENABLED=true`(별도 승인 활성화)** 두 조건이 모두
+성립할 때만 참이다.
+
+## 20. Feature flag 배선 계획(2026-08-27 2차 보정 — `required_in_compose` 정정 + PR B로 재배정)
+
+> **보정 사유**: 최초 작성분은 이 절 전체를 PR A 범위로 뒀고
+> `runtime_env_wiring.json`의 `required_in_compose`를 `false`로 제안했다.
+> 두 가지 모두 정정한다.
+>
+> 1. **PR 배정**: 이 flag는 §17.2(`--mode pre_fdc`/`--mode fdc_only` 분기
+>    선택)와 dispatcher 활성화를 직접 제어하는데, 그 소비자(§17 subprocess
+>    분리, dispatcher 본체)가 전부 PR B 범위다. flag를 아무도 읽지 않는
+>    PR A 시점에 미리 도입하면 "값은 있는데 아무 코드도 참조하지 않는
+>    죽은 설정"이 생기고, `accept env` 배선 요구와도 앞뒤가 맞지 않는다 —
+>    이 절 전체를 **PR B 범위**로 재배정한다.
+> 2. **`required_in_compose` 정정**: 이 키는 "관측 전용(shadow처럼 켜도
+>    꺼도 실제 실행 경로가 안 바뀌는 것)"이 아니라, **켜지는 순간 실제
+>    FDC 호출 방식(레거시 `--mode full` vs 신규 `--mode fdc_only` +
+>    coordinator 강제)이 바뀌는 런타임 실행 경로 선택 키**다. 이런 키는
+>    compose 배선이 실제로 존재하는지(즉 운영자가 이 값을 바꿀 수 있는
+>    통로가 실제로 연결돼 있는지)를 `accept env`가 강제 검증해야 한다 —
+>    `required_in_compose: true`로 정정한다.
+
+기존 `fdc_batch_queue_lifecycle_shadow_enabled` 패턴(settings.py `_resolve_
+xxx()` 함수 + dataclass field)을 그대로 따르되, 위 보정을 반영한다.
+
+- 신규 플래그명: `FDC_ACTUAL_DISPATCH_ENABLED`(기본값 `"false"`) — §17.2의
+  `--mode pre_fdc`/`--mode fdc_only` 분기와 dispatcher 활성화를 함께 제어하는
+  **단일 스위치**로 둔다(§4 "합산 quota 초과 구조 허용 안 함" 요구사항 —
+  core/held_position을 분리한 별도 플래그를 두면 이 요구사항을 어길 위험이
+  생기므로 처음부터 단일 스위치로 설계). lane별 단계적 전환(§15 "① → ② →
+  ③")은 코드 배포 시점이 아니라 **운영 트래픽 구성**(예: 비core 시간대에만
+  관찰)으로 수행하며, 별도 lane 플래그를 코드에 추가하지 않는다.
+- 배선 파일(4곳 전부 **PR B에서 함께** 변경, §19 정정과 일관됨 — flag가
+  실제로 소비되는 코드와 같은 PR에서 도입):
+  - `settings.py`: `_resolve_fdc_actual_dispatch_enabled()` + `fdc_actual_
+    dispatch_enabled: bool = field(default_factory=...)` (기존 패턴 그대로)
+  - `.env.example`: `FDC_ACTUAL_DISPATCH_ENABLED=false` 한 줄 추가(기존
+    `FDC_BATCH_QUEUE_LIFECYCLE_SHADOW_ENABLED=false` 옆)
+  - `docker-compose.yml`: `ops-scheduler` 서비스 `environment:` 블록에
+    `FDC_ACTUAL_DISPATCH_ENABLED: "${FDC_ACTUAL_DISPATCH_ENABLED:-false}"`
+    — **필수 배선**(생략 시 §19 정정의 "PR B 병합 후에도 flag=false 보존"
+    전제가 운영에서 실제로 성립하는지 확인할 방법이 없어진다)
+  - `scripts/harness/contracts/runtime_env_wiring.json`: 신규 entry 등록,
+    **`"required_in_compose": true`**(2차 보정 — 실행 경로 선택 키이므로
+    `accept env`가 compose 배선 누락을 하드 실패로 잡아야 함)
+  - §13의 나머지 설정(`FDC_WORKER_CONCURRENCY` 등)도 같은 파일들에 동일
+    패턴·동일 `required_in_compose: true`로 배선(전부 실행 경로/동시성에
+    직접 영향을 주는 값이므로 §20과 동일한 근거 적용)
+
+## 21. 테스트 계획 통합(2026-08-27 2차 보정 — PR 배정 및 recovery 시나리오 추가)
+
+§15의 19개 시나리오(동시성/reservation/accounting/coordinator 오류)는 **그대로
+유효**하며 dispatcher/coordinator 계층을 대상으로 한다(PR B). 여기에 §17(subprocess
+분리) 전용으로 다음을 추가한다 — 중복 없이 병합한 최종 목록, 항목별 **PR 배정**
+명시(§19/§22 정정과 일관):
+
+**§17 전용 신규 시나리오**(1~5, 9는 PR B / 6~7은 PR A / 8은 PR A·PR B 분리):
+1. `--mode pre_fdc`가 EI/AR/AC를 정확히 1회 실행하고 FDC를 호출하지 않는지
+   (FDC agent `run()`이 전혀 호출되지 않음을 spy로 확인) — **PR B**
+2. `--mode fdc_only`가 EI/AR/AC 관련 클래스를 전혀 import·호출하지 않는지
+   — **PR B**
+3. FDC retry(§5 `RETRY_QUEUED`)가 발생해도 carryover가 재생성되지 않고
+   최초 pre-FDC 결과가 그대로 재사용되는지(EI/AR/AC 재실행 방지 핵심 검증)
+   — **PR B**
+4. FDC 완료 job이 배치 전체 종료를 기다리지 않고 즉시 `assemble_post_fdc()`
+   경로로 합류하는지(다른 job이 아직 `QUEUED`인 상태에서 검증) — **PR B**
+5. `--mode full`(기존 경로)이 `FDC_ACTUAL_DISPATCH_ENABLED=false`일 때
+   완전히 그대로 동작하는지(회귀 없음 — carryover 필드가 채워지지 않아도
+   기존 output 스키마와 100% 호환) — **PR B**(flag와 `--mode` 분기 자체가
+   PR B에서 신설되므로 이 시나리오도 PR B에서만 실행 가능)
+6. 40개 FDC-ready job이 13/13/13/1로 여러 60초 window에 걸쳐 전부 처리되고,
+   순번이 늦은 job이 18초/36초 timeout으로 탈락하지 않는지(기존 `fdc_rate_
+   limiter.py`의 `DEFAULT_MAX_WAIT_SECONDS=18.0`/`DEFAULT_MAX_REQUEUE_
+   COUNT=1` 탈락 경로가 신규 dispatcher 경로에서는 전혀 쓰이지 않음을 확인)
+   — **PR B**(dispatcher 본체 대상)
+7. `generate_structured_once()`가 `_generate_structured_single_attempt()`를
+   정확히 1회만 호출하고(§18), 기존 `generate_structured()`의 외부 동작이
+   리팩터링 전후로 완전히 동일한지(회귀 테스트) — **PR A**(§18은 PR A
+   범위, dispatcher 없이 독립 검증 가능)
+8. §19의 5개 진입점 중 coordinator 필수 대상의 검증은 PR 배정을 따라
+   분리한다: **PR A**에서는 진입점 #3·#4(분석 스크립트)가 coordinator
+   없이는 `LiveGeminiProviderClient`를 생성할 수 없음과, 클래스 자체의
+   생성자 계약(coordinator 필수 인자)만 검증한다. **PR B**에서는 진입점
+   #1·#2(운영 부트스트랩/subprocess FDC 호출)가 실제로 그 클래스를
+   사용하도록 전환됐는지, 그리고 `--mode full`(flag=false)은 이 게이팅의
+   영향을 전혀 받지 않는지(§19 "flag=false 레거시 동작 보존 근거" 직접
+   검증)를 확인한다. EI 전용(#5)은 어느 PR에서도 영향받지 않음을 PR B에서
+   1회 재확인
+9. cycle 종료·프로세스 취소 시 job lifecycle이 명확히 기록되는지(§5 `CANCELLED`
+   3사유 한정 확인) — **PR B**
+10. held_position/core 두 source_type의 live FDC HTTP 시작을 합산해도 임의
+    60초 구간에서 13건을 넘지 않는지(§19 단일 스위치 설계의 핵심 검증 —
+    lane을 분리해도 quota가 분리되지 않음을 직접 증명) — **PR B**
+
+**§17.7 전용 신규 시나리오(재기동/프로세스 종료 복구, 2026-08-27 2차 보정
+신설) — 전부 PR B**:
+11. recovery scan이 non-terminal `mode='real'` job만
+    `CANCELLED(reason=process_terminated_carryover_lost)`로 전이하는지
+12. 이미 terminal 상태(`FDC_SUCCEEDED`/`FDC_FAILED_FINAL`/기존
+    `CANCELLED`)인 job은 recovery scan이 건드리지 않는지
+13. recovery scan을 연속 2회 실행했을 때 두 번째 실행의 영향 행 수가
+    0인지(idempotency)
+14. recovery scan이 `fdc_provider_attempts`의 reservation/attempt
+    accounting 카운터(§9)를 전혀 변경하지 않는지
+15. recovery로 `CANCELLED`된 job과, 다음 cycle에서 같은 종목에 대해 새로
+    생성되는 job이 서로 다른 `job_id`로 완전히 독립적인지(재시도로
+    오인되지 않는지)
+
+모든 테스트는 fake clock/fake PG repository/fake provider만 사용하며 실제
+sleep·외부 Gemini/KIS 호출은 하지 않는다(§15 원칙 그대로).
+
+## 22. PR 실행 계획(2026-08-27 2차 보정 — PR A/PR B 내용 재배정)
+
+1. **이번 문서화 턴에서는 코드를 변경하지 않는다** — §17~§21이 이번에 신설한
+   설계 전부이며, 구현은 별도 PR(들)로 진행한다.
+2. 구현 PR은 규모상 최소 2단계로 분리하되, **flag=false 레거시 FDC 경로가
+   두 PR 어느 단계에서도 깨지지 않도록** 아래처럼 내용을 나눈다(§19/§20
+   2차 보정 반영 — 최초 작성분의 진입점 #2/flag를 PR A에 넣던 배정을
+   철회):
+   - **PR A(provider one-shot + 독립 스크립트 게이팅, dispatcher/flag 없음)**:
+     - §18 전체(`generate_structured_once()` one-shot 추출) — 기존
+       `generate_structured()`는 순수 내부 리팩터링만, 외부 동작 불변
+     - `LiveGeminiProviderClient` 클래스 **신설**(coordinator 필수
+       생성자) — 이 시점엔 **아무 운영 경로도 이 클래스를 사용하지
+       않는 dormant 구현체**
+     - §19 진입점 #3·#4(독립 분석 스크립트 2개)만 이 클래스로 전환 —
+       ops-scheduler 런타임과 무관하므로 flag 존재 여부와 상관없이
+       안전
+     - **포함하지 않는 것**: §17(subprocess 분리), §20(feature flag),
+       진입점 #1·#2(운영 부트스트랩/subprocess FDC 호출) 전환, dispatcher
+       코드 — PR A 병합 후에도 `--mode full`(유일한 실제 운영 FDC 경로)은
+       PR A 이전과 **완전히 동일하게** 동작한다(§19 "flag=false 레거시
+       동작 보존 근거" 참고)
+   - **PR B(subprocess 분리 + dispatcher + flag 배선, 전부 한 PR)**: PR A
+     병합 후 진행.
+     - §17 전체(pre-FDC/FDC subprocess 분리, `--mode pre_fdc`/`--mode
+       fdc_only` 신설, §17.7 재기동 recovery scan 포함)
+     - dispatcher 본체(§4/§6/§7, 이미 확정된 설계를 실제 코드로 구현)
+     - §20 전체(feature flag 4곳 배선, `required_in_compose: true`)
+     - §19 진입점 #1·#2의 실제 전환(운영 부트스트랩이 coordinator를
+       `LiveGeminiProviderClient`에 배선, subprocess FDC 호출이
+       `--mode fdc_only`에서만 그 클래스를 쓰도록 제한)
+     - `FDC_ACTUAL_DISPATCH_ENABLED=false` 상태로 병합해 기존 운영
+       동작을 보존한다 — **§17.2의 `--mode` 분기 자체가 flag를 직접
+       읽으므로, flag=false인 한 `--mode full`(레거시)만 선택되고 신규
+       코드 경로는 전혀 실행되지 않는다**(이 사실이 "PR B 병합 ≠ 즉시
+       동작 변경"의 근거).
+3. 각 PR은 harness 검증에 다음을 포함한다(변경 파일에 맞춰 좁게 선택):
+   - **PR A**: `accept backend-file`(provider_client.py 등), 대상
+     `test-file`, `accept backend-runtime`, `accept architecture`,
+     `accept no-bypass`, `accept style`, `accept docs`(이 문서 갱신 시).
+     `accept env`/`accept db-structure`는 PR A에 변경 대상이 없으므로
+     불필요.
+   - **PR B**: `accept backend-file`/`accept script-file scripts/
+     run_agent_subprocess.py`, 대상 `test-file`, `accept backend-runtime`,
+     `accept db-structure`(schema 변경 시), `accept architecture`,
+     **`accept env`(필수 — §20 2차 보정으로 `required_in_compose: true`
+     로 등록되므로, compose 배선이 없으면 이 명령이 하드 실패한다)**,
+     `accept no-bypass`, `accept style`.
+4. PostgreSQL 전용 FDC quota CI(`fdc_quota_postgres_integration`)는 현재
+   `detect_fdc_quota_postgres_relevance.sh`의 `default_pattern`에 dispatcher
+   신규 파일이 매칭되지 않는다(조사 확인 완료) — PR B가 `fdc_quota_
+   coordinator.py`/`postgres/fdc_quota.py`를 실제로 수정한다면 자동으로
+   relevant=1이 되어 실행되지만, dispatcher 전용 신규 파일만 추가하는 경우
+   `.github/workflows/harness.yml`의 `fdc_quota_postgres_relevant` job
+   호출부에 5번째 인자(pattern override, `postgres_fixture_loop_scope_
+   integration` job이 이미 쓰는 방식)를 추가해 실제 실행되도록 워크플로를
+   함께 수정해야 한다 — PR B 본문에 relevance 판정 결과와 근거를 명시할 것.
+   PR A는 이 CI의 대상 파일을 건드리지 않으므로 relevance 판정과 무관하다.
+5. 운영 활성화(`FDC_ACTUAL_DISPATCH_ENABLED=true`)는 §15 단계적 도입(①→②→③)
+   그대로, PR B 병합 후 **별도 사용자 승인**으로만 수행한다 — 이 문서와
+   구현 PR 어느 것도 활성화 자체를 포함하지 않는다.
