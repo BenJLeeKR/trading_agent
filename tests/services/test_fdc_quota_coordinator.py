@@ -33,6 +33,7 @@ from agent_trading.services.fdc_quota_coordinator import (
 def _make_coordinator(
     *, repo=None, target_rpm: int = 13, window_seconds: int = 60,
     quota_scope: str = "test:default", declared_rpm_limit: int | None = None,
+    manual_call_policy=None,
 ) -> FdcQuotaCoordinator:
     return FdcQuotaCoordinator(
         repo=repo or InMemoryFdcQuotaRepository(),
@@ -40,6 +41,7 @@ def _make_coordinator(
         window_seconds=window_seconds,
         quota_scope=quota_scope,
         declared_rpm_limit=declared_rpm_limit,
+        manual_call_policy=manual_call_policy,
     )
 
 
@@ -63,6 +65,90 @@ class TestFdcQuotaCoordinatorInit:
 
     def test_declared_limit_optional(self) -> None:
         _make_coordinator(target_rpm=13, declared_rpm_limit=None)
+
+
+class TestManualCallPolicy:
+    """``FdcQuotaCoordinator``의 중앙 fail-closed 경계(2026-08-27 3차
+    리뷰 보정 신설) — ``caller_id``가 ``"manual:"``로 시작하는
+    reservation 요청만 대상이며, repository에 위임하기 **전에** 정책을
+    확인한다."""
+
+    @pytest.mark.asyncio
+    async def test_manual_caller_without_policy_is_fail_closed(self) -> None:
+        """정책이 주입되지 않았으면 manual: caller는 무조건 거부되고,
+        repository는 전혀 호출되지 않는다(quota window 미소비)."""
+        repo = InMemoryFdcQuotaRepository()
+        coordinator = _make_coordinator(repo=repo, manual_call_policy=None)
+
+        result = await coordinator.try_reserve(job_id=None, caller_id="manual:test-script")
+
+        assert isinstance(result, CoordinatorError)
+        assert result.error_class == CoordinatorErrorClass.MANUAL_CALL_POLICY_REJECTED
+        assert repo._attempts["test:default"] == []  # type: ignore[attr-defined]
+
+    @pytest.mark.asyncio
+    async def test_manual_caller_policy_rejects_sends_no_reservation(self) -> None:
+        repo = InMemoryFdcQuotaRepository()
+
+        async def _deny() -> bool:
+            return False
+
+        coordinator = _make_coordinator(repo=repo, manual_call_policy=_deny)
+
+        result = await coordinator.try_reserve(job_id=None, caller_id="manual:test-script")
+
+        assert isinstance(result, CoordinatorError)
+        assert result.error_class == CoordinatorErrorClass.MANUAL_CALL_POLICY_REJECTED
+        assert repo._attempts["test:default"] == []  # type: ignore[attr-defined]
+
+    @pytest.mark.asyncio
+    async def test_manual_caller_policy_allows_reservation_succeeds(self) -> None:
+        repo = InMemoryFdcQuotaRepository()
+
+        async def _allow() -> bool:
+            return True
+
+        coordinator = _make_coordinator(repo=repo, manual_call_policy=_allow)
+
+        result = await coordinator.try_reserve(job_id=None, caller_id="manual:test-script")
+
+        assert isinstance(result, ReservationGrant)
+
+    @pytest.mark.asyncio
+    async def test_non_manual_caller_bypasses_policy_check_entirely(self) -> None:
+        """``ops-scheduler`` 같은 manual: 이 아닌 caller는 정책이
+        없어도(또는 거부하는 정책이 있어도) 전혀 영향을 받지 않는다."""
+        repo = InMemoryFdcQuotaRepository()
+
+        async def _deny() -> bool:
+            return False
+
+        coordinator = _make_coordinator(repo=repo, manual_call_policy=_deny)
+
+        result = await coordinator.try_reserve(job_id=None, caller_id="ops-scheduler")
+
+        assert isinstance(result, ReservationGrant)
+
+    @pytest.mark.asyncio
+    async def test_manual_caller_policy_is_reevaluated_each_call(self) -> None:
+        """정책 콜백이 매 ``try_reserve()`` 호출마다 다시 평가되는지
+        (한 번 허용됐다고 캐시되지 않는지) 확인한다."""
+        repo = InMemoryFdcQuotaRepository()
+        call_count = 0
+
+        async def _flip() -> bool:
+            nonlocal call_count
+            call_count += 1
+            return call_count == 1  # 첫 호출만 허용, 이후는 거부
+
+        coordinator = _make_coordinator(repo=repo, manual_call_policy=_flip)
+
+        first = await coordinator.try_reserve(job_id=None, caller_id="manual:test-script")
+        second = await coordinator.try_reserve(job_id=None, caller_id="manual:test-script")
+
+        assert isinstance(first, ReservationGrant)
+        assert isinstance(second, CoordinatorError)
+        assert call_count == 2
 
 
 # ---------------------------------------------------------------------------

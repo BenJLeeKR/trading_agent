@@ -31,6 +31,22 @@ class TestArFdcQuotaScopeSeparation:
         assert "coordinator" not in sig.parameters  # AR 경로에 노출되지 않음
 
 
+class TestManualCallPolicyWiring:
+    """2026-08-27 3차 리뷰 보정: 이 스크립트의 FDC coordinator 구성이
+    중앙 fail-closed 경계(``manual_call_policy``)를 실제로 주입하는지
+    확인한다. ``measure_symbol()``의 전체 provider-호출 파이프라인을
+    가짜로 재현하는 대신(과도한 fixture 비용), 실제로 정확성을 담보하는
+    coordinator 계층 동작은 ``test_fdc_quota_coordinator.py::
+    TestManualCallPolicy``와 ``test_fdc_manual_provider_gate.py::
+    TestBuildManualCallPolicy``가 이미 end-to-end로 검증했으므로, 여기서는
+    이 스크립트의 생성 호출부가 그 정책을 실제로 전달하는지만 소스
+    수준에서 회귀 방지 확인한다."""
+
+    def test_main_wires_manual_call_policy_into_coordinator_construction(self) -> None:
+        source = inspect.getsource(script.main)
+        assert "manual_call_policy=build_manual_call_policy" in source
+
+
 @pytest.mark.asyncio
 async def test_with_provider_market_hours_blocked_returns_1_before_db(
     monkeypatch: pytest.MonkeyPatch,

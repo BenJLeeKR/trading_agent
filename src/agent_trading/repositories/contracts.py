@@ -2010,16 +2010,23 @@ class OrderSubmissionAttemptRepository(Protocol):
 
 
 class CoordinatorErrorClass(str, Enum):
-    """DB/coordinator 오류 3분류(설계 문서 §6 "coordinator 오류 경로").
+    """DB/coordinator 오류 4분류(설계 문서 §6 "coordinator 오류 경로",
+    §11 "수동 provider 호출 정책" — PR A 2026-08-27 3차 리뷰 보정으로
+    ``MANUAL_CALL_POLICY_REJECTED`` 추가).
 
-    이 분류는 DB row가 아니라 호출자의 프로세스 로그/메트릭 계층에서만
+    앞 3개는 DB row가 아니라 호출자의 프로세스 로그/메트릭 계층에서만
     쓰인다 — DB 자체가 unavailable인 경우 그 사실 자체를 DB에 영속
     기록할 방법이 없기 때문이다(A안, 설계 문서 §9의 4차 개정).
+    ``MANUAL_CALL_POLICY_REJECTED``는 DB/coordinator 호출 자체의 실패가
+    아니라, coordinator가 ``try_reserve()`` 위임 **이전**에 의도적으로
+    거부한 경우다(§11 "coordinator 쪽에서 운영 시간대에는 caller_id가
+    'manual:*'인 reservation 요청을 무조건 거부" 계약의 실제 구현).
     """
 
     COORDINATOR_UNAVAILABLE = "coordinator_unavailable"
     COORDINATOR_LOCK_TIMEOUT = "coordinator_lock_timeout"
     COORDINATOR_TRANSACTION_ERROR = "coordinator_transaction_error"
+    MANUAL_CALL_POLICY_REJECTED = "manual_call_policy_rejected"
 
 
 @dataclass(frozen=True, slots=True)

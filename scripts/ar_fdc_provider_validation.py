@@ -37,8 +37,13 @@ except ImportError:
 # 2026-08-27 PR A: 공용 PostgreSQL quota coordinator 경로로 전환하며
 # "DB import 없음" 제약을 의도적으로 해제한다(설계 문서 §11/§19 진입점
 # #3) — TransactionManager()/PostgresFdcQuotaRepository만 쓰고,
-# postgres_runtime()의 전체 RepositoryContainer는 여전히 쓰지 않는다.
+# postgres_runtime()의 전체 RepositoryContainer(migration 실행 포함)는
+# 여전히 쓰지 않는다. create_pool()/close_pool()로 이 standalone
+# 스크립트가 필요한 최소 DB pool lifecycle만 직접 관리한다(2026-08-27
+# 3차 리뷰 보정 — 기존에는 pool을 전혀 초기화하지 않아 reservation
+# 전에 "Database pool is not initialised" 오류로 실패했다).
 from agent_trading.config.settings import AppSettings
+from agent_trading.db.connection import close_pool, create_pool
 from agent_trading.db.transaction import TransactionManager
 from agent_trading.repositories.postgres.fdc_quota import PostgresFdcQuotaRepository
 from agent_trading.services.ai_agents.provider_client import (
@@ -49,6 +54,7 @@ from agent_trading.services.fdc_quota_coordinator import FdcQuotaCoordinator
 from scripts.fdc_manual_provider_gate import (
     MarketHoursBlockedError,
     assert_not_market_hours,
+    build_manual_call_policy,
     build_manual_run_id,
     call_with_coordinator,
 )
@@ -362,13 +368,18 @@ async def main() -> int:
 
     동작:
     1. JSON artifact 로드
-    2. 운영 시간(거래일) fail-closed 차단 확인 — 차단되면 HTTP 0회로 즉시 종료
-    3. .env에서 DEEPSEEK_API_KEY 로드, 공용 quota coordinator 구성
-    4. LiveGeminiProviderClient 생성 (coordinator 필수, timeout_seconds=120)
-    5. OLD-style AR 1회 → NEW-style AR 1회 (순차, 매 시도마다 reservation)
-    6. OLD-style FDC 1회 → NEW-style FDC 1회 (순차, 매 시도마다 reservation)
-    7. 결과 출력 + 결과 artifact 저장
-    8. provider_client.close()
+    2. 운영 시간(거래일) fail-closed 차단 확인(CLI 사전 검사, 1단계) —
+       차단되면 DB pool 초기화·HTTP 전에 즉시 종료
+    3. .env에서 DEEPSEEK_API_KEY 로드
+    4. DB pool 초기화(create_pool()) — standalone 스크립트라 명시적으로
+       필요하다(2026-08-27 3차 리뷰 보정)
+    5. 공용 quota coordinator 구성(운영 시간 정책을 2단계 중앙 경계로도
+       주입 — coordinator.try_reserve()가 manual: caller를 직접 재확인)
+    6. LiveGeminiProviderClient 생성 (coordinator 필수, timeout_seconds=120)
+    7. OLD-style AR 1회 → NEW-style AR 1회 (순차, coordinator 미사용)
+    8. OLD-style FDC 1회 → NEW-style FDC 1회 (순차, 매 시도마다 reservation)
+    9. 결과 출력 + 결과 artifact 저장
+    10. provider_client.close() + close_pool()(모든 종료 경로에서)
     """
     # 1. Load artifact
     if not ARTIFACT_PATH.exists():
@@ -383,14 +394,15 @@ async def main() -> int:
     print(f"  Symbol: {artifact.get('meta', {}).get('symbol', '?')}")
     print(f"  Events: {artifact.get('meta', {}).get('event_count', 0)}")
 
-    # 2. 운영 시간(거래일) fail-closed 차단 — HTTP를 전혀 보내지 않고 종료
+    # 2. 운영 시간(거래일) fail-closed 차단(1단계, CLI 사전 검사) — DB
+    # pool 초기화·HTTP 전에 즉시 종료한다.
     try:
         await assert_not_market_hours(script_name=SCRIPT_NAME)
     except MarketHoursBlockedError as exc:
         print(f"❌ {exc}")
         return 1
 
-    # 3. Init provider client + 공용 quota coordinator
+    # 3. Settings 확인
     settings = AppSettings()
     if not settings.provider_api_key:
         print("❌ provider_api_key is empty. Check .env file.")
@@ -417,13 +429,27 @@ async def main() -> int:
         timeout_seconds=CLIENT_TIMEOUT,
     )
 
-    async with TransactionManager() as ambient_tx:
-        repo = PostgresFdcQuotaRepository(ambient_tx)
+    # 4. DB pool 초기화(2026-08-27 3차 리뷰 보정) — postgres_runtime()은
+    # migration까지 실행하는 무거운 경로라 쓰지 않는다. 이 standalone
+    # 스크립트에 필요한 것은 pool 하나뿐이다. 이 지점부터는 반드시
+    # close_pool()로 정리한다(모든 종료 경로).
+    await create_pool()
+    try:
+        # 5. repo/coordinator 구성 — ambient transaction은 이 구성 목적
+        # 으로만 잠깐 열고 즉시 닫는다(HTTP 호출 동안 열어두지 않는다).
+        # PostgresFdcQuotaRepository.try_reserve()/record_attempt_outcome()
+        # 는 각자 독립 transaction을 새로 열므로, 이 ambient_tx는 생성자
+        # 인자를 채우는 용도 외에는 쓰이지 않는다.
+        async with TransactionManager() as ambient_tx:
+            repo = PostgresFdcQuotaRepository(ambient_tx)
         coordinator = FdcQuotaCoordinator(
             repo=repo,
             target_rpm=settings.fdc_provider_target_rpm,
             window_seconds=settings.fdc_provider_rate_window_seconds,
             declared_rpm_limit=settings.gemini_provider_declared_rpm_limit,
+            # 2단계 중앙 fail-closed 경계 — CLI 사전 검사(2번)와 별개로,
+            # coordinator.try_reserve()가 manual: caller를 직접 재확인한다.
+            manual_call_policy=build_manual_call_policy(script_name=SCRIPT_NAME),
         )
         fdc_client = LiveGeminiProviderClient(
             coordinator=coordinator,
@@ -434,7 +460,7 @@ async def main() -> int:
         manual_run_id = build_manual_run_id(script_name=SCRIPT_NAME)
 
         try:
-            # 4. Call provider for each prompt (순차 호출)
+            # 6. Call provider for each prompt (순차 호출)
             # AR OLD/NEW — coordinator를 거치지 않는다(FDC quota 대상 아님).
             calls.append(await _call_ar(
                 ar_client, prompts.get("ar_old_prompt", ""),
@@ -462,19 +488,21 @@ async def main() -> int:
             await ar_client.close()
             await fdc_client.close()
 
-    total_duration = time.monotonic() - start_total
+        total_duration = time.monotonic() - start_total
 
-    # 4. Classify conclusion
-    conclusion = _classify_conclusion(calls)
+        # 7. Classify conclusion
+        conclusion = _classify_conclusion(calls)
 
-    # 5. Save results artifact
-    result_path = _save_results(calls, artifact, total_duration)
-    print(f"\n  ✅ Results saved: {result_path}")
+        # 8. Save results artifact
+        result_path = _save_results(calls, artifact, total_duration)
+        print(f"\n  ✅ Results saved: {result_path}")
 
-    # 6. Print results
-    _print_results(calls, conclusion)
+        # 9. Print results
+        _print_results(calls, conclusion)
 
-    return 0
+        return 0
+    finally:
+        await close_pool()
 
 
 if __name__ == "__main__":

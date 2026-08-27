@@ -4,18 +4,34 @@
 ``scripts/ar_fdc_output_measurement.py``의 live provider 호출 경로가
 공유하는 두 가지 책임을 담당한다.
 
-1. **운영 시간 fail-closed 차단**: 새 문자열 비교나 ad-hoc 시간 계산을
-   만들지 않고, 기존 검증된 ``market_session.py::create_session_provider()``
-   경로를 그대로 재사용한다. 이 코드베이스는 2026-07-10에 163 WebSocket
-   결합(``CombinedSessionProvider``)을 제거해, 현재 운영 경로는 076
-   REST(``KisHolidayProvider``) 또는 주말 heuristic(``FallbackSessionProvider``)
+1. **운영 시간 fail-closed 차단(2단계, 2026-08-27 3차 리뷰 보정)**: 새
+   문자열 비교나 ad-hoc 시간 계산을 만들지 않고, 기존 검증된
+   ``market_session.py::create_session_provider()`` 경로를 그대로
+   재사용한다. 이 코드베이스는 2026-07-10에 163 WebSocket 결합
+   (``CombinedSessionProvider``)을 제거해, 현재 운영 경로는 076 REST
+   (``KisHolidayProvider``) 또는 주말 heuristic(``FallbackSessionProvider``)
    만 제공한다 — 즉 "지금이 정규장 개장 시각대인가"(분 단위)가 아니라
-   "오늘이 거래일인가"(일 단위)만 판단할 수 있다. 이 헬퍼는 안전을
-   우선해 **거래일이면 하루 종일** 수동 live 호출을 차단한다(보수적
+   "오늘이 거래일인가"(일 단위)만 판단할 수 있다. 안전을 우선해
+   **거래일이면 하루 종일** 수동 live 호출을 차단한다(보수적
    fail-closed — 실제 정규장 시간대만 좁혀서 허용하지 않는다). 이는
    설계 문서 §11이 의도한 "운영 시간 판정"의 근사이며, 분 단위 장운영
    phase가 필요하면 별도 설계/163 WS 재도입이 선행돼야 한다는 한계를
    명시적으로 남긴다.
+   - **1단계(CLI 사전 검사, 기존)**: ``assert_not_market_hours()``를
+     각 스크립트 ``main()`` 시작 부분에서 직접 호출한다 — DB pool
+     초기화·HTTP client 준비보다도 먼저 실행되는 빠른 실패 경로다.
+   - **2단계(coordinator 중앙 경계, 신설)**: ``build_manual_call_policy()``
+     가 위 검사를 ``FdcQuotaCoordinator(manual_call_policy=...)``가
+     요구하는 콜백 모양으로 감싸 coordinator에 주입한다.
+     ``FdcQuotaCoordinator.try_reserve()``는 ``caller_id``가
+     ``"manual:"``로 시작하면 이 정책을 **repository에 위임하기 전에**
+     직접 확인한다(``src/agent_trading/services/fdc_quota_coordinator.py``)
+     — 정책이 주입돼 있지 않거나 정책이 거부하면 `CoordinatorError`를
+     반환하고 quota window를 전혀 건드리지 않는다. 이 경계는 `src`
+     계층에 있으므로, CLI 사전 검사를 우회하는 다른 호출자가 같은
+     coordinator 인스턴스를 직접 쓰더라도 여전히 강제된다(§11 계약의
+     실제 구현 — 1단계는 사용자 편의를 위한 빠른 실패일 뿐, 진짜
+     강제 경계는 2단계다).
 2. **비운영 시간 공용 quota coordinator 경로 — FDC 전용**: HTTP 시도마다
    새 ``FdcQuotaCoordinator.try_reserve()``를 얻어(§7 "HTTP 시도마다
    reservation") ``LiveGeminiProviderClient.generate_structured_once()``
@@ -64,7 +80,10 @@ from agent_trading.services.ai_agents.provider_client import (
     PermitCallback,
     _is_retryable_http_status,
 )
-from agent_trading.services.fdc_quota_coordinator import FdcQuotaCoordinator
+from agent_trading.services.fdc_quota_coordinator import (
+    FdcQuotaCoordinator,
+    ManualCallPolicy,
+)
 from agent_trading.services.market_session import create_session_provider
 
 __all__ = [
@@ -72,6 +91,7 @@ __all__ = [
     "MarketHoursBlockedError",
     "QuotaUnavailableError",
     "assert_not_market_hours",
+    "build_manual_call_policy",
     "build_manual_run_id",
     "call_with_coordinator",
 ]
@@ -113,6 +133,28 @@ async def assert_not_market_hours(*, script_name: str) -> None:
             "provider 호출은 운영 시간(거래일)에 기술적으로 차단된다. "
             "비운영 시간(주말/공휴일)에 다시 실행하라."
         )
+
+
+def build_manual_call_policy(*, script_name: str) -> ManualCallPolicy:
+    """``FdcQuotaCoordinator(manual_call_policy=...)``에 주입할 좁은 정책
+    콜백을 만든다(2026-08-27 3차 리뷰 보정 신설).
+
+    ``assert_not_market_hours()``(예외 기반)를 coordinator가 요구하는
+    ``Callable[[], Awaitable[bool]]`` 모양으로 감싼다 — 거래일이면
+    ``False``(거부), 아니면 ``True``(허용)를 반환한다. **이 정책은
+    이 스크립트 자체의 CLI 사전 검사와 별개로, coordinator
+    (``src`` 계층)가 ``try_reserve()`` 안에서 직접 강제하는 중앙
+    fail-closed 경계에 연결된다** — CLI 사전 검사가 우회되거나 다른
+    코드가 이 coordinator 인스턴스를 직접 써도 이 경계는 유지된다.
+    """
+    async def _policy() -> bool:
+        try:
+            await assert_not_market_hours(script_name=script_name)
+            return True
+        except MarketHoursBlockedError:
+            return False
+
+    return _policy
 
 
 def build_manual_run_id(*, script_name: str) -> str:

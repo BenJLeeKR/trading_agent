@@ -27,11 +27,21 @@ class _FakeOutput:
     symbol: str = ""
 
 
+async def _always_allow_manual_call_policy() -> bool:
+    return True
+
+
 def _make_coordinator(*, target_rpm: int = 13) -> FdcQuotaCoordinator:
+    """이 헬퍼가 만드는 coordinator는 ``manual:`` caller를 항상 허용하는
+    정책을 기본 주입한다 — 이 파일의 기존 테스트들은 quota/lifecycle
+    메커니즘 자체를 검증하는 것이 목적이며, 2026-08-27 3차 리뷰 보정으로
+    신설된 운영 시간 중앙 fail-closed 경계(``TestManualCallPolicy``,
+    ``test_fdc_quota_coordinator.py`` 참고)는 별도로 검증한다."""
     return FdcQuotaCoordinator(
         repo=InMemoryFdcQuotaRepository(),
         target_rpm=target_rpm,
         quota_scope="test:manual-gate",
+        manual_call_policy=_always_allow_manual_call_policy,
     )
 
 
@@ -377,6 +387,79 @@ class TestAssertNotMarketHours:
 
         # 예외 없이 정상 반환돼야 한다.
         await gate.assert_not_market_hours(script_name="test_script")
+
+
+class TestBuildManualCallPolicy:
+    """``build_manual_call_policy()``(2026-08-27 3차 리뷰 보정 신설) —
+    ``assert_not_market_hours()``를 coordinator가 요구하는
+    ``Callable[[], Awaitable[bool]]`` 모양으로 감싼다."""
+
+    @pytest.mark.asyncio
+    async def test_returns_false_on_trading_day(
+        self, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        fake_provider = AsyncMock()
+        fake_provider.get_session_info = AsyncMock(
+            return_value=SessionInfo(is_trading_day=True, source="fallback")
+        )
+
+        async def _fake_create_session_provider():
+            return fake_provider
+
+        monkeypatch.setattr(gate, "create_session_provider", _fake_create_session_provider)
+
+        policy = gate.build_manual_call_policy(script_name="test_script")
+        allowed = await policy()
+
+        assert allowed is False
+
+    @pytest.mark.asyncio
+    async def test_returns_true_on_non_trading_day(
+        self, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        fake_provider = AsyncMock()
+        fake_provider.get_session_info = AsyncMock(
+            return_value=SessionInfo(is_trading_day=False, source="fallback")
+        )
+
+        async def _fake_create_session_provider():
+            return fake_provider
+
+        monkeypatch.setattr(gate, "create_session_provider", _fake_create_session_provider)
+
+        policy = gate.build_manual_call_policy(script_name="test_script")
+        allowed = await policy()
+
+        assert allowed is True
+
+    @pytest.mark.asyncio
+    async def test_policy_wired_into_coordinator_blocks_on_trading_day(
+        self, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """이 정책을 실제로 ``FdcQuotaCoordinator``에 주입했을 때
+        거래일이면 reservation이 거부되고, 비거래일이면 승인되는지
+        end-to-end로 확인한다."""
+        fake_provider = AsyncMock()
+        fake_provider.get_session_info = AsyncMock(
+            return_value=SessionInfo(is_trading_day=True, source="fallback")
+        )
+
+        async def _fake_create_session_provider():
+            return fake_provider
+
+        monkeypatch.setattr(gate, "create_session_provider", _fake_create_session_provider)
+
+        coordinator = FdcQuotaCoordinator(
+            repo=InMemoryFdcQuotaRepository(),
+            target_rpm=13,
+            quota_scope="test:manual-policy-e2e",
+            manual_call_policy=gate.build_manual_call_policy(script_name="test_script"),
+        )
+
+        result = await coordinator.try_reserve(job_id=None, caller_id="manual:test_script")
+
+        from agent_trading.repositories.contracts import CoordinatorError
+        assert isinstance(result, CoordinatorError)
 
 
 class TestBuildManualRunId:

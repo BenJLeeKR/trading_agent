@@ -63,9 +63,185 @@ async def test_market_hours_blocked_returns_1_before_any_db_connection(
 
     monkeypatch.setattr(script, "TransactionManager", _tx_manager_should_not_be_called)
 
+    async def _create_pool_should_not_be_called(*args, **kwargs):
+        raise AssertionError(
+            "create_pool()이 호출됐다 — 운영 시간 차단이 DB pool 초기화보다 "
+            "먼저 일어나야 한다(2026-08-27 3차 리뷰 보정)"
+        )
+
+    monkeypatch.setattr(script, "create_pool", _create_pool_should_not_be_called)
+
     exit_code = await script.main()
 
     assert exit_code == 1
+
+
+def _writable_artifact(tmp_path):
+    artifact_path = tmp_path / "artifact.json"
+    artifact_path.write_text(
+        json.dumps({
+            "meta": {"symbol": "030200", "event_count": 1},
+            "prompts": {}, "system_prompts": {},
+        }),
+        encoding="utf-8",
+    )
+    return artifact_path
+
+
+class _FakeAmbientTx:
+    """``TransactionManager()``를 흉내낸다 — repo 생성자를 채우는
+    용도로만 쓰이며, 실제 DB 연결을 열지 않는다."""
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *exc):
+        return False
+
+
+@pytest.mark.asyncio
+async def test_non_trading_day_reaches_pool_init_and_coordinator_construction(
+    tmp_path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """비거래일 허용 경로가 DB pool 초기화(create_pool) 후 coordinator
+    구성까지 도달하는지, 정상 종료 시 close_pool()이 호출되는지 확인한다
+    (2026-08-27 3차 리뷰 보정)."""
+    monkeypatch.setattr(script, "ARTIFACT_PATH", _writable_artifact(tmp_path))
+
+    async def _allowed(*, script_name: str) -> None:
+        return None  # 예외 없음 = 비거래일
+
+    monkeypatch.setattr(script, "assert_not_market_hours", _allowed)
+
+    pool_calls: list[str] = []
+
+    async def _fake_create_pool(*args, **kwargs):
+        pool_calls.append("create")
+
+    async def _fake_close_pool(*args, **kwargs):
+        pool_calls.append("close")
+
+    monkeypatch.setattr(script, "create_pool", _fake_create_pool)
+    monkeypatch.setattr(script, "close_pool", _fake_close_pool)
+    monkeypatch.setattr(script, "TransactionManager", lambda: _FakeAmbientTx())
+    monkeypatch.setattr(script, "PostgresFdcQuotaRepository", lambda tx: object())
+
+    captured_coordinator_kwargs: dict = {}
+
+    class _FakeCoordinator:
+        def __init__(self, **kwargs):
+            captured_coordinator_kwargs.update(kwargs)
+
+    monkeypatch.setattr(script, "FdcQuotaCoordinator", _FakeCoordinator)
+
+    class _FakeLiveClient:
+        def __init__(self, **kwargs):
+            pass
+
+        async def close(self):
+            pass
+
+    monkeypatch.setattr(script, "LiveGeminiProviderClient", _FakeLiveClient)
+
+    class _FakeArClient:
+        def __init__(self, **kwargs):
+            pass
+
+        async def close(self):
+            pass
+
+    monkeypatch.setattr(script, "OpenAICompatibleClient", _FakeArClient)
+
+    async def _fake_call_ar(*args, **kwargs):
+        return {"run": "ar", "success": True, "used_fallback": False, "duration_seconds": 0.0,
+                "parsed_output": {"risk_opinion": "allow", "risk_score": 0.0, "reason_codes": []},
+                "raw_response_preview": ""}
+
+    async def _fake_call_fdc(*args, **kwargs):
+        return {"run": "fdc", "success": True, "used_fallback": False, "duration_seconds": 0.0,
+                "parsed_output": {"decision_type": "HOLD", "confidence": 0.5},
+                "raw_response_preview": ""}
+
+    monkeypatch.setattr(script, "_call_ar", _fake_call_ar)
+    monkeypatch.setattr(script, "_call_fdc", _fake_call_fdc)
+
+    # provider_api_key가 비어있으면 그 자리에서 조기 반환하므로 채운다.
+    class _FakeSettings:
+        provider_api_key = "fake-key"
+        provider_base_url = "https://fake"
+        provider_model_id = "fake-model"
+        fdc_provider_target_rpm = 13
+        fdc_provider_rate_window_seconds = 60
+        gemini_provider_declared_rpm_limit = 15
+
+    monkeypatch.setattr(script, "AppSettings", lambda: _FakeSettings())
+
+    exit_code = await script.main()
+
+    assert exit_code == 0
+    assert pool_calls == ["create", "close"]
+    assert "manual_call_policy" in captured_coordinator_kwargs
+    assert captured_coordinator_kwargs["manual_call_policy"] is not None
+
+
+@pytest.mark.asyncio
+async def test_pool_is_closed_even_when_call_raises(
+    tmp_path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """AR/FDC 호출 중 예외가 발생해도(조기 반환 경로) close_pool()이
+    반드시 호출돼야 한다."""
+    monkeypatch.setattr(script, "ARTIFACT_PATH", _writable_artifact(tmp_path))
+
+    async def _allowed(*, script_name: str) -> None:
+        return None
+
+    monkeypatch.setattr(script, "assert_not_market_hours", _allowed)
+
+    pool_calls: list[str] = []
+
+    async def _fake_create_pool(*args, **kwargs):
+        pool_calls.append("create")
+
+    async def _fake_close_pool(*args, **kwargs):
+        pool_calls.append("close")
+
+    monkeypatch.setattr(script, "create_pool", _fake_create_pool)
+    monkeypatch.setattr(script, "close_pool", _fake_close_pool)
+    monkeypatch.setattr(script, "TransactionManager", lambda: _FakeAmbientTx())
+    monkeypatch.setattr(script, "PostgresFdcQuotaRepository", lambda tx: object())
+    monkeypatch.setattr(script, "FdcQuotaCoordinator", lambda **kwargs: object())
+
+    class _FakeClient:
+        def __init__(self, **kwargs):
+            pass
+
+        async def close(self):
+            pass
+
+    monkeypatch.setattr(script, "LiveGeminiProviderClient", _FakeClient)
+    monkeypatch.setattr(script, "OpenAICompatibleClient", _FakeClient)
+
+    import asyncio as _asyncio
+
+    async def _raising_call_ar(*args, **kwargs):
+        raise _asyncio.TimeoutError()
+
+    monkeypatch.setattr(script, "_call_ar", _raising_call_ar)
+
+    class _FakeSettings:
+        provider_api_key = "fake-key"
+        provider_base_url = "https://fake"
+        provider_model_id = "fake-model"
+        fdc_provider_target_rpm = 13
+        fdc_provider_rate_window_seconds = 60
+        gemini_provider_declared_rpm_limit = 15
+
+    monkeypatch.setattr(script, "AppSettings", lambda: _FakeSettings())
+
+    exit_code = await script.main()
+
+    assert exit_code == 1
+    assert pool_calls == ["create", "close"]
 
 
 @pytest.mark.asyncio

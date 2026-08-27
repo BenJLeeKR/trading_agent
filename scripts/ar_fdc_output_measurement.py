@@ -60,6 +60,7 @@ from scripts.fdc_manual_provider_gate import (
     CoordinatedFdcProviderClient,
     MarketHoursBlockedError,
     assert_not_market_hours,
+    build_manual_call_policy,
     build_manual_run_id,
 )
 
@@ -1114,6 +1115,12 @@ async def main() -> int:
                     target_rpm=settings.fdc_provider_target_rpm,
                     window_seconds=settings.fdc_provider_rate_window_seconds,
                     declared_rpm_limit=settings.gemini_provider_declared_rpm_limit,
+                    # 2단계 중앙 fail-closed 경계(2026-08-27 3차 리뷰
+                    # 보정) — CLI 사전 검사(assert_not_market_hours, 위
+                    # args.with_provider 분기 이전)와 별개로,
+                    # coordinator.try_reserve()가 manual: caller를 직접
+                    # 재확인한다.
+                    manual_call_policy=build_manual_call_policy(script_name=SCRIPT_NAME),
                 )
                 live_fdc_client = LiveGeminiProviderClient(
                     coordinator=coordinator,
