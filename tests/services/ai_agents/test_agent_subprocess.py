@@ -541,6 +541,7 @@ class TestWriteAgentSubprocessOutputRoundTrip:
             rate_limiter_requeue_count=0,
             rate_limiter_final_waited_seconds=0.0,
             rate_limiter_queue_deadline_exceeded=False,
+            fdc_ready_at="",
         )
 
         stream = StringIO()
@@ -612,6 +613,7 @@ class TestWriteAgentSubprocessOutputRoundTrip:
             rate_limiter_requeue_count=0,
             rate_limiter_final_waited_seconds=0.0,
             rate_limiter_queue_deadline_exceeded=False,
+            fdc_ready_at="",
         )
 
         stream = StringIO()
@@ -692,6 +694,7 @@ class TestWriteAgentSubprocessOutputRoundTrip:
                 rate_limiter_requeue_count=0,
                 rate_limiter_final_waited_seconds=0.0,
                 rate_limiter_queue_deadline_exceeded=False,
+                fdc_ready_at="",
             )
             stream = StringIO()
             write_agent_subprocess_output(fake_output, stream)
@@ -749,6 +752,7 @@ class TestWriteAgentSubprocessOutputRoundTrip:
             rate_limiter_requeue_count=0,
             rate_limiter_final_waited_seconds=0.0,
             rate_limiter_queue_deadline_exceeded=False,
+            fdc_ready_at="",
         )
 
         stream = StringIO()
@@ -831,6 +835,7 @@ class TestProviderObservabilityRoundTrip:
             "rate_limiter_requeue_count": 1,
             "rate_limiter_final_waited_seconds": 8.75,
             "rate_limiter_queue_deadline_exceeded": True,
+            "fdc_ready_at": "2026-08-27T01:00:00+00:00",
         }
         base_observability.update(observability_overrides)
         return SimpleNamespace(
@@ -990,6 +995,173 @@ class TestProviderObservabilityRoundTrip:
         payload["provider_http_attempt_count"] = removed_value
         restored_bundle = deserialize_agent_output(json.dumps(payload))
         assert restored_bundle.provider_observability["provider_http_attempt_count"] == 3
+
+
+class TestFdcReadyAtRoundTrip:
+    """2026-08-27 결함 수정 회귀 테스트: ``fdc_ready_at``(FDC 13 RPM shadow
+    관측의 FIFO 정렬 키)이 실제 ``write_agent_subprocess_output()`` →
+    stdout JSON → ``deserialize_agent_output()`` 경로를 무손실로
+    통과하는지 검증한다.
+
+    배경: ``AgentSubprocessOutput``(``scripts/run_agent_subprocess.py``)에는
+    이 필드가 있었지만, 실제 stdout JSON 페이로드를 만드는
+    ``subprocess_io.py::build_agent_subprocess_output_payload()``에는
+    반영되지 않아 조용히 누락되고 있었다 — 부모 프로세스는 항상 빈
+    문자열로 복원했고, 그 결과 ``_capture_fdc_ready_shadow_event()``가
+    모든 실제 FDC-ready 건을 skip처럼 처리해 운영 shadow 테이블
+    (``fdc_queue_jobs``/``fdc_provider_attempts``)이 계속 0건으로 남아
+    있었다(2026-08-27 read-only 실측에서 발견).
+
+    ``_capture_fdc_ready_shadow_event()`` 자체가 non-empty/empty
+    ``fdc_ready_at_raw``를 어떻게 처리하는지(shadow event 생성 여부)는
+    ``tests/services/test_decision_orchestrator.py::
+    TestFdcReadyShadowEventCapture``가 이미 충분히 좁게 검증한다 — 여기서는
+    그 메서드가 실제로 받는 입력값(``bundle.ai_inputs.fdc_ready_at``)이
+    subprocess 왕복을 거쳐도 정확히 보존되는지만 검증해 중복을 피한다.
+    """
+
+    def test_non_empty_fdc_ready_at_survives_real_round_trip(
+        self,
+        sample_event_output: EventInterpretationOutput,
+        sample_risk_output: AIRiskOutput,
+        sample_compliance_output: AIComplianceOutput,
+        sample_composer_output: FinalDecisionComposerOutput,
+    ) -> None:
+        """non-empty ISO-8601 값이 payload 키와
+        ``bundle.ai_inputs.fdc_ready_at``까지 손실 없이 도달해야 한다
+        (AC-02)."""
+        from io import StringIO
+
+        from agent_trading.services.ai_agents.subprocess_io import (
+            write_agent_subprocess_output,
+        )
+
+        sample_fdc_ready_at = "2026-08-27T01:00:25.158195+00:00"
+        fake_output = SimpleNamespace(
+            success=True,
+            event_output=dataclass_to_dict(sample_event_output),
+            risk_output=dataclass_to_dict(sample_risk_output),
+            compliance_output=dataclass_to_dict(sample_compliance_output),
+            composer_output=dataclass_to_dict(sample_composer_output),
+            error=None,
+            duration_seconds=1.0,
+            ei_error_metadata=None,
+            ei_skipped=False,
+            ar_skipped=False,
+            fdc_skipped=False,
+            skip_reason_codes=(),
+            rate_limiter_waited_seconds=0.0,
+            rate_limiter_slot_acquired=True,
+            rate_limiter_queue_timeout=False,
+            rate_limiter_state_file_error=False,
+            provider_http_attempt_count=1,
+            provider_http_429_count=0,
+            provider_execution_seconds=0.5,
+            provider_final_status="success",
+            rate_limiter_queue_ticket="",
+            rate_limiter_queue_position_at_first_wait=-1,
+            rate_limiter_requeue_count=0,
+            rate_limiter_final_waited_seconds=0.0,
+            rate_limiter_queue_deadline_exceeded=False,
+            fdc_ready_at=sample_fdc_ready_at,
+        )
+
+        stream = StringIO()
+        write_agent_subprocess_output(fake_output, stream)
+        raw_json = stream.getvalue()
+
+        # payload 자체에 키가 실제로 존재하는지 직접 확인(회귀의 정확한 지점).
+        payload = json.loads(raw_json)
+        assert payload["fdc_ready_at"] == sample_fdc_ready_at
+
+        bundle = deserialize_agent_output(raw_json)
+        assert bundle.ai_inputs.fdc_ready_at == sample_fdc_ready_at
+
+    def test_legacy_payload_without_fdc_ready_at_key_defaults_to_empty_string(
+        self,
+        sample_event_output: EventInterpretationOutput,
+        sample_risk_output: AIRiskOutput,
+        sample_compliance_output: AIComplianceOutput,
+        sample_composer_output: FinalDecisionComposerOutput,
+    ) -> None:
+        """구버전 payload(``fdc_ready_at`` 키가 아예 없음)와의 하위 호환
+        — 예외 없이 ``""``(FDC skip과 동일하게 취급되는 안전한 기본값)로
+        복원돼야 한다(AC-03)."""
+        legacy_payload = {
+            "success": True,
+            "event_output": dataclass_to_dict(sample_event_output),
+            "risk_output": dataclass_to_dict(sample_risk_output),
+            "compliance_output": dataclass_to_dict(sample_compliance_output),
+            "composer_output": dataclass_to_dict(sample_composer_output),
+            "error": None,
+            "duration_seconds": 0.1,
+            "ei_error_metadata": None,
+            # fdc_ready_at 키 없음(구버전 payload)
+        }
+        bundle = deserialize_agent_output(json.dumps(legacy_payload))
+        assert bundle.ai_inputs.fdc_ready_at == ""
+
+    def test_removing_fdc_ready_at_key_breaks_round_trip_then_restored(
+        self,
+        sample_event_output: EventInterpretationOutput,
+        sample_risk_output: AIRiskOutput,
+        sample_compliance_output: AIComplianceOutput,
+        sample_composer_output: FinalDecisionComposerOutput,
+    ) -> None:
+        """이 round-trip 테스트가 실제로 배관 누락을 잡아낼 수 있는지
+        자체 검증한다 — payload에서 ``fdc_ready_at`` 키를 임시로 지우면
+        기대값과 달라져야 하고(구버전 기본값 ``""``로 대체됨), 키를
+        복원하면 다시 원래 값이 보존돼야 한다."""
+        from io import StringIO
+
+        from agent_trading.services.ai_agents.subprocess_io import (
+            write_agent_subprocess_output,
+        )
+
+        sample_fdc_ready_at = "2026-08-27T01:00:25.158195+00:00"
+        fake_output = SimpleNamespace(
+            success=True,
+            event_output=dataclass_to_dict(sample_event_output),
+            risk_output=dataclass_to_dict(sample_risk_output),
+            compliance_output=dataclass_to_dict(sample_compliance_output),
+            composer_output=dataclass_to_dict(sample_composer_output),
+            error=None,
+            duration_seconds=1.0,
+            ei_error_metadata=None,
+            ei_skipped=False,
+            ar_skipped=False,
+            fdc_skipped=False,
+            skip_reason_codes=(),
+            rate_limiter_waited_seconds=0.0,
+            rate_limiter_slot_acquired=True,
+            rate_limiter_queue_timeout=False,
+            rate_limiter_state_file_error=False,
+            provider_http_attempt_count=1,
+            provider_http_429_count=0,
+            provider_execution_seconds=0.5,
+            provider_final_status="success",
+            rate_limiter_queue_ticket="",
+            rate_limiter_queue_position_at_first_wait=-1,
+            rate_limiter_requeue_count=0,
+            rate_limiter_final_waited_seconds=0.0,
+            rate_limiter_queue_deadline_exceeded=False,
+            fdc_ready_at=sample_fdc_ready_at,
+        )
+
+        stream = StringIO()
+        write_agent_subprocess_output(fake_output, stream)
+        payload = json.loads(stream.getvalue())
+
+        removed_value = payload.pop("fdc_ready_at")
+        assert removed_value == sample_fdc_ready_at
+
+        degraded_bundle = deserialize_agent_output(json.dumps(payload))
+        assert degraded_bundle.ai_inputs.fdc_ready_at == ""
+        assert degraded_bundle.ai_inputs.fdc_ready_at != removed_value
+
+        payload["fdc_ready_at"] = removed_value
+        restored_bundle = deserialize_agent_output(json.dumps(payload))
+        assert restored_bundle.ai_inputs.fdc_ready_at == sample_fdc_ready_at
 
 
 @pytest.mark.asyncio

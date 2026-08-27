@@ -37,6 +37,16 @@ wait``/``rate_limiter_requeue_count``/``rate_limiter_final_waited_
 seconds``/``rate_limiter_queue_deadline_exceeded``) 추가 — 위와 같은
 실수를 반복하지 않도록 이 모듈의 두 지점(Protocol과 payload 빌더)을
 반드시 함께 수정했다.
+
+2026-08-27 결함 수정: ``fdc_ready_at``(FDC 13 RPM shadow 관측의 FIFO
+정렬 키)이 ``AgentSubprocessOutput``에는 있었지만 역시 이 모듈의 두
+지점에 반영되지 않아, stdout JSON에서 조용히 누락되고 있었다 —
+``deserialize_agent_output()``은 키 부재 시 항상 ``""``로 복원했고,
+``_capture_fdc_ready_shadow_event()``는 빈 문자열을 FDC skip과
+동일하게 no-op 처리해 shadow event가 전혀 생성되지 않았다(운영에서
+실제 FDC-ready 호출이 발생했음에도 shadow 테이블이 계속 0건으로 남은
+근본 원인). 위 2026-08-21 사례와 동일한 실수 패턴이므로 두 지점을
+함께 수정했다.
 """
 
 from __future__ import annotations
@@ -77,6 +87,7 @@ class AgentSubprocessOutputLike(Protocol):
     rate_limiter_requeue_count: int
     rate_limiter_final_waited_seconds: float
     rate_limiter_queue_deadline_exceeded: bool
+    fdc_ready_at: str
 
 
 def build_agent_subprocess_output_payload(
@@ -120,6 +131,7 @@ def build_agent_subprocess_output_payload(
         "rate_limiter_requeue_count": output.rate_limiter_requeue_count,
         "rate_limiter_final_waited_seconds": output.rate_limiter_final_waited_seconds,
         "rate_limiter_queue_deadline_exceeded": output.rate_limiter_queue_deadline_exceeded,
+        "fdc_ready_at": output.fdc_ready_at,
     }
 
 
