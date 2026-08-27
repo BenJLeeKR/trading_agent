@@ -130,6 +130,61 @@ class TestAtomicReservationLogic:
         )
 
 
+class TestRecordAttemptOutcome:
+    """``record_attempt_outcome()``(2026-08-27 PR A 신설) — ``try_reserve()``
+    가 발급한 reservation의 실제 HTTP 결과를 기록한다. 새 reservation을
+    발급하지 않으며, 이미 소비된 window 슬롯의 상태만 갱신한다."""
+
+    @pytest.mark.asyncio
+    async def test_updates_outcome_of_existing_reservation(self) -> None:
+        repo = InMemoryFdcQuotaRepository()
+        coordinator = _make_coordinator(repo=repo, target_rpm=13, quota_scope="scope-outcome-1")
+
+        grant = await coordinator.try_reserve(job_id=None, caller_id="test-caller")
+        assert isinstance(grant, ReservationGrant)
+        assert repo._attempts_by_id[grant.reservation_id].outcome == "reservation_granted"  # type: ignore[attr-defined]
+
+        await coordinator.record_attempt_outcome(
+            reservation_id=grant.reservation_id, outcome="http_succeeded",
+        )
+
+        assert repo._attempts_by_id[grant.reservation_id].outcome == "http_succeeded"  # type: ignore[attr-defined]
+
+    @pytest.mark.asyncio
+    async def test_does_not_create_new_reservation_or_change_window_count(self) -> None:
+        """outcome 갱신은 window 판단에 쓰이는 ``_QUOTA_CONSUMING_OUTCOMES``
+        집합 밖으로 나가지 않는 한(``http_succeeded``도 그 집합의 일부다)
+        window_count에 영향을 주지 않는다 — 새 attempt 행이 생기지 않는다."""
+        repo = InMemoryFdcQuotaRepository()
+        coordinator = _make_coordinator(repo=repo, target_rpm=1, quota_scope="scope-outcome-2")
+
+        grant = await coordinator.try_reserve(job_id=None, caller_id="test-caller")
+        assert isinstance(grant, ReservationGrant)
+        before_count = len(repo._attempts["scope-outcome-2"])  # type: ignore[attr-defined]
+
+        await coordinator.record_attempt_outcome(
+            reservation_id=grant.reservation_id, outcome="http_succeeded",
+        )
+
+        after_count = len(repo._attempts["scope-outcome-2"])  # type: ignore[attr-defined]
+        assert after_count == before_count == 1
+
+        # target_rpm=1이므로 두 번째 reservation은 여전히 거부돼야 한다
+        # (outcome 갱신이 window를 "비우지" 않았다는 뜻).
+        second = await coordinator.try_reserve(job_id=None, caller_id="test-caller")
+        assert isinstance(second, ReservationDenied)
+
+    @pytest.mark.asyncio
+    async def test_unknown_reservation_id_raises(self) -> None:
+        repo = InMemoryFdcQuotaRepository()
+        coordinator = _make_coordinator(repo=repo, target_rpm=13, quota_scope="scope-outcome-3")
+
+        with pytest.raises(ValueError, match="unknown reservation_id"):
+            await coordinator.record_attempt_outcome(
+                reservation_id=uuid4(), outcome="http_succeeded",
+            )
+
+
 def _shadow_job(**overrides):
     base = dict(
         decision_cycle_id="cycle-1", decision_context_id=None,
@@ -281,9 +336,8 @@ class TestShadowFifoQueueLogic:
 
         attempts = repo._attempts["scope-fifo-g"]  # type: ignore[attr-defined]
         assert len(attempts) == 1
-        _, mode, outcome = attempts[0]
-        assert mode == "shadow"
-        assert outcome == "shadow_would_grant"
+        assert attempts[0].mode == "shadow"
+        assert attempts[0].outcome == "shadow_would_grant"
         shadow_jobs = repo._shadow_jobs["scope-fifo-g"]  # type: ignore[attr-defined]
         assert shadow_jobs[0]["job_id"] == result.job_id
         assert shadow_jobs[0]["status"] == "SHADOW_WOULD_GRANT"
@@ -448,6 +502,69 @@ class TestPostgresAtomicReservation:
         coordinator = _postgres_coordinator(quota_scope=quota_scope, target_rpm=13)
         result = await coordinator.try_reserve(job_id=None, caller_id="test-caller")
         assert isinstance(result, ReservationGrant)
+
+
+@pytestmark_db
+class TestPostgresRecordAttemptOutcome:
+    """``record_attempt_outcome()``(2026-08-27 PR A 신설)의 실제 PostgreSQL
+    UPDATE 동작 — 새 행을 만들지 않고 기존 attempt 행만 갱신하는지."""
+
+    @pytest.mark.asyncio
+    async def test_updates_outcome_http_status_and_429_flag(
+        self, db_ready, quota_scope: str,
+    ) -> None:
+        from agent_trading.db.connection import connection
+
+        coordinator = _postgres_coordinator(quota_scope=quota_scope, target_rpm=13)
+        grant = await coordinator.try_reserve(job_id=None, caller_id="test-caller")
+        assert isinstance(grant, ReservationGrant)
+
+        await coordinator.record_attempt_outcome(
+            reservation_id=grant.reservation_id,
+            outcome="http_failed_retryable",
+            http_status=429,
+            error_class="httpx.HTTPStatusError",
+            http_429_observed=True,
+        )
+
+        async with connection() as conn:
+            row = await conn.fetchrow(
+                "SELECT outcome, http_status, error_class, http_429_observed "
+                "FROM trading.fdc_provider_attempts WHERE attempt_id = $1",
+                grant.reservation_id,
+            )
+        assert row is not None
+        assert row["outcome"] == "http_failed_retryable"
+        assert row["http_status"] == 429
+        assert row["error_class"] == "httpx.HTTPStatusError"
+        assert row["http_429_observed"] is True
+
+    @pytest.mark.asyncio
+    async def test_does_not_insert_a_new_row(
+        self, db_ready, quota_scope: str,
+    ) -> None:
+        from agent_trading.db.connection import connection
+
+        coordinator = _postgres_coordinator(quota_scope=quota_scope, target_rpm=13)
+        grant = await coordinator.try_reserve(job_id=None, caller_id="test-caller")
+        assert isinstance(grant, ReservationGrant)
+
+        async with connection() as conn:
+            before = await conn.fetchval(
+                "SELECT count(*) FROM trading.fdc_provider_attempts WHERE quota_scope = $1",
+                quota_scope,
+            )
+
+        await coordinator.record_attempt_outcome(
+            reservation_id=grant.reservation_id, outcome="http_succeeded",
+        )
+
+        async with connection() as conn:
+            after = await conn.fetchval(
+                "SELECT count(*) FROM trading.fdc_provider_attempts WHERE quota_scope = $1",
+                quota_scope,
+            )
+        assert after == before == 1
 
 
 @pytestmark_db

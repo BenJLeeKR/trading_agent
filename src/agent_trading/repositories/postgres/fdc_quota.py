@@ -164,6 +164,46 @@ class PostgresFdcQuotaRepository:
         except (OSError, ConnectionError) as exc:
             return CoordinatorError(_classify_error(exc), str(exc))
 
+    async def record_attempt_outcome(
+        self,
+        *,
+        reservation_id: uuid.UUID,
+        outcome: str,
+        http_status: int | None = None,
+        error_class: str | None = None,
+        http_429_observed: bool = False,
+        http_started_at: datetime | None = None,
+        completed_at: datetime | None = None,
+    ) -> None:
+        """``try_reserve()``가 발급한 ``reservation_id``(=``attempt_id``)
+        행에 실제 HTTP 실행 결과를 기록한다(PR A 신설 — 설계 문서 §7/§9가
+        요구하는 lifecycle 기록 중, ``try_reserve()``까지는 있었으나 그
+        이후 실제 HTTP outcome을 남기는 API가 코드베이스에 없어 이번에
+        추가했다).
+
+        단일 행 UPDATE이므로 anchor 행 잠금(``FOR UPDATE``)이 필요 없다
+        — quota window 판단은 ``outcome`` 값 자체(``_QUOTA_CONSUMING_
+        OUTCOMES``)로만 이뤄지므로, 이미 ``reservation_granted``로
+        window를 소비한 행의 ``outcome`` 문자열만 갱신하면 충분하다.
+        """
+        async with TransactionManager() as outcome_tx:
+            await outcome_tx.connection.execute(
+                "UPDATE trading.fdc_provider_attempts SET "
+                "outcome = $2, http_status = $3, error_class = $4, "
+                "http_429_observed = $5, http_started_at = "
+                "COALESCE($6, http_started_at), completed_at = "
+                "COALESCE($7, completed_at) "
+                "WHERE attempt_id = $1",
+                reservation_id,
+                outcome,
+                http_status,
+                error_class,
+                http_429_observed,
+                http_started_at,
+                completed_at,
+            )
+            await outcome_tx.commit()
+
     async def register_shadow_job_and_judge(
         self,
         *,

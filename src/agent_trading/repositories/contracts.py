@@ -2115,6 +2115,27 @@ class FdcQuotaRepository(Protocol):
         """
         ...
 
+    async def record_attempt_outcome(
+        self,
+        *,
+        reservation_id: UUID,
+        outcome: str,
+        http_status: int | None = None,
+        error_class: str | None = None,
+        http_429_observed: bool = False,
+        http_started_at: datetime | None = None,
+        completed_at: datetime | None = None,
+    ) -> None:
+        """``try_reserve()``가 발급한 ``reservation_id``(=``attempt_id``)
+        행에 실제 HTTP 실행 결과(성공/실패/429/HTTP 미시작)를 기록한다
+        (PR A 신설). ``outcome``은 기존 ``_QUOTA_CONSUMING_OUTCOMES``
+        어휘(``http_started``/``http_succeeded``/``http_failed_
+        retryable``/``http_failed_final``/``reserved_but_http_not_
+        started``)를 그대로 쓴다. 새 reservation을 발급하지 않으며,
+        이미 소비된 window 슬롯의 상태만 갱신한다.
+        """
+        ...
+
     async def register_shadow_job_and_judge(
         self,
         *,

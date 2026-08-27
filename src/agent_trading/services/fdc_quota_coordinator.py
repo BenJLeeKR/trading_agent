@@ -115,6 +115,30 @@ class FdcQuotaCoordinator:
             lock_timeout_ms=self._lock_timeout_ms,
         )
 
+    async def record_attempt_outcome(
+        self,
+        *,
+        reservation_id: uuid.UUID,
+        outcome: str,
+        http_status: int | None = None,
+        error_class: str | None = None,
+        http_429_observed: bool = False,
+        http_started_at: datetime | None = None,
+        completed_at: datetime | None = None,
+    ) -> None:
+        """``try_reserve()``가 발급한 reservation의 실제 HTTP 실행 결과를
+        기록한다(PR A 신설). 새 reservation을 요청하지 않는다 — 이미
+        승인된 attempt 행의 상태만 갱신한다."""
+        await self._repo.record_attempt_outcome(
+            reservation_id=reservation_id,
+            outcome=outcome,
+            http_status=http_status,
+            error_class=error_class,
+            http_429_observed=http_429_observed,
+            http_started_at=http_started_at,
+            completed_at=completed_at,
+        )
+
     # ------------------------------------------------------------------
     # shadow 관측 경로 — Phase 1에서 실제로 호출되는 유일한 경로
     # ------------------------------------------------------------------

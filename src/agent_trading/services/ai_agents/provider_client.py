@@ -11,6 +11,7 @@ import asyncio
 import json
 import logging
 import socket
+import uuid
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -19,7 +20,9 @@ from typing import Any
 
 import httpx
 
+from agent_trading.repositories.contracts import ReservationGrant
 from agent_trading.services.ai_agents.base import RawProviderResponse
+from agent_trading.services.fdc_quota_coordinator import FdcQuotaCoordinator
 
 logger = logging.getLogger(__name__)
 
@@ -252,6 +255,73 @@ class OpenAICompatibleClient:
             )
         return self._client
 
+    def _build_chat_body(
+        self,
+        *,
+        model_id: str,
+        system_prompt: str,
+        user_prompt: str,
+        temperature: float,
+        seed: int | None,
+    ) -> dict[str, Any]:
+        """chat completion 요청 body를 조립한다(2026-08-27 PR A 추출 —
+        ``generate_structured()``와 ``generate_structured_once()``가
+        동일 로직을 공유하기 위한 순수 함수, 부작용 없음)."""
+        body: dict[str, Any] = {
+            "model": model_id,
+            "messages": [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt},
+            ],
+            "temperature": temperature,
+            "response_format": {"type": "json_object"},
+        }
+        if seed is not None:
+            body["seed"] = seed
+        return body
+
+    async def _single_http_attempt(
+        self,
+        client: httpx.AsyncClient,
+        body: dict[str, Any],
+        response_format: type,
+        *,
+        http_attempt_count: int,
+        http_429_count: int,
+    ) -> RawProviderResponse:
+        """정확히 HTTP 요청 1회를 보내고 파싱한다(2026-08-27 PR A 추출 —
+        ``generate_structured()``의 retry 루프 안에 있던 "요청 1회
+        전송 + 성공 파싱" 부분을 그대로 옮긴 것이며, retry 여부 판단·
+        backoff·permit 로직은 전혀 모른다 — 예외를 그대로 호출자에게
+        전파해 호출자(재시도 루프 또는 one-shot 호출자)가 분류하게
+        한다. 이 메서드 자체를 수정하면 ``generate_structured()``와
+        ``generate_structured_once()`` 양쪽에 동시에 영향을 준다.
+
+        ``http_attempt_count``/``http_429_count``는 호출자가 계산해
+        넘긴 값을 그대로 성공 응답에 실어 반환할 뿐, 이 메서드 내부에서
+        증가시키지 않는다(카운팅 책임은 호출자에게 있다)."""
+        response = await client.post("/v1/chat/completions", json=body)
+        response.raise_for_status()
+        data = response.json()
+        raw_content: str = data["choices"][0]["message"]["content"]
+
+        # Parse JSON into the target dataclass
+        parsed_dict = json.loads(raw_content)
+
+        # Recursively coerce nested JSON strings into dicts for nested dataclass fields.
+        # Some providers (e.g. DeepSeek) may return nested objects as serialised JSON
+        # strings instead of proper nested JSON objects.
+        parsed_dict = _coerce_nested_json_strings(response_format, parsed_dict)
+
+        parsed = response_format(**parsed_dict)
+
+        return RawProviderResponse(
+            parsed=parsed,
+            raw_content=raw_content,
+            http_attempt_count=http_attempt_count,
+            http_429_count=http_429_count,
+        )
+
     async def generate_structured(
         self,
         *,
@@ -315,18 +385,10 @@ class OpenAICompatibleClient:
         있다.
         """
         client = await self._get_client()
-
-        body: dict[str, Any] = {
-            "model": model_id,
-            "messages": [
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_prompt},
-            ],
-            "temperature": temperature,
-            "response_format": {"type": "json_object"},
-        }
-        if seed is not None:
-            body["seed"] = seed
+        body = self._build_chat_body(
+            model_id=model_id, system_prompt=system_prompt, user_prompt=user_prompt,
+            temperature=temperature, seed=seed,
+        )
 
         last_exception: Exception | None = None
         http_attempt_count = 0
@@ -349,24 +411,8 @@ class OpenAICompatibleClient:
 
             http_attempt_count += 1
             try:
-                response = await client.post("/v1/chat/completions", json=body)
-                response.raise_for_status()
-                data = response.json()
-                raw_content: str = data["choices"][0]["message"]["content"]
-
-                # Parse JSON into the target dataclass
-                parsed_dict = json.loads(raw_content)
-
-                # Recursively coerce nested JSON strings into dicts for nested dataclass fields.
-                # Some providers (e.g. DeepSeek) may return nested objects as serialised JSON
-                # strings instead of proper nested JSON objects.
-                parsed_dict = _coerce_nested_json_strings(response_format, parsed_dict)
-
-                parsed = response_format(**parsed_dict)
-
-                return RawProviderResponse(
-                    parsed=parsed,
-                    raw_content=raw_content,
+                return await self._single_http_attempt(
+                    client, body, response_format,
                     http_attempt_count=http_attempt_count,
                     http_429_count=http_429_count,
                 )
@@ -416,3 +462,120 @@ class OpenAICompatibleClient:
         if self._client is not None:
             await self._client.aclose()
             self._client = None
+
+
+class LiveGeminiProviderClient(OpenAICompatibleClient):
+    """FDC 전용 실제(live) Gemini HTTP 클라이언트(2026-08-27 PR A 신설).
+
+    설계 근거: docs/40_action_plans/fdc_cycle_scoped_batch_queue_gemini_
+    shared_13rpm_quota_design_2026-08-25.md §12·§18·§19.
+
+    **coordinator 없이는 생성할 수 없다** — 이 클래스가 존재한다는
+    사실 자체가 "이 프로세스는 공용 13 RPM quota coordinator
+    (``FdcQuotaCoordinator``)를 통과하지 않고는 live Gemini HTTP를
+    낼 수 없다"는 계약을 코드 수준에서 강제한다(§12 fail-closed
+    경계 — 생성자 필수 인자, 플래그 방식이 아님).
+
+    **PR 배정(§19/§22 2차 보정)**: PR A 시점에는 이 클래스를 실제로
+    생성하는 **운영 경로가 없다**(dormant) — ``ops-scheduler``의 FDC
+    호출(§19 진입점 #1·#2)은 PR B가 §17(subprocess 분리)과 dispatcher
+    본체를 구현할 때 비로소 이 클래스로 전환된다. PR A에서 실제로
+    이 클래스를 쓰는 것은 독립 분석 스크립트 2개
+    (``scripts/ar_fdc_provider_validation.py``,
+    ``scripts/ar_fdc_output_measurement.py`` — §19 진입점 #3·#4)뿐이며,
+    두 스크립트는 ``generate_structured()``(부모 클래스, 변경 없음)를
+    ``acquire_permit``에 coordinator 기반 어댑터를 주입해 그대로
+    재사용한다 — dispatcher가 아직 없으므로 ``generate_structured_
+    once()``는 이 시점에 아무도 호출하지 않는다(PR B의 dispatcher가
+    유일한 호출자가 될 예정).
+    """
+
+    def __init__(
+        self,
+        *,
+        coordinator: FdcQuotaCoordinator,
+        api_key: str,
+        base_url: str = "https://api.deepseek.com",
+        model_id: str = "deepseek-chat",
+        timeout_seconds: int = 30,
+    ) -> None:
+        if coordinator is None:
+            raise ValueError(
+                "LiveGeminiProviderClient requires a coordinator — live "
+                "Gemini HTTP cannot be created without a shared 13 RPM "
+                "quota coordinator (design doc §12 fail-closed boundary)."
+            )
+        super().__init__(
+            api_key=api_key,
+            base_url=base_url,
+            model_id=model_id,
+            timeout_seconds=timeout_seconds,
+        )
+        self._coordinator = coordinator
+
+    @property
+    def coordinator(self) -> FdcQuotaCoordinator:
+        return self._coordinator
+
+    async def generate_structured_once(
+        self,
+        grant: ReservationGrant,
+        *,
+        expected_job_id: uuid.UUID | None,
+        expected_attempt_no: int,
+        model_id: str,
+        system_prompt: str,
+        user_prompt: str,
+        response_format: type,
+        temperature: float = 0.0,
+        seed: int | None = None,
+    ) -> RawProviderResponse:
+        """dispatcher(PR B)가 이미 발급받은 ``grant``를 검증·소비해 HTTP를
+        **정확히 1회만** 실행한다.
+
+        - 이 메서드 내부에서는 ``self._coordinator.try_reserve()``를
+          절대 호출하지 않는다 — 새 reservation을 요청하지 않는다(§12
+          보정 1의 핵심 계약: reservation을 새로 요청하는 주체는
+          dispatcher 하나뿐이다).
+        - 기존 10 RPM strict limiter(``acquire_permit``)도 호출하지
+          않는다 — 13 RPM coordinator가 이를 완전히 대체한다.
+        - retry가 필요하면 호출자(dispatcher)가 새 reservation을 받아
+          이 메서드를 다시 호출해야 한다 — 이 메서드 자신은 재시도
+          루프를 갖지 않는다.
+
+        Raises
+        ------
+        ValueError
+            ``grant``가 호출자가 실행하려는 job/attempt와 일치하지
+            않을 때(§21 시나리오 3) — HTTP 요청을 보내기 전에 거부한다.
+        """
+        if grant.job_id != expected_job_id or grant.attempt_no != expected_attempt_no:
+            raise ValueError(
+                "generate_structured_once: grant mismatch — expected "
+                f"job_id={expected_job_id!r} attempt_no={expected_attempt_no!r}, "
+                f"grant has job_id={grant.job_id!r} attempt_no={grant.attempt_no!r} "
+                f"(reservation_id={grant.reservation_id!r})"
+            )
+
+        client = await self._get_client()
+        body = self._build_chat_body(
+            model_id=model_id, system_prompt=system_prompt, user_prompt=user_prompt,
+            temperature=temperature, seed=seed,
+        )
+        try:
+            return await self._single_http_attempt(
+                client, body, response_format,
+                http_attempt_count=1, http_429_count=0,
+            )
+        except httpx.HTTPStatusError as e:
+            is_429 = e.response.status_code == 429
+            e.http_attempt_count = 1
+            e.http_429_count = 1 if is_429 else 0
+            raise
+        except (
+            httpx.TransportError, httpx.TimeoutException, socket.gaierror,
+            json.JSONDecodeError, TypeError, ValueError,
+        ) as e:
+            e.http_attempt_count = 1
+            e.http_429_count = 0
+            raise

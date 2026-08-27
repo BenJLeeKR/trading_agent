@@ -56,6 +56,15 @@ from agent_trading.services.ai_agents.schemas import (
     InterpretedEvent,
 )
 from agent_trading.services.decision_orchestrator import AssembledContext, ScoreResult
+from scripts.fdc_manual_provider_gate import (
+    MarketHoursBlockedError,
+    assert_not_market_hours,
+    build_manual_run_id,
+    finalize_permit_adapter_outcomes,
+    make_coordinator_permit_adapter,
+)
+
+SCRIPT_NAME = "ar_fdc_output_measurement"
 
 logger = logging.getLogger(__name__)
 
@@ -745,6 +754,8 @@ async def measure_symbol(
     since: datetime,
     with_provider: bool = False,
     provider_client: Any = None,
+    coordinator: Any = None,
+    manual_run_id: str | None = None,
 ) -> dict[str, Any]:
     """Measure AR/FDC prompt quality for a single symbol."""
     print(f"\n{SEP}")
@@ -936,11 +947,23 @@ async def measure_symbol(
             print(f"    run ar-new-{i+1}: opinion={result.get('risk_opinion')}, "
                   f"score={result.get('risk_score')}, success={result.get('success')}")
 
-        # ── FDC: OLD-style 2회 ──
+        # ── FDC: OLD-style 2회 ── (공용 quota coordinator 경유 — FDC만
+        # 13 RPM quota 대상이다. AR은 production에서도 이 quota의 대상이
+        # 아니므로 위 AR 호출은 그대로 둔다.)
         print(f"\n  [FDC] OLD-style provider 호출 (2회, approximate reconstruction):")
         for i in range(2):
-            fdc_old = _OldStyleFinalDecisionComposerAgent(provider_client=provider_client)
+            adapter, reservations = make_coordinator_permit_adapter(
+                coordinator=coordinator, caller_id=f"manual:{SCRIPT_NAME}",
+                manual_run_id=manual_run_id,
+            )
+            fdc_old = _OldStyleFinalDecisionComposerAgent(
+                provider_client=provider_client, acquire_permit=adapter,
+            )
             result = await _call_provider_fdc(fdc_old, request_full, f"fdc-old-{i+1}")
+            await finalize_permit_adapter_outcomes(
+                coordinator=coordinator, reservation_ids=reservations,
+                succeeded=result.get("success", False),
+            )
             provider_results["fdc"].append(result)
             print(f"    run fdc-old-{i+1}: decision={result.get('decision_type')}, "
                   f"confidence={result.get('confidence')}, success={result.get('success')}")
@@ -948,8 +971,18 @@ async def measure_symbol(
         # ── FDC: NEW-style 2회 ──
         print(f"\n  [FDC] NEW-style provider 호출 (2회, provenance-rich):")
         for i in range(2):
-            fdc_new = FinalDecisionComposerAgent(provider_client=provider_client)
+            adapter, reservations = make_coordinator_permit_adapter(
+                coordinator=coordinator, caller_id=f"manual:{SCRIPT_NAME}",
+                manual_run_id=manual_run_id,
+            )
+            fdc_new = FinalDecisionComposerAgent(
+                provider_client=provider_client, acquire_permit=adapter,
+            )
             result = await _call_provider_fdc(fdc_new, request_full, f"fdc-new-{i+1}")
+            await finalize_permit_adapter_outcomes(
+                coordinator=coordinator, reservation_ids=reservations,
+                succeeded=result.get("success", False),
+            )
             provider_results["fdc"].append(result)
             print(f"    run fdc-new-{i+1}: decision={result.get('decision_type')}, "
                   f"confidence={result.get('confidence')}, success={result.get('success')}")
@@ -1058,22 +1091,50 @@ async def main() -> int:
     print(f"  Provider 호출:   {'✅ (030200 only, 탐색적 관찰)' if args.with_provider else '❌ (read-only)'}")
     print(SEP)
 
+    # 운영 시간(거래일) fail-closed 차단 — --with-provider 요청 시에만
+    # 확인한다(read-only 측정은 HTTP를 내지 않으므로 대상이 아니다).
+    if args.with_provider:
+        try:
+            await assert_not_market_hours(script_name=SCRIPT_NAME)
+        except MarketHoursBlockedError as exc:
+            print(f"❌ {exc}")
+            return 1
+
     async with postgres_runtime() as runtime:
         repos = runtime["repositories"]
 
-        # Provider client (선택적)
+        # Provider client (선택적) — FDC 전용 quota coordinator를 통과하는
+        # LiveGeminiProviderClient로 생성한다(§19 진입점 #4). AR 호출은
+        # production에서도 이 quota의 대상이 아니므로(AIRiskAgent.run()이
+        # acquire_permit을 전혀 쓰지 않음) 그대로 둔다 — FDC 호출만
+        # coordinator 기반 permit adapter를 acquire_permit으로 주입한다.
         provider_client = None
+        coordinator = None
+        manual_run_id = None
         if args.with_provider:
             try:
-                from agent_trading.services.ai_agents.provider_client import OpenAICompatibleClient
                 from agent_trading.config.settings import AppSettings
+                from agent_trading.services.ai_agents.provider_client import (
+                    LiveGeminiProviderClient,
+                )
+                from agent_trading.services.fdc_quota_coordinator import (
+                    FdcQuotaCoordinator,
+                )
                 settings = AppSettings()
-                provider_client = OpenAICompatibleClient(
+                coordinator = FdcQuotaCoordinator(
+                    repo=repos.fdc_quota,
+                    target_rpm=settings.fdc_provider_target_rpm,
+                    window_seconds=settings.fdc_provider_rate_window_seconds,
+                    declared_rpm_limit=settings.gemini_provider_declared_rpm_limit,
+                )
+                provider_client = LiveGeminiProviderClient(
+                    coordinator=coordinator,
                     api_key=settings.provider_api_key,
                     base_url=settings.provider_base_url,
                     timeout_seconds=settings.provider_timeout_seconds,
                 )
-                print("  Provider client initialized (OpenAICompatibleClient).")
+                manual_run_id = build_manual_run_id(script_name=SCRIPT_NAME)
+                print("  Provider client initialized (LiveGeminiProviderClient, coordinator-gated).")
             except (ImportError, AttributeError) as e:
                 print(f"  ⚠️ Provider client not available: {e}. Skipping provider calls.")
                 provider_client = None
@@ -1084,6 +1145,8 @@ async def main() -> int:
                 repos, symbol, now, since,
                 with_provider=args.with_provider,
                 provider_client=provider_client,
+                coordinator=coordinator,
+                manual_run_id=manual_run_id,
             )
             all_results.append(result)
 

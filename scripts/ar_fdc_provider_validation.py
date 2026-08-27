@@ -34,9 +34,23 @@ try:
 except ImportError:
     pass
 
-# DB import 없음! (postgres_runtime, Repository 등 사용 금지)
+# 2026-08-27 PR A: 공용 PostgreSQL quota coordinator 경로로 전환하며
+# "DB import 없음" 제약을 의도적으로 해제한다(설계 문서 §11/§19 진입점
+# #3) — TransactionManager()/PostgresFdcQuotaRepository만 쓰고,
+# postgres_runtime()의 전체 RepositoryContainer는 여전히 쓰지 않는다.
 from agent_trading.config.settings import AppSettings
-from agent_trading.services.ai_agents.provider_client import OpenAICompatibleClient
+from agent_trading.db.transaction import TransactionManager
+from agent_trading.repositories.postgres.fdc_quota import PostgresFdcQuotaRepository
+from agent_trading.services.ai_agents.provider_client import LiveGeminiProviderClient
+from agent_trading.services.fdc_quota_coordinator import FdcQuotaCoordinator
+from scripts.fdc_manual_provider_gate import (
+    MarketHoursBlockedError,
+    assert_not_market_hours,
+    build_manual_run_id,
+    call_with_coordinator,
+)
+
+SCRIPT_NAME = "ar_fdc_provider_validation"
 
 SEP = "=" * 60
 DASH = "-" * 40
@@ -71,18 +85,25 @@ def _is_fdc_fallback(parsed: Any) -> bool:
 
 
 async def _call_ar(
-    client: OpenAICompatibleClient,
+    client: LiveGeminiProviderClient,
+    coordinator: FdcQuotaCoordinator,
+    manual_run_id: str,
     user_prompt: str,
     system_prompt: str,
     label: str,
     model_id: str,
 ) -> dict[str, Any]:
-    """AR provider 호출 + fallback 감지 + used_fallback 포함 반환."""
+    """AR provider 호출(공용 quota coordinator 경유) + fallback 감지 +
+    used_fallback 포함 반환."""
     from agent_trading.services.ai_agents.schemas import AIRiskOutput
 
     start = time.monotonic()
     try:
-        response = await client.generate_structured(
+        response = await call_with_coordinator(
+            coordinator=coordinator,
+            client=client,
+            caller_id=f"manual:{SCRIPT_NAME}",
+            manual_run_id=manual_run_id,
             model_id=model_id,
             system_prompt=system_prompt,
             user_prompt=user_prompt,
@@ -129,18 +150,25 @@ async def _call_ar(
 
 
 async def _call_fdc(
-    client: OpenAICompatibleClient,
+    client: LiveGeminiProviderClient,
+    coordinator: FdcQuotaCoordinator,
+    manual_run_id: str,
     user_prompt: str,
     system_prompt: str,
     label: str,
     model_id: str,
 ) -> dict[str, Any]:
-    """FDC provider 호출 + fallback 감지 + used_fallback 포함 반환."""
+    """FDC provider 호출(공용 quota coordinator 경유) + fallback 감지 +
+    used_fallback 포함 반환."""
     from agent_trading.services.ai_agents.schemas import FinalDecisionComposerOutput
 
     start = time.monotonic()
     try:
-        response = await client.generate_structured(
+        response = await call_with_coordinator(
+            coordinator=coordinator,
+            client=client,
+            caller_id=f"manual:{SCRIPT_NAME}",
+            manual_run_id=manual_run_id,
             model_id=model_id,
             system_prompt=system_prompt,
             user_prompt=user_prompt,
@@ -327,13 +355,14 @@ async def main() -> int:
     """Phase 2: Load JSON artifact, call provider, report results.
 
     동작:
-    1. JSON artifact 로드 (DB 연결 없음)
-    2. .env에서 DEEPSEEK_API_KEY 로드
-    3. OpenAICompatibleClient 생성 (timeout_seconds=120)
-    4. OLD-style AR 1회 → NEW-style AR 1회 (순차)
-    5. OLD-style FDC 1회 → NEW-style FDC 1회 (순차)
-    6. 결과 출력 + 결과 artifact 저장
-    7. provider_client.close()
+    1. JSON artifact 로드
+    2. 운영 시간(거래일) fail-closed 차단 확인 — 차단되면 HTTP 0회로 즉시 종료
+    3. .env에서 DEEPSEEK_API_KEY 로드, 공용 quota coordinator 구성
+    4. LiveGeminiProviderClient 생성 (coordinator 필수, timeout_seconds=120)
+    5. OLD-style AR 1회 → NEW-style AR 1회 (순차, 매 시도마다 reservation)
+    6. OLD-style FDC 1회 → NEW-style FDC 1회 (순차, 매 시도마다 reservation)
+    7. 결과 출력 + 결과 artifact 저장
+    8. provider_client.close()
     """
     # 1. Load artifact
     if not ARTIFACT_PATH.exists():
@@ -348,7 +377,14 @@ async def main() -> int:
     print(f"  Symbol: {artifact.get('meta', {}).get('symbol', '?')}")
     print(f"  Events: {artifact.get('meta', {}).get('event_count', 0)}")
 
-    # 2. Init provider client
+    # 2. 운영 시간(거래일) fail-closed 차단 — HTTP를 전혀 보내지 않고 종료
+    try:
+        await assert_not_market_hours(script_name=SCRIPT_NAME)
+    except MarketHoursBlockedError as exc:
+        print(f"❌ {exc}")
+        return 1
+
+    # 3. Init provider client + 공용 quota coordinator
     settings = AppSettings()
     if not settings.provider_api_key:
         print("❌ provider_api_key is empty. Check .env file.")
@@ -359,12 +395,6 @@ async def main() -> int:
     print(f"  Timeout:  {CLIENT_TIMEOUT}s (client) + {PROCESS_TIMEOUT}s (process)")
     print(SEP)
 
-    client = OpenAICompatibleClient(
-        api_key=settings.provider_api_key,
-        base_url=settings.provider_base_url,
-        timeout_seconds=CLIENT_TIMEOUT,
-    )
-
     prompts = artifact.get("prompts", {})
     system_prompts = artifact.get("system_prompts", {})
     model_id = settings.provider_model_id
@@ -372,35 +402,51 @@ async def main() -> int:
     calls: list[dict[str, Any]] = []
     start_total = time.monotonic()
 
-    try:
-        # 3. Call provider for each prompt (순차 호출)
-        # AR OLD
-        calls.append(await _call_ar(
-            client, prompts.get("ar_old_prompt", ""),
-            system_prompts.get("ar", ""), "ar-old-1", model_id))
+    async with TransactionManager() as ambient_tx:
+        repo = PostgresFdcQuotaRepository(ambient_tx)
+        coordinator = FdcQuotaCoordinator(
+            repo=repo,
+            target_rpm=settings.fdc_provider_target_rpm,
+            window_seconds=settings.fdc_provider_rate_window_seconds,
+            declared_rpm_limit=settings.gemini_provider_declared_rpm_limit,
+        )
+        client = LiveGeminiProviderClient(
+            coordinator=coordinator,
+            api_key=settings.provider_api_key,
+            base_url=settings.provider_base_url,
+            timeout_seconds=CLIENT_TIMEOUT,
+        )
+        manual_run_id = build_manual_run_id(script_name=SCRIPT_NAME)
 
-        # AR NEW
-        calls.append(await _call_ar(
-            client, prompts.get("ar_new_prompt", ""),
-            system_prompts.get("ar", ""), "ar-new-1", model_id))
+        try:
+            # 4. Call provider for each prompt (순차 호출, 매 시도마다 reservation)
+            # AR OLD
+            calls.append(await _call_ar(
+                client, coordinator, manual_run_id, prompts.get("ar_old_prompt", ""),
+                system_prompts.get("ar", ""), "ar-old-1", model_id))
 
-        # FDC OLD
-        calls.append(await _call_fdc(
-            client, prompts.get("fdc_old_prompt", ""),
-            system_prompts.get("fdc", ""), "fdc-old-1", model_id))
+            # AR NEW
+            calls.append(await _call_ar(
+                client, coordinator, manual_run_id, prompts.get("ar_new_prompt", ""),
+                system_prompts.get("ar", ""), "ar-new-1", model_id))
 
-        # FDC NEW
-        calls.append(await _call_fdc(
-            client, prompts.get("fdc_new_prompt", ""),
-            system_prompts.get("fdc", ""), "fdc-new-1", model_id))
+            # FDC OLD
+            calls.append(await _call_fdc(
+                client, coordinator, manual_run_id, prompts.get("fdc_old_prompt", ""),
+                system_prompts.get("fdc", ""), "fdc-old-1", model_id))
 
-    except asyncio.TimeoutError:
-        print(f"❌ Global timeout ({PROCESS_TIMEOUT}s) exceeded.")
-        total_duration = time.monotonic() - start_total
-        _save_results(calls, artifact, total_duration)
-        return 1
-    finally:
-        await client.close()
+            # FDC NEW
+            calls.append(await _call_fdc(
+                client, coordinator, manual_run_id, prompts.get("fdc_new_prompt", ""),
+                system_prompts.get("fdc", ""), "fdc-new-1", model_id))
+
+        except asyncio.TimeoutError:
+            print(f"❌ Global timeout ({PROCESS_TIMEOUT}s) exceeded.")
+            total_duration = time.monotonic() - start_total
+            _save_results(calls, artifact, total_duration)
+            return 1
+        finally:
+            await client.close()
 
     total_duration = time.monotonic() - start_total
 

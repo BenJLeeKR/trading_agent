@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 from collections import defaultdict
 from collections.abc import Sequence
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 from typing import Any
@@ -3138,6 +3138,21 @@ class InMemoryMarketSessionRepository:
         self._next_event_id = 1
 
 
+@dataclass(slots=True)
+class _InMemoryFdcAttempt:
+    """``InMemoryFdcQuotaRepository``의 attempt 저장 단위(PR A 신설).
+
+    ``try_reserve()``가 발급하는 ``reservation_id``를 ``attempt_id``로
+    그대로 저장해, 이후 ``record_attempt_outcome()``이 같은 행을 다시
+    찾아 ``outcome``만 갱신할 수 있게 한다 — 기존 tuple 저장 방식은
+    id를 전혀 보관하지 않아 발급 후 재조회가 불가능했다."""
+
+    attempt_id: UUID
+    reserved_at: datetime
+    mode: str
+    outcome: str
+
+
 class InMemoryFdcQuotaRepository:
     """``FdcQuotaRepository``의 in-memory 구현(테스트 전용).
 
@@ -3148,13 +3163,17 @@ class InMemoryFdcQuotaRepository:
     """
 
     __slots__ = (
-        "_lock", "_attempts", "_jobs", "_shadow_jobs", "_enqueue_sequence_counter",
+        "_lock", "_attempts", "_attempts_by_id", "_jobs", "_shadow_jobs",
+        "_enqueue_sequence_counter",
     )
 
     def __init__(self) -> None:
         self._lock = asyncio.Lock()
-        # quota_scope -> list of (reserved_at, mode, outcome)
-        self._attempts: dict[str, list[tuple[datetime, str, str]]] = defaultdict(list)
+        self._attempts: dict[str, list[_InMemoryFdcAttempt]] = defaultdict(list)
+        # attempt_id -> 저장된 행(quota_scope와 무관하게 O(1) 재조회,
+        # record_attempt_outcome()이 quota_scope 없이 attempt_id만으로
+        # 호출되므로 필요)
+        self._attempts_by_id: dict[UUID, _InMemoryFdcAttempt] = {}
         self._jobs: dict[UUID, dict[str, Any]] = {}
         # quota_scope -> list of shadow job dicts(FIFO 큐 전용, real과 완전 분리)
         self._shadow_jobs: dict[str, list[dict[str, Any]]] = {}
@@ -3169,8 +3188,10 @@ class InMemoryFdcQuotaRepository:
         }
         return sum(
             1
-            for reserved_at, mode, outcome in self._attempts[quota_scope]
-            if mode == "real" and outcome in consuming and reserved_at > cutoff
+            for entry in self._attempts[quota_scope]
+            if entry.mode == "real"
+            and entry.outcome in consuming
+            and entry.reserved_at > cutoff
         )
 
     async def try_reserve(
@@ -3198,18 +3219,54 @@ class InMemoryFdcQuotaRepository:
                 return ReservationDenied(quota_scope=quota_scope, window_count=window_count)
 
             now = datetime.now(timezone.utc)
-            self._attempts[quota_scope].append((now, mode, "reservation_granted"))
+            reservation_id = uuid4()
+            entry = _InMemoryFdcAttempt(
+                attempt_id=reservation_id,
+                reserved_at=now,
+                mode=mode,
+                outcome="reservation_granted",
+            )
+            self._attempts[quota_scope].append(entry)
+            self._attempts_by_id[reservation_id] = entry
             if job_id is not None and job_id in self._jobs:
                 self._jobs[job_id]["dispatch_attempt_no"] += 1
                 self._jobs[job_id]["permit_consumed_count"] += 1
                 self._jobs[job_id]["status"] = "RESERVATION_GRANTED"
             return ReservationGrant(
-                reservation_id=uuid4(),
+                reservation_id=reservation_id,
                 quota_scope=quota_scope,
                 job_id=job_id,
                 attempt_no=attempt_no,
                 window_count_before_grant=window_count,
             )
+
+    async def record_attempt_outcome(
+        self,
+        *,
+        reservation_id: UUID,
+        outcome: str,
+        http_status: int | None = None,
+        error_class: str | None = None,
+        http_429_observed: bool = False,
+        http_started_at: datetime | None = None,
+        completed_at: datetime | None = None,
+    ) -> None:
+        """``try_reserve()``가 발급한 행의 ``outcome``만 갱신한다(PR A
+        신설). Postgres 구현과 동일하게 새 reservation을 발급하지
+        않는다. ``http_status``/``error_class``/`http_429_observed``/
+        타임스탬프는 in-memory 테스트에서는 저장하지 않는다(window
+        판단은 ``outcome``에만 의존하므로 최소 구현으로 충분) — 이
+        값들 자체를 검증해야 하는 테스트는 Postgres 통합 테스트(§
+        21)에서 수행한다.
+        """
+        async with self._lock:
+            entry = self._attempts_by_id.get(reservation_id)
+            if entry is None:
+                raise ValueError(
+                    f"record_attempt_outcome: unknown reservation_id={reservation_id!r} "
+                    "(no matching attempt from try_reserve())"
+                )
+            entry.outcome = outcome
 
     async def register_shadow_job_and_judge(
         self,
@@ -3265,7 +3322,14 @@ class InMemoryFdcQuotaRepository:
 
             attempt_id = uuid4()
             outcome = "shadow_would_grant" if would_grant else "shadow_queued"
-            self._attempts[quota_scope].append((fdc_ready_at, "shadow", outcome))
+            shadow_entry = _InMemoryFdcAttempt(
+                attempt_id=attempt_id,
+                reserved_at=fdc_ready_at,
+                mode="shadow",
+                outcome=outcome,
+            )
+            self._attempts[quota_scope].append(shadow_entry)
+            self._attempts_by_id[attempt_id] = shadow_entry
 
             return ShadowJudgement(
                 job_id=job_id,
