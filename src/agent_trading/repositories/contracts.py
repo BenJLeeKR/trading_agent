@@ -2010,16 +2010,23 @@ class OrderSubmissionAttemptRepository(Protocol):
 
 
 class CoordinatorErrorClass(str, Enum):
-    """DB/coordinator 오류 3분류(설계 문서 §6 "coordinator 오류 경로").
+    """DB/coordinator 오류 4분류(설계 문서 §6 "coordinator 오류 경로",
+    §11 "수동 provider 호출 정책" — PR A 2026-08-27 3차 리뷰 보정으로
+    ``MANUAL_CALL_POLICY_REJECTED`` 추가).
 
-    이 분류는 DB row가 아니라 호출자의 프로세스 로그/메트릭 계층에서만
+    앞 3개는 DB row가 아니라 호출자의 프로세스 로그/메트릭 계층에서만
     쓰인다 — DB 자체가 unavailable인 경우 그 사실 자체를 DB에 영속
     기록할 방법이 없기 때문이다(A안, 설계 문서 §9의 4차 개정).
+    ``MANUAL_CALL_POLICY_REJECTED``는 DB/coordinator 호출 자체의 실패가
+    아니라, coordinator가 ``try_reserve()`` 위임 **이전**에 의도적으로
+    거부한 경우다(§11 "coordinator 쪽에서 운영 시간대에는 caller_id가
+    'manual:*'인 reservation 요청을 무조건 거부" 계약의 실제 구현).
     """
 
     COORDINATOR_UNAVAILABLE = "coordinator_unavailable"
     COORDINATOR_LOCK_TIMEOUT = "coordinator_lock_timeout"
     COORDINATOR_TRANSACTION_ERROR = "coordinator_transaction_error"
+    MANUAL_CALL_POLICY_REJECTED = "manual_call_policy_rejected"
 
 
 @dataclass(frozen=True, slots=True)
@@ -2112,6 +2119,34 @@ class FdcQuotaRepository(Protocol):
         seconds, t]`` 구간의 유효 reservation 수를 세고, ``target_rpm``
         미만이면 새 attempt 행을 INSERT해 승인한다. 트랜잭션/행 잠금을
         쥔 채 네트워크 I/O(Gemini HTTP 호출)를 절대 수행하지 않는다.
+        """
+        ...
+
+    async def record_attempt_outcome(
+        self,
+        *,
+        reservation_id: UUID,
+        outcome: str,
+        http_status: int | None = None,
+        error_class: str | None = None,
+        http_429_observed: bool = False,
+        http_started_at: datetime | None = None,
+        completed_at: datetime | None = None,
+    ) -> None:
+        """``try_reserve()``가 발급한 ``reservation_id``(=``attempt_id``)
+        행에 실제 HTTP 실행 결과(성공/실패/429/HTTP 미시작)를 기록한다
+        (PR A 신설). ``outcome``은 기존 ``_QUOTA_CONSUMING_OUTCOMES``
+        어휘(``http_started``/``http_succeeded``/``http_failed_
+        retryable``/``http_failed_final``/``reserved_but_http_not_
+        started``)를 그대로 쓴다. 새 reservation을 발급하지 않으며,
+        이미 소비된 window 슬롯의 상태만 갱신한다.
+
+        Raises
+        ------
+        ValueError
+            ``reservation_id``에 대응하는 attempt 행이 존재하지 않아
+            갱신된 행이 0개일 때(2026-08-27 리뷰 보정) — 감사 기록
+            누락을 조용히 성공으로 위장하지 않는다.
         """
         ...
 

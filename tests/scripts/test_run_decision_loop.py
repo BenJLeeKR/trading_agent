@@ -5997,6 +5997,6 @@ class TestReplayFdcReadyShadowEventsForCycle:
         # 채워지지 않는다 — 존재하더라도 real outcome이 하나도 없어야 한다.
         real_attempts = [
             entry for entry in repo._attempts.get("gemini:shared-operational", [])
-            if entry[1] == "real"
+            if entry.mode == "real"
         ]
         assert real_attempts == []

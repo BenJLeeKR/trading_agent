@@ -34,9 +34,32 @@ try:
 except ImportError:
     pass
 
-# DB import 없음! (postgres_runtime, Repository 등 사용 금지)
+# 2026-08-27 PR A: 공용 PostgreSQL quota coordinator 경로로 전환하며
+# "DB import 없음" 제약을 의도적으로 해제한다(설계 문서 §11/§19 진입점
+# #3) — TransactionManager()/PostgresFdcQuotaRepository만 쓰고,
+# postgres_runtime()의 전체 RepositoryContainer(migration 실행 포함)는
+# 여전히 쓰지 않는다. create_pool()/close_pool()로 이 standalone
+# 스크립트가 필요한 최소 DB pool lifecycle만 직접 관리한다(2026-08-27
+# 3차 리뷰 보정 — 기존에는 pool을 전혀 초기화하지 않아 reservation
+# 전에 "Database pool is not initialised" 오류로 실패했다).
 from agent_trading.config.settings import AppSettings
-from agent_trading.services.ai_agents.provider_client import OpenAICompatibleClient
+from agent_trading.db.connection import close_pool, create_pool
+from agent_trading.db.transaction import TransactionManager
+from agent_trading.repositories.postgres.fdc_quota import PostgresFdcQuotaRepository
+from agent_trading.services.ai_agents.provider_client import (
+    LiveGeminiProviderClient,
+    OpenAICompatibleClient,
+)
+from agent_trading.services.fdc_quota_coordinator import FdcQuotaCoordinator
+from scripts.fdc_manual_provider_gate import (
+    MarketHoursBlockedError,
+    assert_not_market_hours,
+    build_manual_call_policy,
+    build_manual_run_id,
+    call_with_coordinator,
+)
+
+SCRIPT_NAME = "ar_fdc_provider_validation"
 
 SEP = "=" * 60
 DASH = "-" * 40
@@ -77,7 +100,17 @@ async def _call_ar(
     label: str,
     model_id: str,
 ) -> dict[str, Any]:
-    """AR provider 호출 + fallback 감지 + used_fallback 포함 반환."""
+    """AR provider 호출 + fallback 감지 + used_fallback 포함 반환.
+
+    2026-08-27 리뷰 보정: AR live provider 호출은 FDC 공용 13 RPM
+    coordinator의 대상이 **아니다**(production에서도 ``AIRiskAgent.
+    run()``이 ``acquire_permit``을 쓰지 않음 — §1 배경 문서가 "FDC
+    provider(Gemini) 호출"만 quota 대상으로 명시). 따라서 여기서는
+    coordinator를 거치지 않는 일반 ``OpenAICompatibleClient``를 그대로
+    쓴다 — FDC 전용 ``LiveGeminiProviderClient``를 억지로 재사용하지
+    않는다(그 클래스의 ``generate_structured()``는 애초에 차단돼
+    있어 호출해도 실패한다).
+    """
     from agent_trading.services.ai_agents.schemas import AIRiskOutput
 
     start = time.monotonic()
@@ -129,18 +162,25 @@ async def _call_ar(
 
 
 async def _call_fdc(
-    client: OpenAICompatibleClient,
+    client: LiveGeminiProviderClient,
+    coordinator: FdcQuotaCoordinator,
+    manual_run_id: str,
     user_prompt: str,
     system_prompt: str,
     label: str,
     model_id: str,
 ) -> dict[str, Any]:
-    """FDC provider 호출 + fallback 감지 + used_fallback 포함 반환."""
+    """FDC provider 호출(공용 quota coordinator 경유) + fallback 감지 +
+    used_fallback 포함 반환."""
     from agent_trading.services.ai_agents.schemas import FinalDecisionComposerOutput
 
     start = time.monotonic()
     try:
-        response = await client.generate_structured(
+        response = await call_with_coordinator(
+            coordinator=coordinator,
+            client=client,
+            caller_id=f"manual:{SCRIPT_NAME}",
+            manual_run_id=manual_run_id,
             model_id=model_id,
             system_prompt=system_prompt,
             user_prompt=user_prompt,
@@ -327,13 +367,19 @@ async def main() -> int:
     """Phase 2: Load JSON artifact, call provider, report results.
 
     동작:
-    1. JSON artifact 로드 (DB 연결 없음)
-    2. .env에서 DEEPSEEK_API_KEY 로드
-    3. OpenAICompatibleClient 생성 (timeout_seconds=120)
-    4. OLD-style AR 1회 → NEW-style AR 1회 (순차)
-    5. OLD-style FDC 1회 → NEW-style FDC 1회 (순차)
-    6. 결과 출력 + 결과 artifact 저장
-    7. provider_client.close()
+    1. JSON artifact 로드
+    2. 운영 시간(거래일) fail-closed 차단 확인(CLI 사전 검사, 1단계) —
+       차단되면 DB pool 초기화·HTTP 전에 즉시 종료
+    3. .env에서 DEEPSEEK_API_KEY 로드
+    4. DB pool 초기화(create_pool()) — standalone 스크립트라 명시적으로
+       필요하다(2026-08-27 3차 리뷰 보정)
+    5. 공용 quota coordinator 구성(운영 시간 정책을 2단계 중앙 경계로도
+       주입 — coordinator.try_reserve()가 manual: caller를 직접 재확인)
+    6. LiveGeminiProviderClient 생성 (coordinator 필수, timeout_seconds=120)
+    7. OLD-style AR 1회 → NEW-style AR 1회 (순차, coordinator 미사용)
+    8. OLD-style FDC 1회 → NEW-style FDC 1회 (순차, 매 시도마다 reservation)
+    9. 결과 출력 + 결과 artifact 저장
+    10. provider_client.close() + close_pool()(모든 종료 경로에서)
     """
     # 1. Load artifact
     if not ARTIFACT_PATH.exists():
@@ -348,7 +394,15 @@ async def main() -> int:
     print(f"  Symbol: {artifact.get('meta', {}).get('symbol', '?')}")
     print(f"  Events: {artifact.get('meta', {}).get('event_count', 0)}")
 
-    # 2. Init provider client
+    # 2. 운영 시간(거래일) fail-closed 차단(1단계, CLI 사전 검사) — DB
+    # pool 초기화·HTTP 전에 즉시 종료한다.
+    try:
+        await assert_not_market_hours(script_name=SCRIPT_NAME)
+    except MarketHoursBlockedError as exc:
+        print(f"❌ {exc}")
+        return 1
+
+    # 3. Settings 확인
     settings = AppSettings()
     if not settings.provider_api_key:
         print("❌ provider_api_key is empty. Check .env file.")
@@ -359,12 +413,6 @@ async def main() -> int:
     print(f"  Timeout:  {CLIENT_TIMEOUT}s (client) + {PROCESS_TIMEOUT}s (process)")
     print(SEP)
 
-    client = OpenAICompatibleClient(
-        api_key=settings.provider_api_key,
-        base_url=settings.provider_base_url,
-        timeout_seconds=CLIENT_TIMEOUT,
-    )
-
     prompts = artifact.get("prompts", {})
     system_prompts = artifact.get("system_prompts", {})
     model_id = settings.provider_model_id
@@ -372,49 +420,89 @@ async def main() -> int:
     calls: list[dict[str, Any]] = []
     start_total = time.monotonic()
 
+    # AR과 FDC는 서로 다른 quota 정책을 따르므로 provider client도
+    # 분리한다 — AR은 coordinator 없는 일반 클라이언트, FDC만 coordinator
+    # 필수인 LiveGeminiProviderClient(2026-08-27 리뷰 보정).
+    ar_client = OpenAICompatibleClient(
+        api_key=settings.provider_api_key,
+        base_url=settings.provider_base_url,
+        timeout_seconds=CLIENT_TIMEOUT,
+    )
+
+    # 4. DB pool 초기화(2026-08-27 3차 리뷰 보정) — postgres_runtime()은
+    # migration까지 실행하는 무거운 경로라 쓰지 않는다. 이 standalone
+    # 스크립트에 필요한 것은 pool 하나뿐이다. 이 지점부터는 반드시
+    # close_pool()로 정리한다(모든 종료 경로).
+    await create_pool()
     try:
-        # 3. Call provider for each prompt (순차 호출)
-        # AR OLD
-        calls.append(await _call_ar(
-            client, prompts.get("ar_old_prompt", ""),
-            system_prompts.get("ar", ""), "ar-old-1", model_id))
+        # 5. repo/coordinator 구성 — ambient transaction은 이 구성 목적
+        # 으로만 잠깐 열고 즉시 닫는다(HTTP 호출 동안 열어두지 않는다).
+        # PostgresFdcQuotaRepository.try_reserve()/record_attempt_outcome()
+        # 는 각자 독립 transaction을 새로 열므로, 이 ambient_tx는 생성자
+        # 인자를 채우는 용도 외에는 쓰이지 않는다.
+        async with TransactionManager() as ambient_tx:
+            repo = PostgresFdcQuotaRepository(ambient_tx)
+        coordinator = FdcQuotaCoordinator(
+            repo=repo,
+            target_rpm=settings.fdc_provider_target_rpm,
+            window_seconds=settings.fdc_provider_rate_window_seconds,
+            declared_rpm_limit=settings.gemini_provider_declared_rpm_limit,
+            # 2단계 중앙 fail-closed 경계 — CLI 사전 검사(2번)와 별개로,
+            # coordinator.try_reserve()가 manual: caller를 직접 재확인한다.
+            manual_call_policy=build_manual_call_policy(script_name=SCRIPT_NAME),
+        )
+        fdc_client = LiveGeminiProviderClient(
+            coordinator=coordinator,
+            api_key=settings.provider_api_key,
+            base_url=settings.provider_base_url,
+            timeout_seconds=CLIENT_TIMEOUT,
+        )
+        manual_run_id = build_manual_run_id(script_name=SCRIPT_NAME)
 
-        # AR NEW
-        calls.append(await _call_ar(
-            client, prompts.get("ar_new_prompt", ""),
-            system_prompts.get("ar", ""), "ar-new-1", model_id))
+        try:
+            # 6. Call provider for each prompt (순차 호출)
+            # AR OLD/NEW — coordinator를 거치지 않는다(FDC quota 대상 아님).
+            calls.append(await _call_ar(
+                ar_client, prompts.get("ar_old_prompt", ""),
+                system_prompts.get("ar", ""), "ar-old-1", model_id))
 
-        # FDC OLD
-        calls.append(await _call_fdc(
-            client, prompts.get("fdc_old_prompt", ""),
-            system_prompts.get("fdc", ""), "fdc-old-1", model_id))
+            calls.append(await _call_ar(
+                ar_client, prompts.get("ar_new_prompt", ""),
+                system_prompts.get("ar", ""), "ar-new-1", model_id))
 
-        # FDC NEW
-        calls.append(await _call_fdc(
-            client, prompts.get("fdc_new_prompt", ""),
-            system_prompts.get("fdc", ""), "fdc-new-1", model_id))
+            # FDC OLD/NEW — 매 HTTP 시도마다 공용 quota reservation을 얻는다.
+            calls.append(await _call_fdc(
+                fdc_client, coordinator, manual_run_id, prompts.get("fdc_old_prompt", ""),
+                system_prompts.get("fdc", ""), "fdc-old-1", model_id))
 
-    except asyncio.TimeoutError:
-        print(f"❌ Global timeout ({PROCESS_TIMEOUT}s) exceeded.")
+            calls.append(await _call_fdc(
+                fdc_client, coordinator, manual_run_id, prompts.get("fdc_new_prompt", ""),
+                system_prompts.get("fdc", ""), "fdc-new-1", model_id))
+
+        except asyncio.TimeoutError:
+            print(f"❌ Global timeout ({PROCESS_TIMEOUT}s) exceeded.")
+            total_duration = time.monotonic() - start_total
+            _save_results(calls, artifact, total_duration)
+            return 1
+        finally:
+            await ar_client.close()
+            await fdc_client.close()
+
         total_duration = time.monotonic() - start_total
-        _save_results(calls, artifact, total_duration)
-        return 1
+
+        # 7. Classify conclusion
+        conclusion = _classify_conclusion(calls)
+
+        # 8. Save results artifact
+        result_path = _save_results(calls, artifact, total_duration)
+        print(f"\n  ✅ Results saved: {result_path}")
+
+        # 9. Print results
+        _print_results(calls, conclusion)
+
+        return 0
     finally:
-        await client.close()
-
-    total_duration = time.monotonic() - start_total
-
-    # 4. Classify conclusion
-    conclusion = _classify_conclusion(calls)
-
-    # 5. Save results artifact
-    result_path = _save_results(calls, artifact, total_duration)
-    print(f"\n  ✅ Results saved: {result_path}")
-
-    # 6. Print results
-    _print_results(calls, conclusion)
-
-    return 0
+        await close_pool()
 
 
 if __name__ == "__main__":

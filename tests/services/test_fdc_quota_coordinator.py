@@ -33,6 +33,7 @@ from agent_trading.services.fdc_quota_coordinator import (
 def _make_coordinator(
     *, repo=None, target_rpm: int = 13, window_seconds: int = 60,
     quota_scope: str = "test:default", declared_rpm_limit: int | None = None,
+    manual_call_policy=None,
 ) -> FdcQuotaCoordinator:
     return FdcQuotaCoordinator(
         repo=repo or InMemoryFdcQuotaRepository(),
@@ -40,6 +41,7 @@ def _make_coordinator(
         window_seconds=window_seconds,
         quota_scope=quota_scope,
         declared_rpm_limit=declared_rpm_limit,
+        manual_call_policy=manual_call_policy,
     )
 
 
@@ -63,6 +65,90 @@ class TestFdcQuotaCoordinatorInit:
 
     def test_declared_limit_optional(self) -> None:
         _make_coordinator(target_rpm=13, declared_rpm_limit=None)
+
+
+class TestManualCallPolicy:
+    """``FdcQuotaCoordinator``의 중앙 fail-closed 경계(2026-08-27 3차
+    리뷰 보정 신설) — ``caller_id``가 ``"manual:"``로 시작하는
+    reservation 요청만 대상이며, repository에 위임하기 **전에** 정책을
+    확인한다."""
+
+    @pytest.mark.asyncio
+    async def test_manual_caller_without_policy_is_fail_closed(self) -> None:
+        """정책이 주입되지 않았으면 manual: caller는 무조건 거부되고,
+        repository는 전혀 호출되지 않는다(quota window 미소비)."""
+        repo = InMemoryFdcQuotaRepository()
+        coordinator = _make_coordinator(repo=repo, manual_call_policy=None)
+
+        result = await coordinator.try_reserve(job_id=None, caller_id="manual:test-script")
+
+        assert isinstance(result, CoordinatorError)
+        assert result.error_class == CoordinatorErrorClass.MANUAL_CALL_POLICY_REJECTED
+        assert repo._attempts["test:default"] == []  # type: ignore[attr-defined]
+
+    @pytest.mark.asyncio
+    async def test_manual_caller_policy_rejects_sends_no_reservation(self) -> None:
+        repo = InMemoryFdcQuotaRepository()
+
+        async def _deny() -> bool:
+            return False
+
+        coordinator = _make_coordinator(repo=repo, manual_call_policy=_deny)
+
+        result = await coordinator.try_reserve(job_id=None, caller_id="manual:test-script")
+
+        assert isinstance(result, CoordinatorError)
+        assert result.error_class == CoordinatorErrorClass.MANUAL_CALL_POLICY_REJECTED
+        assert repo._attempts["test:default"] == []  # type: ignore[attr-defined]
+
+    @pytest.mark.asyncio
+    async def test_manual_caller_policy_allows_reservation_succeeds(self) -> None:
+        repo = InMemoryFdcQuotaRepository()
+
+        async def _allow() -> bool:
+            return True
+
+        coordinator = _make_coordinator(repo=repo, manual_call_policy=_allow)
+
+        result = await coordinator.try_reserve(job_id=None, caller_id="manual:test-script")
+
+        assert isinstance(result, ReservationGrant)
+
+    @pytest.mark.asyncio
+    async def test_non_manual_caller_bypasses_policy_check_entirely(self) -> None:
+        """``ops-scheduler`` 같은 manual: 이 아닌 caller는 정책이
+        없어도(또는 거부하는 정책이 있어도) 전혀 영향을 받지 않는다."""
+        repo = InMemoryFdcQuotaRepository()
+
+        async def _deny() -> bool:
+            return False
+
+        coordinator = _make_coordinator(repo=repo, manual_call_policy=_deny)
+
+        result = await coordinator.try_reserve(job_id=None, caller_id="ops-scheduler")
+
+        assert isinstance(result, ReservationGrant)
+
+    @pytest.mark.asyncio
+    async def test_manual_caller_policy_is_reevaluated_each_call(self) -> None:
+        """정책 콜백이 매 ``try_reserve()`` 호출마다 다시 평가되는지
+        (한 번 허용됐다고 캐시되지 않는지) 확인한다."""
+        repo = InMemoryFdcQuotaRepository()
+        call_count = 0
+
+        async def _flip() -> bool:
+            nonlocal call_count
+            call_count += 1
+            return call_count == 1  # 첫 호출만 허용, 이후는 거부
+
+        coordinator = _make_coordinator(repo=repo, manual_call_policy=_flip)
+
+        first = await coordinator.try_reserve(job_id=None, caller_id="manual:test-script")
+        second = await coordinator.try_reserve(job_id=None, caller_id="manual:test-script")
+
+        assert isinstance(first, ReservationGrant)
+        assert isinstance(second, CoordinatorError)
+        assert call_count == 2
 
 
 # ---------------------------------------------------------------------------
@@ -128,6 +214,61 @@ class TestAtomicReservationLogic:
         assert job["queue_poll_count"] == (
             job["reservation_denied_count"] + job["dispatch_attempt_no"]
         )
+
+
+class TestRecordAttemptOutcome:
+    """``record_attempt_outcome()``(2026-08-27 PR A 신설) — ``try_reserve()``
+    가 발급한 reservation의 실제 HTTP 결과를 기록한다. 새 reservation을
+    발급하지 않으며, 이미 소비된 window 슬롯의 상태만 갱신한다."""
+
+    @pytest.mark.asyncio
+    async def test_updates_outcome_of_existing_reservation(self) -> None:
+        repo = InMemoryFdcQuotaRepository()
+        coordinator = _make_coordinator(repo=repo, target_rpm=13, quota_scope="scope-outcome-1")
+
+        grant = await coordinator.try_reserve(job_id=None, caller_id="test-caller")
+        assert isinstance(grant, ReservationGrant)
+        assert repo._attempts_by_id[grant.reservation_id].outcome == "reservation_granted"  # type: ignore[attr-defined]
+
+        await coordinator.record_attempt_outcome(
+            reservation_id=grant.reservation_id, outcome="http_succeeded",
+        )
+
+        assert repo._attempts_by_id[grant.reservation_id].outcome == "http_succeeded"  # type: ignore[attr-defined]
+
+    @pytest.mark.asyncio
+    async def test_does_not_create_new_reservation_or_change_window_count(self) -> None:
+        """outcome 갱신은 window 판단에 쓰이는 ``_QUOTA_CONSUMING_OUTCOMES``
+        집합 밖으로 나가지 않는 한(``http_succeeded``도 그 집합의 일부다)
+        window_count에 영향을 주지 않는다 — 새 attempt 행이 생기지 않는다."""
+        repo = InMemoryFdcQuotaRepository()
+        coordinator = _make_coordinator(repo=repo, target_rpm=1, quota_scope="scope-outcome-2")
+
+        grant = await coordinator.try_reserve(job_id=None, caller_id="test-caller")
+        assert isinstance(grant, ReservationGrant)
+        before_count = len(repo._attempts["scope-outcome-2"])  # type: ignore[attr-defined]
+
+        await coordinator.record_attempt_outcome(
+            reservation_id=grant.reservation_id, outcome="http_succeeded",
+        )
+
+        after_count = len(repo._attempts["scope-outcome-2"])  # type: ignore[attr-defined]
+        assert after_count == before_count == 1
+
+        # target_rpm=1이므로 두 번째 reservation은 여전히 거부돼야 한다
+        # (outcome 갱신이 window를 "비우지" 않았다는 뜻).
+        second = await coordinator.try_reserve(job_id=None, caller_id="test-caller")
+        assert isinstance(second, ReservationDenied)
+
+    @pytest.mark.asyncio
+    async def test_unknown_reservation_id_raises(self) -> None:
+        repo = InMemoryFdcQuotaRepository()
+        coordinator = _make_coordinator(repo=repo, target_rpm=13, quota_scope="scope-outcome-3")
+
+        with pytest.raises(ValueError, match="unknown reservation_id"):
+            await coordinator.record_attempt_outcome(
+                reservation_id=uuid4(), outcome="http_succeeded",
+            )
 
 
 def _shadow_job(**overrides):
@@ -281,9 +422,8 @@ class TestShadowFifoQueueLogic:
 
         attempts = repo._attempts["scope-fifo-g"]  # type: ignore[attr-defined]
         assert len(attempts) == 1
-        _, mode, outcome = attempts[0]
-        assert mode == "shadow"
-        assert outcome == "shadow_would_grant"
+        assert attempts[0].mode == "shadow"
+        assert attempts[0].outcome == "shadow_would_grant"
         shadow_jobs = repo._shadow_jobs["scope-fifo-g"]  # type: ignore[attr-defined]
         assert shadow_jobs[0]["job_id"] == result.job_id
         assert shadow_jobs[0]["status"] == "SHADOW_WOULD_GRANT"
@@ -359,6 +499,10 @@ async def db_ready(quota_scope: str):
         await close_pool()
 
 
+async def _always_allow_manual_call_policy() -> bool:
+    return True
+
+
 def _postgres_coordinator(*, quota_scope: str, target_rpm: int = 13, lock_timeout_ms: int = 3000):
     from agent_trading.db.transaction import TransactionManager
     from agent_trading.repositories.postgres.fdc_quota import PostgresFdcQuotaRepository
@@ -368,6 +512,7 @@ def _postgres_coordinator(*, quota_scope: str, target_rpm: int = 13, lock_timeou
     return FdcQuotaCoordinator(
         repo=repo, target_rpm=target_rpm, quota_scope=quota_scope,
         lock_timeout_ms=lock_timeout_ms,
+        manual_call_policy=_always_allow_manual_call_policy,
     )
 
 
@@ -448,6 +593,389 @@ class TestPostgresAtomicReservation:
         coordinator = _postgres_coordinator(quota_scope=quota_scope, target_rpm=13)
         result = await coordinator.try_reserve(job_id=None, caller_id="test-caller")
         assert isinstance(result, ReservationGrant)
+
+
+@pytestmark_db
+class TestPostgresRecordAttemptOutcome:
+    """``record_attempt_outcome()``(2026-08-27 PR A 신설)의 실제 PostgreSQL
+    UPDATE 동작 — 새 행을 만들지 않고 기존 attempt 행만 갱신하는지."""
+
+    @pytest.mark.asyncio
+    async def test_updates_outcome_http_status_and_429_flag(
+        self, db_ready, quota_scope: str,
+    ) -> None:
+        from agent_trading.db.connection import connection
+
+        coordinator = _postgres_coordinator(quota_scope=quota_scope, target_rpm=13)
+        grant = await coordinator.try_reserve(job_id=None, caller_id="test-caller")
+        assert isinstance(grant, ReservationGrant)
+
+        await coordinator.record_attempt_outcome(
+            reservation_id=grant.reservation_id,
+            outcome="http_failed_retryable",
+            http_status=429,
+            error_class="httpx.HTTPStatusError",
+            http_429_observed=True,
+        )
+
+        async with connection() as conn:
+            row = await conn.fetchrow(
+                "SELECT outcome, http_status, error_class, http_429_observed "
+                "FROM trading.fdc_provider_attempts WHERE attempt_id = $1",
+                grant.reservation_id,
+            )
+        assert row is not None
+        assert row["outcome"] == "http_failed_retryable"
+        assert row["http_status"] == 429
+        assert row["error_class"] == "httpx.HTTPStatusError"
+        assert row["http_429_observed"] is True
+
+    @pytest.mark.asyncio
+    async def test_does_not_insert_a_new_row(
+        self, db_ready, quota_scope: str,
+    ) -> None:
+        from agent_trading.db.connection import connection
+
+        coordinator = _postgres_coordinator(quota_scope=quota_scope, target_rpm=13)
+        grant = await coordinator.try_reserve(job_id=None, caller_id="test-caller")
+        assert isinstance(grant, ReservationGrant)
+
+        async with connection() as conn:
+            before = await conn.fetchval(
+                "SELECT count(*) FROM trading.fdc_provider_attempts WHERE quota_scope = $1",
+                quota_scope,
+            )
+
+        await coordinator.record_attempt_outcome(
+            reservation_id=grant.reservation_id, outcome="http_succeeded",
+        )
+
+        async with connection() as conn:
+            after = await conn.fetchval(
+                "SELECT count(*) FROM trading.fdc_provider_attempts WHERE quota_scope = $1",
+                quota_scope,
+            )
+        assert after == before == 1
+
+    @pytest.mark.asyncio
+    async def test_reservation_row_starts_with_null_http_started_at(
+        self, db_ready, quota_scope: str,
+    ) -> None:
+        """2026-08-27 리뷰 보정 검증: ``try_reserve()`` 직후(HTTP를 시작
+        하기 전)에는 ``http_started_at``이 NULL이어야 한다 — 실제로
+        HTTP를 시작하지 못한 경우에만 이 상태로 남는다는 계약의 기준선."""
+        from agent_trading.db.connection import connection
+
+        coordinator = _postgres_coordinator(quota_scope=quota_scope, target_rpm=13)
+        grant = await coordinator.try_reserve(job_id=None, caller_id="test-caller")
+        assert isinstance(grant, ReservationGrant)
+
+        async with connection() as conn:
+            row = await conn.fetchrow(
+                "SELECT http_started_at, outcome FROM trading.fdc_provider_attempts "
+                "WHERE attempt_id = $1",
+                grant.reservation_id,
+            )
+        assert row is not None
+        assert row["http_started_at"] is None
+        assert row["outcome"] == "reservation_granted"
+
+    @pytest.mark.asyncio
+    async def test_unknown_reservation_id_raises_value_error(
+        self, db_ready, quota_scope: str,
+    ) -> None:
+        """2026-08-27 리뷰 보정: 대응 행이 없는 ``reservation_id``로
+        outcome을 기록하려 하면 조용히 0행 갱신하고 성공한 척하지 않고
+        명시적으로 실패한다(감사 기록 누락 은폐 방지)."""
+        coordinator = _postgres_coordinator(quota_scope=quota_scope, target_rpm=13)
+
+        with pytest.raises(ValueError, match="no fdc_provider_attempts row"):
+            await coordinator.record_attempt_outcome(
+                reservation_id=uuid4(), outcome="http_succeeded",
+            )
+
+
+@pytestmark_db
+class TestPostgresCallWithCoordinatorLifecycle:
+    """``scripts/fdc_manual_provider_gate.py::call_with_coordinator()``가
+    실제 PostgreSQL 위에서 attempt별로 정확한 lifecycle을 기록하는지
+    검증한다(2026-08-27 리뷰 보정 핵심 — 이전 permit adapter 방식은 이
+    수준의 정확도를 낼 수 없었다). 실제 HTTP는 fake client(duck-typed
+    ``generate_structured_once()``)로 대체한다 — 외부 Gemini 호출 없음.
+    """
+
+    @pytest.mark.asyncio
+    async def test_success_records_http_started_at_and_completed_at(
+        self, db_ready, quota_scope: str,
+    ) -> None:
+        from dataclasses import dataclass
+
+        from agent_trading.db.connection import connection
+        from agent_trading.services.ai_agents.base import RawProviderResponse
+        from scripts.fdc_manual_provider_gate import call_with_coordinator
+
+        @dataclass(slots=True, frozen=True)
+        class _Output:
+            symbol: str = "AAPL"
+
+        class _FakeLiveClient:
+            def __init__(self) -> None:
+                self.calls = 0
+
+            async def generate_structured_once(self, grant, *, on_http_start=None, **kwargs):
+                if on_http_start is not None:
+                    await on_http_start()
+                self.calls += 1
+                return RawProviderResponse(
+                    parsed=_Output(), raw_content="{}",
+                    http_attempt_count=1, http_429_count=0,
+                )
+
+        coordinator = _postgres_coordinator(quota_scope=quota_scope, target_rpm=13)
+        fake_client = _FakeLiveClient()
+
+        result = await call_with_coordinator(
+            coordinator=coordinator, client=fake_client, caller_id="manual:test",
+            manual_run_id="run-pg-1", model_id="m", system_prompt="s",
+            user_prompt="u", response_format=_Output,
+        )
+
+        assert result.parsed.symbol == "AAPL"
+        assert fake_client.calls == 1
+
+        async with connection() as conn:
+            row = await conn.fetchrow(
+                "SELECT outcome, http_started_at, completed_at "
+                "FROM trading.fdc_provider_attempts WHERE quota_scope = $1",
+                quota_scope,
+            )
+        assert row is not None
+        assert row["outcome"] == "http_succeeded"
+        assert row["http_started_at"] is not None
+        assert row["completed_at"] is not None
+
+    @pytest.mark.asyncio
+    async def test_429_retry_creates_new_attempt_row_per_reservation(
+        self, db_ready, quota_scope: str,
+    ) -> None:
+        """429 재시도 시 같은 grant를 재사용하지 않고 매번 새 reservation
+        (=새 ``fdc_provider_attempts`` 행)을 얻는지, 각 행의
+        outcome/429/timestamp가 정확한지 검증한다."""
+        from dataclasses import dataclass
+
+        import httpx
+
+        from agent_trading.db.connection import connection
+        from agent_trading.services.ai_agents.base import RawProviderResponse
+        from scripts.fdc_manual_provider_gate import call_with_coordinator
+
+        @dataclass(slots=True, frozen=True)
+        class _Output:
+            symbol: str = "AAPL"
+
+        def _make_429() -> httpx.HTTPStatusError:
+            req = httpx.Request("POST", "https://x/v1/chat/completions")
+            resp = httpx.Response(429, request=req)
+            exc = httpx.HTTPStatusError("429", request=req, response=resp)
+            exc.http_attempt_count = 1  # type: ignore[attr-defined]
+            exc.http_429_count = 1  # type: ignore[attr-defined]
+            return exc
+
+        class _FakeLiveClient:
+            def __init__(self) -> None:
+                self._outcomes = [_make_429(), RawProviderResponse(
+                    parsed=_Output(), raw_content="{}",
+                    http_attempt_count=1, http_429_count=0,
+                )]
+                self.grants_seen = []
+
+            async def generate_structured_once(self, grant, *, on_http_start=None, **kwargs):
+                if on_http_start is not None:
+                    await on_http_start()
+                self.grants_seen.append(grant.reservation_id)
+                outcome = self._outcomes.pop(0)
+                if isinstance(outcome, Exception):
+                    raise outcome
+                return outcome
+
+        coordinator = _postgres_coordinator(quota_scope=quota_scope, target_rpm=13)
+        fake_client = _FakeLiveClient()
+
+        result = await call_with_coordinator(
+            coordinator=coordinator, client=fake_client, caller_id="manual:test",
+            manual_run_id="run-pg-2", model_id="m", system_prompt="s",
+            user_prompt="u", response_format=_Output, max_attempts=3,
+        )
+
+        assert result.parsed.symbol == "AAPL"
+        assert len(fake_client.grants_seen) == 2
+        assert fake_client.grants_seen[0] != fake_client.grants_seen[1]  # 새 reservation
+
+        async with connection() as conn:
+            rows = await conn.fetch(
+                "SELECT attempt_id, outcome, http_status, http_429_observed, "
+                "http_started_at, completed_at FROM trading.fdc_provider_attempts "
+                "WHERE quota_scope = $1 ORDER BY attempt_no",
+                quota_scope,
+            )
+        assert len(rows) == 2  # 재시도마다 별도 행
+
+        first, second = rows
+        assert first["attempt_id"] == fake_client.grants_seen[0]
+        assert first["outcome"] == "http_failed_retryable"
+        assert first["http_status"] == 429
+        assert first["http_429_observed"] is True
+        assert first["http_started_at"] is not None
+        assert first["completed_at"] is not None
+
+        assert second["attempt_id"] == fake_client.grants_seen[1]
+        assert second["outcome"] == "http_succeeded"
+        assert second["http_429_observed"] is False
+        assert second["http_started_at"] is not None
+        assert second["completed_at"] is not None
+
+    @pytest.mark.asyncio
+    async def test_non_retryable_failure_records_http_started_at_not_null(
+        self, db_ready, quota_scope: str,
+    ) -> None:
+        """HTTP 시작 **후** 실패(non-retryable 4xx 등)는 http_started_at
+        이 NULL이 아니어야 한다 — reservation만 받고 HTTP 자체를 시도조차
+        못한 경우(별도 시나리오, RESERVED_BUT_HTTP_NOT_STARTED 계열)와
+        구분된다."""
+        from dataclasses import dataclass
+
+        import httpx
+
+        from agent_trading.db.connection import connection
+        from scripts.fdc_manual_provider_gate import call_with_coordinator
+
+        @dataclass(slots=True, frozen=True)
+        class _Output:
+            symbol: str = "AAPL"
+
+        class _FakeLiveClient:
+            async def generate_structured_once(self, grant, *, on_http_start=None, **kwargs):
+                if on_http_start is not None:
+                    await on_http_start()
+                req = httpx.Request("POST", "https://x/v1/chat/completions")
+                resp = httpx.Response(400, request=req)
+                exc = httpx.HTTPStatusError("400", request=req, response=resp)
+                exc.http_attempt_count = 1  # type: ignore[attr-defined]
+                exc.http_429_count = 0  # type: ignore[attr-defined]
+                raise exc
+
+        coordinator = _postgres_coordinator(quota_scope=quota_scope, target_rpm=13)
+
+        with pytest.raises(httpx.HTTPStatusError):
+            await call_with_coordinator(
+                coordinator=coordinator, client=_FakeLiveClient(), caller_id="manual:test",
+                manual_run_id="run-pg-3", model_id="m", system_prompt="s",
+                user_prompt="u", response_format=_Output, max_attempts=3,
+            )
+
+        async with connection() as conn:
+            row = await conn.fetchrow(
+                "SELECT outcome, http_status, http_started_at, completed_at "
+                "FROM trading.fdc_provider_attempts WHERE quota_scope = $1",
+                quota_scope,
+            )
+        assert row is not None
+        assert row["outcome"] == "http_failed_final"
+        assert row["http_status"] == 400
+        assert row["http_started_at"] is not None
+        assert row["completed_at"] is not None
+
+    @pytest.mark.asyncio
+    async def test_on_http_start_hook_db_failure_sends_zero_http(
+        self, db_ready, quota_scope: str,
+    ) -> None:
+        """``on_http_start`` 콜백(coordinator DB 기록) 자체가 실패하면
+        실제 HTTP 요청에 해당하는 실행이 **0회**여야 하고, 그 attempt는
+        ``reserved_but_http_not_started``로 기록되며 ``http_started_at``
+        은 NULL이어야 한다."""
+        from dataclasses import dataclass
+
+        from agent_trading.db.connection import connection
+        from agent_trading.services.ai_agents.base import RawProviderResponse
+        from scripts.fdc_manual_provider_gate import call_with_coordinator
+
+        @dataclass(slots=True, frozen=True)
+        class _Output:
+            symbol: str = "AAPL"
+
+        class _FailingHookThenSuccessClient:
+            """1번째 attempt는 on_http_start 훅 자체가 예외를 던지도록
+            강제하고(coordinator DB 기록 실패를 시뮬레이션), 2번째
+            attempt는 정상 진행한다."""
+
+            def __init__(self) -> None:
+                self.attempt_index = 0
+                self.http_post_equivalent_calls = 0
+
+            async def generate_structured_once(self, grant, *, on_http_start=None, **kwargs):
+                self.attempt_index += 1
+                if self.attempt_index == 1:
+                    # 훅 자체를 실패시킨다 — call_with_coordinator가 넘긴
+                    # 실제 on_http_start(coordinator.record_attempt_outcome)
+                    # 대신, DB 기록이 실패한 상황을 그대로 재현하기 위해
+                    # 원래 훅을 호출하지 않고 즉시 예외를 던진다.
+                    raise RuntimeError("simulated on_http_start DB failure")
+                if on_http_start is not None:
+                    await on_http_start()
+                self.http_post_equivalent_calls += 1
+                return RawProviderResponse(
+                    parsed=_Output(), raw_content="{}",
+                    http_attempt_count=1, http_429_count=0,
+                )
+
+        coordinator = _postgres_coordinator(quota_scope=quota_scope, target_rpm=13)
+        fake_client = _FailingHookThenSuccessClient()
+
+        result = await call_with_coordinator(
+            coordinator=coordinator, client=fake_client, caller_id="manual:test",
+            manual_run_id="run-pg-5", model_id="m", system_prompt="s",
+            user_prompt="u", response_format=_Output, max_attempts=3,
+        )
+
+        assert result.parsed.symbol == "AAPL"
+        assert fake_client.http_post_equivalent_calls == 1  # 1번째는 HTTP 실행 자체가 없었다
+
+        async with connection() as conn:
+            rows = await conn.fetch(
+                "SELECT outcome, http_started_at, completed_at "
+                "FROM trading.fdc_provider_attempts WHERE quota_scope = $1 "
+                "ORDER BY attempt_no",
+                quota_scope,
+            )
+        assert len(rows) == 2
+        failed_row, success_row = rows
+        assert failed_row["outcome"] == "reserved_but_http_not_started"
+        assert failed_row["http_started_at"] is None
+        assert success_row["outcome"] == "http_succeeded"
+        assert success_row["http_started_at"] is not None
+
+    @pytest.mark.asyncio
+    async def test_duplicate_http_started_recording_fails_closed_on_postgres(
+        self, db_ready, quota_scope: str,
+    ) -> None:
+        """실제 PostgreSQL 위에서도 같은 reservation에 HTTP 시작을 두 번
+        기록하려 하면 명시적으로 실패한다."""
+        from datetime import datetime, timezone
+
+        coordinator = _postgres_coordinator(quota_scope=quota_scope, target_rpm=13)
+        grant = await coordinator.try_reserve(job_id=None, caller_id="manual:test")
+        assert isinstance(grant, ReservationGrant)
+
+        await coordinator.record_attempt_outcome(
+            reservation_id=grant.reservation_id, outcome="http_started",
+            http_started_at=datetime.now(timezone.utc),
+        )
+
+        with pytest.raises(ValueError, match="already has http_started_at"):
+            await coordinator.record_attempt_outcome(
+                reservation_id=grant.reservation_id, outcome="http_started",
+                http_started_at=datetime.now(timezone.utc),
+            )
 
 
 @pytestmark_db

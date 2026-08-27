@@ -139,6 +139,21 @@
 >    배선을 강제 검증해야 함을 명시했다. §20이 이번 보정의 영향을 받으며,
 >    §20 전체를 PR B 범위로 재배정했다(1번 보정과 일관성 유지 — flag가
 >    실제로 소비되는 시점과 같은 PR에서 도입).
+>
+> **상태(2026-08-27 3차, PR #358 실제 구현 반영 — §18/§19 서술 정정)**:
+> PR A(PR #358)가 실제로 구현되면서 §18에 남아있던 "PR A 시점에는 아무
+> 운영 경로도 `generate_structured_once()`를 호출하지 않는다"는 서술이
+> 사실과 달라졌다 — 독립 분석 스크립트 2개(§19 진입점 #3·#4)가 실제로
+> 이 메서드를 호출하는 `call_with_coordinator()`/`CoordinatedFdcProvider
+> Client`(신규, `AIProviderClient` Protocol wrapper)를 PR A에서 이미
+> 사용 중이다. §18을 이 사실에 맞게 정정했다(§4~§17, §19~§22의 다른
+> 계약은 변경 없음 — ops-scheduler 운영 경로가 PR B 전까지 이 메서드를
+> 쓰지 않는다는 핵심 계약은 그대로 유효). 또한 PR A 리뷰 과정에서
+> `LiveGeminiProviderClient.generate_structured()` 의도적 차단과, 실제
+> `client.post()` 직전에만 호출되는 `on_http_start` 콜백(`http_started_at`
+> 정밀 기록용)이 §18에 새로 추가됐다 — 둘 다 최초 설계 문서에는 없던
+> 내용이며, PR A 리뷰에서 발견된 결함(coordinator 우회 가능성,
+> `http_started_at` 부정확 기록)을 보정하며 확정됐다.
 
 ## 1. 배경과 문제 정의
 
@@ -1091,32 +1106,64 @@ job만 `CANCELLED(reason=process_terminated_carryover_lost)`로 전이하는지,
   1회 대비 프로세스 생성 오버헤드(수십~수백 ms 추정)를 cycle 전체에 얼마나
   더하는지는 구현 후 실측 필요.
 
-## 18. Provider one-shot 리팩터링 상세(신설, 2026-08-27)
+## 18. Provider one-shot 리팩터링 상세(2026-08-27 3차 보정 — 실제 PR A 구현 반영)
 
 > **PR 배정(§22 2차 보정과 일관)**: 이 절 전체는 **PR A** 범위다.
-> `generate_structured_once()`는 `LiveGeminiProviderClient`(§19에서 PR A가
-> 신설하는 dormant 클래스)의 메서드로 추가되지만, PR A 시점에는 dispatcher도
-> `--mode fdc_only`도 없으므로 **아무 운영 경로도 이 메서드를 호출하지
-> 않는다** — PR B가 §17을 구현할 때 비로소 실제로 호출된다.
+>
+> **상태 정정(2026-08-27 3차 보정)**: 최초 작성분은 "PR A 시점에는
+> dispatcher도 `--mode fdc_only`도 없으므로 아무 운영 경로도 이 메서드를
+> 호출하지 않는다 — PR B가 §17을 구현할 때 비로소 실제로 호출된다"고
+> 서술했으나, 이는 실제 PR A 구현(PR #358)과 다르다 — **`generate_
+> structured_once()`는 PR A에서 이미 실제로 호출된다.** 다만 그 호출자는
+> dispatcher가 아니라 §19 진입점 #3·#4(독립 분석 스크립트 2개)다:
+> `ar_fdc_provider_validation.py`는 `scripts/fdc_manual_provider_gate.py::
+> call_with_coordinator()`를 통해 직접 호출하고, `ar_fdc_output_
+> measurement.py`는 `FinalDecisionComposerAgent.run()` 같은 기존 고수준
+> 인터페이스를 유지하기 위해 그 함수를 감싼 `CoordinatedFdcProviderClient`
+> (``AIProviderClient`` Protocol wrapper)를 거쳐 간접 호출한다. **ops-
+> scheduler의 실제 운영 FDC 경로(§19 진입점 #1·#2, `--mode full`)는
+> 여전히 PR B 전까지 이 메서드를 호출하지 않는다** — "PR B/dispatcher
+> 전까지 아무도 호출하지 않는다"는 원래 서술이 틀렸을 뿐, "운영 경로는
+> 아직 이 메서드를 쓰지 않는다"는 핵심 계약(flag=false 레거시 보존)
+> 자체는 그대로 유효하다.
 
 - `provider_client.py::OpenAICompatibleClient.generate_structured()`(255-412행)의
   retry 루프(`for attempt in range(MAX_RETRIES)`, 335행)를 **단일 시도 내부
-  헬퍼**(`_generate_structured_single_attempt()`, 신규 private 메서드)로 추출한다
-  — HTTP 요청 1회, 응답 파싱, 에러 분류(retryable/non-retryable)까지만 담당하고
-  retry 여부 판단은 하지 않는다.
+  헬퍼**(초기 설계 명칭은 `_generate_structured_single_attempt()`였으나, 실제
+  구현에서는 `_single_http_attempt()`라는 이름으로 신설된 private 메서드다 —
+  이하 본문은 실제 식별자를 쓴다)로 추출한다 — HTTP 요청 1회, 응답 파싱,
+  에러 분류(retryable/non-retryable)까지만 담당하고 retry 여부 판단은 하지
+  않는다.
 - 기존 `generate_structured()`는 이 헬퍼를 `MAX_RETRIES`만큼 루프 호출하는
   **얇은 wrapper**로 재정의한다 — 외부에서 관측 가능한 동작(재시도 횟수, backoff,
   `acquire_permit` 호출 시점)은 **1바이트도 바뀌지 않는다**(순수 내부 추출
   리팩터링, §16 "공용 `generate_structured()` 불변" 계약 그대로 준수).
 - 신규 `generate_structured_once(grant: ReservationGrant, ...)`(`LiveGemini
-  ProviderClient` 전용 메서드, §12)는 `_generate_structured_single_attempt()`를
-  **정확히 1회** 호출하고 끝낸다 — retry 루프 없음, `acquire_permit` 호출 없음
+  ProviderClient` 전용 메서드, §12)는 `_single_http_attempt()`를 **정확히
+  1회** 호출하고 끝낸다 — retry 루프 없음, `acquire_permit` 호출 없음
   (기존 10 RPM strict limiter를 아예 거치지 않는다 — 13 RPM coordinator가
   이를 대체).
 - `MAX_RETRIES`라는 이름은 **변경하지 않는다**(§16 "구현 후 실측 필요"의
   "리네이밍 영향 범위 확인" 항목은 이번 설계로 "리네이밍하지 않는다"로
   확정 — 참조처가 많고(§16 위험 인지) 이름 자체는 여전히 정확하므로 무근거
   변경 금지 원칙에 따라 그대로 둔다).
+- **`LiveGeminiProviderClient.generate_structured()`는 의도적으로 차단된다**
+  (PR A 구현, 최초 설계 문서에 없던 내용) — 상속받은 이 메서드를 그대로
+  열어두면 reservation 없이 live HTTP를 보내는 우회로가 생기기 때문이다.
+  FDC live HTTP의 유일한 경로는 `generate_structured_once()`뿐이다.
+- **`on_http_start` 콜백(2026-08-27 2차 리뷰 보정 신설)**: `_generate_
+  structured_single_attempt()`(구현체명 `_single_http_attempt()`)는 실제
+  `client.post()` **바로 직전**에 호출자가 넘긴 무인자 코루틴을 정확히
+  1회 호출할 수 있다(``generate_structured()``의 기존 retry 루프는 이
+  인자를 넘기지 않으므로 기존 동작은 완전히 보존된다). `call_with_
+  coordinator()`가 이 콜백에서 `coordinator.record_attempt_outcome(
+  outcome="http_started", http_started_at=now())`를 호출해, "HTTP가
+  실제로 시작된 시각"만을 정확히 감사 기록에 남긴다 — 이전에는 호출
+  직전에 타임스탬프를 미리 잡아, client 준비/body 조립 단계의 실패까지
+  "HTTP가 시작됐다"고 잘못 기록하는 결함이 있었다. 콜백(DB 기록) 자체가
+  실패하면 `client.post()`는 호출되지 않으며, 그 attempt는 기존 상태
+  어휘의 `reserved_but_http_not_started`로 기록된다(§5/§9 기존 상태를
+  재사용 — 새 상태를 만들지 않음).
 
 ## 19. Live provider 진입점별 게이팅 계획(2026-08-27 2차 보정 — PR 배정 정정)
 
@@ -1220,7 +1267,7 @@ xxx()` 함수 + dataclass field)을 그대로 따르되, 위 보정을 반영한
    limiter.py`의 `DEFAULT_MAX_WAIT_SECONDS=18.0`/`DEFAULT_MAX_REQUEUE_
    COUNT=1` 탈락 경로가 신규 dispatcher 경로에서는 전혀 쓰이지 않음을 확인)
    — **PR B**(dispatcher 본체 대상)
-7. `generate_structured_once()`가 `_generate_structured_single_attempt()`를
+7. `generate_structured_once()`가 `_single_http_attempt()`를
    정확히 1회만 호출하고(§18), 기존 `generate_structured()`의 외부 동작이
    리팩터링 전후로 완전히 동일한지(회귀 테스트) — **PR A**(§18은 PR A
    범위, dispatcher 없이 독립 검증 가능)
