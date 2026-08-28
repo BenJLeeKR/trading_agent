@@ -2077,3 +2077,264 @@ class TestPostgresRealJobDispatch:
         )
         assert row["reservation_denied_count"] == 1
         assert row["dispatch_attempt_no"] == 0
+
+    @pytest.mark.asyncio
+    async def test_retry_reenqueues_to_fifo_tail_and_lets_waiting_job_go_first_real_db(
+        self, db_ready, quota_scope: str,
+    ) -> None:
+        """2026-08-28 6차 리뷰 보정 — A가 먼저 grant된 뒤 retryable 실패,
+        B가 이미 QUEUED인 경우: A가 FIFO tail로 재등록되고, A의 재시도는
+        B보다 뒤 순서가 돼야 한다(실제 PostgreSQL)."""
+        coordinator = _postgres_coordinator(quota_scope=quota_scope, target_rpm=13)
+        job_a = await coordinator._repo.register_real_job(  # type: ignore[attr-defined]
+            decision_cycle_id="c1", decision_context_id=None, symbol="A",
+            source_type="held_position", quota_scope=quota_scope,
+            fdc_ready_at=datetime.now(timezone.utc),
+        )
+        job_b = await coordinator._repo.register_real_job(  # type: ignore[attr-defined]
+            decision_cycle_id="c1", decision_context_id=None, symbol="B",
+            source_type="held_position", quota_scope=quota_scope,
+            fdc_ready_at=datetime.now(timezone.utc),
+        )
+
+        grant_a1 = await coordinator.try_reserve(
+            job_id=job_a, caller_id="ops-scheduler:held_position_reduce_sell",
+        )
+        assert isinstance(grant_a1, ReservationGrant)
+
+        await coordinator._repo.apply_retry_failure(  # type: ignore[attr-defined]
+            job_id=job_a, reason="provider_retryable_failure", will_retry=True,
+        )
+
+        # A의 재시도가 B보다 먼저 폴링해도, B가 아직 QUEUED인 한 거부된다.
+        denied_a2 = await coordinator.try_reserve(
+            job_id=job_a, caller_id="ops-scheduler:held_position_reduce_sell",
+        )
+        assert isinstance(denied_a2, ReservationDenied)
+
+        grant_b = await coordinator.try_reserve(
+            job_id=job_b, caller_id="ops-scheduler:held_position_reduce_sell",
+        )
+        assert isinstance(grant_b, ReservationGrant)
+
+        grant_a2 = await coordinator.try_reserve(
+            job_id=job_a, caller_id="ops-scheduler:held_position_reduce_sell",
+            attempt_no=2,
+        )
+        assert isinstance(grant_a2, ReservationGrant)
+
+        from agent_trading.db.connection import connection
+        async with connection() as conn:
+            row_a = await conn.fetchrow(
+                "SELECT status, provider_retry_count, queue_reenqueue_count, "
+                "pre_http_execution_failure_count FROM trading.fdc_queue_jobs "
+                "WHERE job_id = $1",
+                job_a,
+            )
+        assert row_a["status"] == "RESERVATION_GRANTED"
+        assert row_a["provider_retry_count"] == 1
+        assert row_a["queue_reenqueue_count"] == 1
+        assert row_a["pre_http_execution_failure_count"] == 0
+
+    @pytest.mark.asyncio
+    async def test_pre_http_failure_retry_counters_and_no_queue_jump_real_db(
+        self, db_ready, quota_scope: str,
+    ) -> None:
+        """HTTP 시작 전 실패 후 재시도 — pre-HTTP counter/reenqueue
+        counter가 정확히 증가하고, 후속 job을 앞지르지 않는다."""
+        coordinator = _postgres_coordinator(quota_scope=quota_scope, target_rpm=13)
+        job_a = await coordinator._repo.register_real_job(  # type: ignore[attr-defined]
+            decision_cycle_id="c1", decision_context_id=None, symbol="A",
+            source_type="held_position", quota_scope=quota_scope,
+            fdc_ready_at=datetime.now(timezone.utc),
+        )
+        job_b = await coordinator._repo.register_real_job(  # type: ignore[attr-defined]
+            decision_cycle_id="c1", decision_context_id=None, symbol="B",
+            source_type="held_position", quota_scope=quota_scope,
+            fdc_ready_at=datetime.now(timezone.utc),
+        )
+
+        grant_a1 = await coordinator.try_reserve(
+            job_id=job_a, caller_id="ops-scheduler:held_position_reduce_sell",
+        )
+        assert isinstance(grant_a1, ReservationGrant)
+
+        # HTTP 시작 전 worker/subprocess 생성 실패 재현.
+        await coordinator._repo.apply_retry_failure(  # type: ignore[attr-defined]
+            job_id=job_a, reason="pre_http_execution_failure", will_retry=True,
+        )
+
+        denied_a2 = await coordinator.try_reserve(
+            job_id=job_a, caller_id="ops-scheduler:held_position_reduce_sell",
+            attempt_no=2,
+        )
+        assert isinstance(denied_a2, ReservationDenied)  # B가 아직 QUEUED
+
+        grant_b = await coordinator.try_reserve(
+            job_id=job_b, caller_id="ops-scheduler:held_position_reduce_sell",
+        )
+        assert isinstance(grant_b, ReservationGrant)
+
+        from agent_trading.db.connection import connection
+        async with connection() as conn:
+            row_a = await conn.fetchrow(
+                "SELECT status, pre_http_execution_failure_count, "
+                "reserved_but_http_not_started_count, queue_reenqueue_count, "
+                "provider_retry_count FROM trading.fdc_queue_jobs WHERE job_id = $1",
+                job_a,
+            )
+        assert row_a["status"] == "QUEUED"
+        assert row_a["pre_http_execution_failure_count"] == 1
+        assert row_a["reserved_but_http_not_started_count"] == 1
+        assert row_a["queue_reenqueue_count"] == 1
+        assert row_a["provider_retry_count"] == 0
+
+    @pytest.mark.asyncio
+    async def test_provider_429_retry_counters_and_no_duplicate_http_start_real_db(
+        self, db_ready, quota_scope: str,
+    ) -> None:
+        """provider 429 후 재시도 — provider_retry_count/queue_reenqueue_
+        count/http_attempt_count/http_429_count가 실제 값과 일치하고,
+        새 reservation/attempt가 쓰이며, 동일 reservation의 HTTP 시작
+        중복 기록은 불가능하다."""
+        coordinator = _postgres_coordinator(quota_scope=quota_scope, target_rpm=13)
+        job_id = await coordinator._repo.register_real_job(  # type: ignore[attr-defined]
+            decision_cycle_id="c1", decision_context_id=None, symbol="A",
+            source_type="held_position", quota_scope=quota_scope,
+            fdc_ready_at=datetime.now(timezone.utc),
+        )
+
+        grant1 = await coordinator.try_reserve(
+            job_id=job_id, caller_id="ops-scheduler:held_position_reduce_sell",
+        )
+        assert isinstance(grant1, ReservationGrant)
+        await coordinator.record_attempt_outcome(
+            reservation_id=grant1.reservation_id, outcome="http_started",
+            http_started_at=datetime.now(timezone.utc),
+        )
+        # 동일 reservation의 HTTP 시작 중복 기록은 불가능하다.
+        with pytest.raises(ValueError):
+            await coordinator.record_attempt_outcome(
+                reservation_id=grant1.reservation_id, outcome="http_started",
+                http_started_at=datetime.now(timezone.utc),
+            )
+        await coordinator.record_attempt_outcome(
+            reservation_id=grant1.reservation_id, outcome="http_failed_retryable",
+            http_status=429, http_429_observed=True,
+        )
+        await coordinator._repo.record_http_attempt_counters(  # type: ignore[attr-defined]
+            job_id=job_id, http_429_observed=True,
+        )
+        await coordinator._repo.apply_retry_failure(  # type: ignore[attr-defined]
+            job_id=job_id, reason="provider_retryable_failure", will_retry=True,
+        )
+
+        grant2 = await coordinator.try_reserve(
+            job_id=job_id, caller_id="ops-scheduler:held_position_reduce_sell",
+            attempt_no=2,
+        )
+        assert isinstance(grant2, ReservationGrant)
+        assert grant2.reservation_id != grant1.reservation_id  # 새 reservation
+        await coordinator.record_attempt_outcome(
+            reservation_id=grant2.reservation_id, outcome="http_succeeded",
+            http_started_at=datetime.now(timezone.utc),
+        )
+        await coordinator._repo.record_http_attempt_counters(  # type: ignore[attr-defined]
+            job_id=job_id, http_429_observed=False,
+        )
+
+        from agent_trading.db.connection import connection
+        async with connection() as conn:
+            row = await conn.fetchrow(
+                "SELECT provider_retry_count, queue_reenqueue_count, "
+                "http_attempt_count, http_429_count, permit_consumed_count "
+                "FROM trading.fdc_queue_jobs WHERE job_id = $1",
+                job_id,
+            )
+            attempt_rows = await conn.fetch(
+                "SELECT attempt_id FROM trading.fdc_provider_attempts "
+                "WHERE job_id = $1",
+                job_id,
+            )
+        assert row["provider_retry_count"] == 1
+        assert row["queue_reenqueue_count"] == 1
+        assert row["http_attempt_count"] == 2
+        assert row["http_429_count"] == 1
+        assert row["permit_consumed_count"] == 2
+        assert row["http_attempt_count"] <= row["permit_consumed_count"]
+        assert len(attempt_rows) == 2  # 새 reservation = 새 attempt 행
+
+    @pytest.mark.asyncio
+    async def test_success_and_nonretryable_failure_do_not_touch_retry_counters_real_db(
+        self, db_ready, quota_scope: str,
+    ) -> None:
+        """성공 및 non-retryable 실패 — retry/requeue counter가 증가하지
+        않고, terminal status와 attempt outcome이 일치한다."""
+        coordinator = _postgres_coordinator(quota_scope=quota_scope, target_rpm=13)
+
+        job_success = await coordinator._repo.register_real_job(  # type: ignore[attr-defined]
+            decision_cycle_id="c1", decision_context_id=None, symbol="SUCCESS",
+            source_type="held_position", quota_scope=quota_scope,
+            fdc_ready_at=datetime.now(timezone.utc),
+        )
+        grant_s = await coordinator.try_reserve(
+            job_id=job_success, caller_id="ops-scheduler:held_position_reduce_sell",
+        )
+        assert isinstance(grant_s, ReservationGrant)
+        await coordinator.record_attempt_outcome(
+            reservation_id=grant_s.reservation_id, outcome="http_succeeded",
+            http_started_at=datetime.now(timezone.utc),
+        )
+        await coordinator._repo.record_http_attempt_counters(  # type: ignore[attr-defined]
+            job_id=job_success, http_429_observed=False,
+        )
+        await coordinator._repo.mark_job_terminal(  # type: ignore[attr-defined]
+            job_id=job_success, status="FDC_SUCCEEDED",
+        )
+
+        job_nonretryable = await coordinator._repo.register_real_job(  # type: ignore[attr-defined]
+            decision_cycle_id="c1", decision_context_id=None, symbol="NONRETRYABLE",
+            source_type="held_position", quota_scope=quota_scope,
+            fdc_ready_at=datetime.now(timezone.utc),
+        )
+        grant_n = await coordinator.try_reserve(
+            job_id=job_nonretryable, caller_id="ops-scheduler:held_position_reduce_sell",
+        )
+        assert isinstance(grant_n, ReservationGrant)
+        await coordinator.record_attempt_outcome(
+            reservation_id=grant_n.reservation_id, outcome="http_failed_final",
+            http_status=400, http_started_at=datetime.now(timezone.utc),
+        )
+        await coordinator._repo.record_http_attempt_counters(  # type: ignore[attr-defined]
+            job_id=job_nonretryable, http_429_observed=False,
+        )
+        await coordinator._repo.mark_job_terminal(  # type: ignore[attr-defined]
+            job_id=job_nonretryable, status="FDC_FAILED_FINAL",
+            reason="provider_nonretryable",
+        )
+
+        from agent_trading.db.connection import connection
+        async with connection() as conn:
+            row_s = await conn.fetchrow(
+                "SELECT status, provider_retry_count, pre_http_execution_failure_count, "
+                "queue_reenqueue_count, http_attempt_count FROM trading.fdc_queue_jobs "
+                "WHERE job_id = $1",
+                job_success,
+            )
+            row_n = await conn.fetchrow(
+                "SELECT status, failure_or_cancel_reason, provider_retry_count, "
+                "queue_reenqueue_count, http_attempt_count FROM trading.fdc_queue_jobs "
+                "WHERE job_id = $1",
+                job_nonretryable,
+            )
+        assert row_s["status"] == "FDC_SUCCEEDED"
+        assert row_s["provider_retry_count"] == 0
+        assert row_s["pre_http_execution_failure_count"] == 0
+        assert row_s["queue_reenqueue_count"] == 0
+        assert row_s["http_attempt_count"] == 1
+
+        assert row_n["status"] == "FDC_FAILED_FINAL"
+        assert row_n["failure_or_cancel_reason"] == "provider_nonretryable"
+        assert row_n["provider_retry_count"] == 0
+        assert row_n["queue_reenqueue_count"] == 0
+        assert row_n["http_attempt_count"] == 1

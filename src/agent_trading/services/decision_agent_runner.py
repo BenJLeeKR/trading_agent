@@ -534,7 +534,20 @@ async def complete_fdc_actual_dispatch(
                             )
                             return build_fallback_bundle()
 
-                        if provider_attempt_no < max_provider_attempts:
+                        will_retry = provider_attempt_no < max_provider_attempts
+                        # 2026-08-28 6차 리뷰 보정 — 이 실패 유형이
+                        # 일어났다는 사실 자체를 will_retry와 무관하게
+                        # 반영한다(설계 문서 §5가 exhaustion 판정 이전에
+                        # counter를 올리는 순서와 일치). will_retry=True면
+                        # 같은 호출 안에서 job을 FIFO tail로 원자적으로
+                        # 재등록한다(job_id는 그대로, enqueue_sequence만
+                        # 새로 발급) — 이미 대기 중이던 다른 job의 순번을
+                        # 침해하지 않는다.
+                        await fdc_quota_repo.apply_retry_failure(
+                            job_id=job_id, reason="pre_http_execution_failure",
+                            will_retry=will_retry,
+                        )
+                        if will_retry:
                             provider_attempt_no += 1
                             continue
                         await fdc_quota_repo.mark_job_terminal(
@@ -548,22 +561,49 @@ async def complete_fdc_actual_dispatch(
                     # 알 수 없으므로 자동 재시도(=중복 호출 위험)하지
                     # 않는다. 이미 기록된 "http_started" outcome을
                     # 덮어쓰거나 "HTTP 미시작"으로 잘못 기록하지 않는다.
+                    # HTTP는 실제로 시작됐으므로 job 단위 http_attempt_
+                    # count는 반영한다(429 여부는 알 수 없다).
+                    await fdc_quota_repo.record_http_attempt_counters(
+                        job_id=job_id, http_429_observed=False,
+                    )
                     await fdc_quota_repo.mark_job_terminal(
                         job_id=job_id, status="FDC_FAILED_FINAL",
                         reason="fdc_only_subprocess_crashed_after_http_start_result_unknown",
                     )
                     return build_fallback_bundle()
 
+                # 2026-08-28 6차 리뷰 보정 — 이 시점에 fdc_only_result가
+                # success=True이므로 HTTP가 실제로 나갔다(subprocess가
+                # 결과 없이 죽은 경우는 위 branch에서 이미 처리됨). 성공/
+                # provider 레벨 실패 여부와 무관하게 job 단위 http_
+                # attempt_count/http_429_count를 정확히 1회 반영한다.
+                await fdc_quota_repo.record_http_attempt_counters(
+                    job_id=job_id,
+                    http_429_observed=(
+                        fdc_only_result.get("provider_http_429_count", 0) > 0
+                    ),
+                )
+
                 provider_final_status = fdc_only_result.get("provider_final_status", "")
                 retryable_statuses = {
                     "provider_rate_limit", "provider_error", "provider_timeout",
                 }
-                if (
-                    provider_final_status in retryable_statuses
-                    and provider_attempt_no < max_provider_attempts
-                ):
-                    provider_attempt_no += 1
-                    continue
+                if provider_final_status in retryable_statuses:
+                    will_retry = provider_attempt_no < max_provider_attempts
+                    # HTTP가 실제로 시작된 뒤의 retryable 실패 — will_retry
+                    # 와 무관하게 발생 사실 자체를 반영하고(설계 문서 §5),
+                    # will_retry=True면 job_id를 유지한 채 FIFO tail로
+                    # 원자적으로 재등록한다.
+                    await fdc_quota_repo.apply_retry_failure(
+                        job_id=job_id, reason="provider_retryable_failure",
+                        will_retry=will_retry,
+                    )
+                    if will_retry:
+                        provider_attempt_no += 1
+                        continue
+                    # 소진 — 아래 공통 terminal 처리로 넘어가
+                    # FDC_FAILED_FINAL(reason=provider_final_status)로
+                    # 종결된다.
 
                 merged = dict(pre_fdc_result)
                 merged["composer_output"] = fdc_only_result.get("composer_output", {})

@@ -2381,6 +2381,55 @@ class FdcQuotaRepository(Protocol):
         기록한다."""
         ...
 
+    async def apply_retry_failure(
+        self, *, job_id: UUID, reason: str, will_retry: bool,
+    ) -> None:
+        """FIFO tail 재등록 계약(2026-08-28 6차 리뷰 보정 — PR #359,
+        설계 문서 §5/§9).
+
+        ``complete_fdc_actual_dispatch()``가 retryable provider 실패
+        (``reason="provider_retryable_failure"``, HTTP가 실제로
+        시작된 뒤 429/5xx/timeout)나 HTTP 시작 전 subprocess 실패
+        (``reason="pre_http_execution_failure"``)를 만났을 때 호출한다.
+
+        이전 구현은 이 두 실패 후 같은 ``job_id``로 즉시 ``try_
+        reserve()``를 재호출했는데, job의 ``enqueue_sequence``가
+        그대로 유지돼 이미 앞서 있던 순번을 계속 지켰다 — 이 job의
+        재시도가 정상적으로 대기 중이던 다른(뒤에 등록됐지만 아직 첫
+        기회조차 받지 못한) job보다 매번 먼저 grant받는 FIFO 위반이
+        가능했다.
+
+        이 메서드는 job의 ``job_id``(audit identity)를 그대로 유지한
+        채(새 row를 만들지 않는다), ``will_retry=True``일 때만
+        ``enqueue_sequence``를 새로 발급해 FIFO tail로 옮기고
+        ``status``를 ``QUEUED``로 되돌린다 — 이후 ``try_reserve()``의
+        기존 FIFO admission 쿼리("나보다 작은 enqueue_sequence를 가진
+        QUEUED job이 있으면 양보")가 변경 없이 이 새 위치를 그대로
+        반영한다.
+
+        ``provider_retry_count``/``pre_http_execution_failure_count``
+        (및 파생 지표 ``queue_reenqueue_count``)는 ``will_retry`` 값과
+        무관하게 이 실패 유형이 발생했다는 사실 자체로 항상 증가한다
+        (설계 문서 §5 상태 전이도가 exhaustion 판정 이전에 counter를
+        올리는 순서와 일치) — ``will_retry=False``(소진)면 counter만
+        반영하고 큐 위치는 건드리지 않는다(호출자가 곧바로
+        ``mark_job_terminal()``로 종결시킨다).
+        """
+        ...
+
+    async def record_http_attempt_counters(
+        self, *, job_id: UUID, http_429_observed: bool = False,
+    ) -> None:
+        """실제 HTTP 시도가 있었던 attempt마다 job 단위 ``http_attempt_
+        count``/``http_429_count``를 갱신한다(2026-08-28 6차 리뷰 보정 —
+        설계 문서 §9, 불변식 ``http_attempt_count <= permit_consumed_
+        count``). ``http_started_at``이 채워진 attempt(성공, provider
+        레벨 실패, crash-after-http-start 전부 포함)마다 정확히 1회
+        호출돼야 한다 — HTTP가 시작되지 않은 경우(pre-HTTP 실패)는
+        호출하지 않는다.
+        """
+        ...
+
     async def get_attempt_http_lifecycle(
         self, *, reservation_id: UUID,
     ) -> AttemptHttpLifecycle:

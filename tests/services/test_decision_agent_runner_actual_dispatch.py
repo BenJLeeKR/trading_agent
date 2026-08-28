@@ -1137,3 +1137,284 @@ class TestRecordAttemptOutcomeRaceIsFailClosed:
         )
         assert result is not None
         assert result.ai_inputs.decision_type == "HOLD"  # fail-closed fallback
+
+
+class TestRetryFifoTailReenqueue:
+    """2026-08-28 6차 리뷰 보정 — retryable provider 실패/pre-HTTP 실패
+    재시도가 job의 기존 ``enqueue_sequence``를 유지한 채 같은 job_id로
+    즉시 재요청하면, 이미 대기 중이던 다른(뒤에 등록됐지만 아직 한 번도
+    grant받지 못한) job의 순번을 침해한다. ``apply_retry_failure()``가
+    ``will_retry=True``일 때 job을 job_id는 유지한 채 새 ``enqueue_
+    sequence``로 FIFO tail에 재등록해야 한다."""
+
+    @pytest.mark.asyncio
+    async def test_apply_retry_failure_moves_job_to_fifo_tail_behind_waiting_job(
+        self,
+    ) -> None:
+        """repository 계층 직접 검증 — 가장 결정적이고 타이밍에 좌우되지
+        않는 형태로 핵심 메커니즘을 증명한다."""
+        from agent_trading.repositories.contracts import (
+            ReservationDenied as _ReservationDenied,
+            ReservationGrant as _ReservationGrant,
+        )
+        from agent_trading.services.fdc_quota_coordinator import FdcQuotaCoordinator
+
+        repo = InMemoryFdcQuotaRepository()
+        coordinator = FdcQuotaCoordinator(
+            repo=repo, target_rpm=13, quota_scope="scope-retry-fifo",
+        )
+        job_a = await repo.register_real_job(
+            decision_cycle_id="c1", decision_context_id=None, symbol="A",
+            source_type="held_position", quota_scope="scope-retry-fifo",
+            fdc_ready_at=datetime.now(timezone.utc),
+        )
+        job_b = await repo.register_real_job(
+            decision_cycle_id="c1", decision_context_id=None, symbol="B",
+            source_type="held_position", quota_scope="scope-retry-fifo",
+            fdc_ready_at=datetime.now(timezone.utc),
+        )
+
+        # A가 먼저 등록됐으므로 먼저 grant된다.
+        grant_a1 = await coordinator.try_reserve(job_id=job_a, caller_id="ops-scheduler")
+        assert isinstance(grant_a1, _ReservationGrant)
+
+        # A가 retryable provider 실패를 겪어 FIFO tail로 재등록된다.
+        await repo.apply_retry_failure(
+            job_id=job_a, reason="provider_retryable_failure", will_retry=True,
+        )
+        assert repo._jobs[job_a]["status"] == "QUEUED"  # type: ignore[attr-defined]
+        assert repo._jobs[job_a]["provider_retry_count"] == 1  # type: ignore[attr-defined]
+        assert repo._jobs[job_a]["queue_reenqueue_count"] == 1  # type: ignore[attr-defined]
+
+        # B는 A보다 먼저 등록됐던 적이 없다(A 다음에 등록) — 하지만 A가
+        # 재등록되며 새 enqueue_sequence를 받았으므로, 이제 B가 A보다
+        # 앞선다. A가 먼저 폴링해도 B가 아직 QUEUED인 한 거부돼야 한다
+        # (핵심 회귀 방지 포인트 — 재시도가 새치기하지 않는다).
+        denied_a2 = await coordinator.try_reserve(job_id=job_a, caller_id="ops-scheduler")
+        assert isinstance(denied_a2, _ReservationDenied)
+
+        # B는 정상적으로 grant된다.
+        grant_b = await coordinator.try_reserve(job_id=job_b, caller_id="ops-scheduler")
+        assert isinstance(grant_b, _ReservationGrant)
+
+        # B가 더 이상 QUEUED가 아니므로(RESERVATION_GRANTED), 이제
+        # A의 재시도(그 다음 순서)도 정상적으로 grant된다.
+        grant_a2 = await coordinator.try_reserve(job_id=job_a, caller_id="ops-scheduler")
+        assert isinstance(grant_a2, _ReservationGrant)
+
+    @pytest.mark.asyncio
+    async def test_end_to_end_provider_retryable_failure_then_success_reenqueues_and_counts(
+        self, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """complete_fdc_actual_dispatch() 전체 경로로 재시도 1회 후
+        성공하는 시나리오를 실행하고, job-level accounting이 정확히
+        갱신되는지 검증한다."""
+        import agent_trading.services.decision_agent_runner as runner_module
+
+        repo = InMemoryFdcQuotaRepository()
+        job_id = await repo.register_real_job(
+            decision_cycle_id="c1", decision_context_id=None, symbol="005930",
+            source_type="held_position", quota_scope="gemini:shared-operational",
+            fdc_ready_at=datetime.now(timezone.utc),
+        )
+
+        call_count = {"n": 0}
+
+        async def _fake_spawn_impl(input_bytes, *, subprocess_timeout, decision_context_id, correlation_id):
+            call_count["n"] += 1
+            if call_count["n"] == 1:
+                return _fdc_only_retryable_failure_result(), b"{}"
+            return _fdc_only_success_result(), b"{}"
+
+        monkeypatch.setattr(runner_module, "_spawn_agent_subprocess_impl", _fake_spawn_impl)
+
+        result = await runner_module.complete_fdc_actual_dispatch(
+            fdc_quota_repo=repo, provider_runtime={},
+            subprocess_timeout=90, job_id=job_id,
+            pre_fdc_result=_pre_fdc_ready_result(),
+            correlation_id="test-corr", decision_context_id=None,
+            worker_semaphore=asyncio.Semaphore(5),
+        )
+
+        assert call_count["n"] == 2  # 재시도돼 성공
+        assert result is not None
+        job = repo._jobs[job_id]  # type: ignore[attr-defined]
+        assert job["status"] == "FDC_SUCCEEDED"
+        assert job["provider_retry_count"] == 1
+        assert job["pre_http_execution_failure_count"] == 0
+        assert job["queue_reenqueue_count"] == 1
+        assert job["http_attempt_count"] == 2  # 실패한 시도도 HTTP는 나갔다
+        assert job["http_429_count"] == 1  # _fdc_only_retryable_failure_result의 429=1
+        assert job["reserved_but_http_not_started_count"] == 0
+
+    @pytest.mark.asyncio
+    async def test_pre_http_failure_retry_increments_pre_http_counters_only(
+        self, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        import agent_trading.services.decision_agent_runner as runner_module
+
+        repo = InMemoryFdcQuotaRepository()
+        job_id = await repo.register_real_job(
+            decision_cycle_id="c1", decision_context_id=None, symbol="005930",
+            source_type="held_position", quota_scope="gemini:shared-operational",
+            fdc_ready_at=datetime.now(timezone.utc),
+        )
+
+        call_count = {"n": 0}
+
+        async def _fake_spawn_impl(input_bytes, *, subprocess_timeout, decision_context_id, correlation_id):
+            call_count["n"] += 1
+            if call_count["n"] == 1:
+                return None, b""  # HTTP 시작 전 crash — NOT_STARTED
+            return _fdc_only_success_result(), b"{}"
+
+        monkeypatch.setattr(runner_module, "_spawn_agent_subprocess_impl", _fake_spawn_impl)
+
+        result = await runner_module.complete_fdc_actual_dispatch(
+            fdc_quota_repo=repo, provider_runtime={},
+            subprocess_timeout=90, job_id=job_id,
+            pre_fdc_result=_pre_fdc_ready_result(),
+            correlation_id="test-corr", decision_context_id=None,
+            worker_semaphore=asyncio.Semaphore(5),
+        )
+
+        assert call_count["n"] == 2
+        assert result is not None
+        job = repo._jobs[job_id]  # type: ignore[attr-defined]
+        assert job["status"] == "FDC_SUCCEEDED"
+        assert job["provider_retry_count"] == 0  # provider 실패가 아니다
+        assert job["pre_http_execution_failure_count"] == 1
+        assert job["queue_reenqueue_count"] == 1
+        assert job["reserved_but_http_not_started_count"] == 1
+        # 재시도(2차) 시도만 실제 HTTP를 냈다 — 1차는 HTTP 시작 전 실패.
+        assert job["http_attempt_count"] == 1
+
+    @pytest.mark.asyncio
+    async def test_success_on_first_attempt_does_not_touch_retry_counters(
+        self, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        import agent_trading.services.decision_agent_runner as runner_module
+
+        repo = InMemoryFdcQuotaRepository()
+        job_id = await repo.register_real_job(
+            decision_cycle_id="c1", decision_context_id=None, symbol="005930",
+            source_type="held_position", quota_scope="gemini:shared-operational",
+            fdc_ready_at=datetime.now(timezone.utc),
+        )
+
+        async def _fake_spawn_impl(input_bytes, *, subprocess_timeout, decision_context_id, correlation_id):
+            return _fdc_only_success_result(), b"{}"
+
+        monkeypatch.setattr(runner_module, "_spawn_agent_subprocess_impl", _fake_spawn_impl)
+
+        await runner_module.complete_fdc_actual_dispatch(
+            fdc_quota_repo=repo, provider_runtime={},
+            subprocess_timeout=90, job_id=job_id,
+            pre_fdc_result=_pre_fdc_ready_result(),
+            correlation_id="test-corr", decision_context_id=None,
+            worker_semaphore=asyncio.Semaphore(5),
+        )
+
+        job = repo._jobs[job_id]  # type: ignore[attr-defined]
+        assert job["status"] == "FDC_SUCCEEDED"
+        assert job["provider_retry_count"] == 0
+        assert job["pre_http_execution_failure_count"] == 0
+        assert job["queue_reenqueue_count"] == 0
+        assert job["http_attempt_count"] == 1
+        assert job["http_429_count"] == 0
+        assert job["enqueue_sequence"] == 1  # 재등록된 적 없음 — 최초 등록값 그대로
+
+    @pytest.mark.asyncio
+    async def test_non_retryable_provider_failure_does_not_reenqueue(
+        self, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """4xx 등 non-retryable 실패는 재시도/재등록 대상이 아니다 —
+        retry counter를 전혀 건드리지 않고 즉시 종결된다."""
+        import agent_trading.services.decision_agent_runner as runner_module
+
+        repo = InMemoryFdcQuotaRepository()
+        job_id = await repo.register_real_job(
+            decision_cycle_id="c1", decision_context_id=None, symbol="005930",
+            source_type="held_position", quota_scope="gemini:shared-operational",
+            fdc_ready_at=datetime.now(timezone.utc),
+        )
+
+        call_count = {"n": 0}
+
+        async def _fake_spawn_impl(input_bytes, *, subprocess_timeout, decision_context_id, correlation_id):
+            call_count["n"] += 1
+            from agent_trading.services.ai_agents.schemas import FinalDecisionComposerOutput
+            return {
+                "success": True,
+                "composer_output": dataclass_to_dict(
+                    FinalDecisionComposerOutput(
+                        symbol="005930", decision_type="HOLD", confidence=0.0,
+                    )
+                ),
+                "provider_final_status": "provider_nonretryable",
+                "provider_http_attempt_count": 1,
+                "provider_http_429_count": 0,
+                "provider_execution_seconds": 0.3,
+            }, b"{}"
+
+        monkeypatch.setattr(runner_module, "_spawn_agent_subprocess_impl", _fake_spawn_impl)
+
+        result = await runner_module.complete_fdc_actual_dispatch(
+            fdc_quota_repo=repo, provider_runtime={},
+            subprocess_timeout=90, job_id=job_id,
+            pre_fdc_result=_pre_fdc_ready_result(),
+            correlation_id="test-corr", decision_context_id=None,
+            worker_semaphore=asyncio.Semaphore(5),
+        )
+
+        assert call_count["n"] == 1  # 재시도 없음
+        assert result is not None
+        job = repo._jobs[job_id]  # type: ignore[attr-defined]
+        assert job["status"] == "FDC_FAILED_FINAL"
+        assert job["failure_or_cancel_reason"] == "provider_nonretryable"
+        assert job["provider_retry_count"] == 0
+        assert job["queue_reenqueue_count"] == 0
+        assert job["http_attempt_count"] == 1  # HTTP는 실제로 나갔다
+
+    @pytest.mark.asyncio
+    async def test_provider_retry_exhaustion_still_counts_final_failed_attempt(
+        self, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """소진(exhaustion)으로 이어지는 마지막 실패도 provider_retry_
+        count/queue_reenqueue_count에 반영된다(설계 문서 §5 — counter
+        증가가 exhaustion 판정보다 먼저 일어난다) — 다만 그 마지막
+        시도는 실제로 FIFO tail에 다시 서지 않고 곧바로 종결된다."""
+        import agent_trading.services.decision_agent_runner as runner_module
+
+        repo = InMemoryFdcQuotaRepository()
+        job_id = await repo.register_real_job(
+            decision_cycle_id="c1", decision_context_id=None, symbol="005930",
+            source_type="held_position", quota_scope="gemini:shared-operational",
+            fdc_ready_at=datetime.now(timezone.utc),
+        )
+
+        call_count = {"n": 0}
+
+        async def _fake_spawn_impl(input_bytes, *, subprocess_timeout, decision_context_id, correlation_id):
+            call_count["n"] += 1
+            return _fdc_only_retryable_failure_result(), b"{}"
+
+        monkeypatch.setattr(runner_module, "_spawn_agent_subprocess_impl", _fake_spawn_impl)
+
+        result = await runner_module.complete_fdc_actual_dispatch(
+            fdc_quota_repo=repo, provider_runtime={},
+            subprocess_timeout=90, job_id=job_id,
+            pre_fdc_result=_pre_fdc_ready_result(),
+            correlation_id="test-corr", decision_context_id=None,
+            worker_semaphore=asyncio.Semaphore(5),
+        )
+
+        assert call_count["n"] == 3  # max_provider_attempts=3까지 전부 소진
+        assert result is not None
+        job = repo._jobs[job_id]  # type: ignore[attr-defined]
+        assert job["status"] == "FDC_FAILED_FINAL"
+        assert job["failure_or_cancel_reason"] == "provider_rate_limit"
+        assert job["provider_retry_count"] == 3  # 3번의 실패 발생 전부 반영
+        assert job["queue_reenqueue_count"] == 3
+        assert job["http_attempt_count"] == 3
+        assert job["http_429_count"] == 3

@@ -489,6 +489,39 @@ CANCELLED ← 시장 종료 / 운영자 명시 취소 / 프로세스 종료(오�
 `provider_queue_timeout`이라는 기존 reason code는 **이 신규 경로에서 사용하지
 않는다** — 순번 대기로 인한 확정 실패라는 개념 자체가 새 계약에는 존재하지 않는다.
 
+> **실제 구현 확정(2026-08-28 6차 리뷰 보정 — PR #359)**: 위 상태 전이도의
+> "새 queue_entry_id로 FIFO tail 재등록"을 구현 PR에서 다음과 같이 확정했다 —
+> **새 row/새 job_id를 만들지 않고, 기존 row의 `enqueue_sequence`를 원자적으로
+> 새로 발급해 FIFO tail로 옮긴다**(`apply_retry_failure()`, `contracts.py`/
+> `postgres/fdc_quota.py`/`memory.py`). `job_id`(audit identity)는 그대로
+> 유지되므로, `fdc_provider_attempts`의 `(job_id, attempt_no)` 유일 제약과
+> attempt 행 히스토리가 하나의 job_id 아래 연속적으로 남는다 — "새
+> queue_entry_id"는 이 구현에서 "새 `enqueue_sequence` 값"으로 구체화됐다
+> (별도 `queue_entry_id` 컬럼은 추가하지 않았다 — 기존 `enqueue_sequence`가
+> 이미 그 역할을 한다).
+>
+> `RETRY_QUEUED`라는 별도 persisted 상태값도 도입하지 않았다 — 재등록 시
+> `status`를 곧바로(그리고 유일하게) `QUEUED`로 되돌린다. 기존 `try_reserve()`
+> FIFO admission 쿼리("나보다 작은 enqueue_sequence를 가진 QUEUED job이
+> 있으면 양보")가 이 값을 그대로 재사용하므로 admission 로직 자체는 전혀
+> 바뀌지 않는다 — `RETRY_QUEUED`라는 중간 상태를 별도로 두면 `list_
+> resumable_real_jobs()`(§17.7, `status='QUEUED'`만 조회)와 recovery scan
+> (`status='RESERVATION_GRANTED'`만 조회)의 WHERE 절을 모두 넓혀야 했는데,
+> 그 복잡도 증가분에 걸맞은 실익이 없다고 판단했다 — "재시도로 몇 번
+> 재등록됐는지"는 `queue_reenqueue_count`(job 단위 counter)가 이미 감사
+> 가능하게 기록하므로, 상태값 자체를 분리할 필요가 없다.
+>
+> **counter 증가 시점(설계 문서 §9 순서 그대로 구현)**: `provider_retry_
+> count`/`pre_http_execution_failure_count`(및 파생 지표 `queue_reenqueue_
+> count`)는 `will_retry` 여부와 **무관하게** 그 실패 유형이 발생한 사실
+> 자체로 항상 증가한다 — exhaustion으로 이어지는 마지막 실패도 포함된다
+> (§5 상태 전이도가 exhaustion 판정 이전에 counter를 올리는 순서와 일치).
+> `will_retry=True`일 때만 실제로 `enqueue_sequence`를 새로 발급하고
+> `status`를 `QUEUED`로 되돌린다. `http_attempt_count`/`http_429_count`는
+> `record_http_attempt_counters()`로 별도 관리하며, HTTP가 실제로 시작된
+> attempt(성공/provider 레벨 실패/crash-after-http-start 전부)마다 정확히
+> 1회 호출한다 — pre-HTTP 실패(HTTP 미시작)는 호출하지 않는다.
+
 ## 6. Atomic reservation transaction 계약
 
 > **보정 1 반영**: 이 트랜잭션의 유일한 호출자는 **dispatcher**다. 트랜잭션이

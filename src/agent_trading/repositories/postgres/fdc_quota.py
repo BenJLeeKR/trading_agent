@@ -580,6 +580,78 @@ class PostgresFdcQuotaRepository:
             )
             await status_tx.commit()
 
+    async def apply_retry_failure(
+        self, *, job_id: uuid.UUID, reason: str, will_retry: bool,
+    ) -> None:
+        """FIFO tail 재등록(2026-08-28 6차 리뷰 보정 — PR #359, 설계
+        문서 §5/§9).
+
+        ``reason``은 ``"provider_retryable_failure"``(HTTP가 실제로
+        시작된 뒤 429/5xx/timeout) 또는 ``"pre_http_execution_
+        failure"``(HTTP 시작 전 subprocess 실패)다. 두 경우 모두 이
+        발생 자체를 job 단위 counter(``provider_retry_count``/
+        ``pre_http_execution_failure_count``, 파생 지표
+        ``queue_reenqueue_count``)에 원자적으로 반영한다 — retry가
+        이어지는지 소진돼 종결되는지와 무관하게 "이 유형의 실패가
+        일어났다"는 사실 자체는 항상 기록한다(§9 상태 전이도가
+        exhaustion 판정 **이전**에 counter를 증가시키는 순서와 일치).
+
+        ``will_retry=True``일 때만 실제로 FIFO tail로 재등록한다 —
+        ``enqueue_sequence``를 시퀀스의 다음 값으로 새로 발급하고
+        ``status``를 ``QUEUED``로 되돌린다. 이 job의 ``job_id``(audit
+        identity)는 그대로 유지된다 — 새 row를 만들지 않는다. 이후
+        ``try_reserve()``가 이 job_id로 다시 호출되면, FIFO admission
+        쿼리가 "나보다 작은 enqueue_sequence를 가진 QUEUED job"을 이
+        새 sequence 기준으로 재평가하므로, 이 재시도보다 먼저 대기
+        중이던 다른 job이 우선권을 갖는다 — 별도의 admission 로직
+        변경이 필요 없다(같은 쿼리가 새 sequence 값을 그대로 본다).
+
+        ``will_retry=False``(소진)면 counter만 반영하고 큐 위치는
+        건드리지 않는다 — 호출자가 곧바로 ``mark_job_terminal()``로
+        종결시키기 때문이다.
+        """
+        async with TransactionManager() as retry_tx:
+            await retry_tx.connection.execute(
+                "UPDATE trading.fdc_queue_jobs SET "
+                "provider_retry_count = provider_retry_count + "
+                "CASE WHEN $2 = 'provider_retryable_failure' THEN 1 ELSE 0 END, "
+                "pre_http_execution_failure_count = pre_http_execution_failure_count + "
+                "CASE WHEN $2 = 'pre_http_execution_failure' THEN 1 ELSE 0 END, "
+                "reserved_but_http_not_started_count = reserved_but_http_not_started_count + "
+                "CASE WHEN $2 = 'pre_http_execution_failure' THEN 1 ELSE 0 END, "
+                "queue_reenqueue_count = queue_reenqueue_count + 1, "
+                "status = CASE WHEN $3 THEN 'QUEUED' ELSE status END, "
+                "enqueue_sequence = CASE WHEN $3 THEN "
+                "nextval(pg_get_serial_sequence('trading.fdc_queue_jobs', 'enqueue_sequence')) "
+                "ELSE enqueue_sequence END, "
+                "updated_at = now() "
+                "WHERE job_id = $1",
+                job_id,
+                reason,
+                will_retry,
+            )
+            await retry_tx.commit()
+
+    async def record_http_attempt_counters(
+        self, *, job_id: uuid.UUID, http_429_observed: bool = False,
+    ) -> None:
+        """실제 HTTP 시도가 있었던 attempt마다 job 단위 ``http_attempt_
+        count``/``http_429_count``를 갱신한다(2026-08-28 6차 리뷰 보정 —
+        설계 문서 §9). ``http_started_at``이 채워진 attempt(성공이든
+        provider 레벨 실패든, crash-after-http-start든)마다 정확히
+        1회 호출돼야 한다 — HTTP가 시작되지 않은 경우(pre-HTTP 실패)는
+        호출하지 않는다."""
+        async with TransactionManager() as http_tx:
+            await http_tx.connection.execute(
+                "UPDATE trading.fdc_queue_jobs SET "
+                "http_attempt_count = http_attempt_count + 1, "
+                "http_429_count = http_429_count + CASE WHEN $2 THEN 1 ELSE 0 END, "
+                "updated_at = now() WHERE job_id = $1",
+                job_id,
+                http_429_observed,
+            )
+            await http_tx.commit()
+
     async def get_attempt_http_lifecycle(
         self, *, reservation_id: uuid.UUID,
     ) -> AttemptHttpLifecycle:

@@ -3408,11 +3408,46 @@ class InMemoryFdcQuotaRepository:
                 "reservation_denied_count": 0,
                 "dispatch_attempt_no": 0,
                 "permit_consumed_count": 0,
+                "provider_retry_count": 0,
+                "pre_http_execution_failure_count": 0,
+                "queue_reenqueue_count": 0,
+                "http_attempt_count": 0,
+                "http_429_count": 0,
+                "reserved_but_http_not_started_count": 0,
                 "failure_or_cancel_reason": None,
                 "pre_fdc_result": pre_fdc_result,
                 "correlation_id": correlation_id,
             }
             return job_id
+
+    async def apply_retry_failure(
+        self, *, job_id: UUID, reason: str, will_retry: bool,
+    ) -> None:
+        async with self._lock:
+            job = self._jobs.get(job_id)
+            if job is None:
+                return
+            if reason == "provider_retryable_failure":
+                job["provider_retry_count"] += 1
+            elif reason == "pre_http_execution_failure":
+                job["pre_http_execution_failure_count"] += 1
+                job["reserved_but_http_not_started_count"] += 1
+            job["queue_reenqueue_count"] += 1
+            if will_retry:
+                self._enqueue_sequence_counter += 1
+                job["enqueue_sequence"] = self._enqueue_sequence_counter
+                job["status"] = "QUEUED"
+
+    async def record_http_attempt_counters(
+        self, *, job_id: UUID, http_429_observed: bool = False,
+    ) -> None:
+        async with self._lock:
+            job = self._jobs.get(job_id)
+            if job is None:
+                return
+            job["http_attempt_count"] += 1
+            if http_429_observed:
+                job["http_429_count"] += 1
 
     async def list_resumable_real_jobs(
         self, *, quota_scope: str,
