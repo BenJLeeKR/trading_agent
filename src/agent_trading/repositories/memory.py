@@ -63,6 +63,7 @@ from agent_trading.domain.enums import (
     RealizedPnlComputationRunType,
 )
 from agent_trading.repositories.contracts import (
+    AttemptHttpLifecycle,
     CoreEligibilitySample,
     FillSyncHealthSummary,
     LossCutShadowObservationRow,
@@ -3156,6 +3157,7 @@ class _InMemoryFdcAttempt:
     mode: str
     outcome: str
     http_started_at: datetime | None = None
+    job_id: UUID | None = None
 
 
 class InMemoryFdcQuotaRepository:
@@ -3244,6 +3246,7 @@ class InMemoryFdcQuotaRepository:
                 reserved_at=now,
                 mode=mode,
                 outcome="reservation_granted",
+                job_id=job_id,
             )
             self._attempts[quota_scope].append(entry)
             self._attempts_by_id[reservation_id] = entry
@@ -3414,18 +3417,45 @@ class InMemoryFdcQuotaRepository:
     ) -> int:
         async with self._lock:
             terminal = {"FDC_SUCCEEDED", "FDC_FAILED_FINAL", "CANCELLED"}
-            affected = 0
-            for job in self._jobs.values():
-                if job["quota_scope"] != quota_scope:
-                    continue
-                if job["mode"] != "real":
-                    continue
-                if job["status"] in terminal:
-                    continue
-                job["status"] = "CANCELLED"
-                job["failure_or_cancel_reason"] = reason
+            stale_job_ids = [
+                job_id
+                for job_id, job in self._jobs.items()
+                if job["quota_scope"] == quota_scope
+                and job["mode"] == "real"
+                and job["status"] not in terminal
+            ]
+
+        affected = 0
+        for job_id in stale_job_ids:
+            async with self._lock:
+                job = self._jobs.get(job_id)
+                status = job["status"] if job is not None else None
+            if status is None:
+                continue
+            if status == "QUEUED":
+                await self.mark_job_terminal(
+                    job_id=job_id, status="CANCELLED", reason=reason,
+                )
                 affected += 1
-            return affected
+                continue
+
+            lifecycle = await self.get_latest_real_job_attempt_lifecycle(
+                job_id=job_id,
+            )
+            if lifecycle in (
+                AttemptHttpLifecycle.NOT_FOUND,
+                AttemptHttpLifecycle.NOT_STARTED,
+            ):
+                await self.mark_job_terminal(
+                    job_id=job_id, status="CANCELLED", reason=reason,
+                )
+            else:
+                await self.mark_job_terminal(
+                    job_id=job_id, status="FDC_FAILED_FINAL",
+                    reason="fdc_only_subprocess_crashed_after_http_start_result_unknown",
+                )
+            affected += 1
+        return affected
 
     async def mark_job_terminal(
         self, *, job_id: UUID, status: str, reason: str | None = None,
@@ -3440,9 +3470,29 @@ class InMemoryFdcQuotaRepository:
             if job_id in self._jobs:
                 self._jobs[job_id]["status"] = status
 
-    async def get_attempt_http_started_at(
+    async def get_attempt_http_lifecycle(
         self, *, reservation_id: UUID,
-    ) -> datetime | None:
+    ) -> AttemptHttpLifecycle:
         async with self._lock:
             entry = self._attempts_by_id.get(reservation_id)
-            return entry.http_started_at if entry is not None else None
+            if entry is None:
+                return AttemptHttpLifecycle.NOT_FOUND
+            if entry.http_started_at is None:
+                return AttemptHttpLifecycle.NOT_STARTED
+            return AttemptHttpLifecycle.STARTED
+
+    async def get_latest_real_job_attempt_lifecycle(
+        self, *, job_id: UUID,
+    ) -> AttemptHttpLifecycle:
+        async with self._lock:
+            matching = [
+                entry
+                for entry in self._attempts_by_id.values()
+                if entry.job_id == job_id
+            ]
+            if not matching:
+                return AttemptHttpLifecycle.NOT_FOUND
+            latest = max(matching, key=lambda entry: entry.reserved_at)
+            if latest.http_started_at is None:
+                return AttemptHttpLifecycle.NOT_STARTED
+            return AttemptHttpLifecycle.STARTED

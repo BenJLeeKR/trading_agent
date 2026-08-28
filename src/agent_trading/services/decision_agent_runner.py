@@ -318,6 +318,28 @@ def apply_expected_value_anchor(
     )
 
 
+class FdcDispatchDeferredError(Exception):
+    """post-gather dispatcher phase의 소프트 데드라인을 넘겨 이 job을
+    시작(또는 재시도)할 시간이 없음을 알리는 신호(2026-08-27 3차 리뷰
+    보정 — PR #359).
+
+    이 예외가 발생하는 시점에는 **아직 소비되지 않은 reservation이 전혀
+    없다** — ``complete_fdc_actual_dispatch()``의 루프는 매 iteration
+    시작 시(=``try_reserve()`` 호출 직전) 데드라인을 확인하므로, 이미
+    grant를 받은 뒤에는 항상 fdc_only 실행까지 같은 iteration 안에서
+    끝까지 진행한다. 즉 이 예외는 job의 DB 상태(``QUEUED`` 또는 마지막
+    attempt가 이미 종결된 채로 ``RESERVATION_GRANTED``)를 전혀 건드리지
+    않고 던져진다 — 호출자(``run_decision_loop.py``)는 이 job을
+    ``CANCELLED`` 처리하지 말고, 같은 프로세스의 다음 cycle에서 다시
+    시도하도록 carryover 목록에 남겨야 한다(프로세스가 실제로 종료된
+    경우에만 recovery scan이 정리한다).
+    """
+
+    def __init__(self, *, job_id: uuid.UUID) -> None:
+        super().__init__(f"FDC actual dispatch deferred (deadline): job_id={job_id}")
+        self.job_id = job_id
+
+
 async def complete_fdc_actual_dispatch(
     *,
     fdc_quota_repo: Any,
@@ -328,17 +350,34 @@ async def complete_fdc_actual_dispatch(
     correlation_id: str,
     decision_context_id: uuid.UUID | None,
     assembled_context: AIPolicyContextView,
+    worker_semaphore: asyncio.Semaphore,
+    deadline_monotonic: float | None = None,
     sleep_fn: Any = None,
 ) -> AgentExecutionBundle:
-    """FDC 실제 dispatch job 하나를 끝까지 처리한다(2026-08-27 2차 리뷰
+    """FDC 실제 dispatch job 하나를 끝까지 처리한다(2026-08-27 3차 리뷰
     보정 — PR #359, post-gather dispatcher 전용).
 
     ``DecisionAgentRunner._run_agents_in_subprocess_with_actual_
     dispatch()``가 이전에 symbol coroutine 안에서 직접 수행하던 "reservation
-    대기 → fdc_only → 재시도 → 병합" 로직을 그대로 옮겨온 것이다(로직
-    변경 없음 — 호출 위치만 symbol coroutine에서 post-gather dispatcher로
-    이동했다). FIFO 대기(deadline 없음)·coordinator 오류 지수 backoff·
-    provider retryable 실패 시 새 reservation은 이전과 동일하다.
+    대기 → fdc_only → 재시도 → 병합" 로직을 그대로 옮겨온 것이다.
+    FIFO 대기(reservation 자체는 무기한 폴링)·coordinator 오류 지수
+    backoff·provider retryable 실패 시 새 reservation은 이전과 동일하다.
+
+    ``worker_semaphore``(3차 보정 신설)는 fdc_only subprocess를 **실제로
+    실행하는 구간에만** 걸린다 — reservation 대기(``ReservationDenied``
+    폴링, coordinator 오류 backoff)는 이 semaphore를 전혀 점유하지
+    않는다(설계 문서 §7). ``FDC_WORKER_CONCURRENCY``는 "동시에 대기 중인
+    job 수"가 아니라 "동시에 실행 중인 fdc_only subprocess 수"를
+    제한한다는 의미가 이걸로 정확해진다.
+
+    ``deadline_monotonic``(3차 보정 신설)이 주어지고 이미 지났다면, 루프
+    맨 앞(=``try_reserve()`` 호출 직전)에서 ``FdcDispatchDeferredError``를
+    던지고 **아무 상태도 갱신하지 않는다** — grant를 받은 뒤에는 항상
+    fdc_only 실행까지 같은 iteration 안에서 끝까지 처리하므로, 이 예외가
+    발생했다는 것은 "새로 소비된 reservation이 없다"는 뜻이다. 살아 있는
+    프로세스가 데드라인 때문에 job을 ``CANCELLED``로 잘못 표시하는 것을
+    막기 위한 안전 경계다 — 실제 취소는 프로세스가 종료된 뒤 recovery
+    scan(``cancel_stale_real_jobs()``)만 수행한다.
 
     ``job_id``에 대응하는 ``fdc_queue_jobs`` row는 이미 등록돼 있다는
     전제로 호출된다(``DecisionAgentRunner``가 pre_fdc 단계에서 이미
@@ -350,7 +389,11 @@ async def complete_fdc_actual_dispatch(
         _resolve_fdc_provider_target_rpm,
         _resolve_gemini_provider_declared_rpm_limit,
     )
-    from agent_trading.repositories.contracts import CoordinatorError, ReservationDenied
+    from agent_trading.repositories.contracts import (
+        AttemptHttpLifecycle,
+        CoordinatorError,
+        ReservationDenied,
+    )
     from agent_trading.services.fdc_quota_coordinator import (
         DEFAULT_QUOTA_SCOPE,
         FdcQuotaCoordinator,
@@ -378,6 +421,13 @@ async def complete_fdc_actual_dispatch(
     coordinator_error_backoff = coordinator_error_backoff_initial_seconds
 
     while True:
+        # ── 데드라인 확인(reservation을 새로 만들기 전) ─────────────────
+        if (
+            deadline_monotonic is not None
+            and time_module.monotonic() >= deadline_monotonic
+        ):
+            raise FdcDispatchDeferredError(job_id=job_id)
+
         # ── reservation 대기(FIFO, deadline 없음) ───────────────────────
         result = await coordinator.try_reserve(
             job_id=job_id, caller_id=caller_id, mode="real",
@@ -396,7 +446,7 @@ async def complete_fdc_actual_dispatch(
         coordinator_error_backoff = coordinator_error_backoff_initial_seconds
         grant = result
 
-        # ── fdc_only 1회 HTTP 시도 ──────────────────────────────────────
+        # ── fdc_only 1회 HTTP 시도(worker semaphore는 이 구간만 점유) ───
         fdc_only_payload = {
             "decision_context_id": (
                 str(decision_context_id) if decision_context_id else None
@@ -421,23 +471,40 @@ async def complete_fdc_actual_dispatch(
             "reservation_quota_scope": grant.quota_scope,
             "reservation_window_count_before_grant": grant.window_count_before_grant,
         }
-        fdc_only_result, fdc_only_stdout = await _spawn_agent_subprocess_impl(
-            json.dumps(fdc_only_payload).encode("utf-8"),
-            subprocess_timeout=subprocess_timeout,
-            decision_context_id=decision_context_id,
-            correlation_id=correlation_id,
-        )
+        async with worker_semaphore:
+            fdc_only_result, fdc_only_stdout = await _spawn_agent_subprocess_impl(
+                json.dumps(fdc_only_payload).encode("utf-8"),
+                subprocess_timeout=subprocess_timeout,
+                decision_context_id=decision_context_id,
+                correlation_id=correlation_id,
+            )
 
         if fdc_only_result is None or not fdc_only_result.get("success"):
             # subprocess가 결과 없이 종료됐다(timeout/SIGKILL/JSON 파싱
-            # 실패/설정 단계 실패). 2026-08-27 2차 리뷰 보정 — 이 attempt의
-            # http_started_at을 직접 조회해 "HTTP가 실제로 시작됐는지"를
-            # 확인하지 않고 무조건 재시도하면, 이미 나간 HTTP 요청을
-            # 중복으로 다시 보낼 위험이 있다.
-            http_started_at = await fdc_quota_repo.get_attempt_http_started_at(
+            # 실패/설정 단계 실패). 2026-08-27 3차 리뷰 보정 — tri-state
+            # lifecycle로 "행이 없음"과 "행은 있으나 HTTP 미시작"을
+            # 구분한다. "행이 없음"은 try_reserve()의 원자적 grant+
+            # attempt-행 생성 계약(§6)이 깨진 데이터 정합성 이상이므로,
+            # "HTTP 미시작"과 같은 방식(자동 재시도)으로 처리하지 않는다.
+            lifecycle = await fdc_quota_repo.get_attempt_http_lifecycle(
                 reservation_id=grant.reservation_id,
             )
-            if http_started_at is None:
+            if lifecycle == AttemptHttpLifecycle.NOT_FOUND:
+                logger.error(
+                    "complete_fdc_actual_dispatch: job_id=%s reservation_id=%s "
+                    "grant 직후인데 attempt 행이 없다 — 데이터 정합성 이상. "
+                    "재시도하지 않고 fail-closed로 종결한다.",
+                    job_id, grant.reservation_id,
+                )
+                await fdc_quota_repo.mark_job_terminal(
+                    job_id=job_id, status="FDC_FAILED_FINAL",
+                    reason="fdc_provider_attempt_row_missing_data_integrity_error",
+                )
+                return apply_expected_value_anchor(
+                    build_fallback_bundle(), assembled_context=assembled_context,
+                )
+
+            if lifecycle == AttemptHttpLifecycle.NOT_STARTED:
                 # HTTP 시작 전 실패로 확인됨 — 안전하게 재시도할 수 있다.
                 # 이미 다른 경로(예: 자식 프로세스가 부분적으로 기록한
                 # 뒤 죽음)로 outcome이 기록됐을 수 있으므로 ValueError는
@@ -461,9 +528,9 @@ async def complete_fdc_actual_dispatch(
                     build_fallback_bundle(), assembled_context=assembled_context,
                 )
 
-            # HTTP가 실제로 시작된 뒤 결과를 회수하지 못했다 — 실제
-            # Gemini 호출이 성공했는지 실패했는지 알 수 없으므로 자동
-            # 재시도(=중복 호출 위험)하지 않는다. 이미 기록된
+            # STARTED — HTTP가 실제로 시작된 뒤 결과를 회수하지 못했다.
+            # 실제 Gemini 호출이 성공했는지 실패했는지 알 수 없으므로
+            # 자동 재시도(=중복 호출 위험)하지 않는다. 이미 기록된
             # "http_started" outcome을 덮어쓰거나 "HTTP 미시작"으로
             # 잘못 기록하지 않는다 — job만 fail-closed로 종결한다.
             await fdc_quota_repo.mark_job_terminal(

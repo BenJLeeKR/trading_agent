@@ -81,7 +81,10 @@ from agent_trading.runtime.bootstrap import (
     postgres_runtime,
 )
 from agent_trading.services.common_types import PhaseTraceEntry, SubmitResult
-from agent_trading.services.decision_agent_runner import complete_fdc_actual_dispatch
+from agent_trading.services.decision_agent_runner import (
+    FdcDispatchDeferredError,
+    complete_fdc_actual_dispatch,
+)
 from agent_trading.services.core_risk_off_topk_projection import (
     project_core_risk_off_topk_exceptions,
 )
@@ -3328,118 +3331,106 @@ async def _run_fdc_actual_dispatch_phase(
     output: str,
     cycle_count: int,
     phase_deadline_monotonic: float,
-) -> list[dict[str, object]]:
-    """post-gather FDC 실제 dispatch phase(2026-08-27 2차 리뷰 보정 —
+) -> tuple[list[dict[str, object]], list[dict[str, object]]]:
+    """post-gather FDC 실제 dispatch phase(2026-08-27 3차 리뷰 보정 —
     PR #359, 설계 문서 §4/§6/§7/§17). ``asyncio.gather(*coros)``로 모든
-    symbol 처리가 끝난 **뒤에만** 실행되며, symbol 처리용 semaphore
-    (``_SEMAPHORE_MAX``)와 무관한 별도 semaphore(``FDC_WORKER_
-    CONCURRENCY``)로 quota reservation 대기 + fdc_only 실행만 동시성을
-    제한한다.
+    symbol 처리가 끝난 **뒤에만** 실행된다.
 
-    ``phase_deadline_monotonic``(``time.monotonic()`` 기준)을 넘기면 아직
-    reservation을 받지 못했거나 완결되지 않은 job은 더 이상 진행하지
-    않고 ``CANCELLED``(reason="process_terminated_carryover_lost")로
-    종결한다 — 이 dispatcher를 실행 중인 프로세스 인스턴스가 곧 종료돼
-    carryover를 더 이상 들고 있을 수 없기 때문이며, 기존 recovery scan이
-    이미 쓰는 3가지 reason 중 하나를 그대로 재사용한다(설계 문서 §5,
-    신규 4번째 reason을 도입하지 않는다). ops-scheduler decision
-    subprocess timeout(420초) 안에서 이 phase가 끝나도록, 호출자
-    (``_run_loop()``)가 gather() phase 소요 시간을 뺀 나머지를
-    ``phase_deadline_monotonic``으로 넘긴다.
+    ``FDC_WORKER_CONCURRENCY`` semaphore는 ``complete_fdc_actual_
+    dispatch()`` 내부에서 fdc_only subprocess를 **실제로 실행하는
+    구간에만** 걸린다(3차 보정) — reservation 대기(FIFO 폴링, coordinator
+    오류 backoff)는 이 semaphore를 전혀 점유하지 않으므로, 임의로 많은
+    job이 동시에 reservation을 기다릴 수 있고 그 중 실제 실행 중인
+    fdc_only subprocess 수만 제한된다. 이는 symbol 처리용 semaphore
+    (``_SEMAPHORE_MAX``)와도 완전히 분리돼 있다.
+
+    ``phase_deadline_monotonic``(``time.monotonic()`` 기준)을 넘기면
+    **살아 있는 이 프로세스가 job을 CANCELLED로 표시하지 않는다**(3차
+    보정 — 이전 라운드는 이 경우도 ``reason=process_terminated_
+    carryover_lost``로 취소했는데, 그 시점에 프로세스는 실제로 종료된
+    것이 아니라 여전히 실행 중이었으므로 reason이 사실과 달랐다).
+    대신 ``FdcDispatchDeferredError``를 받은 job을 두 번째 반환값(다음
+    cycle로 넘길 carryover 목록)에 담아 호출자에게 돌려준다 — DB의
+    ``fdc_queue_jobs`` row는 전혀 건드리지 않는다. 이 프로세스가 실제로
+    종료되면(다음 cycle이 새 subprocess로 spawn되는 운영 경로), 그
+    다음 프로세스 시작 시 recovery scan(``cancel_stale_real_jobs()``)이
+    tri-state attempt lifecycle로 안전하게 정리한다.
     """
     if not pending_jobs:
-        return []
+        return [], []
 
     from agent_trading.config.settings import _resolve_fdc_worker_concurrency
 
     repos: RepositoryContainer = runtime["repositories"]
-    semaphore = asyncio.Semaphore(_resolve_fdc_worker_concurrency())
+    worker_semaphore = asyncio.Semaphore(_resolve_fdc_worker_concurrency())
 
-    async def _complete_one(job: dict[str, object]) -> dict[str, object]:
-        async with semaphore:
-            remaining = phase_deadline_monotonic - time.monotonic()
-            if remaining <= 0:
-                try:
-                    await repos.fdc_quota.mark_job_terminal(
-                        job_id=job["job_id"], status="CANCELLED",
-                        reason="process_terminated_carryover_lost",
-                    )
-                except Exception:
-                    logger.exception(
-                        "FDC dispatch deadline cancel failed: job_id=%s symbol=%s",
-                        job["job_id"], job["symbol"],
-                    )
-                return {
-                    "status": "CANCELLED", "symbol": job["symbol"],
-                    "market": job["market"], "job_id": str(job["job_id"]),
-                    "duration_seconds": 0.0,
-                }
-            try:
-                bundle = await asyncio.wait_for(
-                    complete_fdc_actual_dispatch(
-                        fdc_quota_repo=repos.fdc_quota,
-                        provider_runtime=job["provider_runtime"] or {},
-                        subprocess_timeout=job["subprocess_timeout"] or 90,
-                        job_id=job["job_id"],
-                        pre_fdc_result=job["pre_fdc_result"],
-                        correlation_id=job["request"].correlation_id,
-                        decision_context_id=job["request"].decision_context_id,
-                        assembled_context=job["assembled_context"],
-                    ),
-                    timeout=max(1.0, remaining),
-                )
-            except asyncio.TimeoutError:
-                try:
-                    await repos.fdc_quota.mark_job_terminal(
-                        job_id=job["job_id"], status="CANCELLED",
-                        reason="process_terminated_carryover_lost",
-                    )
-                except Exception:
-                    logger.exception(
-                        "FDC dispatch timeout cancel failed: job_id=%s symbol=%s",
-                        job["job_id"], job["symbol"],
-                    )
-                return {
-                    "status": "CANCELLED", "symbol": job["symbol"],
-                    "market": job["market"], "job_id": str(job["job_id"]),
-                    "duration_seconds": 0.0,
-                }
-            except Exception as exc:
-                logger.exception(
-                    "FDC actual dispatch failed unexpectedly: job_id=%s symbol=%s: %s",
-                    job["job_id"], job["symbol"], exc,
-                )
-                return {
-                    "status": "ERROR", "symbol": job["symbol"],
-                    "market": job["market"], "job_id": str(job["job_id"]),
-                    "error": str(exc), "duration_seconds": 0.0,
-                }
-
-            # second pass — 이미 완결된 agent_bundle로 override/EV-gate/
-            # sizing/submit만 재실행한다(agent를 다시 호출하지 않는다).
-            return await _run_one_cycle(
-                cycle=cycle_count,
-                submit=True,
-                dry_run=False,
-                output=output,
-                symbol=job["symbol"],
-                market=job["market"],
-                source_type=job["source_type"],
-                market_segment=job["market_segment"],
-                index_memberships=job["index_memberships"],
-                runtime=runtime,
-                cycle_precheck=cycle_precheck,
-                universe_anchor=job["universe_anchor"],
-                deterministic_trigger_override=job["deterministic_trigger_override"],
-                r3b_alpha_percentile=job["r3b_alpha_percentile"],
-                cycle_index=job["cycle_index"],
-                decision_cycle_id=job["decision_cycle_id"],
-                precomputed_agent_bundle=bundle,
-                decision_context_id_override=job["request"].decision_context_id,
+    async def _complete_one(
+        job: dict[str, object],
+    ) -> tuple[dict[str, object] | None, dict[str, object] | None]:
+        """(result, deferred_job) 튜플을 반환한다 — 정확히 하나만
+        non-None이다."""
+        try:
+            bundle = await complete_fdc_actual_dispatch(
+                fdc_quota_repo=repos.fdc_quota,
+                provider_runtime=job["provider_runtime"] or {},
+                subprocess_timeout=job["subprocess_timeout"] or 90,
+                job_id=job["job_id"],
+                pre_fdc_result=job["pre_fdc_result"],
+                correlation_id=job["request"].correlation_id,
+                decision_context_id=job["request"].decision_context_id,
+                assembled_context=job["assembled_context"],
+                worker_semaphore=worker_semaphore,
+                deadline_monotonic=phase_deadline_monotonic,
             )
+        except FdcDispatchDeferredError:
+            # 데드라인 — job의 DB 상태는 전혀 바뀌지 않았다. 다음
+            # cycle(같은 프로세스라면)이 재시도하도록 carryover로 돌려준다.
+            logger.info(
+                "FDC actual dispatch deferred (phase deadline): job_id=%s "
+                "symbol=%s — carried over to next cycle, not cancelled.",
+                job["job_id"], job["symbol"],
+            )
+            return None, job
+        except Exception as exc:
+            logger.exception(
+                "FDC actual dispatch failed unexpectedly: job_id=%s symbol=%s: %s",
+                job["job_id"], job["symbol"], exc,
+            )
+            return {
+                "status": "ERROR", "symbol": job["symbol"],
+                "market": job["market"], "job_id": str(job["job_id"]),
+                "error": str(exc), "duration_seconds": 0.0,
+            }, None
+
+        # second pass — 이미 완결된 agent_bundle로 override/EV-gate/
+        # sizing/submit만 재실행한다(agent를 다시 호출하지 않는다).
+        result = await _run_one_cycle(
+            cycle=cycle_count,
+            submit=True,
+            dry_run=False,
+            output=output,
+            symbol=job["symbol"],
+            market=job["market"],
+            source_type=job["source_type"],
+            market_segment=job["market_segment"],
+            index_memberships=job["index_memberships"],
+            runtime=runtime,
+            cycle_precheck=cycle_precheck,
+            universe_anchor=job["universe_anchor"],
+            deterministic_trigger_override=job["deterministic_trigger_override"],
+            r3b_alpha_percentile=job["r3b_alpha_percentile"],
+            cycle_index=job["cycle_index"],
+            decision_cycle_id=job["decision_cycle_id"],
+            precomputed_agent_bundle=bundle,
+            decision_context_id_override=job["request"].decision_context_id,
+        )
+        return result, None
 
     coros = [_complete_one(job) for job in pending_jobs]
-    return list(await asyncio.gather(*coros))
+    outcomes = list(await asyncio.gather(*coros))
+    results = [r for r, _ in outcomes if r is not None]
+    deferred_jobs = [d for _, d in outcomes if d is not None]
+    return results, deferred_jobs
 
 
 # ── Main loop ───────────────────────────────────────────────────────────────
@@ -3499,6 +3490,15 @@ async def _run_loop(
     total_fail = 0
     results: list[dict[str, object]] = []
     loop_start = time.monotonic()
+    # FDC 실제 dispatch 프로세스-내(cross-cycle) carryover(2026-08-27
+    # 3차 리뷰 보정 — PR #359) — 이전 cycle의 dispatcher phase가 소프트
+    # 데드라인 때문에 완결하지 못한 job을 여기 담아, **같은 프로세스가**
+    # 다음 cycle에서 다시 시도한다(DB에는 CANCELLED를 전혀 기록하지
+    # 않는다). 이 프로세스가 실제로 종료되면(예: --count 1 운영 경로)
+    # 이 목록은 그대로 버려지고, 다음 프로세스의 recovery scan이 DB
+    # 상태만 보고 정리한다 — 그 시점에는 프로세스가 실제로 종료된
+    # 것이므로 reason 문자열이 사실과 일치한다.
+    _fdc_dispatch_carryover: list[dict[str, object]] = []
 
     # ── Runtime: 루프 진입 시 1회 생성, 모든 symbol이 공유 ──────────────
     # 변경 전: _run_one_cycle()이 각 symbol마다 postgres_runtime() 생성
@@ -3872,33 +3872,42 @@ async def _run_loop(
                 await asyncio.gather(*coros)
             )
 
-            # ── FDC 실제 dispatch post-gather phase(2026-08-27 2차 리뷰
+            # ── FDC 실제 dispatch post-gather phase(2026-08-27 3차 리뷰
             # 보정 — PR #359) ────────────────────────────────────────
             # symbol asyncio.gather()가 끝난 뒤에만 실행된다 — quota
             # reservation 대기가 gather()를 막지 않는다는 계약을 여기서
             # 보장한다. FDC_ACTUAL_DISPATCH_ENABLED가 꺼져 있으면
-            # pending_fdc_dispatch_jobs는 항상 빈 리스트이므로(해당
-            # lane에 진입조차 하지 않음) 이 블록은 사실상 no-op이다.
-            if pending_fdc_dispatch_jobs:
+            # pending_fdc_dispatch_jobs/_fdc_dispatch_carryover는 항상 빈
+            # 리스트이므로(해당 lane에 진입조차 하지 않음) 이 블록은
+            # 사실상 no-op이다. 이전 cycle에서 데드라인 때문에 완결하지
+            # 못한 job(carryover)을 이번 cycle의 신규 pending job보다
+            # 먼저 시도한다 — FIFO 순번은 DB의 enqueue_sequence가 이미
+            # 보장하므로 Python list 순서 자체는 공정성에 영향이 없다.
+            _fdc_jobs_this_cycle = _fdc_dispatch_carryover + pending_fdc_dispatch_jobs
+            _fdc_dispatch_carryover = []
+            if _fdc_jobs_this_cycle:
                 _phase_deadline = (
                     _cycle_start_monotonic
                     + _DECISION_SUBPROCESS_TIMEOUT_CEILING_SECONDS
                     - _FDC_DISPATCH_PHASE_SAFETY_MARGIN_SECONDS
                 )
-                fdc_dispatch_results = await _run_fdc_actual_dispatch_phase(
-                    pending_fdc_dispatch_jobs,
-                    runtime=runtime,
-                    cycle_precheck=cycle_precheck,
-                    output=output,
-                    cycle_count=cycle_count,
-                    phase_deadline_monotonic=_phase_deadline,
+                fdc_dispatch_results, _deferred_jobs = (
+                    await _run_fdc_actual_dispatch_phase(
+                        _fdc_jobs_this_cycle,
+                        runtime=runtime,
+                        cycle_precheck=cycle_precheck,
+                        output=output,
+                        cycle_count=cycle_count,
+                        phase_deadline_monotonic=_phase_deadline,
+                    )
                 )
                 cycle_results.extend(fdc_dispatch_results)
+                _fdc_dispatch_carryover.extend(_deferred_jobs)
                 logger.info(
                     "Cycle %d FDC actual-dispatch phase complete: jobs=%d "
-                    "results=%d",
-                    cycle_count, len(pending_fdc_dispatch_jobs),
-                    len(fdc_dispatch_results),
+                    "results=%d deferred_to_next_cycle=%d",
+                    cycle_count, len(_fdc_jobs_this_cycle),
+                    len(fdc_dispatch_results), len(_deferred_jobs),
                 )
 
             # FDC cycle-scoped batch queue lifecycle shadow(Phase 1, 2차

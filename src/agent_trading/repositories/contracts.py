@@ -2087,6 +2087,24 @@ class ShadowJudgement:
 ShadowJudgementResult = ShadowJudgement | CoordinatorError
 
 
+class AttemptHttpLifecycle(str, Enum):
+    """``fdc_provider_attempts`` 행 하나의 HTTP 실행 lifecycle 3상태
+    (2026-08-27 3차 리뷰 보정 — PR #359).
+
+    이전에는 ``get_attempt_http_started_at() -> datetime | None``이
+    "행이 아예 없음"과 "행은 있으나 ``http_started_at IS NULL``"을 모두
+    ``None``으로 뭉뚱그려 반환했다 — crash 복구 판단에서 이 둘은 완전히
+    다른 의미다. "행이 없음"은 ``try_reserve()``가 grant와 attempt 행을
+    같은 트랜잭션에서 원자적으로 만드는 계약(§6)이 깨졌다는 데이터
+    정합성 이상이므로, "HTTP 미시작이라 안전하게 재시도 가능"과 절대
+    같은 방식으로 처리해서는 안 된다.
+    """
+
+    NOT_FOUND = "not_found"
+    NOT_STARTED = "not_started"
+    STARTED = "started"
+
+
 class FdcQuotaRepository(Protocol):
     """FDC 공용 13 RPM quota의 atomic reservation과 lifecycle shadow 관측.
 
@@ -2209,11 +2227,37 @@ class FdcQuotaRepository(Protocol):
         quota_scope: str,
         reason: str = "process_terminated_carryover_lost",
     ) -> int:
-        """재기동 recovery scan(§17.7) — 이 ``quota_scope``의 ``mode=
-        'real'`` job 중 terminal 상태(``FDC_SUCCEEDED``/``FDC_FAILED_
-        FINAL``/``CANCELLED``)가 아닌 모든 job을 ``CANCELLED``(사유는
-        ``reason``, 기본값은 §5가 확정한 "프로세스 종료" 사유)로
-        전이시킨다.
+        """재기동 recovery scan(§17.7) — **이 메서드는 새 프로세스가
+        시작할 때만 호출된다**(``run_decision_loop.py``가 자기 자신의
+        메인 루프에 진입하기 전 1회). 이 시점에는 이전에 이 job들을
+        만들었던 프로세스가 이미 확실히 종료된 상태이므로, ``reason``
+        기본값(§5 "프로세스 종료" 사유)을 여기서 쓰는 것은 정확하다 —
+        **살아 있는 프로세스가 자신의 cycle deadline/timeout 때문에 이
+        reason으로 job을 취소하는 것은 이 메서드의 용도가 아니다**(그런
+        경우는 job을 건드리지 않고 다음 cycle의 dispatcher가 재시도하도록
+        남겨둔다 — ``run_decision_loop.py``의 in-process carryover 참조).
+
+        이 ``quota_scope``의 ``mode='real'`` job 중 terminal 상태
+        (``FDC_SUCCEEDED``/``FDC_FAILED_FINAL``/``CANCELLED``)가 아닌
+        job을 다음과 같이 전이시킨다(2026-08-27 3차 리뷰 보정 — PR #359,
+        더 이상 일괄 ``CANCELLED``가 아니다).
+
+        - ``status='QUEUED'``(reservation을 한 번도 받지 못함): 안전하게
+          ``CANCELLED``(``reason``)로 전이 — 이 job을 만든 프로세스의
+          in-memory carryover(``pre_fdc_result``/``assembled_context``)가
+          함께 사라졌으므로 재개할 방법이 없다.
+        - ``status='RESERVATION_GRANTED'``이고 가장 최근 attempt의
+          ``get_latest_real_job_attempt_lifecycle()``이 ``NOT_STARTED``
+          또는 ``NOT_FOUND``: 실제 HTTP 호출이 나가지 않았으므로 안전하게
+          ``CANCELLED``(``reason``)로 전이(``NOT_FOUND``는 데이터 정합성
+          이상이므로 ERROR 레벨로 별도 로깅한다).
+        - ``status='RESERVATION_GRANTED'``이고 최근 attempt가 ``STARTED``:
+          HTTP가 실제로 나갔을 수 있어 자동으로 안전하다고 볼 수 없으므로
+          ``CANCELLED``가 아니라 ``FDC_FAILED_FINAL``(``reason=
+          "fdc_only_subprocess_crashed_after_http_start_result_unknown"``,
+          ``complete_fdc_actual_dispatch()``의 라이브 crash 판정과 동일한
+          reason)로 전이한다 — 중복 호출 위험을 피하기 위한 fail-closed
+          처리다.
 
         idempotent — 이미 terminal인 job은 건드리지 않으므로, 두 번
         연속 호출해도 두 번째 호출의 영향 행 수는 0이다.
@@ -2223,7 +2267,8 @@ class FdcQuotaRepository(Protocol):
         Returns
         -------
         int
-            이번 호출로 ``CANCELLED``로 전이된 행 수.
+            이번 호출로 상태가 바뀐(``CANCELLED`` 또는 ``FDC_FAILED_
+            FINAL``) 행 수 합계.
         """
         ...
 
@@ -2244,20 +2289,39 @@ class FdcQuotaRepository(Protocol):
         기록한다."""
         ...
 
-    async def get_attempt_http_started_at(
+    async def get_attempt_http_lifecycle(
         self, *, reservation_id: UUID,
-    ) -> datetime | None:
-        """이 reservation의 ``fdc_provider_attempts.http_started_at``을
-        조회한다(2026-08-27 2차 리뷰 보정 — PR #359, subprocess crash 후
-        attempt lifecycle 판별용).
+    ) -> AttemptHttpLifecycle:
+        """이 reservation(``attempt_id``)의 HTTP 실행 lifecycle을 3상태로
+        조회한다(2026-08-27 3차 리뷰 보정 — PR #359, subprocess crash 후
+        attempt lifecycle 판별용. 이전 ``get_attempt_http_started_at()``의
+        ``datetime | None`` 반환을 대체 — "행이 없음"과 "행은 있으나
+        미시작"을 더 이상 뭉뚱그리지 않는다).
 
-        ``fdc_only`` subprocess가 결과 없이 crash/timeout됐을 때, 이
-        값으로 "HTTP가 실제로 시작됐는지"를 판별한다 — ``None``이면
-        (행이 없거나 아직 ``http_started_at``이 채워지지 않았으면)
-        HTTP가 시작되지 않은 것으로 간주해 새 reservation으로 안전하게
-        재시도할 수 있다. 값이 있으면 HTTP가 실제로 나갔을 수 있으므로
-        결과를 모르는 채 자동 재시도(중복 호출 위험)하지 않는다 — 호출자가
-        이 값으로 그 판단만 내리고, 이 메서드 자체는 어떤 상태도 갱신하지
-        않는다(read-only).
+        ``fdc_only`` subprocess가 결과 없이 crash/timeout됐을 때 호출자가
+        이 값으로 판단한다 — ``NOT_STARTED``면 HTTP가 나가지 않았으므로
+        새 reservation으로 안전하게 재시도할 수 있고, ``STARTED``면 HTTP가
+        실제로 나갔을 수 있으므로 결과를 모르는 채 자동 재시도(중복 호출
+        위험)하지 않는다. ``NOT_FOUND``는 ``try_reserve()``가 grant와
+        attempt 행을 원자적으로 함께 만드는 계약(§6)이 깨졌다는 데이터
+        정합성 이상이므로, 호출자는 이를 ``NOT_STARTED``와 절대 같은
+        방식(자동 재시도)으로 처리해서는 안 되고 fail-closed로 다뤄야
+        한다. 이 메서드 자체는 어떤 상태도 갱신하지 않는다(read-only).
+        """
+        ...
+
+    async def get_latest_real_job_attempt_lifecycle(
+        self, *, job_id: UUID,
+    ) -> AttemptHttpLifecycle:
+        """이 ``job_id``의 가장 최근(``reserved_at`` 기준) ``mode='real'``
+        attempt 행을 찾아 그 HTTP 실행 lifecycle을 3상태로 반환한다
+        (2026-08-27 3차 리뷰 보정 — PR #359, recovery scan 전용).
+
+        재기동 recovery scan이 ``status='RESERVATION_GRANTED'``로 멈춰
+        있는(=reservation은 받았지만 job이 종결되지 못한 채 프로세스가
+        죽은) job을 일괄 ``CANCELLED``로 덮어쓰지 않고, ``complete_fdc_
+        actual_dispatch()``의 crash 판정과 동일한 tri-state 규칙을
+        적용하기 위해 쓰인다. 해당 job에 attempt 행이 하나도 없으면
+        ``NOT_FOUND``를 반환한다(read-only, 상태를 갱신하지 않는다).
         """
         ...

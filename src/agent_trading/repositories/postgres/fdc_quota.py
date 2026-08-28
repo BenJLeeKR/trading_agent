@@ -6,6 +6,7 @@ shared_13rpm_quota_design_2026-08-25.md §6·§8·§9.
 
 from __future__ import annotations
 
+import logging
 import uuid
 from datetime import datetime
 
@@ -13,6 +14,7 @@ import asyncpg
 
 from agent_trading.db.transaction import TransactionManager
 from agent_trading.repositories.contracts import (
+    AttemptHttpLifecycle,
     CoordinatorError,
     CoordinatorErrorClass,
     ReservationDenied,
@@ -21,6 +23,8 @@ from agent_trading.repositories.contracts import (
     ShadowJudgement,
     ShadowJudgementResult,
 )
+
+logger = logging.getLogger(__name__)
 
 # reservation 성공/진행 중/완료 등 "이 window의 슬롯을 소비한" 것으로
 # 간주하는 모든 outcome. reserved_but_http_not_started도 포함해야
@@ -423,21 +427,64 @@ class PostgresFdcQuotaRepository:
         reason: str = "process_terminated_carryover_lost",
     ) -> int:
         async with TransactionManager() as scan_tx:
-            result = await scan_tx.connection.execute(
-                "UPDATE trading.fdc_queue_jobs SET "
-                "status = 'CANCELLED', failure_or_cancel_reason = $2, "
-                "completed_at = now(), updated_at = now() "
+            stale_rows = await scan_tx.connection.fetch(
+                "SELECT job_id, status FROM trading.fdc_queue_jobs "
                 "WHERE quota_scope = $1 AND mode = 'real' "
                 "AND status NOT IN ('FDC_SUCCEEDED', 'FDC_FAILED_FINAL', 'CANCELLED')",
                 quota_scope,
-                reason,
             )
             await scan_tx.commit()
-        # asyncpg execute()는 "UPDATE N" 형태의 status string을 반환한다.
-        try:
-            return int(result.split()[-1])
-        except (IndexError, ValueError):
-            return 0
+
+        transitioned = 0
+        for row in stale_rows:
+            job_id = row["job_id"]
+            status = row["status"]
+            if status == "QUEUED":
+                # reservation을 한 번도 받지 못했다 — 이 job을 만든
+                # 프로세스의 in-memory carryover도 함께 사라졌으므로
+                # 재개할 방법이 없다. 안전하게 취소한다.
+                await self.mark_job_terminal(
+                    job_id=job_id, status="CANCELLED", reason=reason,
+                )
+                transitioned += 1
+                continue
+
+            lifecycle = await self.get_latest_real_job_attempt_lifecycle(
+                job_id=job_id,
+            )
+            if lifecycle == AttemptHttpLifecycle.NOT_FOUND:
+                logger.error(
+                    "cancel_stale_real_jobs: job_id=%s status=%s인데 attempt "
+                    "행이 하나도 없다 — try_reserve()가 grant/attempt 행을 "
+                    "원자적으로 함께 만드는 계약(§6)이 깨진 데이터 정합성 "
+                    "이상. 안전하게 CANCELLED로 처리한다(HTTP를 실제로 "
+                    "보낼 수 없었을 것이므로 재시도 금지는 과도한 보수화가 "
+                    "아니라 감사 신호다).",
+                    job_id, status,
+                )
+                await self.mark_job_terminal(
+                    job_id=job_id, status="CANCELLED", reason=reason,
+                )
+                transitioned += 1
+            elif lifecycle == AttemptHttpLifecycle.NOT_STARTED:
+                # HTTP가 나가지 않았다 — 안전하게 취소(재시도는 이
+                # job_id로는 더 이상 불가능하므로 향후 새 job 등록으로
+                # 대체된다).
+                await self.mark_job_terminal(
+                    job_id=job_id, status="CANCELLED", reason=reason,
+                )
+                transitioned += 1
+            else:
+                # STARTED — HTTP가 실제로 나갔을 수 있어 자동으로
+                # 안전하다고 볼 수 없다. complete_fdc_actual_dispatch()의
+                # 라이브 crash 판정과 동일한 reason으로 fail-closed
+                # 종결한다(중복 호출 위험 회피).
+                await self.mark_job_terminal(
+                    job_id=job_id, status="FDC_FAILED_FINAL",
+                    reason="fdc_only_subprocess_crashed_after_http_start_result_unknown",
+                )
+                transitioned += 1
+        return transitioned
 
     async def mark_job_terminal(
         self,
@@ -473,14 +520,34 @@ class PostgresFdcQuotaRepository:
             )
             await status_tx.commit()
 
-    async def get_attempt_http_started_at(
+    async def get_attempt_http_lifecycle(
         self, *, reservation_id: uuid.UUID,
-    ) -> datetime | None:
+    ) -> AttemptHttpLifecycle:
         async with TransactionManager() as read_tx:
-            value = await read_tx.connection.fetchval(
+            row = await read_tx.connection.fetchrow(
                 "SELECT http_started_at FROM trading.fdc_provider_attempts "
                 "WHERE attempt_id = $1",
                 reservation_id,
             )
             await read_tx.commit()
-        return value
+        if row is None:
+            return AttemptHttpLifecycle.NOT_FOUND
+        if row["http_started_at"] is None:
+            return AttemptHttpLifecycle.NOT_STARTED
+        return AttemptHttpLifecycle.STARTED
+
+    async def get_latest_real_job_attempt_lifecycle(
+        self, *, job_id: uuid.UUID,
+    ) -> AttemptHttpLifecycle:
+        async with TransactionManager() as read_tx:
+            row = await read_tx.connection.fetchrow(
+                "SELECT http_started_at FROM trading.fdc_provider_attempts "
+                "WHERE job_id = $1 ORDER BY reserved_at DESC LIMIT 1",
+                job_id,
+            )
+            await read_tx.commit()
+        if row is None:
+            return AttemptHttpLifecycle.NOT_FOUND
+        if row["http_started_at"] is None:
+            return AttemptHttpLifecycle.NOT_STARTED
+        return AttemptHttpLifecycle.STARTED
