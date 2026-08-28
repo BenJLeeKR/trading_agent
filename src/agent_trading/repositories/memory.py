@@ -65,6 +65,7 @@ from agent_trading.domain.enums import (
 from agent_trading.repositories.contracts import (
     AttemptHttpLifecycle,
     CoreEligibilitySample,
+    ResumableRealJob,
     FillSyncHealthSummary,
     LossCutShadowObservationRow,
     ReservationDenied,
@@ -3386,6 +3387,8 @@ class InMemoryFdcQuotaRepository:
         source_type: str,
         quota_scope: str,
         fdc_ready_at: datetime,
+        pre_fdc_result: dict[str, Any] | None = None,
+        correlation_id: str | None = None,
     ) -> UUID:
         async with self._lock:
             self._enqueue_sequence_counter += 1
@@ -3406,8 +3409,39 @@ class InMemoryFdcQuotaRepository:
                 "dispatch_attempt_no": 0,
                 "permit_consumed_count": 0,
                 "failure_or_cancel_reason": None,
+                "pre_fdc_result": pre_fdc_result,
+                "correlation_id": correlation_id,
             }
             return job_id
+
+    async def list_resumable_real_jobs(
+        self, *, quota_scope: str,
+    ) -> list[ResumableRealJob]:
+        async with self._lock:
+            candidates = [
+                dict(job)
+                for job in self._jobs.values()
+                if job["quota_scope"] == quota_scope
+                and job["mode"] == "real"
+                and job["status"] == "QUEUED"
+            ]
+        candidates.sort(key=lambda job: job["enqueue_sequence"])
+        resumable = []
+        for job in candidates:
+            if job.get("pre_fdc_result") is None:
+                continue
+            resumable.append(ResumableRealJob(
+                job_id=job["job_id"],
+                symbol=job["symbol"],
+                source_type=job["source_type"],
+                quota_scope=quota_scope,
+                decision_cycle_id=job["decision_cycle_id"],
+                decision_context_id=job["decision_context_id"],
+                correlation_id=job.get("correlation_id"),
+                pre_fdc_result=job["pre_fdc_result"],
+                fdc_ready_at=job["fdc_ready_at"],
+            ))
+        return resumable
 
     async def cancel_stale_real_jobs(
         self,
@@ -3415,30 +3449,19 @@ class InMemoryFdcQuotaRepository:
         quota_scope: str,
         reason: str = "process_terminated_carryover_lost",
     ) -> int:
+        # 2026-08-28 4차 리뷰 보정 — status='QUEUED'는 더 이상 대상이
+        # 아니다(list_resumable_real_jobs()가 안전하게 재개한다).
         async with self._lock:
-            terminal = {"FDC_SUCCEEDED", "FDC_FAILED_FINAL", "CANCELLED"}
             stale_job_ids = [
                 job_id
                 for job_id, job in self._jobs.items()
                 if job["quota_scope"] == quota_scope
                 and job["mode"] == "real"
-                and job["status"] not in terminal
+                and job["status"] == "RESERVATION_GRANTED"
             ]
 
         affected = 0
         for job_id in stale_job_ids:
-            async with self._lock:
-                job = self._jobs.get(job_id)
-                status = job["status"] if job is not None else None
-            if status is None:
-                continue
-            if status == "QUEUED":
-                await self.mark_job_terminal(
-                    job_id=job_id, status="CANCELLED", reason=reason,
-                )
-                affected += 1
-                continue
-
             lifecycle = await self.get_latest_real_job_attempt_lifecycle(
                 job_id=job_id,
             )

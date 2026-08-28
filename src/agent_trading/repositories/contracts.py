@@ -2105,6 +2105,28 @@ class AttemptHttpLifecycle(str, Enum):
     STARTED = "started"
 
 
+@dataclass(frozen=True, slots=True)
+class ResumableRealJob:
+    """durable resume에 필요한 최소 정보(2026-08-28 4차 리뷰 보정 —
+    PR #359). ``list_resumable_real_jobs()``가 반환한다.
+
+    position/cash/risk snapshot 등 시간이 지나면 낡을 수 있는 context는
+    의도적으로 포함하지 않는다 — override/EV-gate/sizing/submit은 재개
+    시점에 항상 새로 조회한 context로 다시 계산된다(기존
+    ``precomputed_agent_bundle`` 경로).
+    """
+
+    job_id: UUID
+    symbol: str
+    source_type: str
+    quota_scope: str
+    decision_cycle_id: str | None
+    decision_context_id: UUID | None
+    correlation_id: str | None
+    pre_fdc_result: dict[str, Any]
+    fdc_ready_at: datetime
+
+
 class FdcQuotaRepository(Protocol):
     """FDC 공용 13 RPM quota의 atomic reservation과 lifecycle shadow 관측.
 
@@ -2208,16 +2230,50 @@ class FdcQuotaRepository(Protocol):
         source_type: str,
         quota_scope: str,
         fdc_ready_at: datetime,
+        pre_fdc_result: dict[str, Any] | None = None,
+        correlation_id: str | None = None,
     ) -> UUID:
         """실제(``mode='real'``) FDC dispatch 대상 job을 ``QUEUED``
         상태로 ``fdc_queue_jobs``에 등록한다(2026-08-27, held_position
         실제 dispatcher 신설).
+
+        ``pre_fdc_result``/``correlation_id``(2026-08-28 4차 리뷰 보정
+        — PR #359, durable carryover)를 함께 저장한다 — ops-scheduler는
+        ``run_decision_loop.py --count 1``로 항상 단발 프로세스를
+        spawn하므로, 이 job이 quota 포화로 이번 프로세스 안에서
+        완결되지 못하면 프로세스 메모리만으로는 재개할 방법이 없다.
+        ``status='QUEUED'``인 real job은 pre_fdc가 이미 완료된 뒤에만
+        등록되므로 이 값들은 항상 채워져 있다 — 다음 프로세스가
+        ``list_resumable_real_jobs()``로 이 값을 읽어 agent를 다시
+        호출하지 않고 안전하게 재개한다.
 
         이 메서드가 반환하는 ``job_id``는 이후 ``try_reserve(job_id=...)``
         에 그대로 전달돼야 한다 — ``job_id=None``으로 ``try_reserve()``를
         호출하면 이 job의 accounting(``queue_poll_count``/
         ``reservation_denied_count``/``dispatch_attempt_no``)이 전혀
         기록되지 않는다(§9 계약 위반).
+        """
+        ...
+
+    async def list_resumable_real_jobs(
+        self, *, quota_scope: str,
+    ) -> list[ResumableRealJob]:
+        """이 ``quota_scope``의 ``status='QUEUED'`` real job을 모두
+        durable resume 정보와 함께 반환한다(2026-08-28 4차 리뷰 보정 —
+        PR #359).
+
+        ``status='QUEUED'``는 "reservation을 한 번도 받지 못한 채 등록만
+        돼 있음"을 뜻하며, ``register_real_job()``이 pre_fdc 완료 직후
+        에만 호출되므로 이 job들은 전부 재개에 필요한 ``pre_fdc_result``/
+        ``correlation_id``를 이미 갖고 있다. 새 ``run_decision_loop.py``
+        프로세스가 시작할 때(첫 cycle의 universe를 읽은 직후) 이 목록을
+        조회해, 해당 symbol이 현재 universe에 여전히 존재하면 agent를
+        다시 호출하지 않고 이 job을 이어서 완결한다 — 존재하지 않으면
+        (예: 포지션이 이미 청산됨) 감사 가능한 이유로 fail-closed 종결한다
+        (``mark_job_terminal()``, 조용한 취소 금지).
+
+        read-only — 어떤 상태도 갱신하지 않는다. 반환 순서는 FIFO
+        (``enqueue_sequence`` 오름차순)를 보장한다.
         """
         ...
 
@@ -2237,27 +2293,31 @@ class FdcQuotaRepository(Protocol):
         경우는 job을 건드리지 않고 다음 cycle의 dispatcher가 재시도하도록
         남겨둔다 — ``run_decision_loop.py``의 in-process carryover 참조).
 
-        이 ``quota_scope``의 ``mode='real'`` job 중 terminal 상태
-        (``FDC_SUCCEEDED``/``FDC_FAILED_FINAL``/``CANCELLED``)가 아닌
-        job을 다음과 같이 전이시킨다(2026-08-27 3차 리뷰 보정 — PR #359,
-        더 이상 일괄 ``CANCELLED``가 아니다).
+        **2026-08-28 4차 리뷰 보정 — PR #359**: 이 메서드의 대상은 이제
+        ``status='RESERVATION_GRANTED'`` job **만**이다(``status='QUEUED'``
+        job은 더 이상 여기서 다루지 않는다 — durable resume 신설로
+        ``list_resumable_real_jobs()``가 그 job들을 안전하게 재개하므로,
+        "재개할 방법이 없어 취소한다"는 이전 전제가 더 이상 성립하지
+        않는다). 즉 이 메서드는 이제 정확히 "reservation은 실제로
+        받았지만(=grant가 anchor 행 잠금 하에 원자적으로 발급됨), 그
+        결과(성공/실패/HTTP 시작 여부)가 process crash로 불명확하게 남은"
+        job만 다룬다 — 문자 그대로 "process crash로 결과가 불명확한
+        reservation"만 fail-closed로 정리하라는 요구와 일치한다.
 
-        - ``status='QUEUED'``(reservation을 한 번도 받지 못함): 안전하게
-          ``CANCELLED``(``reason``)로 전이 — 이 job을 만든 프로세스의
-          in-memory carryover(``pre_fdc_result``/``assembled_context``)가
-          함께 사라졌으므로 재개할 방법이 없다.
-        - ``status='RESERVATION_GRANTED'``이고 가장 최근 attempt의
-          ``get_latest_real_job_attempt_lifecycle()``이 ``NOT_STARTED``
-          또는 ``NOT_FOUND``: 실제 HTTP 호출이 나가지 않았으므로 안전하게
-          ``CANCELLED``(``reason``)로 전이(``NOT_FOUND``는 데이터 정합성
-          이상이므로 ERROR 레벨로 별도 로깅한다).
-        - ``status='RESERVATION_GRANTED'``이고 최근 attempt가 ``STARTED``:
-          HTTP가 실제로 나갔을 수 있어 자동으로 안전하다고 볼 수 없으므로
-          ``CANCELLED``가 아니라 ``FDC_FAILED_FINAL``(``reason=
-          "fdc_only_subprocess_crashed_after_http_start_result_unknown"``,
-          ``complete_fdc_actual_dispatch()``의 라이브 crash 판정과 동일한
-          reason)로 전이한다 — 중복 호출 위험을 피하기 위한 fail-closed
-          처리다.
+        ``status='RESERVATION_GRANTED'``인 job에 대해 가장 최근 attempt의
+        ``get_latest_real_job_attempt_lifecycle()``로 다음과 같이
+        전이시킨다.
+
+        - ``NOT_STARTED`` 또는 ``NOT_FOUND``: 실제 HTTP 호출이 나가지
+          않았으므로 안전하게 ``CANCELLED``(``reason``)로 전이
+          (``NOT_FOUND``는 데이터 정합성 이상이므로 ERROR 레벨로 별도
+          로깅한다).
+        - ``STARTED``: HTTP가 실제로 나갔을 수 있어 자동으로 안전하다고
+          볼 수 없으므로 ``CANCELLED``가 아니라 ``FDC_FAILED_FINAL``
+          (``reason="fdc_only_subprocess_crashed_after_http_start_
+          result_unknown"``, ``complete_fdc_actual_dispatch()``의 라이브
+          crash 판정과 동일한 reason)로 전이한다 — 중복 호출 위험을
+          피하기 위한 fail-closed 처리다.
 
         idempotent — 이미 terminal인 job은 건드리지 않으므로, 두 번
         연속 호출해도 두 번째 호출의 영향 행 수는 0이다.

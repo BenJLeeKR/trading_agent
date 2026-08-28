@@ -116,6 +116,7 @@ from agent_trading.services.translation import (
 from agent_trading.services.decision_agent_runner import (
     DecisionAgentRunner,
     FdcActualDispatchPendingError,
+    apply_expected_value_anchor,
     _should_skip_final_decision_composer,
 )
 from agent_trading.services.validators import ValidationContext, ValidationResult
@@ -2967,7 +2968,18 @@ class DecisionOrchestratorService:
             # pre_fdc(EI/AR/AC)와 fdc_only(FDC) 결과를 이미 병합해 넘긴
             # 경우. 아래 short-circuit/subprocess/in-process 3분기를 전부
             # 건너뛴다 — agent를 다시 호출하지 않는다.
-            agent_bundle = precomputed_agent_bundle
+            #
+            # 2026-08-28 4차 리뷰 보정 — EV anchor를 여기서 적용한다.
+            # complete_fdc_actual_dispatch()(post-gather dispatcher)는
+            # 더 이상 EV anchor를 적용하지 않는다 — DB에 durable하게
+            # 저장 가능해야 하는(cross-process resume) pre_fdc_result만
+            # 갖고 있고 assembled_context는 갖고 있지 않기 때문이다.
+            # 여기서는 바로 위에서 새로 만든(fresh) ai_policy_context로
+            # anchor를 계산하므로, 재개가 원래 프로세스든 다른 프로세스
+            # (durable resume)든 항상 최신 context를 쓴다.
+            agent_bundle = apply_expected_value_anchor(
+                precomputed_agent_bundle, assembled_context=ai_policy_context,
+            )
             _fdc_run_id = await self._rehydrate_subprocess_agent_runs(
                 resolved_context_id=resolved_context_id,
                 agent_bundle=agent_bundle,
@@ -3700,9 +3712,6 @@ class DecisionOrchestratorService:
                 decision_context_id=decision_context_id,
                 fdc_dispatch_job_id=exc.job_id,
                 fdc_dispatch_pre_fdc_result=exc.pre_fdc_result,
-                fdc_dispatch_assembled_context=exc.assembled_context,
-                fdc_dispatch_provider_runtime=exc.provider_runtime,
-                fdc_dispatch_subprocess_timeout=exc.subprocess_timeout,
             )
         except Exception as exc:
             logger.exception(

@@ -175,6 +175,17 @@ class FdcActualDispatchPendingError(Exception):
     실제 reservation 대기/fdc_only 실행/병합은 호출자(``run_decision_
     loop.py``의 post-gather dispatcher)가 ``complete_fdc_actual_
     dispatch()``로 별도 수행한다.
+
+    2026-08-28 4차 리뷰 보정(PR #359) — ``assembled_context``/
+    ``provider_runtime``/``subprocess_timeout``을 더 이상 싣지 않는다.
+    ``complete_fdc_actual_dispatch()``가 반환하는 bundle에는 이제 EV
+    anchor를 적용하지 않는다(``DecisionOrchestratorService.assemble()``의
+    ``precomputed_agent_bundle`` 분기가 자신이 이미 새로 만든 fresh
+    context로 직접 적용한다) — 이 덕분에 ``pre_fdc_result``와 ``job_id``
+    만으로 완전히 durable하게(DB에 저장 가능) carryover할 수 있다.
+    ``provider_runtime``/``subprocess_timeout``도 decision 시점에 종속된
+    값이 아니라 프로세스의 현재 설정값일 뿐이므로, 호출자가 필요할 때
+    그때그때 새로 만든다.
     """
 
     def __init__(
@@ -182,21 +193,10 @@ class FdcActualDispatchPendingError(Exception):
         *,
         job_id: uuid.UUID,
         pre_fdc_result: dict[str, Any],
-        assembled_context: AIPolicyContextView,
-        provider_runtime: dict[str, Any],
-        subprocess_timeout: int,
     ) -> None:
         super().__init__(f"FDC actual dispatch pending: job_id={job_id}")
         self.job_id = job_id
         self.pre_fdc_result = pre_fdc_result
-        # pre_fdc(EI/AR/AC) 결과가 계산된 바로 그 context를 그대로
-        # 들고 간다 — post-gather dispatcher가 EV anchor를 적용할 때
-        # 새로 재조회한(fresh) context를 쓰면 실제로 EI/AR/AC가 평가한
-        # context와 어긋난다. override/EV-gate/sizing/submit(2차 assemble()
-        # 호출)만 fresh context로 다시 계산한다.
-        self.assembled_context = assembled_context
-        self.provider_runtime = provider_runtime
-        self.subprocess_timeout = subprocess_timeout
 
 
 async def _spawn_agent_subprocess_impl(
@@ -349,40 +349,43 @@ async def complete_fdc_actual_dispatch(
     pre_fdc_result: dict[str, Any],
     correlation_id: str,
     decision_context_id: uuid.UUID | None,
-    assembled_context: AIPolicyContextView,
     worker_semaphore: asyncio.Semaphore,
     deadline_monotonic: float | None = None,
     sleep_fn: Any = None,
 ) -> AgentExecutionBundle:
-    """FDC 실제 dispatch job 하나를 끝까지 처리한다(2026-08-27 3차 리뷰
+    """FDC 실제 dispatch job 하나를 끝까지 처리한다(2026-08-28 4차 리뷰
     보정 — PR #359, post-gather dispatcher 전용).
 
-    ``DecisionAgentRunner._run_agents_in_subprocess_with_actual_
-    dispatch()``가 이전에 symbol coroutine 안에서 직접 수행하던 "reservation
-    대기 → fdc_only → 재시도 → 병합" 로직을 그대로 옮겨온 것이다.
-    FIFO 대기(reservation 자체는 무기한 폴링)·coordinator 오류 지수
-    backoff·provider retryable 실패 시 새 reservation은 이전과 동일하다.
+    반환하는 bundle에는 EV anchor를 적용하지 **않는다**(4차 보정) —
+    호출자(``DecisionOrchestratorService.assemble()``의 ``precomputed_
+    agent_bundle`` 분기)가 자신이 새로 만든 fresh context로 직접
+    적용한다. 이 함수는 ``pre_fdc_result``/``job_id``만으로 완전히
+    durable하게(DB에 저장 가능) 동작해야 하므로 ``assembled_context``
+    (position/cash/risk snapshot 등 낡을 수 있는 값을 포함)를 아예
+    받지 않는다.
 
-    ``worker_semaphore``(3차 보정 신설)는 fdc_only subprocess를 **실제로
-    실행하는 구간에만** 걸린다 — reservation 대기(``ReservationDenied``
-    폴링, coordinator 오류 backoff)는 이 semaphore를 전혀 점유하지
-    않는다(설계 문서 §7). ``FDC_WORKER_CONCURRENCY``는 "동시에 대기 중인
-    job 수"가 아니라 "동시에 실행 중인 fdc_only subprocess 수"를
-    제한한다는 의미가 이걸로 정확해진다.
+    **worker slot과 reservation의 실행 순서(4차 보정, 설계 문서 §7)** —
+    이전 라운드는 ``try_reserve()``로 grant를 먼저 얻은 뒤 fdc_only
+    실행 구간에만 ``worker_semaphore``를 걸었다. 이번 라운드는 순서를
+    다음과 같이 바꿨다: **worker slot 확보 → atomic reservation →
+    (grant면) 즉시 fdc_only 실행 → outcome 기록 → worker slot 반환.**
+    ``ReservationDenied``/``CoordinatorError``면 slot을 즉시 반환한
+    뒤(=``async with`` 블록을 빠져나온 뒤) poll/backoff ``sleep()``한다
+    — semaphore를 잡은 채 sleep하지 않는다. FIFO 및 quota_scope 전역
+    13 RPM sliding-window 판단(``try_reserve()`` 내부, anchor 행 잠금)은
+    전혀 바뀌지 않았다 — anchor 잠금은 그 트랜잭션이 커밋되면 즉시
+    풀리므로, worker slot 확보가 anchor 잠금과 겹쳐 있는 시간을 늘리지
+    않는다.
 
-    ``deadline_monotonic``(3차 보정 신설)이 주어지고 이미 지났다면, 루프
-    맨 앞(=``try_reserve()`` 호출 직전)에서 ``FdcDispatchDeferredError``를
-    던지고 **아무 상태도 갱신하지 않는다** — grant를 받은 뒤에는 항상
-    fdc_only 실행까지 같은 iteration 안에서 끝까지 처리하므로, 이 예외가
-    발생했다는 것은 "새로 소비된 reservation이 없다"는 뜻이다. 살아 있는
-    프로세스가 데드라인 때문에 job을 ``CANCELLED``로 잘못 표시하는 것을
-    막기 위한 안전 경계다 — 실제 취소는 프로세스가 종료된 뒤 recovery
-    scan(``cancel_stale_real_jobs()``)만 수행한다.
+    ``deadline_monotonic``이 주어지고 이미 지났다면, 루프 맨 앞(=worker
+    slot을 잡기 전)에서 ``FdcDispatchDeferredError``를 던지고 **아무
+    상태도 갱신하지 않는다** — grant를 받은 뒤에는 항상 fdc_only 실행
+    까지 같은 iteration 안에서 끝까지 처리하므로, 이 예외가 발생했다는
+    것은 "새로 소비된 reservation이 없다"는 뜻이다.
 
     ``job_id``에 대응하는 ``fdc_queue_jobs`` row는 이미 등록돼 있다는
-    전제로 호출된다(``DecisionAgentRunner``가 pre_fdc 단계에서 이미
-    등록함). 종결(성공/최종 실패)되면 job을 ``FDC_SUCCEEDED``/``FDC_
-    FAILED_FINAL``로 표시한다.
+    전제로 호출된다. 종결(성공/최종 실패)되면 job을 ``FDC_SUCCEEDED``/
+    ``FDC_FAILED_FINAL``로 표시한다.
     """
     from agent_trading.config.settings import (
         _resolve_fdc_provider_rate_window_seconds,
@@ -421,163 +424,185 @@ async def complete_fdc_actual_dispatch(
     coordinator_error_backoff = coordinator_error_backoff_initial_seconds
 
     while True:
-        # ── 데드라인 확인(reservation을 새로 만들기 전) ─────────────────
+        # ── 데드라인 확인(worker slot을 잡기 전) ─────────────────────────
         if (
             deadline_monotonic is not None
             and time_module.monotonic() >= deadline_monotonic
         ):
             raise FdcDispatchDeferredError(job_id=job_id)
 
-        # ── reservation 대기(FIFO, deadline 없음) ───────────────────────
-        result = await coordinator.try_reserve(
-            job_id=job_id, caller_id=caller_id, mode="real",
-            manual_run_id=None, attempt_no=provider_attempt_no,
-        )
-        if isinstance(result, ReservationDenied):
+        reservation_denied = False
+        coordinator_error_hit = False
+
+        # ── worker slot 확보 → atomic reservation → (grant면) 즉시
+        # fdc_only 실행 → outcome 기록 → slot 반환(async with 종료) ──────
+        async with worker_semaphore:
+            result = await coordinator.try_reserve(
+                job_id=job_id, caller_id=caller_id, mode="real",
+                manual_run_id=None, attempt_no=provider_attempt_no,
+            )
+            if isinstance(result, ReservationDenied):
+                reservation_denied = True
+            elif isinstance(result, CoordinatorError):
+                coordinator_error_hit = True
+            else:
+                coordinator_error_backoff = coordinator_error_backoff_initial_seconds
+                grant = result
+
+                fdc_only_payload = {
+                    "decision_context_id": (
+                        str(decision_context_id) if decision_context_id else None
+                    ),
+                    "correlation_id": correlation_id,
+                    "symbol": pre_fdc_result.get("event_output", {}).get("symbol"),
+                    "market": None,
+                    "source_type": "held_position",
+                    "context": {},
+                    "llm_provider": provider_runtime.get("llm_provider", ""),
+                    "provider_api_key": provider_runtime.get("provider_api_key", ""),
+                    "provider_base_url": provider_runtime.get("provider_base_url", ""),
+                    "provider_model_id": provider_runtime.get("provider_model_id", ""),
+                    "provider_timeout_seconds": provider_runtime.get(
+                        "provider_timeout_seconds", 60,
+                    ),
+                    "mode": "fdc_only",
+                    "event_interpretation_output": pre_fdc_result.get("event_output"),
+                    "ai_risk_output": pre_fdc_result.get("risk_output"),
+                    "ai_compliance_output": pre_fdc_result.get("compliance_output"),
+                    "reservation_id": str(grant.reservation_id),
+                    "reservation_job_id": str(job_id),
+                    "reservation_attempt_no": grant.attempt_no,
+                    "reservation_quota_scope": grant.quota_scope,
+                    "reservation_window_count_before_grant": grant.window_count_before_grant,
+                }
+                fdc_only_result, fdc_only_stdout = await _spawn_agent_subprocess_impl(
+                    json.dumps(fdc_only_payload).encode("utf-8"),
+                    subprocess_timeout=subprocess_timeout,
+                    decision_context_id=decision_context_id,
+                    correlation_id=correlation_id,
+                )
+
+                if fdc_only_result is None or not fdc_only_result.get("success"):
+                    # subprocess가 결과 없이 종료됐다(timeout/SIGKILL/JSON
+                    # 파싱 실패/설정 단계 실패). tri-state lifecycle로
+                    # "행이 없음"과 "행은 있으나 HTTP 미시작"을 구분한다.
+                    lifecycle = await fdc_quota_repo.get_attempt_http_lifecycle(
+                        reservation_id=grant.reservation_id,
+                    )
+                    if lifecycle == AttemptHttpLifecycle.NOT_FOUND:
+                        logger.error(
+                            "complete_fdc_actual_dispatch: job_id=%s "
+                            "reservation_id=%s grant 직후인데 attempt 행이 "
+                            "없다 — 데이터 정합성 이상. 재시도하지 않고 "
+                            "fail-closed로 종결한다.",
+                            job_id, grant.reservation_id,
+                        )
+                        await fdc_quota_repo.mark_job_terminal(
+                            job_id=job_id, status="FDC_FAILED_FINAL",
+                            reason="fdc_provider_attempt_row_missing_data_integrity_error",
+                        )
+                        return build_fallback_bundle()
+
+                    if lifecycle == AttemptHttpLifecycle.NOT_STARTED:
+                        # HTTP 시작 전 실패로 확인됨 — 안전하게 재시도할
+                        # 수 있다. 2026-08-28 4차 리뷰 보정 — 직전에
+                        # lifecycle을 NOT_STARTED로 확인했는데
+                        # record_attempt_outcome()이 ValueError를 내면
+                        # (그 사이 attempt 행이 사라진 race), 더 이상
+                        # 조용히 무시하고 재시도하지 않는다 — 데이터
+                        # 정합성 오류로 간주해 fail-closed 종결한다.
+                        try:
+                            await fdc_quota_repo.record_attempt_outcome(
+                                reservation_id=grant.reservation_id,
+                                outcome="reserved_but_http_not_started",
+                                error_class="FdcOnlySubprocessCrashOrTimeout",
+                            )
+                        except ValueError:
+                            logger.error(
+                                "complete_fdc_actual_dispatch: job_id=%s "
+                                "reservation_id=%s — lifecycle 조회 직후 "
+                                "record_attempt_outcome()이 ValueError를 "
+                                "냈다(attempt 행이 그 사이 사라진 race로 "
+                                "추정). 재시도하지 않고 fail-closed로 "
+                                "종결한다.",
+                                job_id, grant.reservation_id,
+                                exc_info=True,
+                            )
+                            await fdc_quota_repo.mark_job_terminal(
+                                job_id=job_id, status="FDC_FAILED_FINAL",
+                                reason="fdc_provider_attempt_outcome_write_race_data_integrity_error",
+                            )
+                            return build_fallback_bundle()
+
+                        if provider_attempt_no < max_provider_attempts:
+                            provider_attempt_no += 1
+                            continue
+                        await fdc_quota_repo.mark_job_terminal(
+                            job_id=job_id, status="FDC_FAILED_FINAL",
+                            reason="fdc_only_subprocess_exhausted",
+                        )
+                        return build_fallback_bundle()
+
+                    # STARTED — HTTP가 실제로 시작된 뒤 결과를 회수하지
+                    # 못했다. 실제 Gemini 호출이 성공했는지 실패했는지
+                    # 알 수 없으므로 자동 재시도(=중복 호출 위험)하지
+                    # 않는다. 이미 기록된 "http_started" outcome을
+                    # 덮어쓰거나 "HTTP 미시작"으로 잘못 기록하지 않는다.
+                    await fdc_quota_repo.mark_job_terminal(
+                        job_id=job_id, status="FDC_FAILED_FINAL",
+                        reason="fdc_only_subprocess_crashed_after_http_start_result_unknown",
+                    )
+                    return build_fallback_bundle()
+
+                provider_final_status = fdc_only_result.get("provider_final_status", "")
+                retryable_statuses = {
+                    "provider_rate_limit", "provider_error", "provider_timeout",
+                }
+                if (
+                    provider_final_status in retryable_statuses
+                    and provider_attempt_no < max_provider_attempts
+                ):
+                    provider_attempt_no += 1
+                    continue
+
+                merged = dict(pre_fdc_result)
+                merged["composer_output"] = fdc_only_result.get("composer_output", {})
+                merged["provider_http_attempt_count"] = fdc_only_result.get(
+                    "provider_http_attempt_count", 0
+                )
+                merged["provider_http_429_count"] = fdc_only_result.get(
+                    "provider_http_429_count", 0
+                )
+                merged["provider_execution_seconds"] = fdc_only_result.get(
+                    "provider_execution_seconds", 0.0
+                )
+                merged["provider_final_status"] = provider_final_status
+
+                terminal_status = (
+                    "FDC_SUCCEEDED"
+                    if provider_final_status in ("", "success")
+                    else "FDC_FAILED_FINAL"
+                )
+                await fdc_quota_repo.mark_job_terminal(
+                    job_id=job_id, status=terminal_status,
+                    reason=(
+                        None if terminal_status == "FDC_SUCCEEDED"
+                        else provider_final_status
+                    ),
+                )
+                return deserialize_agent_output(json.dumps(merged).encode("utf-8"))
+
+        # ── worker slot은 이미 반환됐다 — 여기서부터 poll/backoff sleep ──
+        if reservation_denied:
             await sleep_fn(poll_interval_seconds)
             continue
-        if isinstance(result, CoordinatorError):
+        if coordinator_error_hit:
             await sleep_fn(coordinator_error_backoff)
             coordinator_error_backoff = min(
                 coordinator_error_backoff * 2,
                 coordinator_error_backoff_max_seconds,
             )
             continue
-        coordinator_error_backoff = coordinator_error_backoff_initial_seconds
-        grant = result
-
-        # ── fdc_only 1회 HTTP 시도(worker semaphore는 이 구간만 점유) ───
-        fdc_only_payload = {
-            "decision_context_id": (
-                str(decision_context_id) if decision_context_id else None
-            ),
-            "correlation_id": correlation_id,
-            "symbol": pre_fdc_result.get("event_output", {}).get("symbol"),
-            "market": None,
-            "source_type": "held_position",
-            "context": {},
-            "llm_provider": provider_runtime.get("llm_provider", ""),
-            "provider_api_key": provider_runtime.get("provider_api_key", ""),
-            "provider_base_url": provider_runtime.get("provider_base_url", ""),
-            "provider_model_id": provider_runtime.get("provider_model_id", ""),
-            "provider_timeout_seconds": provider_runtime.get("provider_timeout_seconds", 60),
-            "mode": "fdc_only",
-            "event_interpretation_output": pre_fdc_result.get("event_output"),
-            "ai_risk_output": pre_fdc_result.get("risk_output"),
-            "ai_compliance_output": pre_fdc_result.get("compliance_output"),
-            "reservation_id": str(grant.reservation_id),
-            "reservation_job_id": str(job_id),
-            "reservation_attempt_no": grant.attempt_no,
-            "reservation_quota_scope": grant.quota_scope,
-            "reservation_window_count_before_grant": grant.window_count_before_grant,
-        }
-        async with worker_semaphore:
-            fdc_only_result, fdc_only_stdout = await _spawn_agent_subprocess_impl(
-                json.dumps(fdc_only_payload).encode("utf-8"),
-                subprocess_timeout=subprocess_timeout,
-                decision_context_id=decision_context_id,
-                correlation_id=correlation_id,
-            )
-
-        if fdc_only_result is None or not fdc_only_result.get("success"):
-            # subprocess가 결과 없이 종료됐다(timeout/SIGKILL/JSON 파싱
-            # 실패/설정 단계 실패). 2026-08-27 3차 리뷰 보정 — tri-state
-            # lifecycle로 "행이 없음"과 "행은 있으나 HTTP 미시작"을
-            # 구분한다. "행이 없음"은 try_reserve()의 원자적 grant+
-            # attempt-행 생성 계약(§6)이 깨진 데이터 정합성 이상이므로,
-            # "HTTP 미시작"과 같은 방식(자동 재시도)으로 처리하지 않는다.
-            lifecycle = await fdc_quota_repo.get_attempt_http_lifecycle(
-                reservation_id=grant.reservation_id,
-            )
-            if lifecycle == AttemptHttpLifecycle.NOT_FOUND:
-                logger.error(
-                    "complete_fdc_actual_dispatch: job_id=%s reservation_id=%s "
-                    "grant 직후인데 attempt 행이 없다 — 데이터 정합성 이상. "
-                    "재시도하지 않고 fail-closed로 종결한다.",
-                    job_id, grant.reservation_id,
-                )
-                await fdc_quota_repo.mark_job_terminal(
-                    job_id=job_id, status="FDC_FAILED_FINAL",
-                    reason="fdc_provider_attempt_row_missing_data_integrity_error",
-                )
-                return apply_expected_value_anchor(
-                    build_fallback_bundle(), assembled_context=assembled_context,
-                )
-
-            if lifecycle == AttemptHttpLifecycle.NOT_STARTED:
-                # HTTP 시작 전 실패로 확인됨 — 안전하게 재시도할 수 있다.
-                # 이미 다른 경로(예: 자식 프로세스가 부분적으로 기록한
-                # 뒤 죽음)로 outcome이 기록됐을 수 있으므로 ValueError는
-                # 무시한다(기존 기록을 덮어쓰지 않는다는 계약 보존).
-                try:
-                    await fdc_quota_repo.record_attempt_outcome(
-                        reservation_id=grant.reservation_id,
-                        outcome="reserved_but_http_not_started",
-                        error_class="FdcOnlySubprocessCrashOrTimeout",
-                    )
-                except ValueError:
-                    pass
-                if provider_attempt_no < max_provider_attempts:
-                    provider_attempt_no += 1
-                    continue
-                await fdc_quota_repo.mark_job_terminal(
-                    job_id=job_id, status="FDC_FAILED_FINAL",
-                    reason="fdc_only_subprocess_exhausted",
-                )
-                return apply_expected_value_anchor(
-                    build_fallback_bundle(), assembled_context=assembled_context,
-                )
-
-            # STARTED — HTTP가 실제로 시작된 뒤 결과를 회수하지 못했다.
-            # 실제 Gemini 호출이 성공했는지 실패했는지 알 수 없으므로
-            # 자동 재시도(=중복 호출 위험)하지 않는다. 이미 기록된
-            # "http_started" outcome을 덮어쓰거나 "HTTP 미시작"으로
-            # 잘못 기록하지 않는다 — job만 fail-closed로 종결한다.
-            await fdc_quota_repo.mark_job_terminal(
-                job_id=job_id, status="FDC_FAILED_FINAL",
-                reason="fdc_only_subprocess_crashed_after_http_start_result_unknown",
-            )
-            return apply_expected_value_anchor(
-                build_fallback_bundle(), assembled_context=assembled_context,
-            )
-
-        provider_final_status = fdc_only_result.get("provider_final_status", "")
-        retryable_statuses = {
-            "provider_rate_limit", "provider_error", "provider_timeout",
-        }
-        if (
-            provider_final_status in retryable_statuses
-            and provider_attempt_no < max_provider_attempts
-        ):
-            provider_attempt_no += 1
-            continue
-
-        merged = dict(pre_fdc_result)
-        merged["composer_output"] = fdc_only_result.get("composer_output", {})
-        merged["provider_http_attempt_count"] = fdc_only_result.get(
-            "provider_http_attempt_count", 0
-        )
-        merged["provider_http_429_count"] = fdc_only_result.get(
-            "provider_http_429_count", 0
-        )
-        merged["provider_execution_seconds"] = fdc_only_result.get(
-            "provider_execution_seconds", 0.0
-        )
-        merged["provider_final_status"] = provider_final_status
-
-        terminal_status = (
-            "FDC_SUCCEEDED"
-            if provider_final_status in ("", "success")
-            else "FDC_FAILED_FINAL"
-        )
-        await fdc_quota_repo.mark_job_terminal(
-            job_id=job_id, status=terminal_status,
-            reason=None if terminal_status == "FDC_SUCCEEDED" else provider_final_status,
-        )
-        return apply_expected_value_anchor(
-            deserialize_agent_output(json.dumps(merged).encode("utf-8")),
-            assembled_context=assembled_context,
-        )
 
 
 class DecisionAgentRunner:
@@ -1271,12 +1296,17 @@ class DecisionAgentRunner:
             source_type=request.source_type or "held_position",
             quota_scope=quota_scope,
             fdc_ready_at=fdc_ready_at,
+            # 2026-08-28 4차 리뷰 보정(PR #359, durable carryover) —
+            # ops-scheduler는 항상 --count 1 단발 프로세스이므로, 이 job이
+            # 이번 프로세스 안에서 완결되지 못하면 in-memory carryover만
+            # 으로는 재개할 방법이 없다. pre_fdc_result/correlation_id를
+            # DB에 함께 저장해 다음 프로세스가 agent를 다시 호출하지
+            # 않고 안전하게 재개할 수 있게 한다.
+            pre_fdc_result=pre_fdc_result,
+            correlation_id=request.correlation_id,
         )
         raise FdcActualDispatchPendingError(
             job_id=job_id, pre_fdc_result=pre_fdc_result,
-            assembled_context=assembled_context,
-            provider_runtime=self._provider_runtime,
-            subprocess_timeout=self._subprocess_timeout,
         )
 
     def _apply_expected_value_anchor(

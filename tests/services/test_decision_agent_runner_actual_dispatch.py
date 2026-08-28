@@ -327,7 +327,6 @@ class TestCompleteFdcActualDispatch:
             subprocess_timeout=90, job_id=job_id,
             pre_fdc_result=_pre_fdc_ready_result(),
             correlation_id="test-corr", decision_context_id=None,
-            assembled_context=_held_position_context(),
             worker_semaphore=asyncio.Semaphore(5),
         )
 
@@ -377,7 +376,7 @@ class TestCompleteFdcActualDispatch:
             subprocess_timeout=90, job_id=job_id,
             pre_fdc_result=_pre_fdc_ready_result(),
             correlation_id="test-corr", decision_context_id=None,
-            assembled_context=_held_position_context(), sleep_fn=_fake_sleep,
+            sleep_fn=_fake_sleep,
             worker_semaphore=asyncio.Semaphore(5),
         )
 
@@ -420,7 +419,6 @@ class TestCompleteFdcActualDispatch:
             subprocess_timeout=90, job_id=job_id,
             pre_fdc_result=_pre_fdc_ready_result(),
             correlation_id="test-corr", decision_context_id=None,
-            assembled_context=_held_position_context(),
             worker_semaphore=asyncio.Semaphore(5),
         )
 
@@ -453,7 +451,6 @@ class TestCompleteFdcActualDispatch:
             subprocess_timeout=90, job_id=job_id,
             pre_fdc_result=_pre_fdc_ready_result(),
             correlation_id="test-corr", decision_context_id=None,
-            assembled_context=_held_position_context(),
             worker_semaphore=asyncio.Semaphore(5),
         )
 
@@ -518,7 +515,7 @@ class TestCompleteFdcActualDispatch:
             subprocess_timeout=90, job_id=job_id,
             pre_fdc_result=_pre_fdc_ready_result(),
             correlation_id="test-corr", decision_context_id=None,
-            assembled_context=_held_position_context(), sleep_fn=_fake_sleep,
+            sleep_fn=_fake_sleep,
             worker_semaphore=asyncio.Semaphore(5),
         )
 
@@ -557,7 +554,6 @@ class TestCompleteFdcActualDispatch:
             subprocess_timeout=90, job_id=job_id,
             pre_fdc_result=_pre_fdc_ready_result(),
             correlation_id="test-corr", decision_context_id=None,
-            assembled_context=_held_position_context(),
             worker_semaphore=asyncio.Semaphore(5),
         )
 
@@ -607,7 +603,6 @@ class TestCompleteFdcActualDispatch:
             subprocess_timeout=90, job_id=job_id,
             pre_fdc_result=_pre_fdc_ready_result(),
             correlation_id="test-corr", decision_context_id=None,
-            assembled_context=_held_position_context(),
             worker_semaphore=asyncio.Semaphore(5),
         )
 
@@ -655,7 +650,6 @@ class TestPhaseDeadlineDoesNotCancelLiveProcess:
                     subprocess_timeout=90, job_id=job_id,
                     pre_fdc_result=_pre_fdc_ready_result(),
                     correlation_id="test-corr", decision_context_id=None,
-                    assembled_context=_held_position_context(),
                     worker_semaphore=asyncio.Semaphore(5),
                     # 이미 지난 데드라인 — 첫 iteration에서 즉시 defer.
                     deadline_monotonic=0.0,
@@ -730,7 +724,6 @@ class TestReservationWaitDoesNotHoldWorkerSlot:
                 subprocess_timeout=90, job_id=job_a,
                 pre_fdc_result=_pre_fdc_ready_result(),
                 correlation_id="test-corr-a", decision_context_id=None,
-                assembled_context=_held_position_context(),
                 worker_semaphore=worker_semaphore,
                 sleep_fn=lambda _s: asyncio.sleep(0),
             )
@@ -741,7 +734,6 @@ class TestReservationWaitDoesNotHoldWorkerSlot:
                 subprocess_timeout=90, job_id=job_b,
                 pre_fdc_result=_pre_fdc_ready_result(),
                 correlation_id="test-corr-b", decision_context_id=None,
-                assembled_context=_held_position_context(),
                 worker_semaphore=worker_semaphore,
             )
         )
@@ -809,7 +801,6 @@ class TestConcurrentJobsRespectFifoAndWorkerConcurrency:
                 subprocess_timeout=90, job_id=job_id,
                 pre_fdc_result=_pre_fdc_ready_result(),
                 correlation_id=f"test-corr-{i}", decision_context_id=None,
-                assembled_context=_held_position_context(),
                 worker_semaphore=worker_semaphore,
             )
             for i, job_id in enumerate(job_ids)
@@ -867,7 +858,6 @@ class TestAttemptRowMissingIsFailClosed:
             subprocess_timeout=90, job_id=job_id,
             pre_fdc_result=_pre_fdc_ready_result(),
             correlation_id="test-corr", decision_context_id=None,
-            assembled_context=_held_position_context(),
             worker_semaphore=asyncio.Semaphore(5),
         )
 
@@ -918,9 +908,232 @@ class TestOperationalDispatchNeverSetsManualRunId:
             subprocess_timeout=90, job_id=job_id,
             pre_fdc_result=_pre_fdc_ready_result(),
             correlation_id="test-corr", decision_context_id=None,
-            assembled_context=_held_position_context(),
             worker_semaphore=asyncio.Semaphore(5),
         )
 
         assert observed_manual_run_ids
         assert all(v is None for v in observed_manual_run_ids)
+
+
+class TestDurableResumeAcrossProcessRestart:
+    """2026-08-28 4차 리뷰 보정 — ops-scheduler는 항상 ``--count 1``
+    단발 프로세스를 spawn한다. deadline defer로 완결되지 못한 job이
+    ``list_resumable_real_jobs()``를 통해 (같은 repo로 시뮬레이션한)
+    "다음 프로세스"에서 agent(EI/AR/AC)를 다시 호출하지 않고 안전하게
+    재개되는지 검증한다."""
+
+    @pytest.mark.asyncio
+    async def test_deadline_deferred_job_resumes_via_list_resumable_without_recalling_agents(
+        self, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        import agent_trading.services.decision_agent_runner as runner_module
+
+        repo = InMemoryFdcQuotaRepository()
+        pre_fdc_result = _pre_fdc_ready_result()
+        # register_real_job()이 pre_fdc_result/correlation_id를 함께
+        # 저장한다 — DecisionAgentRunner._run_agents_in_subprocess_with_
+        # actual_dispatch()가 실제로 하는 것과 동일하다.
+        job_id = await repo.register_real_job(
+            decision_cycle_id="c1", decision_context_id=None, symbol="005930",
+            source_type="held_position", quota_scope="gemini:shared-operational",
+            fdc_ready_at=datetime.now(timezone.utc),
+            pre_fdc_result=pre_fdc_result, correlation_id="orig-corr",
+        )
+
+        pre_fdc_spawn_calls = {"n": 0}
+        fdc_only_spawn_calls = {"n": 0}
+
+        async def _fake_spawn_impl(input_bytes, *, subprocess_timeout, decision_context_id, correlation_id):
+            import json as _json
+            payload = _json.loads(input_bytes)
+            if payload.get("mode") == "pre_fdc":
+                pre_fdc_spawn_calls["n"] += 1
+                raise AssertionError("resume 경로에서 pre_fdc를 다시 호출했다")
+            fdc_only_spawn_calls["n"] += 1
+            return _fdc_only_success_result(), b"{}"
+
+        monkeypatch.setattr(runner_module, "_spawn_agent_subprocess_impl", _fake_spawn_impl)
+
+        # ── "이전 프로세스" — deadline이 이미 지나 있어 즉시 defer된다.
+        with pytest.raises(runner_module.FdcDispatchDeferredError):
+            await runner_module.complete_fdc_actual_dispatch(
+                fdc_quota_repo=repo, provider_runtime={},
+                subprocess_timeout=90, job_id=job_id,
+                pre_fdc_result=pre_fdc_result,
+                correlation_id="orig-corr", decision_context_id=None,
+                worker_semaphore=asyncio.Semaphore(5),
+                deadline_monotonic=0.0,
+            )
+        assert fdc_only_spawn_calls["n"] == 0
+        assert repo._jobs[job_id]["status"] == "QUEUED"  # type: ignore[attr-defined]
+
+        # ── "다음 프로세스"(같은 repo — durable 저장을 시뮬레이션) —
+        # list_resumable_real_jobs()로 발견하고 pre_fdc_result를 그대로
+        # 재사용해 완결한다.
+        resumable = await repo.list_resumable_real_jobs(
+            quota_scope="gemini:shared-operational",
+        )
+        assert len(resumable) == 1
+        assert resumable[0].job_id == job_id
+        assert resumable[0].pre_fdc_result == pre_fdc_result
+        assert resumable[0].correlation_id == "orig-corr"
+
+        result = await runner_module.complete_fdc_actual_dispatch(
+            fdc_quota_repo=repo, provider_runtime={},
+            subprocess_timeout=90, job_id=resumable[0].job_id,
+            pre_fdc_result=resumable[0].pre_fdc_result,
+            correlation_id=resumable[0].correlation_id,
+            decision_context_id=resumable[0].decision_context_id,
+            worker_semaphore=asyncio.Semaphore(5),
+        )
+
+        assert result is not None
+        assert pre_fdc_spawn_calls["n"] == 0  # agent를 다시 호출하지 않았다
+        assert fdc_only_spawn_calls["n"] == 1  # fdc_only만 정확히 1회
+        assert repo._jobs[job_id]["status"] == "FDC_SUCCEEDED"  # type: ignore[attr-defined]
+        # 재개 후에는 더 이상 QUEUED가 아니므로 목록에서 사라진다.
+        assert await repo.list_resumable_real_jobs(
+            quota_scope="gemini:shared-operational",
+        ) == []
+
+    @pytest.mark.asyncio
+    async def test_cancel_stale_real_jobs_no_longer_touches_queued(self) -> None:
+        """2026-08-28 4차 리뷰 보정 — QUEUED job은 이제
+        list_resumable_real_jobs()가 재개하므로, cancel_stale_real_jobs()
+        (recovery scan)는 더 이상 QUEUED를 건드리지 않는다."""
+        repo = InMemoryFdcQuotaRepository()
+        job_id = await repo.register_real_job(
+            decision_cycle_id="c1", decision_context_id=None, symbol="005930",
+            source_type="held_position", quota_scope="gemini:shared-operational",
+            fdc_ready_at=datetime.now(timezone.utc),
+            pre_fdc_result=_pre_fdc_ready_result(), correlation_id="orig-corr",
+        )
+
+        affected = await repo.cancel_stale_real_jobs(
+            quota_scope="gemini:shared-operational",
+        )
+
+        assert affected == 0
+        assert repo._jobs[job_id]["status"] == "QUEUED"  # type: ignore[attr-defined]
+        resumable = await repo.list_resumable_real_jobs(
+            quota_scope="gemini:shared-operational",
+        )
+        assert len(resumable) == 1
+        assert resumable[0].job_id == job_id
+
+
+class TestWorkerSlotAcquiredBeforeReservation:
+    """2026-08-28 4차 리뷰 보정 — worker slot을 먼저 확보한 뒤에만
+    reservation을 시도한다(설계 문서 §7 순서). slot이 이미 다른 곳에서
+    점유돼 있으면 slot이 빌 때까지 ``try_reserve()`` 자체를 호출하지
+    않는다."""
+
+    @pytest.mark.asyncio
+    async def test_reservation_not_attempted_until_worker_slot_available(
+        self, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        import agent_trading.services.decision_agent_runner as runner_module
+        from agent_trading.services.fdc_quota_coordinator import FdcQuotaCoordinator
+
+        repo = InMemoryFdcQuotaRepository()
+        job_id = await repo.register_real_job(
+            decision_cycle_id="c1", decision_context_id=None, symbol="005930",
+            source_type="held_position", quota_scope="gemini:shared-operational",
+            fdc_ready_at=datetime.now(timezone.utc),
+        )
+
+        try_reserve_calls = {"n": 0}
+        original_try_reserve = FdcQuotaCoordinator.try_reserve
+
+        async def _counting_try_reserve(self, **kwargs):
+            try_reserve_calls["n"] += 1
+            return await original_try_reserve(self, **kwargs)
+
+        monkeypatch.setattr(FdcQuotaCoordinator, "try_reserve", _counting_try_reserve)
+
+        async def _fake_spawn_impl(input_bytes, *, subprocess_timeout, decision_context_id, correlation_id):
+            return _fdc_only_success_result(), b"{}"
+
+        monkeypatch.setattr(runner_module, "_spawn_agent_subprocess_impl", _fake_spawn_impl)
+
+        worker_semaphore = asyncio.Semaphore(1)
+        # slot을 미리 점유해 둔다 — dispatch가 이 slot을 얻을 때까지
+        # try_reserve()를 호출해서는 안 된다.
+        await worker_semaphore.acquire()
+
+        task = asyncio.create_task(
+            runner_module.complete_fdc_actual_dispatch(
+                fdc_quota_repo=repo, provider_runtime={},
+                subprocess_timeout=90, job_id=job_id,
+                pre_fdc_result=_pre_fdc_ready_result(),
+                correlation_id="test-corr", decision_context_id=None,
+                worker_semaphore=worker_semaphore,
+            )
+        )
+        await asyncio.sleep(0.05)  # dispatch가 slot 대기 상태에 들어갈 시간을 준다
+        assert try_reserve_calls["n"] == 0  # slot을 못 얻었으므로 아직 시도조차 안 함
+
+        worker_semaphore.release()  # slot을 반환 — 이제 dispatch가 진행된다
+        result = await asyncio.wait_for(task, timeout=2.0)
+
+        assert result is not None
+        assert try_reserve_calls["n"] == 1
+
+
+class TestRecordAttemptOutcomeRaceIsFailClosed:
+    """2026-08-28 4차 리뷰 보정 — lifecycle 조회 직후
+    ``record_attempt_outcome()``이 ``ValueError``를 내는 race(그 사이
+    attempt 행이 사라짐)를 더 이상 조용히 무시하지 않는다. 재시도 없이
+    fail-closed로 종결한다."""
+
+    @pytest.mark.asyncio
+    async def test_value_error_race_after_not_started_lifecycle_fails_closed_no_retry(
+        self, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        import agent_trading.services.decision_agent_runner as runner_module
+
+        repo = InMemoryFdcQuotaRepository()
+        job_id = await repo.register_real_job(
+            decision_cycle_id="c1", decision_context_id=None, symbol="005930",
+            source_type="held_position", quota_scope="gemini:shared-operational",
+            fdc_ready_at=datetime.now(timezone.utc),
+        )
+
+        spawn_call_count = {"n": 0}
+
+        async def _fake_spawn_impl(input_bytes, *, subprocess_timeout, decision_context_id, correlation_id):
+            spawn_call_count["n"] += 1
+            return None, b""  # crash — http_started_at 없음(NOT_STARTED)
+
+        monkeypatch.setattr(runner_module, "_spawn_agent_subprocess_impl", _fake_spawn_impl)
+
+        # record_attempt_outcome()을 클래스 레벨에서 패치해, lifecycle이
+        # NOT_STARTED로 확인된 *직후* 그 사이 행이 사라진 race를
+        # 재현한다(실제로는 다른 프로세스의 동시 접근 등으로 발생할 수
+        # 있는 상황).
+        async def _racy_record_attempt_outcome(self, *, reservation_id, **kwargs):
+            raise ValueError(
+                f"record_attempt_outcome: no fdc_provider_attempts row "
+                f"for attempt_id={reservation_id!r} (simulated race)"
+            )
+
+        monkeypatch.setattr(
+            InMemoryFdcQuotaRepository, "record_attempt_outcome",
+            _racy_record_attempt_outcome,
+        )
+
+        result = await runner_module.complete_fdc_actual_dispatch(
+            fdc_quota_repo=repo, provider_runtime={},
+            subprocess_timeout=90, job_id=job_id,
+            pre_fdc_result=_pre_fdc_ready_result(),
+            correlation_id="test-corr", decision_context_id=None,
+            worker_semaphore=asyncio.Semaphore(5),
+        )
+
+        assert spawn_call_count["n"] == 1  # 재시도 없음
+        assert repo._jobs[job_id]["status"] == "FDC_FAILED_FINAL"  # type: ignore[attr-defined]
+        assert repo._jobs[job_id]["failure_or_cancel_reason"] == (  # type: ignore[attr-defined]
+            "fdc_provider_attempt_outcome_write_race_data_integrity_error"
+        )
+        assert result is not None
+        assert result.ai_inputs.decision_type == "HOLD"  # fail-closed fallback

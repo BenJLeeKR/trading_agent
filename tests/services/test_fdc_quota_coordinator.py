@@ -322,15 +322,22 @@ class TestRealJobRegistrationAndFifoFairness:
 
 class TestCancelStaleRealJobs:
     """2026-08-27 — 재기동 recovery scan(§17.7)이 non-terminal real job만
-    ``CANCELLED``로 전이시키는지 검증한다."""
+    ``CANCELLED``로 전이시키는지 검증한다.
+
+    2026-08-28 4차 리뷰 보정 — ``status='QUEUED'``는 더 이상 이 메서드의
+    대상이 아니다(``list_resumable_real_jobs()``가 durable하게 안전하게
+    재개한다). 이 메서드는 이제 ``status='RESERVATION_GRANTED'``(실제로
+    reservation을 받은 뒤 process crash로 결과가 불명확하게 남은 job)
+    만 다룬다."""
 
     @pytest.mark.asyncio
-    async def test_cancels_only_non_terminal_real_jobs(self) -> None:
+    async def test_queued_job_is_left_untouched_for_durable_resume(self) -> None:
         repo = InMemoryFdcQuotaRepository()
         job_queued = await repo.register_real_job(
             decision_cycle_id="c1", decision_context_id=None, symbol="A",
             source_type="held_position", quota_scope="scope-recovery",
             fdc_ready_at=datetime.now(timezone.utc),
+            pre_fdc_result={"requires_fdc_dispatch": True}, correlation_id="c-a",
         )
         job_granted = await repo.register_real_job(
             decision_cycle_id="c1", decision_context_id=None, symbol="B",
@@ -347,23 +354,22 @@ class TestCancelStaleRealJobs:
 
         affected = await repo.cancel_stale_real_jobs(quota_scope="scope-recovery")
 
-        assert affected == 2  # queued + granted, not the already-succeeded one
-        assert repo._jobs[job_queued]["status"] == "CANCELLED"  # type: ignore[attr-defined]
+        # RESERVATION_GRANTED(attempt 행 없음 → NOT_FOUND 취급)만 전이된다.
+        assert affected == 1
+        assert repo._jobs[job_queued]["status"] == "QUEUED"  # type: ignore[attr-defined]
+        assert repo._jobs[job_queued]["failure_or_cancel_reason"] is None  # type: ignore[attr-defined]
         assert repo._jobs[job_granted]["status"] == "CANCELLED"  # type: ignore[attr-defined]
         assert repo._jobs[job_succeeded]["status"] == "FDC_SUCCEEDED"  # type: ignore[attr-defined]
-        assert (
-            repo._jobs[job_queued]["failure_or_cancel_reason"]  # type: ignore[attr-defined]
-            == "process_terminated_carryover_lost"
-        )
 
     @pytest.mark.asyncio
     async def test_second_call_is_idempotent(self) -> None:
         repo = InMemoryFdcQuotaRepository()
-        await repo.register_real_job(
+        job_granted = await repo.register_real_job(
             decision_cycle_id="c1", decision_context_id=None, symbol="A",
             source_type="held_position", quota_scope="scope-recovery-2",
             fdc_ready_at=datetime.now(timezone.utc),
         )
+        await repo.mark_job_status(job_id=job_granted, status="RESERVATION_GRANTED")
 
         first = await repo.cancel_stale_real_jobs(quota_scope="scope-recovery-2")
         second = await repo.cancel_stale_real_jobs(quota_scope="scope-recovery-2")
@@ -1838,6 +1844,50 @@ class TestPostgresRealJobDispatch:
             )
         assert row["status"] == "CANCELLED"
         assert row["failure_or_cancel_reason"] == "process_terminated_carryover_lost"
+
+    @pytest.mark.asyncio
+    async def test_list_resumable_real_jobs_round_trips_pre_fdc_result_via_real_db(
+        self, db_ready, quota_scope: str,
+    ) -> None:
+        """2026-08-28 4차 리뷰 보정 — durable carryover: QUEUED job의
+        pre_fdc_result_json/correlation_id가 실제 PostgreSQL JSONB 컬럼을
+        거쳐 그대로 왕복하는지, 그리고 recovery scan(cancel_stale_real_
+        jobs)이 이 QUEUED job을 더 이상 건드리지 않는지 검증한다."""
+        coordinator = _postgres_coordinator(quota_scope=quota_scope, target_rpm=13)
+        pre_fdc_result = {
+            "success": True,
+            "event_output": {"symbol": "A"},
+            "requires_fdc_dispatch": True,
+        }
+        job_id = await coordinator._repo.register_real_job(  # type: ignore[attr-defined]
+            decision_cycle_id="c1", decision_context_id=None, symbol="A",
+            source_type="held_position", quota_scope=quota_scope,
+            fdc_ready_at=datetime.now(timezone.utc),
+            pre_fdc_result=pre_fdc_result, correlation_id="orig-corr-real-db",
+        )
+
+        resumable = await coordinator._repo.list_resumable_real_jobs(  # type: ignore[attr-defined]
+            quota_scope=quota_scope,
+        )
+
+        assert len(resumable) == 1
+        assert resumable[0].job_id == job_id
+        assert resumable[0].pre_fdc_result == pre_fdc_result
+        assert resumable[0].correlation_id == "orig-corr-real-db"
+
+        # QUEUED는 더 이상 recovery scan 대상이 아니다.
+        cancelled = await coordinator._repo.cancel_stale_real_jobs(  # type: ignore[attr-defined]
+            quota_scope=quota_scope,
+        )
+        assert cancelled == 0
+
+        from agent_trading.db.connection import connection
+        async with connection() as conn:
+            row = await conn.fetchrow(
+                "SELECT status FROM trading.fdc_queue_jobs WHERE job_id = $1",
+                job_id,
+            )
+        assert row["status"] == "QUEUED"
 
     @pytest.mark.asyncio
     async def test_job_counters_consistent_in_real_db(

@@ -6039,6 +6039,10 @@ class TestFdcActualDispatchRecoveryScan:
 
         fake_fdc_quota = MagicMock()
         fake_fdc_quota.cancel_stale_real_jobs = AsyncMock(return_value=0)
+        # 2026-08-28 4차 리뷰 보정 — durable resume scan이 recovery scan
+        # 직후 항상 호출된다(flag=true일 때). 빈 목록을 반환해 이 테스트
+        # 에서는 resume 대상이 없다고 시뮬레이션한다.
+        fake_fdc_quota.list_resumable_real_jobs = AsyncMock(return_value=[])
         fake_repos = MagicMock()
         fake_repos.fdc_quota = fake_fdc_quota
 
@@ -6074,6 +6078,9 @@ class TestFdcActualDispatchRecoveryScan:
             fdc_actual_dispatch_enabled=True, monkeypatch=monkeypatch,
         )
         fake_fdc_quota.cancel_stale_real_jobs.assert_awaited_once()
+        # 2026-08-28 4차 리뷰 보정 — durable resume scan도 recovery scan과
+        # 함께 정확히 1회 호출된다.
+        fake_fdc_quota.list_resumable_real_jobs.assert_awaited_once()
 
     @pytest.mark.asyncio
     async def test_recovery_scan_not_called_when_flag_disabled(
@@ -6083,3 +6090,4 @@ class TestFdcActualDispatchRecoveryScan:
             fdc_actual_dispatch_enabled=False, monkeypatch=monkeypatch,
         )
         fake_fdc_quota.cancel_stale_real_jobs.assert_not_awaited()
+        fake_fdc_quota.list_resumable_real_jobs.assert_not_awaited()

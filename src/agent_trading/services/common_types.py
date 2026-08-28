@@ -300,13 +300,15 @@ class SubmitResult:
     # 호출자(run_decision_loop.py)가 이 값을 post-gather dispatcher의
     # pending sink에 적재한다.
     fdc_dispatch_job_id: UUID | None = None
+    # 2026-08-28 4차 리뷰 보정(PR #359, durable carryover) — assembled_
+    # context/provider_runtime/subprocess_timeout은 더 이상 여기 싣지
+    # 않는다. pre_fdc_result와 job_id만으로 DB에 durable하게(cross-
+    # process resume) 저장 가능해야 하기 때문이다 — EV anchor는
+    # assemble()의 precomputed_agent_bundle 분기가 자신이 새로 만든
+    # fresh context로 직접 적용하고, provider_runtime/subprocess_timeout
+    # 은 decision 시점에 종속되지 않는 프로세스 설정값이라 호출자가
+    # 필요할 때 새로 만든다.
     fdc_dispatch_pre_fdc_result: dict[str, Any] | None = None
-    # pre_fdc가 평가된 바로 그 context — post-gather dispatcher가 EV
-    # anchor 계산에 그대로 재사용한다(새로 재조회한 context를 쓰면
-    # 실제 EI/AR/AC 평가 시점과 어긋난다).
-    fdc_dispatch_assembled_context: AIPolicyContextView | None = None
-    fdc_dispatch_provider_runtime: dict[str, Any] | None = None
-    fdc_dispatch_subprocess_timeout: int | None = None
 
     @classmethod
     def build(

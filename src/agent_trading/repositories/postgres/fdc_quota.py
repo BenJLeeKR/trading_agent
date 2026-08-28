@@ -6,9 +6,11 @@ shared_13rpm_quota_design_2026-08-25.md §6·§8·§9.
 
 from __future__ import annotations
 
+import json
 import logging
 import uuid
 from datetime import datetime
+from typing import Any
 
 import asyncpg
 
@@ -17,6 +19,7 @@ from agent_trading.repositories.contracts import (
     AttemptHttpLifecycle,
     CoordinatorError,
     CoordinatorErrorClass,
+    ResumableRealJob,
     ReservationDenied,
     ReservationGrant,
     ReservationResult,
@@ -401,14 +404,18 @@ class PostgresFdcQuotaRepository:
         source_type: str,
         quota_scope: str,
         fdc_ready_at: datetime,
+        pre_fdc_result: dict[str, Any] | None = None,
+        correlation_id: str | None = None,
     ) -> uuid.UUID:
         job_id = uuid.uuid4()
         async with TransactionManager() as reg_tx:
             await reg_tx.connection.execute(
                 "INSERT INTO trading.fdc_queue_jobs "
                 "(job_id, decision_cycle_id, decision_context_id, symbol, "
-                " source_type, quota_scope, mode, status, fdc_ready_at) "
-                "VALUES ($1, $2, $3, $4, $5, $6, 'real', 'QUEUED', $7)",
+                " source_type, quota_scope, mode, status, fdc_ready_at, "
+                " pre_fdc_result_json, correlation_id) "
+                "VALUES ($1, $2, $3, $4, $5, $6, 'real', 'QUEUED', $7, "
+                "$8::jsonb, $9)",
                 job_id,
                 decision_cycle_id,
                 decision_context_id,
@@ -416,9 +423,50 @@ class PostgresFdcQuotaRepository:
                 source_type,
                 quota_scope,
                 fdc_ready_at,
+                json.dumps(pre_fdc_result) if pre_fdc_result is not None else None,
+                correlation_id,
             )
             await reg_tx.commit()
         return job_id
+
+    async def list_resumable_real_jobs(
+        self, *, quota_scope: str,
+    ) -> list[ResumableRealJob]:
+        async with TransactionManager() as list_tx:
+            rows = await list_tx.connection.fetch(
+                "SELECT job_id, symbol, source_type, decision_cycle_id, "
+                "decision_context_id, correlation_id, pre_fdc_result_json, "
+                "fdc_ready_at FROM trading.fdc_queue_jobs "
+                "WHERE quota_scope = $1 AND mode = 'real' AND status = 'QUEUED' "
+                "ORDER BY enqueue_sequence ASC",
+                quota_scope,
+            )
+            await list_tx.commit()
+        resumable = []
+        for row in rows:
+            raw_pre_fdc = row["pre_fdc_result_json"]
+            if raw_pre_fdc is None:
+                # 이론상 register_real_job()이 항상 함께 저장하므로
+                # 발생하면 안 되지만, 재개 불가로 안전하게 건너뛴다
+                # (호출자가 이 job을 감사 가능한 terminal 상태로 정리한다).
+                logger.error(
+                    "list_resumable_real_jobs: job_id=%s status=QUEUED인데 "
+                    "pre_fdc_result_json이 없다 — 데이터 정합성 이상.",
+                    row["job_id"],
+                )
+                continue
+            resumable.append(ResumableRealJob(
+                job_id=row["job_id"],
+                symbol=row["symbol"],
+                source_type=row["source_type"],
+                quota_scope=quota_scope,
+                decision_cycle_id=row["decision_cycle_id"],
+                decision_context_id=row["decision_context_id"],
+                correlation_id=row["correlation_id"],
+                pre_fdc_result=json.loads(raw_pre_fdc),
+                fdc_ready_at=row["fdc_ready_at"],
+            ))
+        return resumable
 
     async def cancel_stale_real_jobs(
         self,
@@ -426,11 +474,16 @@ class PostgresFdcQuotaRepository:
         quota_scope: str,
         reason: str = "process_terminated_carryover_lost",
     ) -> int:
+        # 2026-08-28 4차 리뷰 보정 — status='QUEUED'는 더 이상 이
+        # 메서드의 대상이 아니다(durable resume 신설로
+        # list_resumable_real_jobs()가 안전하게 재개한다). 여기서는
+        # 오직 reservation을 실제로 받은 뒤 process crash로 결과가
+        # 불명확하게 남은 job(status='RESERVATION_GRANTED')만 다룬다.
         async with TransactionManager() as scan_tx:
             stale_rows = await scan_tx.connection.fetch(
                 "SELECT job_id, status FROM trading.fdc_queue_jobs "
                 "WHERE quota_scope = $1 AND mode = 'real' "
-                "AND status NOT IN ('FDC_SUCCEEDED', 'FDC_FAILED_FINAL', 'CANCELLED')",
+                "AND status = 'RESERVATION_GRANTED'",
                 quota_scope,
             )
             await scan_tx.commit()
@@ -439,16 +492,6 @@ class PostgresFdcQuotaRepository:
         for row in stale_rows:
             job_id = row["job_id"]
             status = row["status"]
-            if status == "QUEUED":
-                # reservation을 한 번도 받지 못했다 — 이 job을 만든
-                # 프로세스의 in-memory carryover도 함께 사라졌으므로
-                # 재개할 방법이 없다. 안전하게 취소한다.
-                await self.mark_job_terminal(
-                    job_id=job_id, status="CANCELLED", reason=reason,
-                )
-                transitioned += 1
-                continue
-
             lifecycle = await self.get_latest_real_job_attempt_lifecycle(
                 job_id=job_id,
             )
