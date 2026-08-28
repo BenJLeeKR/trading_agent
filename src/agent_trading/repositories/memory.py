@@ -63,7 +63,9 @@ from agent_trading.domain.enums import (
     RealizedPnlComputationRunType,
 )
 from agent_trading.repositories.contracts import (
+    AttemptHttpLifecycle,
     CoreEligibilitySample,
+    ResumableRealJob,
     FillSyncHealthSummary,
     LossCutShadowObservationRow,
     ReservationDenied,
@@ -3156,6 +3158,7 @@ class _InMemoryFdcAttempt:
     mode: str
     outcome: str
     http_started_at: datetime | None = None
+    job_id: UUID | None = None
 
 
 class InMemoryFdcQuotaRepository:
@@ -3218,7 +3221,21 @@ class InMemoryFdcQuotaRepository:
             )
             if job_id is not None and job_id in self._jobs:
                 self._jobs[job_id]["queue_poll_count"] += 1
-            if window_count >= target_rpm:
+
+            # FIFO 공정성(2026-08-27, Postgres 구현과 동일한 계약) — job_id가
+            # 있는 호출에 한해, 나보다 먼저 등록됐고 아직 QUEUED인 job이
+            # 있으면 window에 여유가 있어도 순번을 양보한다.
+            not_my_turn = False
+            if job_id is not None and job_id in self._jobs:
+                my_sequence = self._jobs[job_id]["enqueue_sequence"]
+                not_my_turn = any(
+                    other["status"] == "QUEUED"
+                    and other["enqueue_sequence"] < my_sequence
+                    for other in self._jobs.values()
+                    if other["quota_scope"] == quota_scope
+                )
+
+            if window_count >= target_rpm or not_my_turn:
                 if job_id is not None and job_id in self._jobs:
                     self._jobs[job_id]["reservation_denied_count"] += 1
                 return ReservationDenied(quota_scope=quota_scope, window_count=window_count)
@@ -3230,6 +3247,7 @@ class InMemoryFdcQuotaRepository:
                 reserved_at=now,
                 mode=mode,
                 outcome="reservation_granted",
+                job_id=job_id,
             )
             self._attempts[quota_scope].append(entry)
             self._attempts_by_id[reservation_id] = entry
@@ -3359,3 +3377,204 @@ class InMemoryFdcQuotaRepository:
                 attempt_id=attempt_id,
                 enqueue_sequence=enqueue_sequence,
             )
+
+    async def register_real_job(
+        self,
+        *,
+        decision_cycle_id: str | None,
+        decision_context_id: UUID | None,
+        symbol: str,
+        source_type: str,
+        quota_scope: str,
+        fdc_ready_at: datetime,
+        pre_fdc_result: dict[str, Any] | None = None,
+        correlation_id: str | None = None,
+    ) -> UUID:
+        async with self._lock:
+            self._enqueue_sequence_counter += 1
+            job_id = uuid4()
+            self._jobs[job_id] = {
+                "job_id": job_id,
+                "decision_cycle_id": decision_cycle_id,
+                "decision_context_id": decision_context_id,
+                "symbol": symbol,
+                "source_type": source_type,
+                "quota_scope": quota_scope,
+                "mode": "real",
+                "status": "QUEUED",
+                "fdc_ready_at": fdc_ready_at,
+                "enqueue_sequence": self._enqueue_sequence_counter,
+                "queue_poll_count": 0,
+                "reservation_denied_count": 0,
+                "dispatch_attempt_no": 0,
+                "permit_consumed_count": 0,
+                "provider_retry_count": 0,
+                "pre_http_execution_failure_count": 0,
+                "queue_reenqueue_count": 0,
+                "http_attempt_count": 0,
+                "http_429_count": 0,
+                "reserved_but_http_not_started_count": 0,
+                "failure_or_cancel_reason": None,
+                "pre_fdc_result": pre_fdc_result,
+                "correlation_id": correlation_id,
+            }
+            return job_id
+
+    async def apply_retry_failure(
+        self, *, job_id: UUID, reason: str, will_retry: bool,
+    ) -> None:
+        async with self._lock:
+            job = self._jobs.get(job_id)
+            if job is None:
+                return
+            # 2026-08-28 7차 리뷰 보정 — reserved_but_http_not_started_
+            # count는 attempt 단위 관측값(§9)이므로 재등록 여부와 무관
+            # 하게 이 outcome이 기록될 때마다 증가한다.
+            if reason == "pre_http_execution_failure":
+                job["reserved_but_http_not_started_count"] += 1
+            # provider_retry_count/pre_http_execution_failure_count/
+            # queue_reenqueue_count는 "실제 FIFO tail 재등록 횟수"를
+            # 뜻하므로 will_retry=True(실제 재등록)일 때만 증가한다 —
+            # 소진으로 이어지는 마지막 실패는 재등록이 아니라 종결이다.
+            if will_retry:
+                if reason == "provider_retryable_failure":
+                    job["provider_retry_count"] += 1
+                elif reason == "pre_http_execution_failure":
+                    job["pre_http_execution_failure_count"] += 1
+                job["queue_reenqueue_count"] += 1
+                self._enqueue_sequence_counter += 1
+                job["enqueue_sequence"] = self._enqueue_sequence_counter
+                job["status"] = "QUEUED"
+
+    async def record_http_attempt_counters(
+        self, *, job_id: UUID, http_429_observed: bool = False,
+    ) -> None:
+        async with self._lock:
+            job = self._jobs.get(job_id)
+            if job is None:
+                return
+            job["http_attempt_count"] += 1
+            if http_429_observed:
+                job["http_429_count"] += 1
+
+    async def list_resumable_real_jobs(
+        self, *, quota_scope: str,
+    ) -> list[ResumableRealJob]:
+        async with self._lock:
+            candidates = [
+                dict(job)
+                for job in self._jobs.values()
+                if job["quota_scope"] == quota_scope
+                and job["mode"] == "real"
+                and job["status"] == "QUEUED"
+            ]
+        candidates.sort(key=lambda job: job["enqueue_sequence"])
+        resumable = []
+        for job in candidates:
+            # 2026-08-28 5차 리뷰 보정 — 불완전한 QUEUED job을 조용히
+            # 건너뛰면, try_reserve()의 FIFO admission("나보다 먼저
+            # 등록된 QUEUED job이 있으면 양보")이 이 job 뒤의 모든 real
+            # job을 영구 대기시킨다(§17.3/§17.7). 즉시 fail-closed로
+            # 종결해 FIFO head를 비운다 — idempotent(다음 호출부터는
+            # 이미 QUEUED가 아니므로 후보 목록에 다시 잡히지 않는다).
+            pre_fdc_result = job.get("pre_fdc_result")
+            correlation_id = job.get("correlation_id")
+            if pre_fdc_result is None or not correlation_id:
+                reason = (
+                    "fdc_carryover_payload_missing_data_integrity_error"
+                    if pre_fdc_result is None
+                    else "fdc_carryover_correlation_id_missing_data_integrity_error"
+                )
+                await self.mark_job_terminal(
+                    job_id=job["job_id"], status="FDC_FAILED_FINAL", reason=reason,
+                )
+                continue
+            resumable.append(ResumableRealJob(
+                job_id=job["job_id"],
+                symbol=job["symbol"],
+                source_type=job["source_type"],
+                quota_scope=quota_scope,
+                decision_cycle_id=job["decision_cycle_id"],
+                decision_context_id=job["decision_context_id"],
+                correlation_id=correlation_id,
+                pre_fdc_result=pre_fdc_result,
+                fdc_ready_at=job["fdc_ready_at"],
+            ))
+        return resumable
+
+    async def cancel_stale_real_jobs(
+        self,
+        *,
+        quota_scope: str,
+        reason: str = "process_terminated_carryover_lost",
+    ) -> int:
+        # 2026-08-28 4차 리뷰 보정 — status='QUEUED'는 더 이상 대상이
+        # 아니다(list_resumable_real_jobs()가 안전하게 재개한다).
+        async with self._lock:
+            stale_job_ids = [
+                job_id
+                for job_id, job in self._jobs.items()
+                if job["quota_scope"] == quota_scope
+                and job["mode"] == "real"
+                and job["status"] == "RESERVATION_GRANTED"
+            ]
+
+        affected = 0
+        for job_id in stale_job_ids:
+            lifecycle = await self.get_latest_real_job_attempt_lifecycle(
+                job_id=job_id,
+            )
+            if lifecycle in (
+                AttemptHttpLifecycle.NOT_FOUND,
+                AttemptHttpLifecycle.NOT_STARTED,
+            ):
+                await self.mark_job_terminal(
+                    job_id=job_id, status="CANCELLED", reason=reason,
+                )
+            else:
+                await self.mark_job_terminal(
+                    job_id=job_id, status="FDC_FAILED_FINAL",
+                    reason="fdc_only_subprocess_crashed_after_http_start_result_unknown",
+                )
+            affected += 1
+        return affected
+
+    async def mark_job_terminal(
+        self, *, job_id: UUID, status: str, reason: str | None = None,
+    ) -> None:
+        async with self._lock:
+            if job_id in self._jobs:
+                self._jobs[job_id]["status"] = status
+                self._jobs[job_id]["failure_or_cancel_reason"] = reason
+
+    async def mark_job_status(self, *, job_id: UUID, status: str) -> None:
+        async with self._lock:
+            if job_id in self._jobs:
+                self._jobs[job_id]["status"] = status
+
+    async def get_attempt_http_lifecycle(
+        self, *, reservation_id: UUID,
+    ) -> AttemptHttpLifecycle:
+        async with self._lock:
+            entry = self._attempts_by_id.get(reservation_id)
+            if entry is None:
+                return AttemptHttpLifecycle.NOT_FOUND
+            if entry.http_started_at is None:
+                return AttemptHttpLifecycle.NOT_STARTED
+            return AttemptHttpLifecycle.STARTED
+
+    async def get_latest_real_job_attempt_lifecycle(
+        self, *, job_id: UUID,
+    ) -> AttemptHttpLifecycle:
+        async with self._lock:
+            matching = [
+                entry
+                for entry in self._attempts_by_id.values()
+                if entry.job_id == job_id
+            ]
+            if not matching:
+                return AttemptHttpLifecycle.NOT_FOUND
+            latest = max(matching, key=lambda entry: entry.reserved_at)
+            if latest.http_started_at is None:
+                return AttemptHttpLifecycle.NOT_STARTED
+            return AttemptHttpLifecycle.STARTED

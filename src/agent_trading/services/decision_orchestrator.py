@@ -115,6 +115,8 @@ from agent_trading.services.translation import (
 )
 from agent_trading.services.decision_agent_runner import (
     DecisionAgentRunner,
+    FdcActualDispatchPendingError,
+    apply_expected_value_anchor,
     _should_skip_final_decision_composer,
 )
 from agent_trading.services.validators import ValidationContext, ValidationResult
@@ -362,6 +364,8 @@ class DecisionOrchestratorService:
         held_position_reduce_skip_shadow_enabled: bool = False,
         # --- FDC cycle-scoped batch queue lifecycle shadow (Phase 1, 관측 전용, 결정 미개입) ---
         fdc_batch_queue_lifecycle_shadow_enabled: bool = False,
+        # --- FDC 실제 dispatch 전환 (2026-08-27, held_position lane REDUCE/SELL_CANDIDATE 한정) ---
+        fdc_actual_dispatch_enabled: bool = False,
     ) -> None:
         self._repos = repos
         self._decision_context_service = DecisionContextService(repos)
@@ -453,6 +457,12 @@ class DecisionOrchestratorService:
             fdc_batch_queue_lifecycle_shadow_enabled
         )
         self.pending_fdc_ready_shadow_event: FdcReadyShadowEvent | None = None
+        # FDC 실제 dispatch 전환 스위치(2026-08-27) — subprocess 경로에서만
+        # 의미가 있고(DecisionAgentRunner에 그대로 전달), held_position
+        # lane의 REDUCE_CANDIDATE/SELL_CANDIDATE(보유 포지션 존재)에 한해서만
+        # 영향을 준다. 최종 lane/후보 판별은 run_agent_subprocess.py가
+        # context.deterministic_trigger로 직접 확인한다.
+        self._fdc_actual_dispatch_enabled = fdc_actual_dispatch_enabled
         # --- Execution Service (execution pipeline state: sell guard, quote CB, fresh check) ---
         self._execution_service = ExecutionService(
             repos=repos,
@@ -476,6 +486,7 @@ class DecisionOrchestratorService:
             provider_base_url=self._provider_base_url,
             provider_model_id=self._provider_model_id,
             provider_timeout_seconds=self._provider_timeout_seconds,
+            fdc_actual_dispatch_enabled=self._fdc_actual_dispatch_enabled,
         )
 
     def _check_held_position_sell_override(
@@ -2656,6 +2667,7 @@ class DecisionOrchestratorService:
         order_intent_id: UUID | None = None,
         seeded_events: list[ExternalEventEntity] | None = None,
         decision_cycle_id: str | None = None,
+        precomputed_agent_bundle: AgentExecutionBundle | None = None,
     ) -> OrderIntent:
         """Assemble a structured order intent from a raw request.
 
@@ -2677,11 +2689,31 @@ class DecisionOrchestratorService:
             심볼별로 다른 값이라 이 용도로 쓰지 않는다) — FDC batch queue
             lifecycle shadow(Phase 1)가 같은 사이클의 FDC-ready job을
             묶는 데만 사용한다(``FdcReadyShadowEvent.decision_cycle_id``).
+        precomputed_agent_bundle : AgentExecutionBundle | None
+            2026-08-27 2차 리뷰 보정(PR #359) — FDC 실제 dispatch
+            post-gather dispatcher 전용. 주어지면 EI/AR/AC/FDC agent
+            실행(short-circuit/subprocess/in-process 3분기 전부)을
+            완전히 건너뛰고 이 bundle을 그대로 쓴다 — pre-FDC 단계에서
+            symbol coroutine이 이미 만든 EI/AR/AC 결과와, dispatcher가
+            별도 concurrency로 얻은 FDC 결과를 병합해 여기로 전달한다.
+            ``None``이면(기존 모든 호출자) 기존 동작과 100% 동일하다.
 
         Returns
         -------
         OrderIntent
             A structured intent with P1 fields and assembled context attached.
+
+        Raises
+        ------
+        FdcActualDispatchPendingError
+            2026-08-27 2차 리뷰 보정 — ``precomputed_agent_bundle``이
+            없고 FDC 실제 dispatch 대상(held_position REDUCE_CANDIDATE/
+            SELL_CANDIDATE, flag 켜짐)이면, subprocess 실행 분기
+            (``self._run_agents_in_subprocess()``)가 quota reservation을
+            기다리지 않고 이 예외를 즉시 던진다 — ``asyncio.gather()``를
+            막지 않기 위함이다. 호출자(``_run_decision_pipeline()``)가
+            전용 핸들러로 이 예외를 잡아 ``SubmitResult(status=
+            "FDC_ACTUAL_DISPATCH_PENDING", ...)``로 변환한다.
         """
         # --- Resolve or create active decision context ---
         # Ensures a valid decision_context_id exists before agent execution,
@@ -2931,7 +2963,28 @@ class DecisionOrchestratorService:
         short_circuit_bundle = self._evaluate_pre_agent_short_circuit(
             assembled_context=ai_policy_context,
         )
-        if short_circuit_bundle is not None:
+        if precomputed_agent_bundle is not None:
+            # 2026-08-27 2차 리뷰 보정(PR #359) — post-gather dispatcher가
+            # pre_fdc(EI/AR/AC)와 fdc_only(FDC) 결과를 이미 병합해 넘긴
+            # 경우. 아래 short-circuit/subprocess/in-process 3분기를 전부
+            # 건너뛴다 — agent를 다시 호출하지 않는다.
+            #
+            # 2026-08-28 4차 리뷰 보정 — EV anchor를 여기서 적용한다.
+            # complete_fdc_actual_dispatch()(post-gather dispatcher)는
+            # 더 이상 EV anchor를 적용하지 않는다 — DB에 durable하게
+            # 저장 가능해야 하는(cross-process resume) pre_fdc_result만
+            # 갖고 있고 assembled_context는 갖고 있지 않기 때문이다.
+            # 여기서는 바로 위에서 새로 만든(fresh) ai_policy_context로
+            # anchor를 계산하므로, 재개가 원래 프로세스든 다른 프로세스
+            # (durable resume)든 항상 최신 context를 쓴다.
+            agent_bundle = apply_expected_value_anchor(
+                precomputed_agent_bundle, assembled_context=ai_policy_context,
+            )
+            _fdc_run_id = await self._rehydrate_subprocess_agent_runs(
+                resolved_context_id=resolved_context_id,
+                agent_bundle=agent_bundle,
+            )
+        elif short_circuit_bundle is not None:
             agent_bundle = short_circuit_bundle
             _fdc_run_id = None
             logger.info(
@@ -3499,6 +3552,7 @@ class DecisionOrchestratorService:
         actor_type: str = "system",
         actor_id: str = "decision_orchestrator",
         decision_cycle_id: str | None = None,
+        precomputed_agent_bundle: AgentExecutionBundle | None = None,
     ) -> SubmitResult:
         """Execute the full AI decision → order submit pipeline.
 
@@ -3558,6 +3612,7 @@ class DecisionOrchestratorService:
             order_intent_id=order_intent_id,
             seeded_events=seeded_events,
             decision_cycle_id=decision_cycle_id,
+            precomputed_agent_bundle=precomputed_agent_bundle,
             _add_phase=_add_phase,
             _phase_trace=_phase_trace,
         )
@@ -3590,6 +3645,7 @@ class DecisionOrchestratorService:
         order_intent_id: UUID | None = None,
         seeded_events: list[ExternalEventEntity] | None = None,
         decision_cycle_id: str | None = None,
+        precomputed_agent_bundle: AgentExecutionBundle | None = None,
         _add_phase: Callable[[str, str], None],
         _phase_trace: list[PhaseTraceEntry],
     ) -> tuple[OrderIntent | None, UUID | None, SubmitResult | None]:
@@ -3619,6 +3675,7 @@ class DecisionOrchestratorService:
                 order_intent_id=order_intent_id,
                 seeded_events=seeded_events,
                 decision_cycle_id=decision_cycle_id,
+                precomputed_agent_bundle=precomputed_agent_bundle,
             )
             _assemble_elapsed = time_module.monotonic() - _assemble_t0
             logger.info(
@@ -3638,6 +3695,23 @@ class DecisionOrchestratorService:
                 error_phase="ai_timeout",
                 error_message=f"assemble() timed out for symbol={request.symbol}",
                 decision_context_id=decision_context_id,
+            )
+        except FdcActualDispatchPendingError as exc:
+            # 2026-08-27 2차 리뷰 보정(PR #359) — FDC 실제 dispatch 대상
+            # job이 quota reservation을 기다려야 한다. 오류가 아니다 —
+            # 호출자(run_decision_loop.py)가 이 상태를 보고 post-gather
+            # dispatcher의 pending sink에 적재한다.
+            logger.info(
+                "FDC actual dispatch pending: symbol=%s job_id=%s "
+                "decision_context_id=%s",
+                _symbol, exc.job_id, decision_context_id,
+            )
+            _add_phase("ai_assemble", "fdc_dispatch_pending")
+            return None, None, SubmitResult(
+                status="FDC_ACTUAL_DISPATCH_PENDING",
+                decision_context_id=decision_context_id,
+                fdc_dispatch_job_id=exc.job_id,
+                fdc_dispatch_pre_fdc_result=exc.pre_fdc_result,
             )
         except Exception as exc:
             logger.exception(

@@ -81,7 +81,7 @@ from agent_trading.domain.entities import (
     RiskLimitSnapshotEntity,
     SignalFeatureSnapshotEntity,
 )
-from agent_trading.services.common_types import dataclass_to_dict
+from agent_trading.services.common_types import dataclass_to_dict, dict_to_dataclass
 from agent_trading.services.market_regime import MarketRegimeAssessment
 from agent_trading.services.deterministic_trigger_engine import (
     DeterministicTriggerAssessment,
@@ -212,6 +212,32 @@ class AgentSubprocessInput:
     score: dict[str, Any] | None = None
     positional_args: tuple[Any, ...] = ()
 
+    # --- subprocess 실행 모드(2026-08-27, held_position 실제 dispatcher
+    # 신설 — PR #359 리뷰 보정) ---
+    # "full"(기본값, 기존 동작): EI/AR/AC/FDC를 한 subprocess에서 순차
+    #   실행한다 — flag=false·비대상 lane은 항상 이 모드만 쓰이므로
+    #   기존 동작과 100% 동일하다.
+    # "pre_fdc": EI/AR/AC + FDC skip 판정까지만 수행한다. FDC-ready면
+    #   FDC를 호출하지 않고 즉시 반환한다(``AgentSubprocessOutput.
+    #   requires_fdc_dispatch=True``) — 호출자(``DecisionAgentRunner``)가
+    #   quota reservation을 기다린 뒤 별도로 "fdc_only" subprocess를
+    #   스폰한다.
+    # "fdc_only": 이미 확보한 reservation grant로 FDC one-shot만
+    #   실행한다. EI/AR/AC는 전혀 호출하지 않는다 — 대신
+    #   ``event_interpretation_output``/``ai_risk_output``/
+    #   ``ai_compliance_output``(위 필드, pre_fdc의 결과)로 프롬프트를
+    #   재구성한다.
+    mode: str = "full"
+
+    # --- "fdc_only" 전용: 호출자가 이미 확보한 reservation grant ---
+    # (``FdcQuotaCoordinator.try_reserve()``가 GRANTED했을 때만 이
+    # 필드들이 채워진다 — DENIED/오류 상태로는 이 모드가 호출되지 않는다.)
+    reservation_id: str | None = None
+    reservation_job_id: str | None = None
+    reservation_attempt_no: int = 1
+    reservation_quota_scope: str | None = None
+    reservation_window_count_before_grant: int = 0
+
 
 @dataclass(slots=True, frozen=True)
 class AgentSubprocessOutput:
@@ -264,6 +290,13 @@ class AgentSubprocessOutput:
     rate_limiter_requeue_count: int = 0
     rate_limiter_final_waited_seconds: float = 0.0
     rate_limiter_queue_deadline_exceeded: bool = False
+    # 2026-08-27 신설(held_position 실제 dispatcher, PR #359 리뷰 보정) —
+    # mode="pre_fdc"에서 FDC-ready(=fdc_skipped=False)로 확정됐지만 FDC를
+    # 아직 호출하지 않았을 때만 True. 이 경우 composer_output은 비어
+    # 있고, 호출자가 quota reservation을 기다린 뒤 별도로 mode="fdc_only"
+    # subprocess를 스폰해야 한다. mode="full"/"fdc_only" 출력에서는 항상
+    # False다(기존 동작·계약 불변).
+    requires_fdc_dispatch: bool = False
 
 
 # ---------------------------------------------------------------------------
@@ -1205,6 +1238,135 @@ async def _run_fdc_with_outer_timeout(
 
 
 # ---------------------------------------------------------------------------
+# mode="fdc_only" — 이미 확보한 reservation grant로 FDC one-shot만 실행
+# (2026-08-27 신설, held_position 실제 dispatcher — PR #359 리뷰 보정)
+# ---------------------------------------------------------------------------
+
+
+async def _run_fdc_only_mode(inp: AgentSubprocessInput, t0: float) -> None:
+    """EI/AR/AC를 전혀 호출하지 않고, 이미 확보한 reservation grant로
+    FDC one-shot만 실행한다. 결과를 stdout에 쓰고, 실패하면
+    ``sys.exit(1)``(기존 ``main()``과 동일한 오류 처리 계약).
+
+    DB pool은 이 함수가 독자적으로 열고 닫는다(PR A의
+    ``ar_fdc_provider_validation.py``와 동일 패턴) — reservation 자체는
+    호출자(``DecisionAgentRunner``)가 이미 얻었으므로 여기서는
+    ``try_reserve()``를 호출하지 않지만, ``record_attempt_outcome()``
+    (HTTP 시작/완료 기록)에는 여전히 DB 접근이 필요하다.
+    """
+    pool_opened = False
+    try:
+        if not (
+            inp.reservation_id and inp.reservation_job_id
+            and inp.reservation_quota_scope
+        ):
+            raise ValueError(
+                "mode='fdc_only'는 reservation_id/reservation_job_id/"
+                "reservation_quota_scope가 모두 필요하다"
+            )
+        if not (inp.provider_api_key and inp.provider_base_url):
+            raise ValueError("mode='fdc_only'는 provider 설정이 필요하다")
+
+        from agent_trading.config.settings import (
+            _resolve_fdc_provider_rate_window_seconds,
+            _resolve_fdc_provider_target_rpm,
+            _resolve_gemini_provider_declared_rpm_limit,
+        )
+        from agent_trading.db.connection import close_pool, create_pool
+        from agent_trading.db.transaction import TransactionManager
+        from agent_trading.repositories.contracts import ReservationGrant
+        from agent_trading.repositories.postgres.fdc_quota import (
+            PostgresFdcQuotaRepository,
+        )
+        from agent_trading.services.ai_agents.provider_client import (
+            LiveGeminiProviderClient,
+        )
+        from agent_trading.services.fdc_quota_coordinator import FdcQuotaCoordinator
+        from scripts.fdc_manual_provider_gate import PreGrantedFdcProviderClient
+
+        await create_pool()
+        pool_opened = True
+
+        async with TransactionManager() as ambient_tx:
+            repo = PostgresFdcQuotaRepository(ambient_tx)
+        coordinator = FdcQuotaCoordinator(
+            repo=repo,
+            target_rpm=_resolve_fdc_provider_target_rpm(),
+            window_seconds=_resolve_fdc_provider_rate_window_seconds(),
+            declared_rpm_limit=_resolve_gemini_provider_declared_rpm_limit(),
+        )
+        live_client = LiveGeminiProviderClient(
+            coordinator=coordinator,
+            api_key=inp.provider_api_key,
+            base_url=inp.provider_base_url,
+            timeout_seconds=inp.provider_timeout_seconds,
+        )
+        grant = ReservationGrant(
+            reservation_id=UUID(inp.reservation_id),
+            quota_scope=inp.reservation_quota_scope,
+            job_id=UUID(inp.reservation_job_id),
+            attempt_no=inp.reservation_attempt_no,
+            window_count_before_grant=inp.reservation_window_count_before_grant,
+        )
+        pre_granted_client = PreGrantedFdcProviderClient(
+            coordinator=coordinator, live_client=live_client,
+            grant=grant, job_id=grant.job_id,
+        )
+        fdc_agent = FinalDecisionComposerAgent(
+            provider_client=pre_granted_client,
+            model_id=inp.provider_model_id,
+        )
+
+        event_output = dict_to_dataclass(
+            inp.event_interpretation_output or {}, EventInterpretationOutput,
+        )
+        risk_output = dict_to_dataclass(inp.ai_risk_output or {}, AIRiskOutput)
+        compliance_output = dict_to_dataclass(
+            inp.ai_compliance_output or {}, AIComplianceOutput,
+        )
+        request = _reconstruct_request(
+            inp, event_output=event_output, risk_output=risk_output,
+            compliance_output=compliance_output,
+        )
+
+        composer_output, observation_fields = await _run_fdc_with_outer_timeout(
+            fdc_agent, request, timeout_seconds=_FDC_PER_AGENT_TIMEOUT,
+            symbol=inp.symbol or "",
+        )
+
+        if is_missing_agent_symbol(composer_output.symbol) and inp.symbol:
+            from dataclasses import replace
+            composer_output = replace(composer_output, symbol=inp.symbol)
+        normalized_dt = normalize_decision_type(composer_output.decision_type)
+        if normalized_dt != composer_output.decision_type:
+            from dataclasses import replace
+            composer_output = replace(composer_output, decision_type=normalized_dt)
+
+        duration = time.monotonic() - t0
+        output = AgentSubprocessOutput(
+            success=True,
+            composer_output=dataclass_to_dict(composer_output),
+            duration_seconds=duration,
+            fdc_skipped=False,
+            provider_http_attempt_count=observation_fields["provider_http_attempt_count"],
+            provider_http_429_count=observation_fields["provider_http_429_count"],
+            provider_execution_seconds=observation_fields["provider_execution_seconds"],
+            provider_final_status=observation_fields["provider_final_status"],
+        )
+        _write_output(output)
+        _diag(f"SUCCESS: fdc_only completed in {duration:.2f}s")
+    except Exception as exc:
+        duration = time.monotonic() - t0
+        _diag(f"EXCEPTION (fdc_only) after {duration:.2f}s: {exc}")
+        logger.exception("fdc_only subprocess failed after %.2fs", duration)
+        _write_error_output(str(exc), duration=duration)
+        sys.exit(1)
+    finally:
+        if pool_opened:
+            await close_pool()
+
+
+# ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
 
@@ -1224,6 +1386,12 @@ async def main() -> None:
         _diag(f"Failed to parse input: {exc}")
         _write_error_output(f"Failed to parse input: {exc}")
         sys.exit(1)
+
+    if inp.mode == "fdc_only":
+        # EI/AR/AC를 전혀 호출하지 않는다 — 별도 함수로 완전히 분리해
+        # 처리한다(2026-08-27 신설, held_position 실제 dispatcher).
+        await _run_fdc_only_mode(inp, t0)
+        return
 
     # ── 1b. Create provider client (if configured) ─────────────────────
     provider_client: AIProviderClient | None = None
@@ -1443,6 +1611,23 @@ async def main() -> None:
                 composer_output.symbol,
                 composer_output.decision_type,
             )
+        elif inp.mode == "pre_fdc":
+            # FDC-ready지만 mode="pre_fdc"라 FDC를 호출하지 않는다
+            # (2026-08-27, held_position 실제 dispatcher 신설 — PR #359
+            # 리뷰 보정). 호출자(``DecisionAgentRunner``)가 quota
+            # reservation을 기다린 뒤 별도 "fdc_only" subprocess를
+            # 스폰한다. composer_output은 빈 상태로 남기고, 아래
+            # ``requires_fdc_dispatch=True`` 플래그로 호출자에게 알린다.
+            composer_output = FinalDecisionComposerOutput(
+                symbol=inp.symbol or event_output.symbol or "",
+            )
+            _diag(
+                f"FDC dispatch required (mode=pre_fdc): symbol={composer_output.symbol}"
+            )
+            logger.info(
+                "FDC dispatch required (mode=pre_fdc): symbol=%s",
+                composer_output.symbol,
+            )
         else:
             # --- 2d. Final Decision Composer Agent ---
             # 2026-08-21 전환: rate limiter permit 획득은 더 이상 여기서
@@ -1584,10 +1769,13 @@ async def main() -> None:
             rate_limiter_requeue_count=fdc_rate_limiter_requeue_count,
             rate_limiter_final_waited_seconds=fdc_rate_limiter_final_waited_seconds,
             rate_limiter_queue_deadline_exceeded=fdc_rate_limiter_queue_deadline_exceeded,
+            requires_fdc_dispatch=(inp.mode == "pre_fdc" and not skip_fdc),
         )
         _write_output(output)
         if skip_fdc:
             _diag(f"SUCCESS: FDC skipped — all 3 agents completed in {duration:.2f}s")
+        elif inp.mode == "pre_fdc":
+            _diag(f"SUCCESS: pre_fdc completed, FDC dispatch required, in {duration:.2f}s")
         else:
             _diag(f"SUCCESS: all 3 agents completed in {duration:.2f}s")
 

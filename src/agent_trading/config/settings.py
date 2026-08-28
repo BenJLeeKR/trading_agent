@@ -679,6 +679,26 @@ def _resolve_fdc_batch_queue_lifecycle_shadow_enabled() -> bool:
     return raw.strip().lower() == "true"
 
 
+def _resolve_fdc_actual_dispatch_enabled() -> bool:
+    """FDC **실제 dispatch**(공용 quota coordinator를 실제로 거쳐
+    reservation을 소비하고 provider one-shot HTTP를 보내는 경로) on/off
+    스위치를 ``FDC_ACTUAL_DISPATCH_ENABLED`` env에서 읽는다.
+
+    설계 근거: docs/40_action_plans/fdc_cycle_scoped_batch_queue_gemini_
+    shared_13rpm_quota_design_2026-08-25.md §15 단계적 도입 "② held_
+    position lane 한정 실전 전환" 단계를, 운영 트래픽 구성이 아니라
+    코드 수준에서 강제하는 좁은 구현(2026-08-27 도입, §17 전체 subprocess
+    분리/dispatcher 없이 기존 단일 subprocess 호출 내부에서 FDC 클라이언트만
+    교체). 기본값 ``False``. ``True``여도 held_position lane의
+    ``REDUCE_CANDIDATE``/``SELL_CANDIDATE``(그리고 보유 포지션 존재) 조건을
+    만족하는 건에만 영향을 준다 — BUY 후보, 일반 universe, 그 밖의 held_
+    position 상태(NO_ACTION/WATCH)는 이 값과 무관하게 기존 10 RPM strict
+    limiter 경로(``_FdcPermitAccumulator``)를 그대로 쓴다.
+    """
+    raw = os.getenv("FDC_ACTUAL_DISPATCH_ENABLED", "false")
+    return raw.strip().lower() == "true"
+
+
 def _resolve_fdc_provider_target_rpm() -> int:
     """``FDC_PROVIDER_TARGET_RPM`` env — 공용 quota coordinator의 운영
     목표 RPM. 기본값 ``13``(Gemini 선언 한도 15보다 여유 2를 둔 값,
@@ -701,6 +721,15 @@ def _resolve_gemini_provider_declared_rpm_limit() -> int:
     값이 아니다). 기본값 ``15``. 외부 provider의 실시간 검증값이 아니라
     운영자가 알고 있는 선언값임에 유의(설계 문서 §13)."""
     return max(1, int(os.getenv("GEMINI_PROVIDER_DECLARED_RPM_LIMIT", "15")))
+
+
+def _resolve_fdc_worker_concurrency() -> int:
+    """``FDC_WORKER_CONCURRENCY`` env — post-gather FDC 실제 dispatch
+    worker의 동시 실행 수(2026-08-27 2차 리뷰 보정, PR #359). 기본값
+    ``5``(설계 문서 §13 "실측 전 보수적 시작값"). symbol 처리용
+    ``asyncio.Semaphore``(``_SEMAPHORE_MAX``)와는 별도의 semaphore로,
+    FDC quota reservation 대기 + fdc_only 실행만 이 값으로 제한한다."""
+    return max(1, int(os.getenv("FDC_WORKER_CONCURRENCY", "5")))
 
 
 def _resolve_kis_fill_incremental_append_enabled() -> bool:
@@ -1031,6 +1060,15 @@ class AppSettings:
     스위치. 기본값 ``False``. FDC cycle-scoped batch queue Phase 1
     (lifecycle shadow) 전용 — 실제 FDC HTTP 호출/기존 strict limiter/
     주문 제출을 전혀 바꾸지 않는다."""
+
+    fdc_actual_dispatch_enabled: bool = field(
+        default_factory=_resolve_fdc_actual_dispatch_enabled
+    )
+    """`FDC_ACTUAL_DISPATCH_ENABLED` env로 제어하는 실전 전환 스위치.
+    기본값 ``False``. ``True``여도 held_position lane의
+    `REDUCE_CANDIDATE`/`SELL_CANDIDATE`(보유 포지션 존재) 조건에 한해서만
+    공용 quota coordinator를 실제로 거친다 — BUY/일반 universe/그 밖의
+    held_position 상태는 영향받지 않는다."""
 
     fdc_provider_target_rpm: int = field(
         default_factory=_resolve_fdc_provider_target_rpm

@@ -42,6 +42,10 @@ def serialize_agent_input(
     score: ScoreResult | None,
     positional_args: tuple[Any, ...] = (),
     provider_runtime: dict[str, Any] | None = None,
+    mode: str = "full",
+    event_interpretation_output: dict[str, Any] | None = None,
+    ai_risk_output: dict[str, Any] | None = None,
+    ai_compliance_output: dict[str, Any] | None = None,
 ) -> str:
     """Serialize agent input for subprocess execution.
 
@@ -49,6 +53,21 @@ def serialize_agent_input(
     dataclass in ``scripts/run_agent_subprocess.py``.
 
     Extracted from DecisionOrchestratorService._serialize_agent_input().
+
+    ``mode``(2026-08-27, held_position 실제 dispatcher 신설 — PR #359
+    리뷰 보정): ``"full"``(기본값, 기존 동작 그대로 EI/AR/AC/FDC를 한
+    subprocess에서 순차 실행) | ``"pre_fdc"``(EI/AR/AC + FDC skip 판정만,
+    FDC-ready면 FDC를 호출하지 않고 즉시 반환) | ``"fdc_only"``(이미
+    확보한 reservation grant로 FDC one-shot만 실행 — EI/AR/AC는 호출하지
+    않는다). 어느 lane/flag를 대상으로 이 모드를 선택할지는 호출자
+    (``DecisionAgentRunner``)가 결정한다 — 이 함수는 그 결정을 그대로
+    전달할 뿐이다.
+
+    ``event_interpretation_output``/``ai_risk_output``/
+    ``ai_compliance_output``: ``mode="fdc_only"``일 때 pre_fdc 단계의
+    결과를 전달해 FDC 프롬프트를 재구성하는 데 쓴다(기존
+    ``AgentSubprocessInput``의 동명 필드를 그대로 재사용 — 새 carryover
+    포맷을 만들지 않는다).
     """
     resolved_provider_runtime = provider_runtime or resolve_provider_runtime_config()
     payload = {
@@ -68,6 +87,12 @@ def serialize_agent_input(
         "provider_base_url": resolved_provider_runtime["provider_base_url"],
         "provider_model_id": resolved_provider_runtime["provider_model_id"],
         "provider_timeout_seconds": resolved_provider_runtime["provider_timeout_seconds"],
+
+        # subprocess 실행 모드(2026-08-27 신설)
+        "mode": mode,
+        "event_interpretation_output": event_interpretation_output,
+        "ai_risk_output": ai_risk_output,
+        "ai_compliance_output": ai_compliance_output,
 
         # Legacy top-level keys (consumed by _reconstruct_context)
         "score": dataclass_to_dict(score) if score is not None else None,

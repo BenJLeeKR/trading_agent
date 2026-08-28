@@ -55,6 +55,12 @@
       "services": ["sppv3-oos-batch"],
       "required_in_compose": true,
       "note": "위 KIS_LIVE_INFO_APP_KEY와 짝을 이루는 secret. 동일한 이유로 필요하다."
+    },
+    {
+      "key": "FDC_ACTUAL_DISPATCH_ENABLED",
+      "services": ["ops-scheduler"],
+      "required_in_compose": true,
+      "note": "held_position lane의 REDUCE_CANDIDATE/SELL_CANDIDATE에 한해 FDC 공용 quota coordinator 실제 reservation/one-shot HTTP 경로로 전환하는 실행 경로 선택 키(2026-08-27). 켜지는 순간 실제 FDC 호출 방식이 바뀌므로(레거시 10 RPM strict limiter vs coordinator 강제) 배선 누락을 하드 실패로 잡는다. 기본값 false는 기존 운영 동작을 그대로 유지한다."
     }
   ]
 }

@@ -6,21 +6,28 @@ shared_13rpm_quota_design_2026-08-25.md §6·§8·§9.
 
 from __future__ import annotations
 
+import json
+import logging
 import uuid
 from datetime import datetime
+from typing import Any
 
 import asyncpg
 
 from agent_trading.db.transaction import TransactionManager
 from agent_trading.repositories.contracts import (
+    AttemptHttpLifecycle,
     CoordinatorError,
     CoordinatorErrorClass,
+    ResumableRealJob,
     ReservationDenied,
     ReservationGrant,
     ReservationResult,
     ShadowJudgement,
     ShadowJudgementResult,
 )
+
+logger = logging.getLogger(__name__)
 
 # reservation 성공/진행 중/완료 등 "이 window의 슬롯을 소비한" 것으로
 # 간주하는 모든 outcome. reserved_but_http_not_started도 포함해야
@@ -113,7 +120,31 @@ class PostgresFdcQuotaRepository:
                     window_seconds,
                 )
 
-                if window_count >= target_rpm:
+                # FIFO 공정성(2026-08-27, held_position 실제 dispatcher 신설
+                # — PR #359 리뷰 보정): job_id가 있는 호출(=dispatcher가
+                # 관리하는 real job)에 한해, 나보다 먼저 등록됐고 아직
+                # QUEUED 상태인(=아직 grant를 못 받은) job이 있으면 이번
+                # window에 여유가 있어도 순번을 양보한다 — 동시에 여러
+                # symbol의 coroutine이 각자 try_reserve()를 폴링해도
+                # "늦게 등록된 job이 먼저 grant받는" 새치기를 anchor 행
+                # 잠금 하에 원천 차단한다. job_id가 없는 호출(기존 manual
+                # 스크립트 경로)은 이 검사 대상이 아니다 — 하위 호환.
+                not_my_turn = False
+                if job_id is not None:
+                    earlier_queued = await reservation_tx.connection.fetchval(
+                        "SELECT EXISTS(SELECT 1 FROM trading.fdc_queue_jobs "
+                        "WHERE quota_scope = $1 AND mode = 'real' "
+                        "AND status = 'QUEUED' "
+                        "AND enqueue_sequence < ("
+                        "  SELECT enqueue_sequence FROM trading.fdc_queue_jobs "
+                        "  WHERE job_id = $2"
+                        "))",
+                        quota_scope,
+                        job_id,
+                    )
+                    not_my_turn = bool(earlier_queued)
+
+                if window_count >= target_rpm or not_my_turn:
                     if job_id is not None:
                         await reservation_tx.connection.execute(
                             "UPDATE trading.fdc_queue_jobs SET "
@@ -363,3 +394,306 @@ class PostgresFdcQuotaRepository:
             return CoordinatorError(_classify_error(exc), str(exc))
         except (OSError, ConnectionError) as exc:
             return CoordinatorError(_classify_error(exc), str(exc))
+
+    async def register_real_job(
+        self,
+        *,
+        decision_cycle_id: str | None,
+        decision_context_id: uuid.UUID | None,
+        symbol: str,
+        source_type: str,
+        quota_scope: str,
+        fdc_ready_at: datetime,
+        pre_fdc_result: dict[str, Any] | None = None,
+        correlation_id: str | None = None,
+    ) -> uuid.UUID:
+        job_id = uuid.uuid4()
+        async with TransactionManager() as reg_tx:
+            await reg_tx.connection.execute(
+                "INSERT INTO trading.fdc_queue_jobs "
+                "(job_id, decision_cycle_id, decision_context_id, symbol, "
+                " source_type, quota_scope, mode, status, fdc_ready_at, "
+                " pre_fdc_result_json, correlation_id) "
+                "VALUES ($1, $2, $3, $4, $5, $6, 'real', 'QUEUED', $7, "
+                "$8::jsonb, $9)",
+                job_id,
+                decision_cycle_id,
+                decision_context_id,
+                symbol,
+                source_type,
+                quota_scope,
+                fdc_ready_at,
+                json.dumps(pre_fdc_result) if pre_fdc_result is not None else None,
+                correlation_id,
+            )
+            await reg_tx.commit()
+        return job_id
+
+    async def list_resumable_real_jobs(
+        self, *, quota_scope: str,
+    ) -> list[ResumableRealJob]:
+        async with TransactionManager() as list_tx:
+            rows = await list_tx.connection.fetch(
+                "SELECT job_id, symbol, source_type, decision_cycle_id, "
+                "decision_context_id, correlation_id, pre_fdc_result_json, "
+                "fdc_ready_at FROM trading.fdc_queue_jobs "
+                "WHERE quota_scope = $1 AND mode = 'real' AND status = 'QUEUED' "
+                "ORDER BY enqueue_sequence ASC",
+                quota_scope,
+            )
+            await list_tx.commit()
+        resumable = []
+        for row in rows:
+            raw_pre_fdc = row["pre_fdc_result_json"]
+            correlation_id = row["correlation_id"]
+            # 2026-08-28 5차 리뷰 보정 — 불완전한 QUEUED row를 조용히
+            # 건너뛰고 로그만 남기면, try_reserve()의 FIFO admission이
+            # "나보다 먼저 등록된 QUEUED job이 있으면 양보"하므로 이
+            # row 하나가 뒤따르는 모든 real job을 영구 대기시킨다
+            # (§17.3/§17.7). 건너뛰지 않고 즉시 fail-closed로 종결해
+            # FIFO head를 비운다 — idempotent(다음 호출부터는 이미
+            # 'QUEUED'가 아니므로 이 SELECT 자체에 다시 걸리지 않는다).
+            if raw_pre_fdc is None or not correlation_id:
+                reason = (
+                    "fdc_carryover_payload_missing_data_integrity_error"
+                    if raw_pre_fdc is None
+                    else "fdc_carryover_correlation_id_missing_data_integrity_error"
+                )
+                logger.error(
+                    "list_resumable_real_jobs: job_id=%s status=QUEUED인데 "
+                    "%s가 없다 — 데이터 정합성 이상. 재개하지 않고 "
+                    "FDC_FAILED_FINAL(reason=%s)로 즉시 종결해 FIFO head "
+                    "차단을 막는다.",
+                    row["job_id"],
+                    "pre_fdc_result_json" if raw_pre_fdc is None else "correlation_id",
+                    reason,
+                )
+                await self.mark_job_terminal(
+                    job_id=row["job_id"], status="FDC_FAILED_FINAL", reason=reason,
+                )
+                continue
+            resumable.append(ResumableRealJob(
+                job_id=row["job_id"],
+                symbol=row["symbol"],
+                source_type=row["source_type"],
+                quota_scope=quota_scope,
+                decision_cycle_id=row["decision_cycle_id"],
+                decision_context_id=row["decision_context_id"],
+                correlation_id=correlation_id,
+                pre_fdc_result=json.loads(raw_pre_fdc),
+                fdc_ready_at=row["fdc_ready_at"],
+            ))
+        return resumable
+
+    async def cancel_stale_real_jobs(
+        self,
+        *,
+        quota_scope: str,
+        reason: str = "process_terminated_carryover_lost",
+    ) -> int:
+        # 2026-08-28 4차 리뷰 보정 — status='QUEUED'는 더 이상 이
+        # 메서드의 대상이 아니다(durable resume 신설로
+        # list_resumable_real_jobs()가 안전하게 재개한다). 여기서는
+        # 오직 reservation을 실제로 받은 뒤 process crash로 결과가
+        # 불명확하게 남은 job(status='RESERVATION_GRANTED')만 다룬다.
+        async with TransactionManager() as scan_tx:
+            stale_rows = await scan_tx.connection.fetch(
+                "SELECT job_id, status FROM trading.fdc_queue_jobs "
+                "WHERE quota_scope = $1 AND mode = 'real' "
+                "AND status = 'RESERVATION_GRANTED'",
+                quota_scope,
+            )
+            await scan_tx.commit()
+
+        transitioned = 0
+        for row in stale_rows:
+            job_id = row["job_id"]
+            status = row["status"]
+            lifecycle = await self.get_latest_real_job_attempt_lifecycle(
+                job_id=job_id,
+            )
+            if lifecycle == AttemptHttpLifecycle.NOT_FOUND:
+                logger.error(
+                    "cancel_stale_real_jobs: job_id=%s status=%s인데 attempt "
+                    "행이 하나도 없다 — try_reserve()가 grant/attempt 행을 "
+                    "원자적으로 함께 만드는 계약(§6)이 깨진 데이터 정합성 "
+                    "이상. 안전하게 CANCELLED로 처리한다(HTTP를 실제로 "
+                    "보낼 수 없었을 것이므로 재시도 금지는 과도한 보수화가 "
+                    "아니라 감사 신호다).",
+                    job_id, status,
+                )
+                await self.mark_job_terminal(
+                    job_id=job_id, status="CANCELLED", reason=reason,
+                )
+                transitioned += 1
+            elif lifecycle == AttemptHttpLifecycle.NOT_STARTED:
+                # HTTP가 나가지 않았다 — 안전하게 취소(재시도는 이
+                # job_id로는 더 이상 불가능하므로 향후 새 job 등록으로
+                # 대체된다).
+                await self.mark_job_terminal(
+                    job_id=job_id, status="CANCELLED", reason=reason,
+                )
+                transitioned += 1
+            else:
+                # STARTED — HTTP가 실제로 나갔을 수 있어 자동으로
+                # 안전하다고 볼 수 없다. complete_fdc_actual_dispatch()의
+                # 라이브 crash 판정과 동일한 reason으로 fail-closed
+                # 종결한다(중복 호출 위험 회피).
+                await self.mark_job_terminal(
+                    job_id=job_id, status="FDC_FAILED_FINAL",
+                    reason="fdc_only_subprocess_crashed_after_http_start_result_unknown",
+                )
+                transitioned += 1
+        return transitioned
+
+    async def mark_job_terminal(
+        self,
+        *,
+        job_id: uuid.UUID,
+        status: str,
+        reason: str | None = None,
+    ) -> None:
+        """job을 종결 상태(``FDC_SUCCEEDED``/``FDC_FAILED_FINAL``/
+        ``CANCELLED``)로 전이시킨다 — dispatcher가 attempt 단위
+        accounting(``try_reserve()``/``record_attempt_outcome()``)과는
+        별개로, job 단위 최종 상태를 명시적으로 기록하기 위한 헬퍼다."""
+        async with TransactionManager() as term_tx:
+            await term_tx.connection.execute(
+                "UPDATE trading.fdc_queue_jobs SET "
+                "status = $2, failure_or_cancel_reason = $3, "
+                "completed_at = now(), updated_at = now() WHERE job_id = $1",
+                job_id,
+                status,
+                reason,
+            )
+            await term_tx.commit()
+
+    async def mark_job_status(self, *, job_id: uuid.UUID, status: str) -> None:
+        """job의 비종결(non-terminal) 상태 전이(``RETRY_QUEUED`` 등)를
+        기록한다 — ``completed_at``은 건드리지 않는다."""
+        async with TransactionManager() as status_tx:
+            await status_tx.connection.execute(
+                "UPDATE trading.fdc_queue_jobs SET "
+                "status = $2, updated_at = now() WHERE job_id = $1",
+                job_id,
+                status,
+            )
+            await status_tx.commit()
+
+    async def apply_retry_failure(
+        self, *, job_id: uuid.UUID, reason: str, will_retry: bool,
+    ) -> None:
+        """FIFO tail 재등록(2026-08-28 6차 리뷰 보정 — PR #359, 설계
+        문서 §5/§9; 2026-08-28 7차 리뷰 보정으로 counter 의미 정정).
+
+        ``reason``은 ``"provider_retryable_failure"``(HTTP가 실제로
+        시작된 뒤 429/5xx/timeout) 또는 ``"pre_http_execution_
+        failure"``(HTTP 시작 전 subprocess 실패)다.
+
+        **7차 보정** — ``provider_retry_count``/``pre_http_execution_
+        failure_count``(및 파생 지표 ``queue_reenqueue_count``)는
+        ``will_retry=True``일 때만(=실제로 FIFO tail에 다시 섰을 때만)
+        증가한다. 소진(``will_retry=False``)으로 이어지는 마지막 실패는
+        "재등록"이 아니라 "종결"이므로 이 counter들을 건드리지 않는다
+        — ``queue_reenqueue_count``는 문자 그대로 **"실제 FIFO tail
+        재등록 횟수"**를 뜻해야 하며, "이 유형의 실패가 몇 번
+        발생했는지"(그건 ``http_attempt_count``/``http_429_count``가
+        attempt 단위로 이미 담당한다)와 혼동해서는 안 된다(이전 라운드의
+        결함 — will_retry와 무관하게 증가시켰던 것을 이 보정으로
+        되돌렸다).
+
+        ``reserved_but_http_not_started_count``는 예외다 — 이것은
+        "``outcome='reserved_but_http_not_started'``로 기록된 attempt
+        수"라는 attempt 단위 관측값(§9)이므로, 재등록 여부와 무관하게
+        이 outcome이 기록될 때마다(=``reason="pre_http_execution_
+        failure"``일 때마다) 항상 증가한다.
+
+        ``will_retry=True``일 때만 실제로 FIFO tail로 재등록한다 —
+        ``enqueue_sequence``를 시퀀스의 다음 값으로 새로 발급하고
+        ``status``를 ``QUEUED``로 되돌린다. 이 job의 ``job_id``(audit
+        identity)는 그대로 유지된다 — 새 row를 만들지 않는다. 이후
+        ``try_reserve()``가 이 job_id로 다시 호출되면, FIFO admission
+        쿼리가 "나보다 작은 enqueue_sequence를 가진 QUEUED job"을 이
+        새 sequence 기준으로 재평가하므로, 이 재시도보다 먼저 대기
+        중이던 다른 job이 우선권을 갖는다 — 별도의 admission 로직
+        변경이 필요 없다(같은 쿼리가 새 sequence 값을 그대로 본다).
+
+        ``will_retry=False``(소진)면 이 메서드는 ``reserved_but_http_
+        not_started_count``(``reason``이 pre-HTTP일 때만) 외에는 아무
+        것도 갱신하지 않는다 — 호출자가 곧바로 ``mark_job_terminal()``로
+        종결시키며, 실제 HTTP 시도/429 관측은 별도로
+        ``record_http_attempt_counters()``가 이미 반영했다.
+        """
+        async with TransactionManager() as retry_tx:
+            await retry_tx.connection.execute(
+                "UPDATE trading.fdc_queue_jobs SET "
+                "provider_retry_count = provider_retry_count + "
+                "CASE WHEN $3 AND $2 = 'provider_retryable_failure' THEN 1 ELSE 0 END, "
+                "pre_http_execution_failure_count = pre_http_execution_failure_count + "
+                "CASE WHEN $3 AND $2 = 'pre_http_execution_failure' THEN 1 ELSE 0 END, "
+                "reserved_but_http_not_started_count = reserved_but_http_not_started_count + "
+                "CASE WHEN $2 = 'pre_http_execution_failure' THEN 1 ELSE 0 END, "
+                "queue_reenqueue_count = queue_reenqueue_count + CASE WHEN $3 THEN 1 ELSE 0 END, "
+                "status = CASE WHEN $3 THEN 'QUEUED' ELSE status END, "
+                "enqueue_sequence = CASE WHEN $3 THEN "
+                "nextval(pg_get_serial_sequence('trading.fdc_queue_jobs', 'enqueue_sequence')) "
+                "ELSE enqueue_sequence END, "
+                "updated_at = now() "
+                "WHERE job_id = $1",
+                job_id,
+                reason,
+                will_retry,
+            )
+            await retry_tx.commit()
+
+    async def record_http_attempt_counters(
+        self, *, job_id: uuid.UUID, http_429_observed: bool = False,
+    ) -> None:
+        """실제 HTTP 시도가 있었던 attempt마다 job 단위 ``http_attempt_
+        count``/``http_429_count``를 갱신한다(2026-08-28 6차 리뷰 보정 —
+        설계 문서 §9). ``http_started_at``이 채워진 attempt(성공이든
+        provider 레벨 실패든, crash-after-http-start든)마다 정확히
+        1회 호출돼야 한다 — HTTP가 시작되지 않은 경우(pre-HTTP 실패)는
+        호출하지 않는다."""
+        async with TransactionManager() as http_tx:
+            await http_tx.connection.execute(
+                "UPDATE trading.fdc_queue_jobs SET "
+                "http_attempt_count = http_attempt_count + 1, "
+                "http_429_count = http_429_count + CASE WHEN $2 THEN 1 ELSE 0 END, "
+                "updated_at = now() WHERE job_id = $1",
+                job_id,
+                http_429_observed,
+            )
+            await http_tx.commit()
+
+    async def get_attempt_http_lifecycle(
+        self, *, reservation_id: uuid.UUID,
+    ) -> AttemptHttpLifecycle:
+        async with TransactionManager() as read_tx:
+            row = await read_tx.connection.fetchrow(
+                "SELECT http_started_at FROM trading.fdc_provider_attempts "
+                "WHERE attempt_id = $1",
+                reservation_id,
+            )
+            await read_tx.commit()
+        if row is None:
+            return AttemptHttpLifecycle.NOT_FOUND
+        if row["http_started_at"] is None:
+            return AttemptHttpLifecycle.NOT_STARTED
+        return AttemptHttpLifecycle.STARTED
+
+    async def get_latest_real_job_attempt_lifecycle(
+        self, *, job_id: uuid.UUID,
+    ) -> AttemptHttpLifecycle:
+        async with TransactionManager() as read_tx:
+            row = await read_tx.connection.fetchrow(
+                "SELECT http_started_at FROM trading.fdc_provider_attempts "
+                "WHERE job_id = $1 ORDER BY reserved_at DESC LIMIT 1",
+                job_id,
+            )
+            await read_tx.commit()
+        if row is None:
+            return AttemptHttpLifecycle.NOT_FOUND
+        if row["http_started_at"] is None:
+            return AttemptHttpLifecycle.NOT_STARTED
+        return AttemptHttpLifecycle.STARTED

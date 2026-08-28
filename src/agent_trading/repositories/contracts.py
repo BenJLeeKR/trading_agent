@@ -2087,6 +2087,46 @@ class ShadowJudgement:
 ShadowJudgementResult = ShadowJudgement | CoordinatorError
 
 
+class AttemptHttpLifecycle(str, Enum):
+    """``fdc_provider_attempts`` 행 하나의 HTTP 실행 lifecycle 3상태
+    (2026-08-27 3차 리뷰 보정 — PR #359).
+
+    이전에는 ``get_attempt_http_started_at() -> datetime | None``이
+    "행이 아예 없음"과 "행은 있으나 ``http_started_at IS NULL``"을 모두
+    ``None``으로 뭉뚱그려 반환했다 — crash 복구 판단에서 이 둘은 완전히
+    다른 의미다. "행이 없음"은 ``try_reserve()``가 grant와 attempt 행을
+    같은 트랜잭션에서 원자적으로 만드는 계약(§6)이 깨졌다는 데이터
+    정합성 이상이므로, "HTTP 미시작이라 안전하게 재시도 가능"과 절대
+    같은 방식으로 처리해서는 안 된다.
+    """
+
+    NOT_FOUND = "not_found"
+    NOT_STARTED = "not_started"
+    STARTED = "started"
+
+
+@dataclass(frozen=True, slots=True)
+class ResumableRealJob:
+    """durable resume에 필요한 최소 정보(2026-08-28 4차 리뷰 보정 —
+    PR #359). ``list_resumable_real_jobs()``가 반환한다.
+
+    position/cash/risk snapshot 등 시간이 지나면 낡을 수 있는 context는
+    의도적으로 포함하지 않는다 — override/EV-gate/sizing/submit은 재개
+    시점에 항상 새로 조회한 context로 다시 계산된다(기존
+    ``precomputed_agent_bundle`` 경로).
+    """
+
+    job_id: UUID
+    symbol: str
+    source_type: str
+    quota_scope: str
+    decision_cycle_id: str | None
+    decision_context_id: UUID | None
+    correlation_id: str | None
+    pre_fdc_result: dict[str, Any]
+    fdc_ready_at: datetime
+
+
 class FdcQuotaRepository(Protocol):
     """FDC 공용 13 RPM quota의 atomic reservation과 lifecycle shadow 관측.
 
@@ -2178,5 +2218,266 @@ class FdcQuotaRepository(Protocol):
 
         ``mode='real'`` 행은 전혀 보지 않으며, 이 메서드가 만드는 모든
         행은 ``mode='shadow'``다 — 실제 quota를 절대 소비하지 않는다.
+        """
+        ...
+
+    async def register_real_job(
+        self,
+        *,
+        decision_cycle_id: str | None,
+        decision_context_id: UUID | None,
+        symbol: str,
+        source_type: str,
+        quota_scope: str,
+        fdc_ready_at: datetime,
+        pre_fdc_result: dict[str, Any] | None = None,
+        correlation_id: str | None = None,
+    ) -> UUID:
+        """실제(``mode='real'``) FDC dispatch 대상 job을 ``QUEUED``
+        상태로 ``fdc_queue_jobs``에 등록한다(2026-08-27, held_position
+        실제 dispatcher 신설).
+
+        ``pre_fdc_result``/``correlation_id``(2026-08-28 4차 리뷰 보정
+        — PR #359, durable carryover)를 함께 저장한다 — ops-scheduler는
+        ``run_decision_loop.py --count 1``로 항상 단발 프로세스를
+        spawn하므로, 이 job이 quota 포화로 이번 프로세스 안에서
+        완결되지 못하면 프로세스 메모리만으로는 재개할 방법이 없다.
+        ``status='QUEUED'``인 real job은 pre_fdc가 이미 완료된 뒤에만
+        등록되므로 이 값들은 항상 채워져 있다 — 다음 프로세스가
+        ``list_resumable_real_jobs()``로 이 값을 읽어 agent를 다시
+        호출하지 않고 안전하게 재개한다.
+
+        **왜 두 파라미터가 optional(기본값 ``None``)인가(2026-08-28 5차
+        리뷰 보정)** — ``try_reserve()``의 FIFO/rate-limit 메커니즘 자체를
+        검증하는 기존 테스트(``tests/services/test_fdc_quota_
+        coordinator.py``, ``tests/scripts/test_fdc_manual_provider_
+        gate.py``)들이 durable resume과 무관하게 이 메서드를 호출하며,
+        NOT NULL로 강제하면 이 테스트들과 그 테스트들이 대변하는 기존
+        (durable-resume 이전) 호출 패턴이 전부 깨진다 — 근거 없이 schema
+        제약을 넓히지 않는다는 원칙에 따라 DB 컬럼도 nullable로 유지
+        했다(migration ``0069``). 대신 **actual-dispatch 경로에서 이
+        값이 누락되는 것은 별도로 막는다** — ``DecisionAgentRunner.
+        _run_agents_in_subprocess_with_actual_dispatch()``는 이 메서드를
+        호출하기 **전에** ``request.correlation_id``가 비어 있으면 즉시
+        ``build_fallback_bundle()``로 fail-closed하고 아예 등록하지
+        않는다(불완전한 row를 만들지 않는 것이 사후 정리보다 우선).
+        그래도 불완전한 ``QUEUED`` row가 남아 있다면(migration 이전
+        데이터, 수동 복구 오류 등) ``list_resumable_real_jobs()``가
+        그 row를 발견 즉시 ``FDC_FAILED_FINAL``로 fail-closed 종결해
+        FIFO head 차단을 막는다 — 두 계층(등록 시점 예방 + 조회 시점
+        정리)이 함께 이 계약을 지킨다.
+
+        이 메서드가 반환하는 ``job_id``는 이후 ``try_reserve(job_id=...)``
+        에 그대로 전달돼야 한다 — ``job_id=None``으로 ``try_reserve()``를
+        호출하면 이 job의 accounting(``queue_poll_count``/
+        ``reservation_denied_count``/``dispatch_attempt_no``)이 전혀
+        기록되지 않는다(§9 계약 위반).
+        """
+        ...
+
+    async def list_resumable_real_jobs(
+        self, *, quota_scope: str,
+    ) -> list[ResumableRealJob]:
+        """이 ``quota_scope``의 ``status='QUEUED'`` real job을 모두
+        durable resume 정보와 함께 반환한다(2026-08-28 4차 리뷰 보정 —
+        PR #359).
+
+        ``status='QUEUED'``는 "reservation을 한 번도 받지 못한 채 등록만
+        돼 있음"을 뜻하며, ``register_real_job()``이 pre_fdc 완료 직후
+        에만 호출되므로 이 job들은 전부 재개에 필요한 ``pre_fdc_result``/
+        ``correlation_id``를 이미 갖고 있어야 한다. 새 ``run_decision_
+        loop.py`` 프로세스가 시작할 때(첫 cycle의 universe를 읽은 직후)
+        이 목록을 조회해, 해당 symbol이 현재 universe에 여전히 존재하면
+        agent를 다시 호출하지 않고 이 job을 이어서 완결한다 — 존재하지
+        않으면(예: 포지션이 이미 청산됨) 호출자가 감사 가능한 이유로
+        fail-closed 종결한다(``mark_job_terminal()``, 조용한 취소 금지).
+
+        **2026-08-28 5차 리뷰 보정** — 이 메서드는 더 이상 완전히
+        read-only가 아니다. ``pre_fdc_result_json`` 또는
+        ``correlation_id``가 없는 ``QUEUED`` row(migration 이전 데이터,
+        부분 실패, 수동 복구 오류, 향후 코드 결함 등으로 발생 가능)는
+        조용히 건너뛰지 않고 그 자리에서 즉시 ``FDC_FAILED_FINAL``로
+        전이시킨다(``reason="fdc_carryover_payload_missing_data_
+        integrity_error"`` 또는 ``"fdc_carryover_correlation_id_
+        missing_data_integrity_error"``). 이렇게 하지 않고 로그만 남긴
+        채 건너뛰면, ``try_reserve()``의 FIFO admission("나보다 먼저
+        등록된 QUEUED job이 있으면 양보")이 이 불완전한 row 하나 때문에
+        뒤따르는 모든 held-position 실제 FDC job을 영구 대기시킨다(§17.3/
+        §17.7). 이 정리는 idempotent다 — 한 번 terminal로 전이된 job은
+        다음 호출부터 이 SELECT 자체에 다시 걸리지 않는다. 반환 순서는
+        FIFO(``enqueue_sequence`` 오름차순)를 보장한다.
+        """
+        ...
+
+    async def cancel_stale_real_jobs(
+        self,
+        *,
+        quota_scope: str,
+        reason: str = "process_terminated_carryover_lost",
+    ) -> int:
+        """재기동 recovery scan(§17.7) — **이 메서드는 새 프로세스가
+        시작할 때만 호출된다**(``run_decision_loop.py``가 자기 자신의
+        메인 루프에 진입하기 전 1회). 이 시점에는 이전에 이 job들을
+        만들었던 프로세스가 이미 확실히 종료된 상태이므로, ``reason``
+        기본값(§5 "프로세스 종료" 사유)을 여기서 쓰는 것은 정확하다 —
+        **살아 있는 프로세스가 자신의 cycle deadline/timeout 때문에 이
+        reason으로 job을 취소하는 것은 이 메서드의 용도가 아니다**(그런
+        경우는 job을 건드리지 않고 다음 cycle의 dispatcher가 재시도하도록
+        남겨둔다 — ``run_decision_loop.py``의 in-process carryover 참조).
+
+        **2026-08-28 4차 리뷰 보정 — PR #359**: 이 메서드의 대상은 이제
+        ``status='RESERVATION_GRANTED'`` job **만**이다(``status='QUEUED'``
+        job은 더 이상 여기서 다루지 않는다 — durable resume 신설로
+        ``list_resumable_real_jobs()``가 그 job들을 안전하게 재개하므로,
+        "재개할 방법이 없어 취소한다"는 이전 전제가 더 이상 성립하지
+        않는다). 즉 이 메서드는 이제 정확히 "reservation은 실제로
+        받았지만(=grant가 anchor 행 잠금 하에 원자적으로 발급됨), 그
+        결과(성공/실패/HTTP 시작 여부)가 process crash로 불명확하게 남은"
+        job만 다룬다 — 문자 그대로 "process crash로 결과가 불명확한
+        reservation"만 fail-closed로 정리하라는 요구와 일치한다.
+
+        ``status='RESERVATION_GRANTED'``인 job에 대해 가장 최근 attempt의
+        ``get_latest_real_job_attempt_lifecycle()``로 다음과 같이
+        전이시킨다.
+
+        - ``NOT_STARTED`` 또는 ``NOT_FOUND``: 실제 HTTP 호출이 나가지
+          않았으므로 안전하게 ``CANCELLED``(``reason``)로 전이
+          (``NOT_FOUND``는 데이터 정합성 이상이므로 ERROR 레벨로 별도
+          로깅한다).
+        - ``STARTED``: HTTP가 실제로 나갔을 수 있어 자동으로 안전하다고
+          볼 수 없으므로 ``CANCELLED``가 아니라 ``FDC_FAILED_FINAL``
+          (``reason="fdc_only_subprocess_crashed_after_http_start_
+          result_unknown"``, ``complete_fdc_actual_dispatch()``의 라이브
+          crash 판정과 동일한 reason)로 전이한다 — 중복 호출 위험을
+          피하기 위한 fail-closed 처리다.
+
+        idempotent — 이미 terminal인 job은 건드리지 않으므로, 두 번
+        연속 호출해도 두 번째 호출의 영향 행 수는 0이다.
+        reservation/attempt accounting 카운터(§9)는 전혀 변경하지
+        않는다 — ``status``와 ``failure_or_cancel_reason``만 갱신한다.
+
+        Returns
+        -------
+        int
+            이번 호출로 상태가 바뀐(``CANCELLED`` 또는 ``FDC_FAILED_
+            FINAL``) 행 수 합계.
+        """
+        ...
+
+    async def mark_job_terminal(
+        self,
+        *,
+        job_id: UUID,
+        status: str,
+        reason: str | None = None,
+    ) -> None:
+        """job을 종결 상태(``FDC_SUCCEEDED``/``FDC_FAILED_FINAL``/
+        ``CANCELLED``)로 전이시킨다. attempt 단위 accounting과는 별개로
+        job 단위 최종 상태만 기록한다."""
+        ...
+
+    async def mark_job_status(self, *, job_id: UUID, status: str) -> None:
+        """job의 비종결(non-terminal) 상태 전이(``RETRY_QUEUED`` 등)를
+        기록한다."""
+        ...
+
+    async def apply_retry_failure(
+        self, *, job_id: UUID, reason: str, will_retry: bool,
+    ) -> None:
+        """FIFO tail 재등록 계약(2026-08-28 6차 리뷰 보정 — PR #359,
+        설계 문서 §5/§9).
+
+        ``complete_fdc_actual_dispatch()``가 retryable provider 실패
+        (``reason="provider_retryable_failure"``, HTTP가 실제로
+        시작된 뒤 429/5xx/timeout)나 HTTP 시작 전 subprocess 실패
+        (``reason="pre_http_execution_failure"``)를 만났을 때 호출한다.
+
+        이전 구현은 이 두 실패 후 같은 ``job_id``로 즉시 ``try_
+        reserve()``를 재호출했는데, job의 ``enqueue_sequence``가
+        그대로 유지돼 이미 앞서 있던 순번을 계속 지켰다 — 이 job의
+        재시도가 정상적으로 대기 중이던 다른(뒤에 등록됐지만 아직 첫
+        기회조차 받지 못한) job보다 매번 먼저 grant받는 FIFO 위반이
+        가능했다.
+
+        이 메서드는 job의 ``job_id``(audit identity)를 그대로 유지한
+        채(새 row를 만들지 않는다), ``will_retry=True``일 때만
+        ``enqueue_sequence``를 새로 발급해 FIFO tail로 옮기고
+        ``status``를 ``QUEUED``로 되돌린다 — 이후 ``try_reserve()``의
+        기존 FIFO admission 쿼리("나보다 작은 enqueue_sequence를 가진
+        QUEUED job이 있으면 양보")가 변경 없이 이 새 위치를 그대로
+        반영한다.
+
+        **2026-08-28 7차 리뷰 보정 — counter 의미 정정**:
+        ``provider_retry_count``/``pre_http_execution_failure_count``
+        (및 파생 지표 ``queue_reenqueue_count``)는 ``will_retry=True``
+        일 때만(=실제로 FIFO tail에 다시 섰을 때만) 증가한다.
+        ``queue_reenqueue_count``는 문자 그대로 **"실제 FIFO tail
+        재등록 횟수"**를 뜻해야 하며, "이 유형의 실패가 몇 번
+        발생했는지"와 혼동해서는 안 된다 — 소진(``will_retry=False``)
+        으로 이어지는 마지막 실패는 재등록이 아니라 종결이므로 이
+        counter들을 건드리지 않는다(이전 라운드는 ``will_retry`` 값과
+        무관하게 항상 증가시켰는데, 이는 "3회 실패 후 소진"이 실제로는
+        FIFO tail에 2번만 재등록된 것을 3번 재등록된 것처럼 과대
+        보고하는 결함이었다 — 이 보정으로 되돌렸다).
+
+        ``reserved_but_http_not_started_count``는 예외다 — attempt
+        단위 관측값(§9, "outcome='reserved_but_http_not_started'로
+        기록된 attempt 수")이므로 ``reason="pre_http_execution_
+        failure"``일 때마다 재등록 여부와 무관하게 항상 증가한다.
+
+        ``will_retry=False``(소진)면 이 메서드는 위 예외를 제외하고는
+        아무 것도 갱신하지 않는다 — 호출자가 곧바로 ``mark_job_
+        terminal()``로 종결시키며, 실제 HTTP 시도/429 관측은 별도로
+        ``record_http_attempt_counters()``가 이미 반영했다.
+        """
+        ...
+
+    async def record_http_attempt_counters(
+        self, *, job_id: UUID, http_429_observed: bool = False,
+    ) -> None:
+        """실제 HTTP 시도가 있었던 attempt마다 job 단위 ``http_attempt_
+        count``/``http_429_count``를 갱신한다(2026-08-28 6차 리뷰 보정 —
+        설계 문서 §9, 불변식 ``http_attempt_count <= permit_consumed_
+        count``). ``http_started_at``이 채워진 attempt(성공, provider
+        레벨 실패, crash-after-http-start 전부 포함)마다 정확히 1회
+        호출돼야 한다 — HTTP가 시작되지 않은 경우(pre-HTTP 실패)는
+        호출하지 않는다.
+        """
+        ...
+
+    async def get_attempt_http_lifecycle(
+        self, *, reservation_id: UUID,
+    ) -> AttemptHttpLifecycle:
+        """이 reservation(``attempt_id``)의 HTTP 실행 lifecycle을 3상태로
+        조회한다(2026-08-27 3차 리뷰 보정 — PR #359, subprocess crash 후
+        attempt lifecycle 판별용. 이전 ``get_attempt_http_started_at()``의
+        ``datetime | None`` 반환을 대체 — "행이 없음"과 "행은 있으나
+        미시작"을 더 이상 뭉뚱그리지 않는다).
+
+        ``fdc_only`` subprocess가 결과 없이 crash/timeout됐을 때 호출자가
+        이 값으로 판단한다 — ``NOT_STARTED``면 HTTP가 나가지 않았으므로
+        새 reservation으로 안전하게 재시도할 수 있고, ``STARTED``면 HTTP가
+        실제로 나갔을 수 있으므로 결과를 모르는 채 자동 재시도(중복 호출
+        위험)하지 않는다. ``NOT_FOUND``는 ``try_reserve()``가 grant와
+        attempt 행을 원자적으로 함께 만드는 계약(§6)이 깨졌다는 데이터
+        정합성 이상이므로, 호출자는 이를 ``NOT_STARTED``와 절대 같은
+        방식(자동 재시도)으로 처리해서는 안 되고 fail-closed로 다뤄야
+        한다. 이 메서드 자체는 어떤 상태도 갱신하지 않는다(read-only).
+        """
+        ...
+
+    async def get_latest_real_job_attempt_lifecycle(
+        self, *, job_id: UUID,
+    ) -> AttemptHttpLifecycle:
+        """이 ``job_id``의 가장 최근(``reserved_at`` 기준) ``mode='real'``
+        attempt 행을 찾아 그 HTTP 실행 lifecycle을 3상태로 반환한다
+        (2026-08-27 3차 리뷰 보정 — PR #359, recovery scan 전용).
+
+        재기동 recovery scan이 ``status='RESERVATION_GRANTED'``로 멈춰
+        있는(=reservation은 받았지만 job이 종결되지 못한 채 프로세스가
+        죽은) job을 일괄 ``CANCELLED``로 덮어쓰지 않고, ``complete_fdc_
+        actual_dispatch()``의 crash 판정과 동일한 tri-state 규칙을
+        적용하기 위해 쓰인다. 해당 job에 attempt 행이 하나도 없으면
+        ``NOT_FOUND``를 반환한다(read-only, 상태를 갱신하지 않는다).
         """
         ...

@@ -199,6 +199,12 @@ class TestAtomicReservationLogic:
         repo._jobs[job_id] = {  # type: ignore[attr-defined]
             "queue_poll_count": 0, "reservation_denied_count": 0,
             "dispatch_attempt_no": 0, "permit_consumed_count": 0,
+            # 2026-08-27(held_position 실제 dispatcher, FIFO 공정성
+            # 검사 신설) — register_real_job()이 실제로 채우는 필드를
+            # 최소한으로 맞춘다: status="QUEUED"·quota_scope·
+            # enqueue_sequence가 없으면 try_reserve()의 FIFO 순번 검사가
+            # KeyError를 낸다.
+            "status": "QUEUED", "quota_scope": "scope-c", "enqueue_sequence": 1,
         }
         first = await coordinator.try_reserve(job_id=job_id, caller_id="test-caller")
         second = await coordinator.try_reserve(job_id=job_id, caller_id="test-caller")
@@ -214,6 +220,272 @@ class TestAtomicReservationLogic:
         assert job["queue_poll_count"] == (
             job["reservation_denied_count"] + job["dispatch_attempt_no"]
         )
+
+
+class TestRealJobRegistrationAndFifoFairness:
+    """2026-08-27(held_position 실제 dispatcher, PR #359 리뷰 보정) —
+    ``register_real_job()``이 만든 job을 ``try_reserve(job_id=...)``가
+    FIFO 순서대로만 grant하는지 검증한다. quota window에 여유가 있어도
+    나보다 먼저 등록되고 아직 QUEUED인 job이 있으면 순번을 양보해야
+    한다 — "늦게 등록된 job이 먼저 grant받는" 새치기 방지가 핵심."""
+
+    @pytest.mark.asyncio
+    async def test_register_real_job_returns_queued_job_id(self) -> None:
+        repo = InMemoryFdcQuotaRepository()
+        job_id = await repo.register_real_job(
+            decision_cycle_id="cycle-1", decision_context_id=None,
+            symbol="005930", source_type="held_position",
+            quota_scope="scope-fifo", fdc_ready_at=datetime.now(timezone.utc),
+        )
+        assert job_id in repo._jobs  # type: ignore[attr-defined]
+        assert repo._jobs[job_id]["status"] == "QUEUED"  # type: ignore[attr-defined]
+
+    @pytest.mark.asyncio
+    async def test_later_registered_job_denied_until_earlier_job_resolved(
+        self,
+    ) -> None:
+        """target_rpm이 커서 window 자체는 여유가 있어도, 먼저 등록된
+        job A가 아직 QUEUED인 동안 나중에 등록된 job B는 거부된다."""
+        repo = InMemoryFdcQuotaRepository()
+        coordinator = _make_coordinator(repo=repo, target_rpm=13, quota_scope="scope-fifo-2")
+
+        job_a = await repo.register_real_job(
+            decision_cycle_id="c1", decision_context_id=None, symbol="A",
+            source_type="held_position", quota_scope="scope-fifo-2",
+            fdc_ready_at=datetime.now(timezone.utc),
+        )
+        job_b = await repo.register_real_job(
+            decision_cycle_id="c1", decision_context_id=None, symbol="B",
+            source_type="held_position", quota_scope="scope-fifo-2",
+            fdc_ready_at=datetime.now(timezone.utc),
+        )
+
+        # B가 먼저 폴링해도 A가 아직 QUEUED이므로 거부돼야 한다(새치기 방지).
+        result_b = await coordinator.try_reserve(job_id=job_b, caller_id="ops-scheduler")
+        assert isinstance(result_b, ReservationDenied)
+
+        # A는 정상적으로 grant된다.
+        result_a = await coordinator.try_reserve(job_id=job_a, caller_id="ops-scheduler")
+        assert isinstance(result_a, ReservationGrant)
+
+        # A가 더 이상 QUEUED가 아니므로(RESERVATION_GRANTED), 이제 B도 grant된다.
+        result_b_retry = await coordinator.try_reserve(job_id=job_b, caller_id="ops-scheduler")
+        assert isinstance(result_b_retry, ReservationGrant)
+
+    @pytest.mark.asyncio
+    async def test_concurrent_polling_never_lets_later_job_win_first(self) -> None:
+        """여러 job이 동시에(asyncio.gather) try_reserve()를 폴링해도,
+        FIFO 순서대로만 grant된다 — 실행 완료 순서와 무관하다."""
+        repo = InMemoryFdcQuotaRepository()
+        coordinator = _make_coordinator(repo=repo, target_rpm=13, quota_scope="scope-fifo-3")
+
+        job_ids = []
+        for i in range(5):
+            job_id = await repo.register_real_job(
+                decision_cycle_id="c1", decision_context_id=None, symbol=f"S{i}",
+                source_type="held_position", quota_scope="scope-fifo-3",
+                fdc_ready_at=datetime.now(timezone.utc),
+            )
+            job_ids.append(job_id)
+
+        # 등록 역순으로 동시에 폴링(가장 늦게 등록된 job부터 요청) —
+        # 그래도 FIFO 순서(job_ids[0]부터)로만 grant돼야 한다.
+        results = await asyncio.gather(*[
+            coordinator.try_reserve(job_id=jid, caller_id="ops-scheduler")
+            for jid in reversed(job_ids)
+        ])
+        # reversed(job_ids)의 첫 항목은 job_ids[4](가장 늦게 등록됨) —
+        # 이 항목만 유일하게 "앞서 QUEUED인 job 없음" 조건을 만족하지
+        # 못하므로 거부돼야 하고, 가장 먼저 등록된 job_ids[0](reversed
+        # 순서의 마지막 항목)만 즉시 grant돼야 한다.
+        result_by_job = dict(zip(reversed(job_ids), results))
+        assert isinstance(result_by_job[job_ids[0]], ReservationGrant)
+        for jid in job_ids[1:]:
+            assert isinstance(result_by_job[jid], ReservationDenied)
+
+    @pytest.mark.asyncio
+    async def test_non_job_reservation_unaffected_by_fifo_check(self) -> None:
+        """job_id=None(기존 manual 스크립트 경로)은 FIFO 검사 대상이
+        아니다 — 하위 호환 보존."""
+        repo = InMemoryFdcQuotaRepository()
+        coordinator = _make_coordinator(repo=repo, target_rpm=13, quota_scope="scope-fifo-4")
+
+        # 등록된 QUEUED real job이 있어도 job_id=None 호출은 영향받지 않는다.
+        await repo.register_real_job(
+            decision_cycle_id="c1", decision_context_id=None, symbol="A",
+            source_type="held_position", quota_scope="scope-fifo-4",
+            fdc_ready_at=datetime.now(timezone.utc),
+        )
+        result = await coordinator.try_reserve(job_id=None, caller_id="ops-scheduler:other")
+        assert isinstance(result, ReservationGrant)
+
+
+class TestIncompleteCarryoverDoesNotPermanentlyBlockFifo:
+    """2026-08-28 5차 리뷰 보정 — durable resume 정보(``pre_fdc_result``/
+    ``correlation_id``)가 없는 불완전한 ``QUEUED`` row를
+    ``list_resumable_real_jobs()``가 조용히 건너뛰면, ``try_reserve()``의
+    FIFO admission("나보다 먼저 등록된 QUEUED job이 있으면 양보")이 그
+    불완전한 row 하나 때문에 뒤따르는 모든 real job을 영구 대기시킨다
+    (§17.3/§17.7). ``list_resumable_real_jobs()``가 그 row를 즉시
+    ``FDC_FAILED_FINAL``로 정리해 FIFO head를 비워야 한다."""
+
+    @pytest.mark.asyncio
+    async def test_incomplete_head_row_is_resolved_and_following_row_then_grants(
+        self,
+    ) -> None:
+        repo = InMemoryFdcQuotaRepository()
+        coordinator = _make_coordinator(
+            repo=repo, target_rpm=13, quota_scope="scope-fifo-incomplete",
+        )
+
+        # 불완전한 선행 row(migration 이전 데이터/부분 실패를 재현) —
+        # pre_fdc_result/correlation_id를 채우지 않는다.
+        incomplete_job = await repo.register_real_job(
+            decision_cycle_id="c1", decision_context_id=None, symbol="INCOMPLETE",
+            source_type="held_position", quota_scope="scope-fifo-incomplete",
+            fdc_ready_at=datetime.now(timezone.utc),
+        )
+        # 정상 후속 row.
+        normal_job = await repo.register_real_job(
+            decision_cycle_id="c1", decision_context_id=None, symbol="NORMAL",
+            source_type="held_position", quota_scope="scope-fifo-incomplete",
+            fdc_ready_at=datetime.now(timezone.utc),
+            pre_fdc_result={"requires_fdc_dispatch": True}, correlation_id="c-normal",
+        )
+
+        # 정리 전: 불완전한 선행 row가 QUEUED로 남아 있어 후속 row가
+        # FIFO에 막힌다.
+        blocked = await coordinator.try_reserve(
+            job_id=normal_job, caller_id="ops-scheduler",
+        )
+        assert isinstance(blocked, ReservationDenied)
+
+        # list_resumable_real_jobs()가 불완전한 row를 발견 즉시
+        # FDC_FAILED_FINAL로 종결하고, resumable 목록에는 정상 row만
+        # 남는다.
+        resumable = await repo.list_resumable_real_jobs(
+            quota_scope="scope-fifo-incomplete",
+        )
+        assert [r.job_id for r in resumable] == [normal_job]
+        assert repo._jobs[incomplete_job]["status"] == "FDC_FAILED_FINAL"  # type: ignore[attr-defined]
+        assert repo._jobs[incomplete_job]["failure_or_cancel_reason"] == (  # type: ignore[attr-defined]
+            "fdc_carryover_payload_missing_data_integrity_error"
+        )
+
+        # 정리 후: 정상 후속 row는 더 이상 FIFO에 막히지 않고 grant된다.
+        granted = await coordinator.try_reserve(
+            job_id=normal_job, caller_id="ops-scheduler",
+        )
+        assert isinstance(granted, ReservationGrant)
+
+    @pytest.mark.asyncio
+    async def test_missing_correlation_id_gets_distinct_reason(self) -> None:
+        repo = InMemoryFdcQuotaRepository()
+        job_id = await repo.register_real_job(
+            decision_cycle_id="c1", decision_context_id=None, symbol="A",
+            source_type="held_position", quota_scope="scope-fifo-incomplete-2",
+            fdc_ready_at=datetime.now(timezone.utc),
+            pre_fdc_result={"requires_fdc_dispatch": True}, correlation_id=None,
+        )
+
+        resumable = await repo.list_resumable_real_jobs(
+            quota_scope="scope-fifo-incomplete-2",
+        )
+
+        assert resumable == []
+        assert repo._jobs[job_id]["status"] == "FDC_FAILED_FINAL"  # type: ignore[attr-defined]
+        assert repo._jobs[job_id]["failure_or_cancel_reason"] == (  # type: ignore[attr-defined]
+            "fdc_carryover_correlation_id_missing_data_integrity_error"
+        )
+
+    @pytest.mark.asyncio
+    async def test_cleanup_is_idempotent(self) -> None:
+        repo = InMemoryFdcQuotaRepository()
+        job_id = await repo.register_real_job(
+            decision_cycle_id="c1", decision_context_id=None, symbol="A",
+            source_type="held_position", quota_scope="scope-fifo-incomplete-3",
+            fdc_ready_at=datetime.now(timezone.utc),
+        )
+
+        first = await repo.list_resumable_real_jobs(
+            quota_scope="scope-fifo-incomplete-3",
+        )
+        second = await repo.list_resumable_real_jobs(
+            quota_scope="scope-fifo-incomplete-3",
+        )
+
+        assert first == []
+        assert second == []
+        assert repo._jobs[job_id]["status"] == "FDC_FAILED_FINAL"  # type: ignore[attr-defined]
+
+
+class TestCancelStaleRealJobs:
+    """2026-08-27 — 재기동 recovery scan(§17.7)이 non-terminal real job만
+    ``CANCELLED``로 전이시키는지 검증한다.
+
+    2026-08-28 4차 리뷰 보정 — ``status='QUEUED'``는 더 이상 이 메서드의
+    대상이 아니다(``list_resumable_real_jobs()``가 durable하게 안전하게
+    재개한다). 이 메서드는 이제 ``status='RESERVATION_GRANTED'``(실제로
+    reservation을 받은 뒤 process crash로 결과가 불명확하게 남은 job)
+    만 다룬다."""
+
+    @pytest.mark.asyncio
+    async def test_queued_job_is_left_untouched_for_durable_resume(self) -> None:
+        repo = InMemoryFdcQuotaRepository()
+        job_queued = await repo.register_real_job(
+            decision_cycle_id="c1", decision_context_id=None, symbol="A",
+            source_type="held_position", quota_scope="scope-recovery",
+            fdc_ready_at=datetime.now(timezone.utc),
+            pre_fdc_result={"requires_fdc_dispatch": True}, correlation_id="c-a",
+        )
+        job_granted = await repo.register_real_job(
+            decision_cycle_id="c1", decision_context_id=None, symbol="B",
+            source_type="held_position", quota_scope="scope-recovery",
+            fdc_ready_at=datetime.now(timezone.utc),
+        )
+        await repo.mark_job_status(job_id=job_granted, status="RESERVATION_GRANTED")
+        job_succeeded = await repo.register_real_job(
+            decision_cycle_id="c1", decision_context_id=None, symbol="C",
+            source_type="held_position", quota_scope="scope-recovery",
+            fdc_ready_at=datetime.now(timezone.utc),
+        )
+        await repo.mark_job_terminal(job_id=job_succeeded, status="FDC_SUCCEEDED")
+
+        affected = await repo.cancel_stale_real_jobs(quota_scope="scope-recovery")
+
+        # RESERVATION_GRANTED(attempt 행 없음 → NOT_FOUND 취급)만 전이된다.
+        assert affected == 1
+        assert repo._jobs[job_queued]["status"] == "QUEUED"  # type: ignore[attr-defined]
+        assert repo._jobs[job_queued]["failure_or_cancel_reason"] is None  # type: ignore[attr-defined]
+        assert repo._jobs[job_granted]["status"] == "CANCELLED"  # type: ignore[attr-defined]
+        assert repo._jobs[job_succeeded]["status"] == "FDC_SUCCEEDED"  # type: ignore[attr-defined]
+
+    @pytest.mark.asyncio
+    async def test_second_call_is_idempotent(self) -> None:
+        repo = InMemoryFdcQuotaRepository()
+        job_granted = await repo.register_real_job(
+            decision_cycle_id="c1", decision_context_id=None, symbol="A",
+            source_type="held_position", quota_scope="scope-recovery-2",
+            fdc_ready_at=datetime.now(timezone.utc),
+        )
+        await repo.mark_job_status(job_id=job_granted, status="RESERVATION_GRANTED")
+
+        first = await repo.cancel_stale_real_jobs(quota_scope="scope-recovery-2")
+        second = await repo.cancel_stale_real_jobs(quota_scope="scope-recovery-2")
+
+        assert first == 1
+        assert second == 0
+
+    @pytest.mark.asyncio
+    async def test_does_not_touch_other_quota_scope(self) -> None:
+        repo = InMemoryFdcQuotaRepository()
+        await repo.register_real_job(
+            decision_cycle_id="c1", decision_context_id=None, symbol="A",
+            source_type="held_position", quota_scope="scope-a",
+            fdc_ready_at=datetime.now(timezone.utc),
+        )
+        affected = await repo.cancel_stale_real_jobs(quota_scope="scope-b")
+        assert affected == 0
 
 
 class TestRecordAttemptOutcome:
@@ -755,6 +1027,78 @@ class TestPostgresCallWithCoordinatorLifecycle:
         assert row["completed_at"] is not None
 
     @pytest.mark.asyncio
+    async def test_non_manual_caller_id_succeeds_without_manual_call_policy(
+        self, db_ready, quota_scope: str,
+    ) -> None:
+        """2026-08-27(held_position 실제 dispatch): ``manual:`` 접두사가
+        아닌 caller_id(ops-scheduler 운영 경로)는 ``manual_call_policy``를
+        주입하지 않아도(=``None``) 실제 PostgreSQL 위에서 정상적으로
+        reservation/기록이 되는지 확인한다 — §11 fail-closed 정책은
+        ``manual:`` 접두사 caller에만 적용되고, 비-manual 호출자는 완전히
+        영향받지 않는다는 계약을 InMemory(``TestManualCallPolicy``)뿐
+        아니라 실제 lock/transaction 경로에서도 재확인한다."""
+        from dataclasses import dataclass
+
+        from agent_trading.db.connection import connection
+        from agent_trading.db.transaction import TransactionManager
+        from agent_trading.repositories.postgres.fdc_quota import (
+            PostgresFdcQuotaRepository,
+        )
+        from agent_trading.services.ai_agents.base import RawProviderResponse
+        from scripts.fdc_manual_provider_gate import call_with_coordinator
+
+        @dataclass(slots=True, frozen=True)
+        class _Output:
+            symbol: str = "005930"
+
+        class _FakeLiveClient:
+            def __init__(self) -> None:
+                self.calls = 0
+
+            async def generate_structured_once(self, grant, *, on_http_start=None, **kwargs):
+                if on_http_start is not None:
+                    await on_http_start()
+                self.calls += 1
+                return RawProviderResponse(
+                    parsed=_Output(), raw_content="{}",
+                    http_attempt_count=1, http_429_count=0,
+                )
+
+        # manual_call_policy를 명시적으로 주입하지 않는다(None) —
+        # scripts/run_agent_subprocess.py::_build_actual_dispatch_fdc_
+        # client()가 실제로 그렇게 구성한다(ops-scheduler 운영 경로는
+        # §11 fail-closed 정책의 대상이 아니므로). 이 파일의 다른 대부분
+        # 테스트가 쓰는 ``_postgres_coordinator()`` 헬퍼는 always-allow
+        # 정책을 기본 주입하므로 여기서는 일부러 쓰지 않는다.
+        tx = TransactionManager()
+        repo = PostgresFdcQuotaRepository(tx)
+        coordinator = FdcQuotaCoordinator(
+            repo=repo, target_rpm=13, quota_scope=quota_scope,
+        )
+        fake_client = _FakeLiveClient()
+
+        result = await call_with_coordinator(
+            coordinator=coordinator, client=fake_client,
+            caller_id="ops-scheduler:held_position_reduce_sell",
+            manual_run_id="cycle-corr-1", model_id="m", system_prompt="s",
+            user_prompt="u", response_format=_Output,
+        )
+
+        assert result.parsed.symbol == "005930"
+        assert fake_client.calls == 1
+
+        async with connection() as conn:
+            row = await conn.fetchrow(
+                "SELECT outcome, http_started_at, completed_at "
+                "FROM trading.fdc_provider_attempts WHERE quota_scope = $1",
+                quota_scope,
+            )
+        assert row is not None
+        assert row["outcome"] == "http_succeeded"
+        assert row["http_started_at"] is not None
+        assert row["completed_at"] is not None
+
+    @pytest.mark.asyncio
     async def test_429_retry_creates_new_attempt_row_per_reservation(
         self, db_ready, quota_scope: str,
     ) -> None:
@@ -1234,3 +1578,879 @@ class TestPostgresAnchorRowFailClosed:
                 missing_scope,
             )
         assert count == 0, "anchor 행이 없으면 shadow job도 절대 등록하면 안 된다"
+
+
+@pytestmark_db
+class TestPostgresRealJobDispatch:
+    """2026-08-27 신설(PR #359 리뷰 보정) — held_position 실제 dispatcher가
+    실제 PostgreSQL row-lock/transaction 위에서 FIFO 순번·no-queue-jumping·
+    quota-full 시 fallback 없는 대기·429 재시도 새 reservation을 지키는지
+    검증한다. 실제 HTTP는 fake client로 대체한다 — 외부 Gemini 호출 없음."""
+
+    @pytest.mark.asyncio
+    async def test_13_concurrent_jobs_all_granted_http_at_most_once_each(
+        self, db_ready, quota_scope: str,
+    ) -> None:
+        from dataclasses import dataclass
+
+        from agent_trading.services.ai_agents.base import RawProviderResponse
+        from scripts.fdc_manual_provider_gate import run_real_dispatch_job
+
+        @dataclass(slots=True, frozen=True)
+        class _Output:
+            symbol: str = "AAPL"
+
+        class _FakeLiveClient:
+            def __init__(self) -> None:
+                self.calls = 0
+
+            async def generate_structured_once(self, grant, *, on_http_start=None, **kwargs):
+                if on_http_start is not None:
+                    await on_http_start()
+                self.calls += 1
+                return RawProviderResponse(
+                    parsed=_Output(), raw_content="{}",
+                    http_attempt_count=1, http_429_count=0,
+                )
+
+        coordinator = _postgres_coordinator(quota_scope=quota_scope, target_rpm=13)
+        job_ids = [
+            await coordinator._repo.register_real_job(  # type: ignore[attr-defined]
+                decision_cycle_id="c1", decision_context_id=None, symbol=f"S{i}",
+                source_type="held_position", quota_scope=quota_scope,
+                fdc_ready_at=datetime.now(timezone.utc),
+            )
+            for i in range(13)
+        ]
+        clients = [_FakeLiveClient() for _ in range(13)]
+
+        results = await asyncio.gather(*[
+            run_real_dispatch_job(
+                coordinator=coordinator, client=clients[i], job_id=job_ids[i],
+                caller_id="ops-scheduler:held_position_reduce_sell",
+                manual_run_id=f"cycle-{i}", model_id="m", system_prompt="s",
+                user_prompt="u", response_format=_Output,
+                poll_interval_seconds=0.05,
+            )
+            for i in range(13)
+        ])
+
+        assert all(r.parsed.symbol == "AAPL" for r in results)
+        assert all(c.calls == 1 for c in clients)  # HTTP는 각 job당 정확히 1회
+
+    @pytest.mark.asyncio
+    async def test_14th_job_stays_queued_until_slot_frees_not_lost(
+        self, db_ready, quota_scope: str,
+    ) -> None:
+        """quota가 가득 차면 fallback HOLD로 끝나지 않고 QUEUED로 남아
+        있다가, window가 지나 slot이 회복되면 승인·성공한다."""
+        from dataclasses import dataclass
+
+        from agent_trading.services.ai_agents.base import RawProviderResponse
+        from scripts.fdc_manual_provider_gate import run_real_dispatch_job
+
+        @dataclass(slots=True, frozen=True)
+        class _Output:
+            symbol: str = "AAPL"
+
+        class _FakeLiveClient:
+            def __init__(self) -> None:
+                self.calls = 0
+
+            async def generate_structured_once(self, grant, *, on_http_start=None, **kwargs):
+                if on_http_start is not None:
+                    await on_http_start()
+                self.calls += 1
+                return RawProviderResponse(
+                    parsed=_Output(), raw_content="{}",
+                    http_attempt_count=1, http_429_count=0,
+                )
+
+        # 짧은 window(2초)로 실측 가능한 시간 안에 slot 회복을 재현한다.
+        coordinator = _postgres_coordinator(
+            quota_scope=quota_scope, target_rpm=1,
+        )
+        coordinator._window_seconds = 2  # type: ignore[attr-defined]
+
+        filler_job = await coordinator._repo.register_real_job(  # type: ignore[attr-defined]
+            decision_cycle_id="c1", decision_context_id=None, symbol="FILLER",
+            source_type="held_position", quota_scope=quota_scope,
+            fdc_ready_at=datetime.now(timezone.utc),
+        )
+        filler_client = _FakeLiveClient()
+        # window를 채운다(target_rpm=1이므로 이 1건으로 가득 참).
+        filler_result = await run_real_dispatch_job(
+            coordinator=coordinator, client=filler_client, job_id=filler_job,
+            caller_id="ops-scheduler:held_position_reduce_sell",
+            manual_run_id="cycle-filler", model_id="m", system_prompt="s",
+            user_prompt="u", response_format=_Output, poll_interval_seconds=0.1,
+        )
+        assert filler_result.parsed.symbol == "AAPL"
+
+        queued_job = await coordinator._repo.register_real_job(  # type: ignore[attr-defined]
+            decision_cycle_id="c1", decision_context_id=None, symbol="QUEUED",
+            source_type="held_position", quota_scope=quota_scope,
+            fdc_ready_at=datetime.now(timezone.utc),
+        )
+        queued_client = _FakeLiveClient()
+
+        # window(2초)가 지나야 승인되므로, 이 호출은 즉시 반환되지 않고
+        # 대기 후 성공해야 한다 — fallback으로 즉시 포기하지 않는다.
+        result = await run_real_dispatch_job(
+            coordinator=coordinator, client=queued_client, job_id=queued_job,
+            caller_id="ops-scheduler:held_position_reduce_sell",
+            manual_run_id="cycle-queued", model_id="m", system_prompt="s",
+            user_prompt="u", response_format=_Output, poll_interval_seconds=0.3,
+        )
+
+        assert result.parsed.symbol == "AAPL"
+        assert queued_client.calls == 1
+
+    @pytest.mark.asyncio
+    async def test_fifo_order_preserved_under_concurrent_polling(
+        self, db_ready, quota_scope: str,
+    ) -> None:
+        """동시에 여러 job이 try_reserve()를 폴링해도 grant된 job 집합은
+        항상 FIFO 앞쪽부터 연속된 prefix를 이룬다(중간이 비거나 뒤집히지
+        않음) — 실제 PostgreSQL row-lock 위에서 새치기가 발생하지 않는지
+        확인한다.
+
+        (구현 노트) 각 `try_reserve()` 호출은 독립된 connection/
+        transaction으로 anchor 행 잠금을 놓고 경쟁한다 — 어느 호출이
+        먼저 잠금을 얻는지는 Python 쪽 제출 순서와 무관하다. 이 설계가
+        보장하는 것은 "나보다 먼저 등록되고 아직 QUEUED인 job이 있으면
+        거부"이므로, job_ids[0]이 먼저 grant되어 상태가 바뀌면 같은
+        동시 묶음 안에서 job_ids[1]도 곧바로 grant될 수 있다(정상 —
+        불필요하게 한 바퀴 더 기다리게 하지 않는다). 따라서 "정확히
+        1개만 grant"가 아니라 "grant된 집합이 앞쪽부터 연속된 prefix"가
+        올바른 불변식이다.
+        """
+        coordinator = _postgres_coordinator(quota_scope=quota_scope, target_rpm=13)
+        job_ids = [
+            await coordinator._repo.register_real_job(  # type: ignore[attr-defined]
+                decision_cycle_id="c1", decision_context_id=None, symbol=f"S{i}",
+                source_type="held_position", quota_scope=quota_scope,
+                fdc_ready_at=datetime.now(timezone.utc),
+            )
+            for i in range(5)
+        ]
+
+        results = await asyncio.gather(*[
+            coordinator.try_reserve(
+                job_id=jid, caller_id="ops-scheduler:held_position_reduce_sell",
+            )
+            for jid in reversed(job_ids)
+        ])
+        result_by_job = dict(zip(reversed(job_ids), results))
+
+        granted_indices = {
+            i for i, jid in enumerate(job_ids)
+            if isinstance(result_by_job[jid], ReservationGrant)
+        }
+        assert granted_indices, "적어도 job_ids[0]은 grant돼야 한다"
+        assert granted_indices == set(range(len(granted_indices))), (
+            f"grant된 인덱스가 앞쪽 prefix가 아니다(새치기 의심): {granted_indices}"
+        )
+        # prefix 밖의 나머지는 전부 명시적으로 거부됐어야 한다(오류 아님).
+        for i, jid in enumerate(job_ids):
+            if i not in granted_indices:
+                assert isinstance(result_by_job[jid], ReservationDenied)
+
+    @pytest.mark.asyncio
+    async def test_40_concurrent_jobs_only_target_rpm_granted_no_reordering(
+        self, db_ready, quota_scope: str,
+    ) -> None:
+        """40개 동시 job 등록·폴링에서도 target_rpm(13)을 절대 넘지 않고,
+        grant된 job 집합은 항상 FIFO 앞쪽부터 연속된 prefix를 이룬다
+        (순서 역전·중간 새치기 없음). 40-way 동시 접속 자체의 connection/
+        lock 경합으로 일부 호출이 ``CoordinatorError``(fail-closed)를
+        받을 수 있으므로 그 경우는 실패로 보지 않는다 — 실제 dispatcher
+        (``run_real_dispatch_job()``)도 이 경우 재시도로 흡수한다."""
+        coordinator = _postgres_coordinator(
+            quota_scope=quota_scope, target_rpm=13, lock_timeout_ms=15000,
+        )
+        job_ids = [
+            await coordinator._repo.register_real_job(  # type: ignore[attr-defined]
+                decision_cycle_id="c1", decision_context_id=None, symbol=f"S{i}",
+                source_type="held_position", quota_scope=quota_scope,
+                fdc_ready_at=datetime.now(timezone.utc),
+            )
+            for i in range(40)
+        ]
+
+        results = await asyncio.gather(*[
+            coordinator.try_reserve(
+                job_id=jid, caller_id="ops-scheduler:held_position_reduce_sell",
+            )
+            for jid in job_ids
+        ])
+        result_by_job = dict(zip(job_ids, results))
+
+        granted_indices = {
+            i for i, jid in enumerate(job_ids)
+            if isinstance(result_by_job[jid], ReservationGrant)
+        }
+        assert len(granted_indices) <= 13  # window 상한을 절대 넘지 않는다
+        assert granted_indices == set(range(len(granted_indices))), (
+            f"grant된 인덱스가 앞쪽 prefix가 아니다(새치기 의심): {granted_indices}"
+        )
+
+    @pytest.mark.asyncio
+    async def test_lock_timeout_and_coordinator_unavailable_send_zero_http(
+        self, db_ready, quota_scope: str,
+    ) -> None:
+        """anchor 행 잠금이 lock_timeout 안에 풀리지 않으면 coordinator
+        오류가 반환되고, HTTP는 전혀 나가지 않는다."""
+        from dataclasses import dataclass
+
+        from agent_trading.db.transaction import TransactionManager
+
+        @dataclass(slots=True, frozen=True)
+        class _Output:
+            symbol: str = "AAPL"
+
+        class _CountingClient:
+            def __init__(self) -> None:
+                self.calls = 0
+
+            async def generate_structured_once(self, grant, *, on_http_start=None, **kwargs):
+                self.calls += 1
+                raise AssertionError("HTTP가 호출되면 안 된다")
+
+        job_id = None
+        async with TransactionManager() as holder_tx:
+            await holder_tx.connection.execute(
+                "SELECT * FROM trading.fdc_quota_state WHERE quota_scope = $1 FOR UPDATE",
+                quota_scope,
+            )
+            coordinator = _postgres_coordinator(
+                quota_scope=quota_scope, target_rpm=13, lock_timeout_ms=200,
+            )
+            job_id = await coordinator._repo.register_real_job(  # type: ignore[attr-defined]
+                decision_cycle_id="c1", decision_context_id=None, symbol="LOCKED",
+                source_type="held_position", quota_scope=quota_scope,
+                fdc_ready_at=datetime.now(timezone.utc),
+            )
+            client = _CountingClient()
+            result = await coordinator.try_reserve(
+                job_id=job_id, caller_id="ops-scheduler:held_position_reduce_sell",
+            )
+            assert isinstance(result, CoordinatorError)
+            assert result.error_class == CoordinatorErrorClass.COORDINATOR_LOCK_TIMEOUT
+            assert client.calls == 0
+            await holder_tx.rollback()
+
+    @pytest.mark.asyncio
+    async def test_provider_retry_uses_new_reservation_and_attempt_row(
+        self, db_ready, quota_scope: str,
+    ) -> None:
+        from dataclasses import dataclass
+
+        import httpx
+
+        from agent_trading.db.connection import connection
+        from agent_trading.services.ai_agents.base import RawProviderResponse
+        from scripts.fdc_manual_provider_gate import run_real_dispatch_job
+
+        @dataclass(slots=True, frozen=True)
+        class _Output:
+            symbol: str = "AAPL"
+
+        def _make_429() -> httpx.HTTPStatusError:
+            req = httpx.Request("POST", "https://x/v1/chat/completions")
+            resp = httpx.Response(429, request=req)
+            exc = httpx.HTTPStatusError("429", request=req, response=resp)
+            exc.http_attempt_count = 1  # type: ignore[attr-defined]
+            exc.http_429_count = 1  # type: ignore[attr-defined]
+            return exc
+
+        class _FakeLiveClient:
+            def __init__(self) -> None:
+                self._outcomes = [_make_429(), RawProviderResponse(
+                    parsed=_Output(), raw_content="{}",
+                    http_attempt_count=1, http_429_count=0,
+                )]
+                self.calls = 0
+
+            async def generate_structured_once(self, grant, *, on_http_start=None, **kwargs):
+                if on_http_start is not None:
+                    await on_http_start()
+                self.calls += 1
+                outcome = self._outcomes.pop(0)
+                if isinstance(outcome, Exception):
+                    raise outcome
+                return outcome
+
+        coordinator = _postgres_coordinator(quota_scope=quota_scope, target_rpm=13)
+        job_id = await coordinator._repo.register_real_job(  # type: ignore[attr-defined]
+            decision_cycle_id="c1", decision_context_id=None, symbol="005930",
+            source_type="held_position", quota_scope=quota_scope,
+            fdc_ready_at=datetime.now(timezone.utc),
+        )
+        client = _FakeLiveClient()
+
+        result = await run_real_dispatch_job(
+            coordinator=coordinator, client=client, job_id=job_id,
+            caller_id="ops-scheduler:held_position_reduce_sell",
+            manual_run_id="cycle-1", model_id="m", system_prompt="s",
+            user_prompt="u", response_format=_Output,
+        )
+
+        assert result.parsed.symbol == "AAPL"
+        assert client.calls == 2
+        async with connection() as conn:
+            rows = await conn.fetch(
+                "SELECT attempt_id, outcome FROM trading.fdc_provider_attempts "
+                "WHERE job_id = $1 ORDER BY reserved_at",
+                job_id,
+            )
+        assert len(rows) == 2  # 새 reservation = 새 attempt 행
+        assert rows[0]["attempt_id"] != rows[1]["attempt_id"]
+        assert rows[0]["outcome"] == "http_failed_retryable"
+        assert rows[1]["outcome"] == "http_succeeded"
+
+    @pytest.mark.asyncio
+    async def test_recovery_scan_idempotent_against_real_db(
+        self, db_ready, quota_scope: str,
+    ) -> None:
+        coordinator = _postgres_coordinator(quota_scope=quota_scope, target_rpm=13)
+        job_queued = await coordinator._repo.register_real_job(  # type: ignore[attr-defined]
+            decision_cycle_id="c1", decision_context_id=None, symbol="A",
+            source_type="held_position", quota_scope=quota_scope,
+            fdc_ready_at=datetime.now(timezone.utc),
+        )
+        job_granted_result = await coordinator.try_reserve(
+            job_id=job_queued, caller_id="ops-scheduler:held_position_reduce_sell",
+        )
+        assert isinstance(job_granted_result, ReservationGrant)
+
+        first = await coordinator._repo.cancel_stale_real_jobs(  # type: ignore[attr-defined]
+            quota_scope=quota_scope,
+        )
+        second = await coordinator._repo.cancel_stale_real_jobs(  # type: ignore[attr-defined]
+            quota_scope=quota_scope,
+        )
+
+        assert first == 1
+        assert second == 0
+
+        from agent_trading.db.connection import connection
+        async with connection() as conn:
+            row = await conn.fetchrow(
+                "SELECT status, failure_or_cancel_reason FROM trading.fdc_queue_jobs "
+                "WHERE job_id = $1",
+                job_queued,
+            )
+        assert row["status"] == "CANCELLED"
+        assert row["failure_or_cancel_reason"] == "process_terminated_carryover_lost"
+
+    @pytest.mark.asyncio
+    async def test_list_resumable_real_jobs_round_trips_pre_fdc_result_via_real_db(
+        self, db_ready, quota_scope: str,
+    ) -> None:
+        """2026-08-28 4차 리뷰 보정 — durable carryover: QUEUED job의
+        pre_fdc_result_json/correlation_id가 실제 PostgreSQL JSONB 컬럼을
+        거쳐 그대로 왕복하는지, 그리고 recovery scan(cancel_stale_real_
+        jobs)이 이 QUEUED job을 더 이상 건드리지 않는지 검증한다."""
+        coordinator = _postgres_coordinator(quota_scope=quota_scope, target_rpm=13)
+        pre_fdc_result = {
+            "success": True,
+            "event_output": {"symbol": "A"},
+            "requires_fdc_dispatch": True,
+        }
+        job_id = await coordinator._repo.register_real_job(  # type: ignore[attr-defined]
+            decision_cycle_id="c1", decision_context_id=None, symbol="A",
+            source_type="held_position", quota_scope=quota_scope,
+            fdc_ready_at=datetime.now(timezone.utc),
+            pre_fdc_result=pre_fdc_result, correlation_id="orig-corr-real-db",
+        )
+
+        resumable = await coordinator._repo.list_resumable_real_jobs(  # type: ignore[attr-defined]
+            quota_scope=quota_scope,
+        )
+
+        assert len(resumable) == 1
+        assert resumable[0].job_id == job_id
+        assert resumable[0].pre_fdc_result == pre_fdc_result
+        assert resumable[0].correlation_id == "orig-corr-real-db"
+
+        # QUEUED는 더 이상 recovery scan 대상이 아니다.
+        cancelled = await coordinator._repo.cancel_stale_real_jobs(  # type: ignore[attr-defined]
+            quota_scope=quota_scope,
+        )
+        assert cancelled == 0
+
+        from agent_trading.db.connection import connection
+        async with connection() as conn:
+            row = await conn.fetchrow(
+                "SELECT status FROM trading.fdc_queue_jobs WHERE job_id = $1",
+                job_id,
+            )
+        assert row["status"] == "QUEUED"
+
+    @pytest.mark.asyncio
+    async def test_incomplete_carryover_row_is_cleaned_up_and_unblocks_fifo_on_real_db(
+        self, db_ready, quota_scope: str,
+    ) -> None:
+        """2026-08-28 5차 리뷰 보정 — 실제 PostgreSQL에서도 불완전한
+        QUEUED row(pre_fdc_result_json/correlation_id 없음)가
+        list_resumable_real_jobs()로 즉시 FDC_FAILED_FINAL 종결되고,
+        그 뒤 정상 후속 row가 FIFO admission을 통과해 grant되는지
+        검증한다."""
+        coordinator = _postgres_coordinator(quota_scope=quota_scope, target_rpm=13)
+
+        incomplete_job = await coordinator._repo.register_real_job(  # type: ignore[attr-defined]
+            decision_cycle_id="c1", decision_context_id=None, symbol="INCOMPLETE",
+            source_type="held_position", quota_scope=quota_scope,
+            fdc_ready_at=datetime.now(timezone.utc),
+        )
+        normal_job = await coordinator._repo.register_real_job(  # type: ignore[attr-defined]
+            decision_cycle_id="c1", decision_context_id=None, symbol="NORMAL",
+            source_type="held_position", quota_scope=quota_scope,
+            fdc_ready_at=datetime.now(timezone.utc),
+            pre_fdc_result={"requires_fdc_dispatch": True}, correlation_id="c-normal",
+        )
+
+        blocked = await coordinator.try_reserve(
+            job_id=normal_job, caller_id="ops-scheduler",
+        )
+        assert isinstance(blocked, ReservationDenied)
+
+        resumable = await coordinator._repo.list_resumable_real_jobs(  # type: ignore[attr-defined]
+            quota_scope=quota_scope,
+        )
+        assert [r.job_id for r in resumable] == [normal_job]
+
+        from agent_trading.db.connection import connection
+        async with connection() as conn:
+            row = await conn.fetchrow(
+                "SELECT status, failure_or_cancel_reason FROM "
+                "trading.fdc_queue_jobs WHERE job_id = $1",
+                incomplete_job,
+            )
+        assert row["status"] == "FDC_FAILED_FINAL"
+        assert row["failure_or_cancel_reason"] == (
+            "fdc_carryover_payload_missing_data_integrity_error"
+        )
+
+        granted = await coordinator.try_reserve(
+            job_id=normal_job, caller_id="ops-scheduler",
+        )
+        assert isinstance(granted, ReservationGrant)
+
+    @pytest.mark.asyncio
+    async def test_job_counters_consistent_in_real_db(
+        self, db_ready, quota_scope: str,
+    ) -> None:
+        """queue_poll_count = reservation_denied_count + dispatch_attempt_no
+        항등식이 실제 fdc_queue_jobs row에서도 성립한다."""
+        coordinator = _postgres_coordinator(quota_scope=quota_scope, target_rpm=1)
+        filler_job = await coordinator._repo.register_real_job(  # type: ignore[attr-defined]
+            decision_cycle_id="c1", decision_context_id=None, symbol="FILLER",
+            source_type="held_position", quota_scope=quota_scope,
+            fdc_ready_at=datetime.now(timezone.utc),
+        )
+        await coordinator.try_reserve(
+            job_id=filler_job, caller_id="ops-scheduler:held_position_reduce_sell",
+        )
+
+        target_job = await coordinator._repo.register_real_job(  # type: ignore[attr-defined]
+            decision_cycle_id="c1", decision_context_id=None, symbol="TARGET",
+            source_type="held_position", quota_scope=quota_scope,
+            fdc_ready_at=datetime.now(timezone.utc),
+        )
+        # target_rpm=1이 이미 filler로 소진돼 거부된다.
+        denied = await coordinator.try_reserve(
+            job_id=target_job, caller_id="ops-scheduler:held_position_reduce_sell",
+        )
+        assert isinstance(denied, ReservationDenied)
+
+        from agent_trading.db.connection import connection
+        async with connection() as conn:
+            row = await conn.fetchrow(
+                "SELECT queue_poll_count, reservation_denied_count, "
+                "dispatch_attempt_no FROM trading.fdc_queue_jobs WHERE job_id = $1",
+                target_job,
+            )
+        assert row["queue_poll_count"] == (
+            row["reservation_denied_count"] + row["dispatch_attempt_no"]
+        )
+        assert row["reservation_denied_count"] == 1
+        assert row["dispatch_attempt_no"] == 0
+
+    @pytest.mark.asyncio
+    async def test_retry_reenqueues_to_fifo_tail_and_lets_waiting_job_go_first_real_db(
+        self, db_ready, quota_scope: str,
+    ) -> None:
+        """2026-08-28 6차 리뷰 보정 — A가 먼저 grant된 뒤 retryable 실패,
+        B가 이미 QUEUED인 경우: A가 FIFO tail로 재등록되고, A의 재시도는
+        B보다 뒤 순서가 돼야 한다(실제 PostgreSQL)."""
+        coordinator = _postgres_coordinator(quota_scope=quota_scope, target_rpm=13)
+        job_a = await coordinator._repo.register_real_job(  # type: ignore[attr-defined]
+            decision_cycle_id="c1", decision_context_id=None, symbol="A",
+            source_type="held_position", quota_scope=quota_scope,
+            fdc_ready_at=datetime.now(timezone.utc),
+        )
+        job_b = await coordinator._repo.register_real_job(  # type: ignore[attr-defined]
+            decision_cycle_id="c1", decision_context_id=None, symbol="B",
+            source_type="held_position", quota_scope=quota_scope,
+            fdc_ready_at=datetime.now(timezone.utc),
+        )
+
+        grant_a1 = await coordinator.try_reserve(
+            job_id=job_a, caller_id="ops-scheduler:held_position_reduce_sell",
+        )
+        assert isinstance(grant_a1, ReservationGrant)
+
+        await coordinator._repo.apply_retry_failure(  # type: ignore[attr-defined]
+            job_id=job_a, reason="provider_retryable_failure", will_retry=True,
+        )
+
+        # A의 재시도가 B보다 먼저 폴링해도, B가 아직 QUEUED인 한 거부된다.
+        denied_a2 = await coordinator.try_reserve(
+            job_id=job_a, caller_id="ops-scheduler:held_position_reduce_sell",
+        )
+        assert isinstance(denied_a2, ReservationDenied)
+
+        grant_b = await coordinator.try_reserve(
+            job_id=job_b, caller_id="ops-scheduler:held_position_reduce_sell",
+        )
+        assert isinstance(grant_b, ReservationGrant)
+
+        grant_a2 = await coordinator.try_reserve(
+            job_id=job_a, caller_id="ops-scheduler:held_position_reduce_sell",
+            attempt_no=2,
+        )
+        assert isinstance(grant_a2, ReservationGrant)
+
+        from agent_trading.db.connection import connection
+        async with connection() as conn:
+            row_a = await conn.fetchrow(
+                "SELECT status, provider_retry_count, queue_reenqueue_count, "
+                "pre_http_execution_failure_count FROM trading.fdc_queue_jobs "
+                "WHERE job_id = $1",
+                job_a,
+            )
+        assert row_a["status"] == "RESERVATION_GRANTED"
+        assert row_a["provider_retry_count"] == 1
+        assert row_a["queue_reenqueue_count"] == 1
+        assert row_a["pre_http_execution_failure_count"] == 0
+
+    @pytest.mark.asyncio
+    async def test_pre_http_failure_retry_counters_and_no_queue_jump_real_db(
+        self, db_ready, quota_scope: str,
+    ) -> None:
+        """HTTP 시작 전 실패 후 재시도 — pre-HTTP counter/reenqueue
+        counter가 정확히 증가하고, 후속 job을 앞지르지 않는다."""
+        coordinator = _postgres_coordinator(quota_scope=quota_scope, target_rpm=13)
+        job_a = await coordinator._repo.register_real_job(  # type: ignore[attr-defined]
+            decision_cycle_id="c1", decision_context_id=None, symbol="A",
+            source_type="held_position", quota_scope=quota_scope,
+            fdc_ready_at=datetime.now(timezone.utc),
+        )
+        job_b = await coordinator._repo.register_real_job(  # type: ignore[attr-defined]
+            decision_cycle_id="c1", decision_context_id=None, symbol="B",
+            source_type="held_position", quota_scope=quota_scope,
+            fdc_ready_at=datetime.now(timezone.utc),
+        )
+
+        grant_a1 = await coordinator.try_reserve(
+            job_id=job_a, caller_id="ops-scheduler:held_position_reduce_sell",
+        )
+        assert isinstance(grant_a1, ReservationGrant)
+
+        # HTTP 시작 전 worker/subprocess 생성 실패 재현.
+        await coordinator._repo.apply_retry_failure(  # type: ignore[attr-defined]
+            job_id=job_a, reason="pre_http_execution_failure", will_retry=True,
+        )
+
+        denied_a2 = await coordinator.try_reserve(
+            job_id=job_a, caller_id="ops-scheduler:held_position_reduce_sell",
+            attempt_no=2,
+        )
+        assert isinstance(denied_a2, ReservationDenied)  # B가 아직 QUEUED
+
+        grant_b = await coordinator.try_reserve(
+            job_id=job_b, caller_id="ops-scheduler:held_position_reduce_sell",
+        )
+        assert isinstance(grant_b, ReservationGrant)
+
+        from agent_trading.db.connection import connection
+        async with connection() as conn:
+            row_a = await conn.fetchrow(
+                "SELECT status, pre_http_execution_failure_count, "
+                "reserved_but_http_not_started_count, queue_reenqueue_count, "
+                "provider_retry_count FROM trading.fdc_queue_jobs WHERE job_id = $1",
+                job_a,
+            )
+        assert row_a["status"] == "QUEUED"
+        assert row_a["pre_http_execution_failure_count"] == 1
+        assert row_a["reserved_but_http_not_started_count"] == 1
+        assert row_a["queue_reenqueue_count"] == 1
+        assert row_a["provider_retry_count"] == 0
+
+    @pytest.mark.asyncio
+    async def test_provider_429_retry_counters_and_no_duplicate_http_start_real_db(
+        self, db_ready, quota_scope: str,
+    ) -> None:
+        """provider 429 후 재시도 — provider_retry_count/queue_reenqueue_
+        count/http_attempt_count/http_429_count가 실제 값과 일치하고,
+        새 reservation/attempt가 쓰이며, 동일 reservation의 HTTP 시작
+        중복 기록은 불가능하다."""
+        coordinator = _postgres_coordinator(quota_scope=quota_scope, target_rpm=13)
+        job_id = await coordinator._repo.register_real_job(  # type: ignore[attr-defined]
+            decision_cycle_id="c1", decision_context_id=None, symbol="A",
+            source_type="held_position", quota_scope=quota_scope,
+            fdc_ready_at=datetime.now(timezone.utc),
+        )
+
+        grant1 = await coordinator.try_reserve(
+            job_id=job_id, caller_id="ops-scheduler:held_position_reduce_sell",
+        )
+        assert isinstance(grant1, ReservationGrant)
+        await coordinator.record_attempt_outcome(
+            reservation_id=grant1.reservation_id, outcome="http_started",
+            http_started_at=datetime.now(timezone.utc),
+        )
+        # 동일 reservation의 HTTP 시작 중복 기록은 불가능하다.
+        with pytest.raises(ValueError):
+            await coordinator.record_attempt_outcome(
+                reservation_id=grant1.reservation_id, outcome="http_started",
+                http_started_at=datetime.now(timezone.utc),
+            )
+        await coordinator.record_attempt_outcome(
+            reservation_id=grant1.reservation_id, outcome="http_failed_retryable",
+            http_status=429, http_429_observed=True,
+        )
+        await coordinator._repo.record_http_attempt_counters(  # type: ignore[attr-defined]
+            job_id=job_id, http_429_observed=True,
+        )
+        await coordinator._repo.apply_retry_failure(  # type: ignore[attr-defined]
+            job_id=job_id, reason="provider_retryable_failure", will_retry=True,
+        )
+
+        grant2 = await coordinator.try_reserve(
+            job_id=job_id, caller_id="ops-scheduler:held_position_reduce_sell",
+            attempt_no=2,
+        )
+        assert isinstance(grant2, ReservationGrant)
+        assert grant2.reservation_id != grant1.reservation_id  # 새 reservation
+        await coordinator.record_attempt_outcome(
+            reservation_id=grant2.reservation_id, outcome="http_succeeded",
+            http_started_at=datetime.now(timezone.utc),
+        )
+        await coordinator._repo.record_http_attempt_counters(  # type: ignore[attr-defined]
+            job_id=job_id, http_429_observed=False,
+        )
+
+        from agent_trading.db.connection import connection
+        async with connection() as conn:
+            row = await conn.fetchrow(
+                "SELECT provider_retry_count, queue_reenqueue_count, "
+                "http_attempt_count, http_429_count, permit_consumed_count "
+                "FROM trading.fdc_queue_jobs WHERE job_id = $1",
+                job_id,
+            )
+            attempt_rows = await conn.fetch(
+                "SELECT attempt_id FROM trading.fdc_provider_attempts "
+                "WHERE job_id = $1",
+                job_id,
+            )
+        assert row["provider_retry_count"] == 1
+        assert row["queue_reenqueue_count"] == 1
+        assert row["http_attempt_count"] == 2
+        assert row["http_429_count"] == 1
+        assert row["permit_consumed_count"] == 2
+        assert row["http_attempt_count"] <= row["permit_consumed_count"]
+        assert len(attempt_rows) == 2  # 새 reservation = 새 attempt 행
+
+    @pytest.mark.asyncio
+    async def test_provider_429_exhaustion_counts_only_actual_reenqueues_real_db(
+        self, db_ready, quota_scope: str,
+    ) -> None:
+        """2026-08-28 7차 리뷰 보정 — 최대 HTTP 시도 3회 모두 retryable
+        429로 실패하면: 실제 HTTP 시도 3회, 실제 FIFO tail 재등록은
+        2회뿐이다(마지막 3차 실패는 재등록 없이 곧바로 FDC_FAILED_
+        FINAL로 종결) — 실제 PostgreSQL로 검증한다."""
+        coordinator = _postgres_coordinator(quota_scope=quota_scope, target_rpm=13)
+        job_id = await coordinator._repo.register_real_job(  # type: ignore[attr-defined]
+            decision_cycle_id="c1", decision_context_id=None, symbol="A",
+            source_type="held_position", quota_scope=quota_scope,
+            fdc_ready_at=datetime.now(timezone.utc),
+        )
+
+        for attempt_no in (1, 2, 3):
+            grant = await coordinator.try_reserve(
+                job_id=job_id, caller_id="ops-scheduler:held_position_reduce_sell",
+                attempt_no=attempt_no,
+            )
+            assert isinstance(grant, ReservationGrant)
+            await coordinator.record_attempt_outcome(
+                reservation_id=grant.reservation_id, outcome="http_started",
+                http_started_at=datetime.now(timezone.utc),
+            )
+            await coordinator.record_attempt_outcome(
+                reservation_id=grant.reservation_id, outcome="http_failed_retryable",
+                http_status=429, http_429_observed=True,
+            )
+            await coordinator._repo.record_http_attempt_counters(  # type: ignore[attr-defined]
+                job_id=job_id, http_429_observed=True,
+            )
+            will_retry = attempt_no < 3
+            await coordinator._repo.apply_retry_failure(  # type: ignore[attr-defined]
+                job_id=job_id, reason="provider_retryable_failure",
+                will_retry=will_retry,
+            )
+        await coordinator._repo.mark_job_terminal(  # type: ignore[attr-defined]
+            job_id=job_id, status="FDC_FAILED_FINAL", reason="provider_rate_limit",
+        )
+
+        from agent_trading.db.connection import connection
+        async with connection() as conn:
+            row = await conn.fetchrow(
+                "SELECT status, failure_or_cancel_reason, provider_retry_count, "
+                "queue_reenqueue_count, http_attempt_count, http_429_count, "
+                "permit_consumed_count FROM trading.fdc_queue_jobs WHERE job_id = $1",
+                job_id,
+            )
+            attempt_rows = await conn.fetch(
+                "SELECT attempt_id FROM trading.fdc_provider_attempts WHERE job_id = $1",
+                job_id,
+            )
+        assert row["status"] == "FDC_FAILED_FINAL"
+        assert row["failure_or_cancel_reason"] == "provider_rate_limit"
+        assert row["provider_retry_count"] == 2  # 실제 재등록은 2회뿐
+        assert row["queue_reenqueue_count"] == 2
+        assert row["http_attempt_count"] == 3  # HTTP 시도 자체는 3회
+        assert row["http_429_count"] == 3
+        assert row["permit_consumed_count"] == 3
+        assert len(attempt_rows) == 3  # 시도마다 새 attempt 행
+
+    @pytest.mark.asyncio
+    async def test_pre_http_failure_exhaustion_counts_only_actual_reenqueues_real_db(
+        self, db_ready, quota_scope: str,
+    ) -> None:
+        """pre-HTTP 실패가 최대 횟수까지 소진되는 경우도 동일 원칙이
+        적용된다 — pre_http_execution_failure_count는 실제 재등록
+        횟수(2회)와 일치하고, reserved_but_http_not_started_count는
+        attempt 단위 관측값이므로 3회 전부 반영된다."""
+        coordinator = _postgres_coordinator(quota_scope=quota_scope, target_rpm=13)
+        job_id = await coordinator._repo.register_real_job(  # type: ignore[attr-defined]
+            decision_cycle_id="c1", decision_context_id=None, symbol="A",
+            source_type="held_position", quota_scope=quota_scope,
+            fdc_ready_at=datetime.now(timezone.utc),
+        )
+
+        for attempt_no in (1, 2, 3):
+            grant = await coordinator.try_reserve(
+                job_id=job_id, caller_id="ops-scheduler:held_position_reduce_sell",
+                attempt_no=attempt_no,
+            )
+            assert isinstance(grant, ReservationGrant)
+            # HTTP 시작 전 worker/subprocess 생성 실패 재현.
+            await coordinator.record_attempt_outcome(
+                reservation_id=grant.reservation_id,
+                outcome="reserved_but_http_not_started",
+                error_class="FdcOnlySubprocessCrashOrTimeout",
+            )
+            will_retry = attempt_no < 3
+            await coordinator._repo.apply_retry_failure(  # type: ignore[attr-defined]
+                job_id=job_id, reason="pre_http_execution_failure",
+                will_retry=will_retry,
+            )
+        await coordinator._repo.mark_job_terminal(  # type: ignore[attr-defined]
+            job_id=job_id, status="FDC_FAILED_FINAL",
+            reason="fdc_only_subprocess_exhausted",
+        )
+
+        from agent_trading.db.connection import connection
+        async with connection() as conn:
+            row = await conn.fetchrow(
+                "SELECT status, failure_or_cancel_reason, "
+                "pre_http_execution_failure_count, reserved_but_http_not_started_count, "
+                "queue_reenqueue_count, provider_retry_count, http_attempt_count "
+                "FROM trading.fdc_queue_jobs WHERE job_id = $1",
+                job_id,
+            )
+        assert row["status"] == "FDC_FAILED_FINAL"
+        assert row["failure_or_cancel_reason"] == "fdc_only_subprocess_exhausted"
+        assert row["pre_http_execution_failure_count"] == 2  # 실제 재등록은 2회뿐
+        assert row["reserved_but_http_not_started_count"] == 3  # attempt 단위 관측값
+        assert row["queue_reenqueue_count"] == 2
+        assert row["provider_retry_count"] == 0
+        assert row["http_attempt_count"] == 0  # HTTP는 한 번도 시작되지 않았다
+
+    @pytest.mark.asyncio
+    async def test_success_and_nonretryable_failure_do_not_touch_retry_counters_real_db(
+        self, db_ready, quota_scope: str,
+    ) -> None:
+        """성공 및 non-retryable 실패 — retry/requeue counter가 증가하지
+        않고, terminal status와 attempt outcome이 일치한다."""
+        coordinator = _postgres_coordinator(quota_scope=quota_scope, target_rpm=13)
+
+        job_success = await coordinator._repo.register_real_job(  # type: ignore[attr-defined]
+            decision_cycle_id="c1", decision_context_id=None, symbol="SUCCESS",
+            source_type="held_position", quota_scope=quota_scope,
+            fdc_ready_at=datetime.now(timezone.utc),
+        )
+        grant_s = await coordinator.try_reserve(
+            job_id=job_success, caller_id="ops-scheduler:held_position_reduce_sell",
+        )
+        assert isinstance(grant_s, ReservationGrant)
+        await coordinator.record_attempt_outcome(
+            reservation_id=grant_s.reservation_id, outcome="http_succeeded",
+            http_started_at=datetime.now(timezone.utc),
+        )
+        await coordinator._repo.record_http_attempt_counters(  # type: ignore[attr-defined]
+            job_id=job_success, http_429_observed=False,
+        )
+        await coordinator._repo.mark_job_terminal(  # type: ignore[attr-defined]
+            job_id=job_success, status="FDC_SUCCEEDED",
+        )
+
+        job_nonretryable = await coordinator._repo.register_real_job(  # type: ignore[attr-defined]
+            decision_cycle_id="c1", decision_context_id=None, symbol="NONRETRYABLE",
+            source_type="held_position", quota_scope=quota_scope,
+            fdc_ready_at=datetime.now(timezone.utc),
+        )
+        grant_n = await coordinator.try_reserve(
+            job_id=job_nonretryable, caller_id="ops-scheduler:held_position_reduce_sell",
+        )
+        assert isinstance(grant_n, ReservationGrant)
+        await coordinator.record_attempt_outcome(
+            reservation_id=grant_n.reservation_id, outcome="http_failed_final",
+            http_status=400, http_started_at=datetime.now(timezone.utc),
+        )
+        await coordinator._repo.record_http_attempt_counters(  # type: ignore[attr-defined]
+            job_id=job_nonretryable, http_429_observed=False,
+        )
+        await coordinator._repo.mark_job_terminal(  # type: ignore[attr-defined]
+            job_id=job_nonretryable, status="FDC_FAILED_FINAL",
+            reason="provider_nonretryable",
+        )
+
+        from agent_trading.db.connection import connection
+        async with connection() as conn:
+            row_s = await conn.fetchrow(
+                "SELECT status, provider_retry_count, pre_http_execution_failure_count, "
+                "queue_reenqueue_count, http_attempt_count FROM trading.fdc_queue_jobs "
+                "WHERE job_id = $1",
+                job_success,
+            )
+            row_n = await conn.fetchrow(
+                "SELECT status, failure_or_cancel_reason, provider_retry_count, "
+                "queue_reenqueue_count, http_attempt_count FROM trading.fdc_queue_jobs "
+                "WHERE job_id = $1",
+                job_nonretryable,
+            )
+        assert row_s["status"] == "FDC_SUCCEEDED"
+        assert row_s["provider_retry_count"] == 0
+        assert row_s["pre_http_execution_failure_count"] == 0
+        assert row_s["queue_reenqueue_count"] == 0
+        assert row_s["http_attempt_count"] == 1
+
+        assert row_n["status"] == "FDC_FAILED_FINAL"
+        assert row_n["failure_or_cancel_reason"] == "provider_nonretryable"
+        assert row_n["provider_retry_count"] == 0
+        assert row_n["queue_reenqueue_count"] == 0
+        assert row_n["http_attempt_count"] == 1

@@ -1,0 +1,398 @@
+"""Tests for ``scripts/run_agent_subprocess.py``의 ``mode``(2026-08-27,
+held_position 실제 dispatcher — PR #359 리뷰 보정) 배선.
+
+§17 설계를 코드 수준으로 구현한다 — 실제 dispatcher/FIFO 대기/quota
+reservation 로직 자체는 ``tests/scripts/test_fdc_manual_provider_gate.py``
+(``run_real_dispatch_job()``)와 ``tests/services/test_fdc_quota_
+coordinator.py``(FIFO 공정성)가 검증했으므로 중복하지 않는다. 이 파일은
+다음만 검증한다:
+
+1. ``mode="full"``(기본값): 기존 동작 100% 보존(EI/AR/AC/FDC를 한
+   subprocess에서 순차 실행).
+2. ``mode="pre_fdc"``: FDC skip이면 기존과 동일한 완전한 output, FDC-
+   ready면 FDC를 호출하지 않고 ``requires_fdc_dispatch=True``로 즉시
+   반환.
+3. ``mode="fdc_only"``: EI/AR/AC를 전혀 호출하지 않고, 이미 확보한
+   grant로 FDC one-shot만 실행(``_run_fdc_only_mode()``).
+
+fake/mock만 사용 — 실제 sleep/DB/HTTP/Gemini 없음.
+"""
+
+from __future__ import annotations
+
+import json
+from types import SimpleNamespace
+from typing import Any
+
+import pytest
+
+from agent_trading.services.ai_agents.schemas import (
+    AIComplianceOutput,
+    AIRiskOutput,
+    EventInterpretationOutput,
+    FinalDecisionComposerOutput,
+)
+from scripts import run_agent_subprocess as script
+
+
+# ===========================================================================
+# main() wiring — mode="full"/"pre_fdc"
+# ===========================================================================
+
+
+def _base_payload(
+    *,
+    mode: str,
+    source_type: str = "held_position",
+    primary_candidate: str = "SELL_CANDIDATE",
+    quantity: str | None = "10",
+) -> dict[str, Any]:
+    context: dict[str, Any] = {
+        "source_type": source_type,
+        "deterministic_trigger": {"primary_candidate": primary_candidate},
+    }
+    if quantity is not None:
+        context["position_snapshot"] = {"quantity": quantity}
+    return {
+        "decision_context_id": None,
+        "correlation_id": "test-main-corr",
+        "symbol": "005930",
+        "market": "KRX",
+        "source_type": source_type,
+        "context": context,
+        "llm_provider": "gemini",
+        "provider_api_key": "fake-key",
+        "provider_base_url": "https://fake.example",
+        "provider_model_id": "fake-model",
+        "provider_timeout_seconds": 30,
+        "mode": mode,
+    }
+
+
+class _FakeStdinBuffer:
+    def __init__(self, payload: dict[str, Any]) -> None:
+        self._raw = json.dumps(payload).encode("utf-8")
+
+    def read(self) -> bytes:
+        return self._raw
+
+
+def _install_common_main_stubs(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
+    """EI/AR/AC/FDC를 실제로 실행하지 않고 즉시 안전한 output을
+    반환하도록 한다 — 이 테스트가 검증하는 것은 mode 배선이지 agent
+    로직이 아니다."""
+
+    class _FakeEventInterpretationAgent:
+        async def run(self, request: Any) -> EventInterpretationOutput:
+            return EventInterpretationOutput(
+                agent_name="event_interpretation", schema_version="v1",
+                symbol=request.symbol or "005930",
+            )
+
+    class _FakeAIRiskAgent:
+        async def run(self, request: Any) -> AIRiskOutput:
+            return AIRiskOutput(
+                agent_name="ai_risk", schema_version="v1",
+                risk_opinion="allow", risk_score=0.1, confidence=0.9,
+            )
+
+    class _FakeAIComplianceAgent:
+        async def run(self, request: Any) -> AIComplianceOutput:
+            return AIComplianceOutput(
+                agent_name="ai_compliance", schema_version="v1",
+                compliance_opinion="allow", compliance_score=0.1, confidence=0.9,
+            )
+
+    captured: dict[str, Any] = {"fdc_run_count": 0}
+
+    class _FakeFdcAgent:
+        def __init__(self, **kwargs: Any) -> None:
+            captured["triplet_kwargs"] = kwargs
+            self.last_provider_observation = None
+
+        async def run(self, request: Any) -> FinalDecisionComposerOutput:
+            captured["fdc_run_count"] += 1
+            return FinalDecisionComposerOutput(
+                agent_name="final_decision_composer", schema_version="v1",
+                decision_type="HOLD", confidence=0.5,
+                symbol=request.symbol or "005930",
+            )
+
+    def _fake_build_agent_triplet(
+        *, provider_client: Any, model_id: Any, acquire_permit: Any = None,
+    ) -> tuple[Any, Any, Any, Any]:
+        return (
+            _FakeEventInterpretationAgent(), _FakeAIRiskAgent(),
+            _FakeAIComplianceAgent(), _FakeFdcAgent(),
+        )
+
+    monkeypatch.setattr(script, "_build_agent_triplet", _fake_build_agent_triplet)
+
+    written: dict[str, Any] = {}
+
+    def _fake_write_output(output: Any) -> None:
+        written["output"] = output
+
+    monkeypatch.setattr(script, "_write_output", _fake_write_output)
+    captured["written"] = written
+    return captured
+
+
+@pytest.mark.asyncio
+async def test_mode_full_calls_fdc_and_produces_full_output(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """mode="full"(기본값)은 기존과 동일하게 FDC를 호출해 완전한
+    output을 만든다 — held_position SELL_CANDIDATE라도 mode="full"이면
+    (이 스크립트 관점에서는) 그냥 정상 실행이다(게이팅은 상위
+    DecisionAgentRunner의 책임)."""
+    payload = _base_payload(mode="full")
+    monkeypatch.setattr(
+        script.sys, "stdin", SimpleNamespace(buffer=_FakeStdinBuffer(payload))
+    )
+    captured = _install_common_main_stubs(monkeypatch)
+
+    await script.main()
+
+    assert captured["fdc_run_count"] == 1
+    output = captured["written"]["output"]
+    assert output.success is True
+    assert output.requires_fdc_dispatch is False
+    assert output.composer_output["decision_type"] == "HOLD"
+
+
+@pytest.mark.asyncio
+async def test_mode_pre_fdc_skips_fdc_when_deterministic_skip(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """mode="pre_fdc"라도 결정론적 skip 조건(risk reject 등)이면 FDC를
+    부르지 않고 완전한 output을 즉시 만든다 — requires_fdc_dispatch는
+    False."""
+    payload = _base_payload(mode="pre_fdc")
+    monkeypatch.setattr(
+        script.sys, "stdin", SimpleNamespace(buffer=_FakeStdinBuffer(payload))
+    )
+    captured = _install_common_main_stubs(monkeypatch)
+
+    def _fake_check_fdc_skip(*, inp, request, event_output, risk_output):
+        return (
+            True, "risk_reject",
+            FinalDecisionComposerOutput(
+                symbol="005930", decision_type="HOLD", confidence=0.0,
+                reason_codes=("risk_rejected",),
+            ),
+        )
+
+    monkeypatch.setattr(script, "_check_fdc_skip", _fake_check_fdc_skip)
+
+    await script.main()
+
+    assert captured["fdc_run_count"] == 0
+    output = captured["written"]["output"]
+    assert output.success is True
+    assert output.fdc_skipped is True
+    assert output.requires_fdc_dispatch is False
+
+
+@pytest.mark.asyncio
+async def test_mode_pre_fdc_ready_does_not_call_fdc_and_flags_dispatch(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """mode="pre_fdc" + FDC-ready(skip 아님)면 FDC를 전혀 호출하지 않고
+    requires_fdc_dispatch=True로 즉시 반환한다 — composer_output은
+    비어 있다."""
+    payload = _base_payload(mode="pre_fdc")
+    monkeypatch.setattr(
+        script.sys, "stdin", SimpleNamespace(buffer=_FakeStdinBuffer(payload))
+    )
+    captured = _install_common_main_stubs(monkeypatch)
+
+    def _fake_check_fdc_skip(*, inp, request, event_output, risk_output):
+        return (False, "", FinalDecisionComposerOutput())
+
+    monkeypatch.setattr(script, "_check_fdc_skip", _fake_check_fdc_skip)
+
+    await script.main()
+
+    assert captured["fdc_run_count"] == 0  # FDC agent는 호출되지 않는다
+    output = captured["written"]["output"]
+    assert output.success is True
+    assert output.fdc_skipped is False
+    assert output.requires_fdc_dispatch is True
+    # composer_output은 placeholder일 뿐 신뢰 대상이 아니다 — 호출자
+    # (DecisionAgentRunner)는 requires_fdc_dispatch=True를 보면 이 값을
+    # 무시하고 fdc_only 결과로 교체한다.
+    # EI/AR/AC 결과는 그대로 채워져 있다(다음 fdc_only 호출의 carryover로 쓰임).
+    assert output.event_output
+    assert output.risk_output
+    assert output.compliance_output
+
+
+# ===========================================================================
+# mode="fdc_only" — _run_fdc_only_mode()
+# ===========================================================================
+
+
+@pytest.mark.asyncio
+async def test_fdc_only_mode_missing_reservation_fields_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """reservation_id/job_id/quota_scope 중 하나라도 없으면 즉시
+    실패한다(방어적 검증) — 실제 DB pool도 열지 않는다."""
+    payload = _base_payload(mode="fdc_only")
+    monkeypatch.setattr(
+        script.sys, "stdin", SimpleNamespace(buffer=_FakeStdinBuffer(payload))
+    )
+
+    written_errors: list[str] = []
+    monkeypatch.setattr(
+        script, "_write_error_output",
+        lambda msg, **kwargs: written_errors.append(msg),
+    )
+
+    async def _should_not_be_called(*args: Any, **kwargs: Any) -> None:
+        raise AssertionError("create_pool()이 호출됐다 — 사전 검증이 먼저 실패해야 한다")
+
+    import agent_trading.db.connection as db_connection_module
+    monkeypatch.setattr(db_connection_module, "create_pool", _should_not_be_called)
+
+    with pytest.raises(SystemExit) as exc_info:
+        await script.main()
+
+    assert exc_info.value.code == 1
+    assert written_errors
+
+
+@pytest.mark.asyncio
+async def test_fdc_only_mode_success_calls_fdc_once_and_closes_pool(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """mode="fdc_only" 정상 경로 — EI/AR/AC는 호출되지 않고 FDC만
+    정확히 1회 실행되며, DB pool은 반드시 정리된다."""
+    payload = _base_payload(mode="fdc_only")
+    payload["event_interpretation_output"] = {"symbol": "005930"}
+    payload["ai_risk_output"] = {"risk_opinion": "allow"}
+    payload["ai_compliance_output"] = {"compliance_opinion": "allow"}
+    payload["reservation_id"] = "11111111-1111-1111-1111-111111111111"
+    payload["reservation_job_id"] = "22222222-2222-2222-2222-222222222222"
+    payload["reservation_quota_scope"] = "gemini:shared-operational"
+    payload["reservation_attempt_no"] = 1
+    payload["reservation_window_count_before_grant"] = 3
+    monkeypatch.setattr(
+        script.sys, "stdin", SimpleNamespace(buffer=_FakeStdinBuffer(payload))
+    )
+
+    pool_calls: list[str] = []
+
+    async def _fake_create_pool(*args: Any, **kwargs: Any) -> None:
+        pool_calls.append("create")
+
+    async def _fake_close_pool(*args: Any, **kwargs: Any) -> None:
+        pool_calls.append("close")
+
+    import agent_trading.db.connection as db_connection_module
+    monkeypatch.setattr(db_connection_module, "create_pool", _fake_create_pool)
+    monkeypatch.setattr(db_connection_module, "close_pool", _fake_close_pool)
+
+    class _FakeAmbientTx:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *exc):
+            return False
+
+    import agent_trading.db.transaction as db_transaction_module
+    monkeypatch.setattr(
+        db_transaction_module, "TransactionManager", lambda: _FakeAmbientTx()
+    )
+
+    fdc_run_count = 0
+
+    class _FakeFdcAgent:
+        def __init__(self, **kwargs: Any) -> None:
+            pass
+
+        async def run(self, request: Any) -> FinalDecisionComposerOutput:
+            nonlocal fdc_run_count
+            fdc_run_count += 1
+            return FinalDecisionComposerOutput(
+                symbol="005930", decision_type="HOLD", confidence=0.5,
+            )
+
+    monkeypatch.setattr(script, "FinalDecisionComposerAgent", _FakeFdcAgent)
+
+    written: dict[str, Any] = {}
+    monkeypatch.setattr(
+        script, "_write_output", lambda output: written.update(output=output)
+    )
+
+    await script.main()
+
+    assert fdc_run_count == 1
+    assert pool_calls == ["create", "close"]
+    output = written["output"]
+    assert output.success is True
+    assert output.composer_output["decision_type"] == "HOLD"
+
+
+@pytest.mark.asyncio
+async def test_fdc_only_mode_pool_closed_even_when_fdc_raises(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """FDC 실행 중 예외가 나도(예: LiveGeminiProviderClient 구성 실패)
+    DB pool은 반드시 정리된다."""
+    payload = _base_payload(mode="fdc_only")
+    payload["event_interpretation_output"] = {"symbol": "005930"}
+    payload["ai_risk_output"] = {"risk_opinion": "allow"}
+    payload["ai_compliance_output"] = {"compliance_opinion": "allow"}
+    payload["reservation_id"] = "11111111-1111-1111-1111-111111111111"
+    payload["reservation_job_id"] = "22222222-2222-2222-2222-222222222222"
+    payload["reservation_quota_scope"] = "gemini:shared-operational"
+    monkeypatch.setattr(
+        script.sys, "stdin", SimpleNamespace(buffer=_FakeStdinBuffer(payload))
+    )
+
+    pool_calls: list[str] = []
+
+    async def _fake_create_pool(*args: Any, **kwargs: Any) -> None:
+        pool_calls.append("create")
+
+    async def _fake_close_pool(*args: Any, **kwargs: Any) -> None:
+        pool_calls.append("close")
+
+    import agent_trading.db.connection as db_connection_module
+    monkeypatch.setattr(db_connection_module, "create_pool", _fake_create_pool)
+    monkeypatch.setattr(db_connection_module, "close_pool", _fake_close_pool)
+
+    class _FakeAmbientTx:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *exc):
+            return False
+
+    import agent_trading.db.transaction as db_transaction_module
+    monkeypatch.setattr(
+        db_transaction_module, "TransactionManager", lambda: _FakeAmbientTx()
+    )
+
+    def _raising_repo(tx: Any) -> Any:
+        raise RuntimeError("simulated repo construction failure")
+
+    import agent_trading.repositories.postgres.fdc_quota as fdc_quota_module
+    monkeypatch.setattr(
+        fdc_quota_module, "PostgresFdcQuotaRepository", _raising_repo
+    )
+
+    written_errors: list[str] = []
+    monkeypatch.setattr(
+        script, "_write_error_output",
+        lambda msg, **kwargs: written_errors.append(msg),
+    )
+
+    with pytest.raises(SystemExit) as exc_info:
+        await script.main()
+
+    assert exc_info.value.code == 1
+    assert pool_calls == ["create", "close"]
+    assert written_errors

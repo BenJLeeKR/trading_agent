@@ -18,9 +18,10 @@ import it directly regardless of that constraint.
 ``rate_limiter_waited_seconds``, ``rate_limiter_slot_acquired``,
 ``rate_limiter_queue_timeout``, ``rate_limiter_state_file_error``,
 ``provider_http_attempt_count``, ``provider_http_429_count``,
-``provider_execution_seconds``, ``provider_final_status`` works
-(e.g. the real ``AgentSubprocessOutput`` dataclass, or a lightweight
-stand-in built in a test without importing ``scripts.run_agent_subprocess``).
+``provider_execution_seconds``, ``provider_final_status``,
+``requires_fdc_dispatch`` works (e.g. the real ``AgentSubprocessOutput``
+dataclass, or a lightweight stand-in built in a test without importing
+``scripts.run_agent_subprocess``).
 
 2026-08-21 결함 수정: strict FDC rate limiter + retry-inclusive permit
 관측성 필드 8개(``rate_limiter_*``/``provider_*``)가
@@ -88,6 +89,7 @@ class AgentSubprocessOutputLike(Protocol):
     rate_limiter_final_waited_seconds: float
     rate_limiter_queue_deadline_exceeded: bool
     fdc_ready_at: str
+    requires_fdc_dispatch: bool
 
 
 def build_agent_subprocess_output_payload(
@@ -132,6 +134,7 @@ def build_agent_subprocess_output_payload(
         "rate_limiter_final_waited_seconds": output.rate_limiter_final_waited_seconds,
         "rate_limiter_queue_deadline_exceeded": output.rate_limiter_queue_deadline_exceeded,
         "fdc_ready_at": output.fdc_ready_at,
+        "requires_fdc_dispatch": output.requires_fdc_dispatch,
     }
 
 
