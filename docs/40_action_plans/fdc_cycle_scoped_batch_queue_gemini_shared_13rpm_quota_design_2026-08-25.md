@@ -817,17 +817,60 @@ FDC가 이 quota_scope의 유일한 운영 소비자이고, 수동 호출은 예
 | `permit_consumed_count` | 성공 reservation 수(`fdc_provider_attempts`에 `reservation_granted` 이상으로 기록된 행 수) |
 | `http_attempt_count` | `http_started_at IS NOT NULL`인 attempt 수 |
 | `http_429_count` | `http_status=429`인 attempt 수 |
-| `reserved_but_http_not_started_count` | `outcome='reserved_but_http_not_started'`인 attempt 수(= `pre_http_execution_failure_count`의 attempt-행 기준 합계와 일치해야 함, §14 정합성 검증 대상) |
+| `reserved_but_http_not_started_count` | `outcome='reserved_but_http_not_started'`인 attempt 수 **전체**(재등록으로 이어졌는지와 무관 — 아래 "정정" 참고) |
 
-**불변식(보정 후 확정)**:
+> **정정(2026-08-28, PR #359 병합 후속 문서 정합성 보정)**: 위 표의 이전 서술
+> "`reserved_but_http_not_started_count`는 `pre_http_execution_failure_count`의
+> attempt-행 기준 합계와 **항상 일치해야 한다**"는 틀렸다 — 이 등식은 **마지막
+> 소진(exhaustion) 실패**를 반영하지 못한다.
+>
+> `pre_http_execution_failure_count`(및 그 합산 지표 `queue_reenqueue_count`)는
+> **실제로 FIFO tail 재등록으로 이어진 pre-HTTP 실패 횟수만** 센다 — 재시도
+> 없이 곧바로 `FDC_FAILED_FINAL`로 종결되는 마지막(소진) 실패는 "재등록"이
+> 아니므로 이 counter를 증가시키지 않는다. 반면 `reserved_but_http_not_
+> started_count`는 `outcome='reserved_but_http_not_started'`가 **기록된
+> attempt 자체의 수**이므로, 재등록으로 이어졌는지와 무관하게 그 실패도
+> 포함해 항상 증가한다. 정확한 관계는 다음과 같다.
+>
+> - job이 **pre-HTTP 실패로 소진**되어 종결된 경우: `reserved_but_http_not_
+>   started_count = pre_http_execution_failure_count + 1`(마지막 소진 실패
+>   1건만큼 더 크다).
+> - job이 그 외의 경로(성공, provider 실패로 소진, non-retryable 즉시 실패
+>   등)로 끝난 경우: 두 값은 **일치**한다(pre-HTTP 실패가 전혀 없었거나,
+>   있었던 pre-HTTP 실패가 전부 재등록으로 이어졌기 때문).
+>
+> 즉 일반식은 `reserved_but_http_not_started_count >= pre_http_execution_
+> failure_count`이며, 차이가 나더라도(0 또는 1) 오류로 오판해서는 안 된다 —
+> "항상 일치해야 한다"는 §14 정합성 검증 기준으로 쓰지 않는다.
+
+**불변식(2026-08-28 정정 — 마지막 소진 실패를 반영)**:
 ```
 provider_retry_count <= max_http_attempts - 1        (= 2, MAX_RETRIES=3 기준)
 pre_http_execution_failure_count <= max_pre_http_execution_failures
 queue_reenqueue_count = provider_retry_count + pre_http_execution_failure_count
+  (= "실제 FIFO tail 재등록 횟수"만의 합 — 소진으로 이어진 마지막 실패는 포함하지 않는다)
+reserved_but_http_not_started_count = outcome='reserved_but_http_not_started'로
+  기록된 attempt 수 **전체**(소진으로 이어진 마지막 실패도 포함) >=
+  pre_http_execution_failure_count — pre-HTTP 실패로 소진 종결된 job은
+  정확히 +1(마지막 소진 실패 1건), 그 외 종결 경로는 0(일치). "항상 일치"가
+  아니다.
 http_attempt_count <= permit_consumed_count
 queue_poll_count = reservation_denied_count + dispatch_attempt_no   (보정 — 폴링 시도는 거부/성공 둘 중 하나로만 귀결)
 reservation count <= 13 per any sliding 60-second window  (§6 트랜잭션이 보장)
 ```
+
+**예시(최대 3회 pre-HTTP 실패 후 소진하는 정상 사례)**:
+```
+1차 실패 → 재등록(will_retry=True): pre_http_execution_failure_count=1, queue_reenqueue_count=1
+2차 실패 → 재등록(will_retry=True): pre_http_execution_failure_count=2, queue_reenqueue_count=2
+3차 실패 → 소진(will_retry=False, 재등록 없이 즉시 종결):
+  pre_http_execution_failure_count=2(불변), queue_reenqueue_count=2(불변)
+  reserved_but_http_not_started_count=3(attempt 3건 전부 기록됨)
+  최종 상태 = FDC_FAILED_FINAL(reason=fdc_only_subprocess_exhausted)
+```
+이 결과(`reserved_but_http_not_started_count=3`, `pre_http_execution_failure_
+count=2`)는 **정상**이다 — 두 값이 다르다고 데이터 정합성 이상으로 판정하지
+않는다.
 
 **reservation 거부/성공 시 정확한 증가 규칙(보정, 이전 초안의 모순 정정)**:
 ```
