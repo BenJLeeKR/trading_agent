@@ -584,17 +584,29 @@ class PostgresFdcQuotaRepository:
         self, *, job_id: uuid.UUID, reason: str, will_retry: bool,
     ) -> None:
         """FIFO tail 재등록(2026-08-28 6차 리뷰 보정 — PR #359, 설계
-        문서 §5/§9).
+        문서 §5/§9; 2026-08-28 7차 리뷰 보정으로 counter 의미 정정).
 
         ``reason``은 ``"provider_retryable_failure"``(HTTP가 실제로
         시작된 뒤 429/5xx/timeout) 또는 ``"pre_http_execution_
-        failure"``(HTTP 시작 전 subprocess 실패)다. 두 경우 모두 이
-        발생 자체를 job 단위 counter(``provider_retry_count``/
-        ``pre_http_execution_failure_count``, 파생 지표
-        ``queue_reenqueue_count``)에 원자적으로 반영한다 — retry가
-        이어지는지 소진돼 종결되는지와 무관하게 "이 유형의 실패가
-        일어났다"는 사실 자체는 항상 기록한다(§9 상태 전이도가
-        exhaustion 판정 **이전**에 counter를 증가시키는 순서와 일치).
+        failure"``(HTTP 시작 전 subprocess 실패)다.
+
+        **7차 보정** — ``provider_retry_count``/``pre_http_execution_
+        failure_count``(및 파생 지표 ``queue_reenqueue_count``)는
+        ``will_retry=True``일 때만(=실제로 FIFO tail에 다시 섰을 때만)
+        증가한다. 소진(``will_retry=False``)으로 이어지는 마지막 실패는
+        "재등록"이 아니라 "종결"이므로 이 counter들을 건드리지 않는다
+        — ``queue_reenqueue_count``는 문자 그대로 **"실제 FIFO tail
+        재등록 횟수"**를 뜻해야 하며, "이 유형의 실패가 몇 번
+        발생했는지"(그건 ``http_attempt_count``/``http_429_count``가
+        attempt 단위로 이미 담당한다)와 혼동해서는 안 된다(이전 라운드의
+        결함 — will_retry와 무관하게 증가시켰던 것을 이 보정으로
+        되돌렸다).
+
+        ``reserved_but_http_not_started_count``는 예외다 — 이것은
+        "``outcome='reserved_but_http_not_started'``로 기록된 attempt
+        수"라는 attempt 단위 관측값(§9)이므로, 재등록 여부와 무관하게
+        이 outcome이 기록될 때마다(=``reason="pre_http_execution_
+        failure"``일 때마다) 항상 증가한다.
 
         ``will_retry=True``일 때만 실제로 FIFO tail로 재등록한다 —
         ``enqueue_sequence``를 시퀀스의 다음 값으로 새로 발급하고
@@ -606,20 +618,22 @@ class PostgresFdcQuotaRepository:
         중이던 다른 job이 우선권을 갖는다 — 별도의 admission 로직
         변경이 필요 없다(같은 쿼리가 새 sequence 값을 그대로 본다).
 
-        ``will_retry=False``(소진)면 counter만 반영하고 큐 위치는
-        건드리지 않는다 — 호출자가 곧바로 ``mark_job_terminal()``로
-        종결시키기 때문이다.
+        ``will_retry=False``(소진)면 이 메서드는 ``reserved_but_http_
+        not_started_count``(``reason``이 pre-HTTP일 때만) 외에는 아무
+        것도 갱신하지 않는다 — 호출자가 곧바로 ``mark_job_terminal()``로
+        종결시키며, 실제 HTTP 시도/429 관측은 별도로
+        ``record_http_attempt_counters()``가 이미 반영했다.
         """
         async with TransactionManager() as retry_tx:
             await retry_tx.connection.execute(
                 "UPDATE trading.fdc_queue_jobs SET "
                 "provider_retry_count = provider_retry_count + "
-                "CASE WHEN $2 = 'provider_retryable_failure' THEN 1 ELSE 0 END, "
+                "CASE WHEN $3 AND $2 = 'provider_retryable_failure' THEN 1 ELSE 0 END, "
                 "pre_http_execution_failure_count = pre_http_execution_failure_count + "
-                "CASE WHEN $2 = 'pre_http_execution_failure' THEN 1 ELSE 0 END, "
+                "CASE WHEN $3 AND $2 = 'pre_http_execution_failure' THEN 1 ELSE 0 END, "
                 "reserved_but_http_not_started_count = reserved_but_http_not_started_count + "
                 "CASE WHEN $2 = 'pre_http_execution_failure' THEN 1 ELSE 0 END, "
-                "queue_reenqueue_count = queue_reenqueue_count + 1, "
+                "queue_reenqueue_count = queue_reenqueue_count + CASE WHEN $3 THEN 1 ELSE 0 END, "
                 "status = CASE WHEN $3 THEN 'QUEUED' ELSE status END, "
                 "enqueue_sequence = CASE WHEN $3 THEN "
                 "nextval(pg_get_serial_sequence('trading.fdc_queue_jobs', 'enqueue_sequence')) "

@@ -1290,6 +1290,52 @@ class TestRetryFifoTailReenqueue:
         assert job["http_attempt_count"] == 1
 
     @pytest.mark.asyncio
+    async def test_pre_http_failure_exhaustion_counts_only_actual_reenqueues(
+        self, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """2026-08-28 7차 리뷰 보정 — pre-HTTP 실패가 max_provider_
+        attempts=3까지 전부 소진되는 경우, 실제 FIFO tail 재등록은
+        2회뿐이다(3차 실패는 재등록 없이 곧바로 종결). reserved_but_
+        http_not_started_count는 attempt 단위 관측값이므로 3회 전부
+        반영된다(재등록 여부와 무관)."""
+        import agent_trading.services.decision_agent_runner as runner_module
+
+        repo = InMemoryFdcQuotaRepository()
+        job_id = await repo.register_real_job(
+            decision_cycle_id="c1", decision_context_id=None, symbol="005930",
+            source_type="held_position", quota_scope="gemini:shared-operational",
+            fdc_ready_at=datetime.now(timezone.utc),
+        )
+
+        call_count = {"n": 0}
+
+        async def _fake_spawn_impl(input_bytes, *, subprocess_timeout, decision_context_id, correlation_id):
+            call_count["n"] += 1
+            return None, b""  # 매번 HTTP 시작 전 crash
+
+        monkeypatch.setattr(runner_module, "_spawn_agent_subprocess_impl", _fake_spawn_impl)
+
+        result = await runner_module.complete_fdc_actual_dispatch(
+            fdc_quota_repo=repo, provider_runtime={},
+            subprocess_timeout=90, job_id=job_id,
+            pre_fdc_result=_pre_fdc_ready_result(),
+            correlation_id="test-corr", decision_context_id=None,
+            worker_semaphore=asyncio.Semaphore(5),
+        )
+
+        assert call_count["n"] == 3
+        assert result is not None
+        job = repo._jobs[job_id]  # type: ignore[attr-defined]
+        assert job["status"] == "FDC_FAILED_FINAL"
+        assert job["failure_or_cancel_reason"] == "fdc_only_subprocess_exhausted"
+        assert job["pre_http_execution_failure_count"] == 2  # 실제 재등록은 2회뿐
+        assert job["queue_reenqueue_count"] == 2
+        assert job["provider_retry_count"] == 0
+        # attempt 단위 관측값은 재등록 여부와 무관하게 3회 전부 반영된다.
+        assert job["reserved_but_http_not_started_count"] == 3
+        assert job["http_attempt_count"] == 0  # HTTP는 한 번도 시작되지 않았다
+
+    @pytest.mark.asyncio
     async def test_success_on_first_attempt_does_not_touch_retry_counters(
         self, monkeypatch: pytest.MonkeyPatch,
     ) -> None:
@@ -1377,13 +1423,15 @@ class TestRetryFifoTailReenqueue:
         assert job["http_attempt_count"] == 1  # HTTP는 실제로 나갔다
 
     @pytest.mark.asyncio
-    async def test_provider_retry_exhaustion_still_counts_final_failed_attempt(
+    async def test_provider_retry_exhaustion_counts_only_actual_reenqueues(
         self, monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """소진(exhaustion)으로 이어지는 마지막 실패도 provider_retry_
-        count/queue_reenqueue_count에 반영된다(설계 문서 §5 — counter
-        증가가 exhaustion 판정보다 먼저 일어난다) — 다만 그 마지막
-        시도는 실제로 FIFO tail에 다시 서지 않고 곧바로 종결된다."""
+        """2026-08-28 7차 리뷰 보정 — 소진(exhaustion)으로 이어지는
+        마지막 실패는 재등록이 아니라 종결이므로 provider_retry_count/
+        queue_reenqueue_count에 반영하지 않는다. max_provider_attempts=3
+        이면 실제 HTTP 시도는 3회지만, 실제 FIFO tail 재등록은 2회뿐
+        이다(1→2회차, 2→3회차 사이의 재등록만 실재) — 3회차 실패는
+        곧바로 FDC_FAILED_FINAL로 종결되고 재등록되지 않는다."""
         import agent_trading.services.decision_agent_runner as runner_module
 
         repo = InMemoryFdcQuotaRepository()
@@ -1394,9 +1442,11 @@ class TestRetryFifoTailReenqueue:
         )
 
         call_count = {"n": 0}
+        enqueue_sequence_snapshots: list[int] = []
 
         async def _fake_spawn_impl(input_bytes, *, subprocess_timeout, decision_context_id, correlation_id):
             call_count["n"] += 1
+            enqueue_sequence_snapshots.append(repo._jobs[job_id]["enqueue_sequence"])  # type: ignore[attr-defined]
             return _fdc_only_retryable_failure_result(), b"{}"
 
         monkeypatch.setattr(runner_module, "_spawn_agent_subprocess_impl", _fake_spawn_impl)
@@ -1409,12 +1459,17 @@ class TestRetryFifoTailReenqueue:
             worker_semaphore=asyncio.Semaphore(5),
         )
 
-        assert call_count["n"] == 3  # max_provider_attempts=3까지 전부 소진
+        assert call_count["n"] == 3  # max_provider_attempts=3까지 실제 HTTP 시도
         assert result is not None
         job = repo._jobs[job_id]  # type: ignore[attr-defined]
         assert job["status"] == "FDC_FAILED_FINAL"
         assert job["failure_or_cancel_reason"] == "provider_rate_limit"
-        assert job["provider_retry_count"] == 3  # 3번의 실패 발생 전부 반영
-        assert job["queue_reenqueue_count"] == 3
-        assert job["http_attempt_count"] == 3
+        assert job["provider_retry_count"] == 2  # 실제 재등록은 2회뿐
+        assert job["queue_reenqueue_count"] == 2
+        assert job["http_attempt_count"] == 3  # HTTP 시도 자체는 3회
         assert job["http_429_count"] == 3
+        # enqueue_sequence는 1차→2차, 2차→3차 사이 두 번만 바뀐다
+        # (3차 실패 후에는 재등록되지 않으므로 세 번째 값이 없다).
+        assert len(enqueue_sequence_snapshots) == 3
+        assert enqueue_sequence_snapshots[0] < enqueue_sequence_snapshots[1]
+        assert enqueue_sequence_snapshots[1] < enqueue_sequence_snapshots[2]

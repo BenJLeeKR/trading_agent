@@ -2265,6 +2265,122 @@ class TestPostgresRealJobDispatch:
         assert len(attempt_rows) == 2  # 새 reservation = 새 attempt 행
 
     @pytest.mark.asyncio
+    async def test_provider_429_exhaustion_counts_only_actual_reenqueues_real_db(
+        self, db_ready, quota_scope: str,
+    ) -> None:
+        """2026-08-28 7차 리뷰 보정 — 최대 HTTP 시도 3회 모두 retryable
+        429로 실패하면: 실제 HTTP 시도 3회, 실제 FIFO tail 재등록은
+        2회뿐이다(마지막 3차 실패는 재등록 없이 곧바로 FDC_FAILED_
+        FINAL로 종결) — 실제 PostgreSQL로 검증한다."""
+        coordinator = _postgres_coordinator(quota_scope=quota_scope, target_rpm=13)
+        job_id = await coordinator._repo.register_real_job(  # type: ignore[attr-defined]
+            decision_cycle_id="c1", decision_context_id=None, symbol="A",
+            source_type="held_position", quota_scope=quota_scope,
+            fdc_ready_at=datetime.now(timezone.utc),
+        )
+
+        for attempt_no in (1, 2, 3):
+            grant = await coordinator.try_reserve(
+                job_id=job_id, caller_id="ops-scheduler:held_position_reduce_sell",
+                attempt_no=attempt_no,
+            )
+            assert isinstance(grant, ReservationGrant)
+            await coordinator.record_attempt_outcome(
+                reservation_id=grant.reservation_id, outcome="http_started",
+                http_started_at=datetime.now(timezone.utc),
+            )
+            await coordinator.record_attempt_outcome(
+                reservation_id=grant.reservation_id, outcome="http_failed_retryable",
+                http_status=429, http_429_observed=True,
+            )
+            await coordinator._repo.record_http_attempt_counters(  # type: ignore[attr-defined]
+                job_id=job_id, http_429_observed=True,
+            )
+            will_retry = attempt_no < 3
+            await coordinator._repo.apply_retry_failure(  # type: ignore[attr-defined]
+                job_id=job_id, reason="provider_retryable_failure",
+                will_retry=will_retry,
+            )
+        await coordinator._repo.mark_job_terminal(  # type: ignore[attr-defined]
+            job_id=job_id, status="FDC_FAILED_FINAL", reason="provider_rate_limit",
+        )
+
+        from agent_trading.db.connection import connection
+        async with connection() as conn:
+            row = await conn.fetchrow(
+                "SELECT status, failure_or_cancel_reason, provider_retry_count, "
+                "queue_reenqueue_count, http_attempt_count, http_429_count, "
+                "permit_consumed_count FROM trading.fdc_queue_jobs WHERE job_id = $1",
+                job_id,
+            )
+            attempt_rows = await conn.fetch(
+                "SELECT attempt_id FROM trading.fdc_provider_attempts WHERE job_id = $1",
+                job_id,
+            )
+        assert row["status"] == "FDC_FAILED_FINAL"
+        assert row["failure_or_cancel_reason"] == "provider_rate_limit"
+        assert row["provider_retry_count"] == 2  # 실제 재등록은 2회뿐
+        assert row["queue_reenqueue_count"] == 2
+        assert row["http_attempt_count"] == 3  # HTTP 시도 자체는 3회
+        assert row["http_429_count"] == 3
+        assert row["permit_consumed_count"] == 3
+        assert len(attempt_rows) == 3  # 시도마다 새 attempt 행
+
+    @pytest.mark.asyncio
+    async def test_pre_http_failure_exhaustion_counts_only_actual_reenqueues_real_db(
+        self, db_ready, quota_scope: str,
+    ) -> None:
+        """pre-HTTP 실패가 최대 횟수까지 소진되는 경우도 동일 원칙이
+        적용된다 — pre_http_execution_failure_count는 실제 재등록
+        횟수(2회)와 일치하고, reserved_but_http_not_started_count는
+        attempt 단위 관측값이므로 3회 전부 반영된다."""
+        coordinator = _postgres_coordinator(quota_scope=quota_scope, target_rpm=13)
+        job_id = await coordinator._repo.register_real_job(  # type: ignore[attr-defined]
+            decision_cycle_id="c1", decision_context_id=None, symbol="A",
+            source_type="held_position", quota_scope=quota_scope,
+            fdc_ready_at=datetime.now(timezone.utc),
+        )
+
+        for attempt_no in (1, 2, 3):
+            grant = await coordinator.try_reserve(
+                job_id=job_id, caller_id="ops-scheduler:held_position_reduce_sell",
+                attempt_no=attempt_no,
+            )
+            assert isinstance(grant, ReservationGrant)
+            # HTTP 시작 전 worker/subprocess 생성 실패 재현.
+            await coordinator.record_attempt_outcome(
+                reservation_id=grant.reservation_id,
+                outcome="reserved_but_http_not_started",
+                error_class="FdcOnlySubprocessCrashOrTimeout",
+            )
+            will_retry = attempt_no < 3
+            await coordinator._repo.apply_retry_failure(  # type: ignore[attr-defined]
+                job_id=job_id, reason="pre_http_execution_failure",
+                will_retry=will_retry,
+            )
+        await coordinator._repo.mark_job_terminal(  # type: ignore[attr-defined]
+            job_id=job_id, status="FDC_FAILED_FINAL",
+            reason="fdc_only_subprocess_exhausted",
+        )
+
+        from agent_trading.db.connection import connection
+        async with connection() as conn:
+            row = await conn.fetchrow(
+                "SELECT status, failure_or_cancel_reason, "
+                "pre_http_execution_failure_count, reserved_but_http_not_started_count, "
+                "queue_reenqueue_count, provider_retry_count, http_attempt_count "
+                "FROM trading.fdc_queue_jobs WHERE job_id = $1",
+                job_id,
+            )
+        assert row["status"] == "FDC_FAILED_FINAL"
+        assert row["failure_or_cancel_reason"] == "fdc_only_subprocess_exhausted"
+        assert row["pre_http_execution_failure_count"] == 2  # 실제 재등록은 2회뿐
+        assert row["reserved_but_http_not_started_count"] == 3  # attempt 단위 관측값
+        assert row["queue_reenqueue_count"] == 2
+        assert row["provider_retry_count"] == 0
+        assert row["http_attempt_count"] == 0  # HTTP는 한 번도 시작되지 않았다
+
+    @pytest.mark.asyncio
     async def test_success_and_nonretryable_failure_do_not_touch_retry_counters_real_db(
         self, db_ready, quota_scope: str,
     ) -> None:

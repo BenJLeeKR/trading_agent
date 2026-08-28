@@ -535,11 +535,13 @@ async def complete_fdc_actual_dispatch(
                             return build_fallback_bundle()
 
                         will_retry = provider_attempt_no < max_provider_attempts
-                        # 2026-08-28 6차 리뷰 보정 — 이 실패 유형이
-                        # 일어났다는 사실 자체를 will_retry와 무관하게
-                        # 반영한다(설계 문서 §5가 exhaustion 판정 이전에
-                        # counter를 올리는 순서와 일치). will_retry=True면
-                        # 같은 호출 안에서 job을 FIFO tail로 원자적으로
+                        # 2026-08-28 7차 리뷰 보정 — provider_retry_count/
+                        # pre_http_execution_failure_count/queue_reenqueue_
+                        # count는 will_retry=True(실제 FIFO tail 재등록)
+                        # 일 때만 증가한다 — 소진으로 이어지는 마지막
+                        # 실패는 재등록이 아니라 종결이므로 이 counter들을
+                        # 과대 집계하지 않는다. will_retry=True면 같은
+                        # 호출 안에서 job을 FIFO tail로 원자적으로
                         # 재등록한다(job_id는 그대로, enqueue_sequence만
                         # 새로 발급) — 이미 대기 중이던 다른 job의 순번을
                         # 침해하지 않는다.
@@ -590,10 +592,11 @@ async def complete_fdc_actual_dispatch(
                 }
                 if provider_final_status in retryable_statuses:
                     will_retry = provider_attempt_no < max_provider_attempts
-                    # HTTP가 실제로 시작된 뒤의 retryable 실패 — will_retry
-                    # 와 무관하게 발생 사실 자체를 반영하고(설계 문서 §5),
-                    # will_retry=True면 job_id를 유지한 채 FIFO tail로
-                    # 원자적으로 재등록한다.
+                    # HTTP가 실제로 시작된 뒤의 retryable 실패 —
+                    # provider_retry_count/queue_reenqueue_count는
+                    # will_retry=True(실제 FIFO tail 재등록)일 때만
+                    # 증가한다(2026-08-28 7차 리뷰 보정). job_id는
+                    # 유지한 채 재등록한다.
                     await fdc_quota_repo.apply_retry_failure(
                         job_id=job_id, reason="provider_retryable_failure",
                         will_retry=will_retry,

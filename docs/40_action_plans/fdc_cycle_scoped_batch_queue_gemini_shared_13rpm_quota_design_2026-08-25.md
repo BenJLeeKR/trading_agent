@@ -511,16 +511,26 @@ CANCELLED ← 시장 종료 / 운영자 명시 취소 / 프로세스 종료(오�
 > 재등록됐는지"는 `queue_reenqueue_count`(job 단위 counter)가 이미 감사
 > 가능하게 기록하므로, 상태값 자체를 분리할 필요가 없다.
 >
-> **counter 증가 시점(설계 문서 §9 순서 그대로 구현)**: `provider_retry_
-> count`/`pre_http_execution_failure_count`(및 파생 지표 `queue_reenqueue_
-> count`)는 `will_retry` 여부와 **무관하게** 그 실패 유형이 발생한 사실
-> 자체로 항상 증가한다 — exhaustion으로 이어지는 마지막 실패도 포함된다
-> (§5 상태 전이도가 exhaustion 판정 이전에 counter를 올리는 순서와 일치).
-> `will_retry=True`일 때만 실제로 `enqueue_sequence`를 새로 발급하고
-> `status`를 `QUEUED`로 되돌린다. `http_attempt_count`/`http_429_count`는
-> `record_http_attempt_counters()`로 별도 관리하며, HTTP가 실제로 시작된
-> attempt(성공/provider 레벨 실패/crash-after-http-start 전부)마다 정확히
-> 1회 호출한다 — pre-HTTP 실패(HTTP 미시작)는 호출하지 않는다.
+> **counter 증가 시점(2026-08-28 7차 리뷰 보정으로 정정)**: `provider_
+> retry_count`/`pre_http_execution_failure_count`(및 파생 지표 `queue_
+> reenqueue_count`)는 **`will_retry=True`일 때만**(=실제로 FIFO tail에
+> 다시 섰을 때만) 증가한다. `queue_reenqueue_count`는 문자 그대로
+> **"실제 FIFO tail 재등록 횟수"**를 뜻해야 하며 "이 유형의 실패가 몇 번
+> 발생했는지"와 혼동해서는 안 된다 — 소진(exhaustion)으로 이어지는
+> 마지막 실패는 재등록이 아니라 종결이므로 이 counter들을 건드리지
+> 않는다(6차 보정 시점의 초안은 `will_retry` 여부와 무관하게 항상
+> 증가시켰는데, 이는 예를 들어 "3회 실패 후 소진"을 "3회 재등록"으로
+> 과대 보고하는 결함이었다 — 실제로는 1→2회차, 2→3회차 사이의 재등록
+> 2회만 일어난다). `reserved_but_http_not_started_count`는 예외다 —
+> attempt 단위 관측값(§9, "outcome='reserved_but_http_not_started'로
+> 기록된 attempt 수")이므로 재등록 여부와 무관하게 이 outcome이 기록될
+> 때마다 항상 증가한다. `will_retry=True`일 때만 실제로 `enqueue_
+> sequence`를 새로 발급하고 `status`를 `QUEUED`로 되돌린다. `http_
+> attempt_count`/`http_429_count`는 `record_http_attempt_counters()`로
+> 별도 관리하며, HTTP가 실제로 시작된 attempt(성공/provider 레벨 실패/
+> crash-after-http-start 전부)마다 정확히 1회 호출한다(재등록 여부와
+> 무관 — HTTP 시도는 재등록과 별개의 사건이다) — pre-HTTP 실패(HTTP
+> 미시작)는 호출하지 않는다.
 
 ## 6. Atomic reservation transaction 계약
 

@@ -3427,13 +3427,21 @@ class InMemoryFdcQuotaRepository:
             job = self._jobs.get(job_id)
             if job is None:
                 return
-            if reason == "provider_retryable_failure":
-                job["provider_retry_count"] += 1
-            elif reason == "pre_http_execution_failure":
-                job["pre_http_execution_failure_count"] += 1
+            # 2026-08-28 7차 리뷰 보정 — reserved_but_http_not_started_
+            # count는 attempt 단위 관측값(§9)이므로 재등록 여부와 무관
+            # 하게 이 outcome이 기록될 때마다 증가한다.
+            if reason == "pre_http_execution_failure":
                 job["reserved_but_http_not_started_count"] += 1
-            job["queue_reenqueue_count"] += 1
+            # provider_retry_count/pre_http_execution_failure_count/
+            # queue_reenqueue_count는 "실제 FIFO tail 재등록 횟수"를
+            # 뜻하므로 will_retry=True(실제 재등록)일 때만 증가한다 —
+            # 소진으로 이어지는 마지막 실패는 재등록이 아니라 종결이다.
             if will_retry:
+                if reason == "provider_retryable_failure":
+                    job["provider_retry_count"] += 1
+                elif reason == "pre_http_execution_failure":
+                    job["pre_http_execution_failure_count"] += 1
+                job["queue_reenqueue_count"] += 1
                 self._enqueue_sequence_counter += 1
                 job["enqueue_sequence"] = self._enqueue_sequence_counter
                 job["status"] = "QUEUED"
