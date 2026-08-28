@@ -3428,7 +3428,23 @@ class InMemoryFdcQuotaRepository:
         candidates.sort(key=lambda job: job["enqueue_sequence"])
         resumable = []
         for job in candidates:
-            if job.get("pre_fdc_result") is None:
+            # 2026-08-28 5차 리뷰 보정 — 불완전한 QUEUED job을 조용히
+            # 건너뛰면, try_reserve()의 FIFO admission("나보다 먼저
+            # 등록된 QUEUED job이 있으면 양보")이 이 job 뒤의 모든 real
+            # job을 영구 대기시킨다(§17.3/§17.7). 즉시 fail-closed로
+            # 종결해 FIFO head를 비운다 — idempotent(다음 호출부터는
+            # 이미 QUEUED가 아니므로 후보 목록에 다시 잡히지 않는다).
+            pre_fdc_result = job.get("pre_fdc_result")
+            correlation_id = job.get("correlation_id")
+            if pre_fdc_result is None or not correlation_id:
+                reason = (
+                    "fdc_carryover_payload_missing_data_integrity_error"
+                    if pre_fdc_result is None
+                    else "fdc_carryover_correlation_id_missing_data_integrity_error"
+                )
+                await self.mark_job_terminal(
+                    job_id=job["job_id"], status="FDC_FAILED_FINAL", reason=reason,
+                )
                 continue
             resumable.append(ResumableRealJob(
                 job_id=job["job_id"],
@@ -3437,8 +3453,8 @@ class InMemoryFdcQuotaRepository:
                 quota_scope=quota_scope,
                 decision_cycle_id=job["decision_cycle_id"],
                 decision_context_id=job["decision_context_id"],
-                correlation_id=job.get("correlation_id"),
-                pre_fdc_result=job["pre_fdc_result"],
+                correlation_id=correlation_id,
+                pre_fdc_result=pre_fdc_result,
                 fdc_ready_at=job["fdc_ready_at"],
             ))
         return resumable

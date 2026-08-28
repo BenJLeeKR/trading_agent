@@ -320,6 +320,105 @@ class TestRealJobRegistrationAndFifoFairness:
         assert isinstance(result, ReservationGrant)
 
 
+class TestIncompleteCarryoverDoesNotPermanentlyBlockFifo:
+    """2026-08-28 5차 리뷰 보정 — durable resume 정보(``pre_fdc_result``/
+    ``correlation_id``)가 없는 불완전한 ``QUEUED`` row를
+    ``list_resumable_real_jobs()``가 조용히 건너뛰면, ``try_reserve()``의
+    FIFO admission("나보다 먼저 등록된 QUEUED job이 있으면 양보")이 그
+    불완전한 row 하나 때문에 뒤따르는 모든 real job을 영구 대기시킨다
+    (§17.3/§17.7). ``list_resumable_real_jobs()``가 그 row를 즉시
+    ``FDC_FAILED_FINAL``로 정리해 FIFO head를 비워야 한다."""
+
+    @pytest.mark.asyncio
+    async def test_incomplete_head_row_is_resolved_and_following_row_then_grants(
+        self,
+    ) -> None:
+        repo = InMemoryFdcQuotaRepository()
+        coordinator = _make_coordinator(
+            repo=repo, target_rpm=13, quota_scope="scope-fifo-incomplete",
+        )
+
+        # 불완전한 선행 row(migration 이전 데이터/부분 실패를 재현) —
+        # pre_fdc_result/correlation_id를 채우지 않는다.
+        incomplete_job = await repo.register_real_job(
+            decision_cycle_id="c1", decision_context_id=None, symbol="INCOMPLETE",
+            source_type="held_position", quota_scope="scope-fifo-incomplete",
+            fdc_ready_at=datetime.now(timezone.utc),
+        )
+        # 정상 후속 row.
+        normal_job = await repo.register_real_job(
+            decision_cycle_id="c1", decision_context_id=None, symbol="NORMAL",
+            source_type="held_position", quota_scope="scope-fifo-incomplete",
+            fdc_ready_at=datetime.now(timezone.utc),
+            pre_fdc_result={"requires_fdc_dispatch": True}, correlation_id="c-normal",
+        )
+
+        # 정리 전: 불완전한 선행 row가 QUEUED로 남아 있어 후속 row가
+        # FIFO에 막힌다.
+        blocked = await coordinator.try_reserve(
+            job_id=normal_job, caller_id="ops-scheduler",
+        )
+        assert isinstance(blocked, ReservationDenied)
+
+        # list_resumable_real_jobs()가 불완전한 row를 발견 즉시
+        # FDC_FAILED_FINAL로 종결하고, resumable 목록에는 정상 row만
+        # 남는다.
+        resumable = await repo.list_resumable_real_jobs(
+            quota_scope="scope-fifo-incomplete",
+        )
+        assert [r.job_id for r in resumable] == [normal_job]
+        assert repo._jobs[incomplete_job]["status"] == "FDC_FAILED_FINAL"  # type: ignore[attr-defined]
+        assert repo._jobs[incomplete_job]["failure_or_cancel_reason"] == (  # type: ignore[attr-defined]
+            "fdc_carryover_payload_missing_data_integrity_error"
+        )
+
+        # 정리 후: 정상 후속 row는 더 이상 FIFO에 막히지 않고 grant된다.
+        granted = await coordinator.try_reserve(
+            job_id=normal_job, caller_id="ops-scheduler",
+        )
+        assert isinstance(granted, ReservationGrant)
+
+    @pytest.mark.asyncio
+    async def test_missing_correlation_id_gets_distinct_reason(self) -> None:
+        repo = InMemoryFdcQuotaRepository()
+        job_id = await repo.register_real_job(
+            decision_cycle_id="c1", decision_context_id=None, symbol="A",
+            source_type="held_position", quota_scope="scope-fifo-incomplete-2",
+            fdc_ready_at=datetime.now(timezone.utc),
+            pre_fdc_result={"requires_fdc_dispatch": True}, correlation_id=None,
+        )
+
+        resumable = await repo.list_resumable_real_jobs(
+            quota_scope="scope-fifo-incomplete-2",
+        )
+
+        assert resumable == []
+        assert repo._jobs[job_id]["status"] == "FDC_FAILED_FINAL"  # type: ignore[attr-defined]
+        assert repo._jobs[job_id]["failure_or_cancel_reason"] == (  # type: ignore[attr-defined]
+            "fdc_carryover_correlation_id_missing_data_integrity_error"
+        )
+
+    @pytest.mark.asyncio
+    async def test_cleanup_is_idempotent(self) -> None:
+        repo = InMemoryFdcQuotaRepository()
+        job_id = await repo.register_real_job(
+            decision_cycle_id="c1", decision_context_id=None, symbol="A",
+            source_type="held_position", quota_scope="scope-fifo-incomplete-3",
+            fdc_ready_at=datetime.now(timezone.utc),
+        )
+
+        first = await repo.list_resumable_real_jobs(
+            quota_scope="scope-fifo-incomplete-3",
+        )
+        second = await repo.list_resumable_real_jobs(
+            quota_scope="scope-fifo-incomplete-3",
+        )
+
+        assert first == []
+        assert second == []
+        assert repo._jobs[job_id]["status"] == "FDC_FAILED_FINAL"  # type: ignore[attr-defined]
+
+
 class TestCancelStaleRealJobs:
     """2026-08-27 — 재기동 recovery scan(§17.7)이 non-terminal real job만
     ``CANCELLED``로 전이시키는지 검증한다.
@@ -1888,6 +1987,56 @@ class TestPostgresRealJobDispatch:
                 job_id,
             )
         assert row["status"] == "QUEUED"
+
+    @pytest.mark.asyncio
+    async def test_incomplete_carryover_row_is_cleaned_up_and_unblocks_fifo_on_real_db(
+        self, db_ready, quota_scope: str,
+    ) -> None:
+        """2026-08-28 5차 리뷰 보정 — 실제 PostgreSQL에서도 불완전한
+        QUEUED row(pre_fdc_result_json/correlation_id 없음)가
+        list_resumable_real_jobs()로 즉시 FDC_FAILED_FINAL 종결되고,
+        그 뒤 정상 후속 row가 FIFO admission을 통과해 grant되는지
+        검증한다."""
+        coordinator = _postgres_coordinator(quota_scope=quota_scope, target_rpm=13)
+
+        incomplete_job = await coordinator._repo.register_real_job(  # type: ignore[attr-defined]
+            decision_cycle_id="c1", decision_context_id=None, symbol="INCOMPLETE",
+            source_type="held_position", quota_scope=quota_scope,
+            fdc_ready_at=datetime.now(timezone.utc),
+        )
+        normal_job = await coordinator._repo.register_real_job(  # type: ignore[attr-defined]
+            decision_cycle_id="c1", decision_context_id=None, symbol="NORMAL",
+            source_type="held_position", quota_scope=quota_scope,
+            fdc_ready_at=datetime.now(timezone.utc),
+            pre_fdc_result={"requires_fdc_dispatch": True}, correlation_id="c-normal",
+        )
+
+        blocked = await coordinator.try_reserve(
+            job_id=normal_job, caller_id="ops-scheduler",
+        )
+        assert isinstance(blocked, ReservationDenied)
+
+        resumable = await coordinator._repo.list_resumable_real_jobs(  # type: ignore[attr-defined]
+            quota_scope=quota_scope,
+        )
+        assert [r.job_id for r in resumable] == [normal_job]
+
+        from agent_trading.db.connection import connection
+        async with connection() as conn:
+            row = await conn.fetchrow(
+                "SELECT status, failure_or_cancel_reason FROM "
+                "trading.fdc_queue_jobs WHERE job_id = $1",
+                incomplete_job,
+            )
+        assert row["status"] == "FDC_FAILED_FINAL"
+        assert row["failure_or_cancel_reason"] == (
+            "fdc_carryover_payload_missing_data_integrity_error"
+        )
+
+        granted = await coordinator.try_reserve(
+            job_id=normal_job, caller_id="ops-scheduler",
+        )
+        assert isinstance(granted, ReservationGrant)
 
     @pytest.mark.asyncio
     async def test_job_counters_consistent_in_real_db(

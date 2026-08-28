@@ -6091,3 +6091,213 @@ class TestFdcActualDispatchRecoveryScan:
         )
         fake_fdc_quota.cancel_stale_real_jobs.assert_not_awaited()
         fake_fdc_quota.list_resumable_real_jobs.assert_not_awaited()
+
+
+class TestFdcActualDispatchDurableResumeEndToEnd:
+    """2026-08-28 5차 리뷰 보정 — ``_run_loop()`` 운영 경로를 좁게
+    재현해, "이전 --count 1 프로세스가 deadline defer로 남긴 QUEUED
+    job을 새 프로세스가 agent를 다시 호출하지 않고 안전하게 재개하는지"
+    를 검증한다.
+
+    경계: ``_run_one_cycle()``은 mock으로 대체한다(그 내부의 override/
+    EV-gate/sizing/submit 배선은 기존 광범위한 다른 테스트가 이미
+    검증한다) — 이 테스트가 실제로 실행하는 것은 resume scan
+    (``list_resumable_real_jobs()``) → post-gather dispatcher
+    (``_run_fdc_actual_dispatch_phase()``) → ``complete_fdc_actual_
+    dispatch()``(실제 ``InMemoryFdcQuotaRepository``로 FIFO/reservation
+    까지 전부 실행) → ``_run_one_cycle(precomputed_agent_bundle=...)``
+    호출까지의 실제 배선이다. ``_spawn_agent_subprocess_impl``만 fake로
+    대체해 pre_fdc가 재호출되면 즉시 AssertionError를 던지게 한다."""
+
+    @staticmethod
+    def _pre_fdc_result() -> dict[str, Any]:
+        from agent_trading.services.ai_agents.schemas import (
+            AIComplianceOutput,
+            AIRiskOutput,
+            EventInterpretationOutput,
+        )
+        from agent_trading.services.common_types import dataclass_to_dict
+
+        return {
+            "success": True,
+            "event_output": dataclass_to_dict(EventInterpretationOutput(symbol="005930")),
+            "risk_output": dataclass_to_dict(AIRiskOutput(risk_opinion="allow")),
+            "compliance_output": dataclass_to_dict(
+                AIComplianceOutput(compliance_opinion="allow")
+            ),
+            "composer_output": {},
+            "fdc_skipped": False,
+            "requires_fdc_dispatch": True,
+            "fdc_ready_at": "2026-08-27T01:00:00+00:00",
+            "skip_reason_codes": [],
+            "duration_seconds": 0.1,
+        }
+
+    @staticmethod
+    def _fdc_only_result() -> dict[str, Any]:
+        from agent_trading.services.ai_agents.schemas import FinalDecisionComposerOutput
+        from agent_trading.services.common_types import dataclass_to_dict
+
+        return {
+            "success": True,
+            "composer_output": dataclass_to_dict(
+                FinalDecisionComposerOutput(
+                    symbol="005930", decision_type="REDUCE", confidence=0.7,
+                )
+            ),
+            "provider_final_status": "success",
+            "provider_http_attempt_count": 1,
+            "provider_http_429_count": 0,
+            "provider_execution_seconds": 1.2,
+        }
+
+    @pytest.mark.asyncio
+    async def test_process_restart_resumes_queued_job_without_recalling_pre_fdc(
+        self, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        import json as _json
+
+        import scripts.run_decision_loop as module
+        from agent_trading.repositories.memory import InMemoryFdcQuotaRepository
+        from agent_trading.services.fdc_quota_coordinator import DEFAULT_QUOTA_SCOPE
+
+        monkeypatch.setenv("FDC_ACTUAL_DISPATCH_ENABLED", "true")
+
+        # ── "이전 --count 1 프로세스"의 유산 — pre_fdc는 이미 끝났지만
+        # deadline defer로 QUEUED 상태로 남은 job. ──────────────────────
+        shared_repo = InMemoryFdcQuotaRepository()
+        job_id = await shared_repo.register_real_job(
+            decision_cycle_id="prior-cycle", decision_context_id=None,
+            symbol="005930", source_type="held_position",
+            quota_scope=DEFAULT_QUOTA_SCOPE,
+            fdc_ready_at=datetime.now(timezone.utc),
+            pre_fdc_result=self._pre_fdc_result(), correlation_id="orig-corr",
+        )
+
+        fake_repos = MagicMock()
+        fake_repos.fdc_quota = shared_repo
+
+        @asynccontextmanager
+        async def _mock_runtime(run_migrations: bool = False) -> AsyncIterator[dict[str, Any]]:
+            yield {"repositories": fake_repos}
+
+        class _DummyTx:
+            async def commit(self) -> None:
+                return None
+
+        @asynccontextmanager
+        async def _mock_tx() -> AsyncIterator[_DummyTx]:
+            yield _DummyTx()
+
+        universe = (
+            UniverseSymbol(symbol="005930", market="KRX", source_type="held_position"),
+        )
+
+        pre_fdc_spawn_calls = {"n": 0}
+        fdc_only_spawn_calls = {"n": 0}
+
+        async def _fake_spawn_impl(
+            input_bytes, *, subprocess_timeout, decision_context_id, correlation_id,
+        ):
+            payload = _json.loads(input_bytes)
+            if payload.get("mode") == "pre_fdc":
+                pre_fdc_spawn_calls["n"] += 1
+                raise AssertionError(
+                    "durable resume 경로가 pre_fdc subprocess를 다시 호출했다 "
+                    "— agent를 재호출하지 않는다는 계약 위반"
+                )
+            fdc_only_spawn_calls["n"] += 1
+            return self._fdc_only_result(), b"{}"
+
+        run_one_cycle_calls: list[dict[str, Any]] = []
+
+        async def _fake_run_one_cycle(*args: Any, **kwargs: Any) -> dict[str, object]:
+            run_one_cycle_calls.append(kwargs)
+            if kwargs.get("precomputed_agent_bundle") is not None:
+                # ── 재개된 job의 second pass — 실제로는 override→EV
+                # gate→sizing→submit(assemble_and_submit)로 이어지지만,
+                # 그 내부 배선은 다른 광범위한 테스트가 이미 검증하므로
+                # 여기서는 진입 자체(정확한 kwargs)만 확인한다.
+                return {
+                    "status": "SUBMITTED", "symbol": kwargs.get("symbol"),
+                    "market": kwargs.get("market"), "duration_seconds": 0.0,
+                }
+            return {
+                "status": "HOLD", "symbol": kwargs.get("symbol"),
+                "market": kwargs.get("market"), "duration_seconds": 0.0,
+            }
+
+        original_shutdown_event = module._shutdown_event
+        module._shutdown_event = asyncio.Event()
+        try:
+            with (
+                patch("scripts.run_decision_loop._install_signal_handlers", return_value=None),
+                patch(
+                    "scripts.run_decision_loop._load_trading_universe_with_anchor",
+                    AsyncMock(return_value=(universe, UniverseAnchorMetadata(source="test"))),
+                ),
+                patch("scripts.run_decision_loop.postgres_runtime", new=_mock_runtime),
+                patch("scripts.run_decision_loop._seed_if_empty", AsyncMock(return_value=False)),
+                patch("scripts.run_decision_loop._run_precheck", AsyncMock(return_value=None)),
+                patch(
+                    "scripts.run_decision_loop._run_mixedness_check",
+                    AsyncMock(return_value=None),
+                ),
+                patch(
+                    "scripts.run_decision_loop._build_r3b_alpha_percentile_overrides_for_cycle",
+                    AsyncMock(return_value={}),
+                ),
+                patch(
+                    "scripts.run_decision_loop._build_core_risk_off_apply_overrides_for_cycle",
+                    AsyncMock(return_value={}),
+                ),
+                patch(
+                    "scripts.run_decision_loop._replay_fdc_ready_shadow_events_for_cycle",
+                    AsyncMock(return_value=None),
+                ),
+                patch("scripts.run_decision_loop._run_one_cycle", side_effect=_fake_run_one_cycle),
+                patch(
+                    "agent_trading.services.decision_agent_runner._spawn_agent_subprocess_impl",
+                    _fake_spawn_impl,
+                ),
+                patch("agent_trading.db.transaction.transaction", new=_mock_tx),
+                patch(
+                    "agent_trading.repositories.postgres.bootstrap.build_postgres_repositories",
+                    return_value=fake_repos,
+                ),
+            ):
+                await module._run_loop(
+                    interval=0, max_cycles=1, submit=True, dry_run=False,
+                    allow_general_submit=True, max_general_submits_this_cycle=0,
+                    output="text",
+                )
+        finally:
+            module._shutdown_event = original_shutdown_event
+
+        # 1. EI/AR/AC(pre_fdc) subprocess는 재호출되지 않았다.
+        assert pre_fdc_spawn_calls["n"] == 0
+        # 2. fdc_only는 정확히 1회만 실행됐다(중복 HTTP 호출 없음).
+        assert fdc_only_spawn_calls["n"] == 1
+
+        # 3. _run_one_cycle이 precomputed_agent_bundle과 함께 정확히
+        # 1회 호출됐다 — 재개된 job의 override→EV-gate→sizing→submit
+        # 경로 진입 지점. universe에 있는 같은 symbol의 "정상 1차 pass"
+        # 호출(precomputed_agent_bundle=None)도 별도로 존재할 수 있다.
+        resumed_calls = [
+            c for c in run_one_cycle_calls if c.get("precomputed_agent_bundle") is not None
+        ]
+        assert len(resumed_calls) == 1
+        assert resumed_calls[0]["submit"] is True
+        assert resumed_calls[0]["symbol"] == "005930"
+        assert resumed_calls[0]["decision_cycle_id"] == "prior-cycle"
+
+        # 4. job이 감사 가능한 terminal 상태(FDC_SUCCEEDED)로 종결됐다.
+        assert shared_repo._jobs[job_id]["status"] == "FDC_SUCCEEDED"  # type: ignore[attr-defined]
+
+        # 5. 동일 job에 대한 attempt(=reservation)가 정확히 1개만
+        # 생겼다 — 중복 reservation/FDC 호출이 없었다는 증거.
+        matching_attempts = [
+            a for a in shared_repo._attempts_by_id.values()  # type: ignore[attr-defined]
+            if a.job_id == job_id
+        ]
+        assert len(matching_attempts) == 1

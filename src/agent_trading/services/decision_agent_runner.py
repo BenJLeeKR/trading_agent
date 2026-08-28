@@ -1289,6 +1289,29 @@ class DecisionAgentRunner:
             )
         except ValueError:
             fdc_ready_at = datetime.now(timezone.utc)
+
+        # 2026-08-28 5차 리뷰 보정(PR #359) — durable resume 계약(§17.3/
+        # §17.7)은 register_real_job()의 actual-dispatch 호출 경로에서
+        # pre_fdc_result/correlation_id가 "선택"이 아니라 "필수"임을
+        # 전제한다. 이 두 값이 없는 채로 QUEUED job이 등록되면, 그
+        # 불완전한 row 하나가 try_reserve()의 FIFO admission을 영구
+        # 차단할 수 있다(뒤따르는 모든 real job이 "나보다 먼저 등록된
+        # QUEUED job이 있다"는 이유로 계속 거절됨). 이 시점에서
+        # pre_fdc_result는 이미 non-None임이 위에서 보장됐으므로, 여기서
+        # 실제로 방어하는 것은 request.correlation_id 누락이다(정상
+        # 경로에서는 DecisionOrchestratorService.assemble()이 항상 채워
+        # 넘기므로 도달하지 않아야 하는 방어 코드) — 발생하면 애초에
+        # 등록하지 않고 fail-closed로 fallback한다(불완전한 row를 만들지
+        # 않는 것이 resume-scan의 사후 정리보다 우선한다).
+        if not request.correlation_id:
+            logger.error(
+                "_run_agents_in_subprocess_with_actual_dispatch: "
+                "request.correlation_id가 비어 있다 — durable resume에 "
+                "필수인 값이 없어 real job을 등록하지 않는다(데이터 "
+                "정합성 이상, fail-closed).",
+            )
+            return build_fallback_bundle()
+
         job_id = await self._repos.fdc_quota.register_real_job(
             decision_cycle_id=request.correlation_id,
             decision_context_id=request.decision_context_id,

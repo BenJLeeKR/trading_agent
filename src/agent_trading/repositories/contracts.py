@@ -2247,6 +2247,26 @@ class FdcQuotaRepository(Protocol):
         ``list_resumable_real_jobs()``로 이 값을 읽어 agent를 다시
         호출하지 않고 안전하게 재개한다.
 
+        **왜 두 파라미터가 optional(기본값 ``None``)인가(2026-08-28 5차
+        리뷰 보정)** — ``try_reserve()``의 FIFO/rate-limit 메커니즘 자체를
+        검증하는 기존 테스트(``tests/services/test_fdc_quota_
+        coordinator.py``, ``tests/scripts/test_fdc_manual_provider_
+        gate.py``)들이 durable resume과 무관하게 이 메서드를 호출하며,
+        NOT NULL로 강제하면 이 테스트들과 그 테스트들이 대변하는 기존
+        (durable-resume 이전) 호출 패턴이 전부 깨진다 — 근거 없이 schema
+        제약을 넓히지 않는다는 원칙에 따라 DB 컬럼도 nullable로 유지
+        했다(migration ``0069``). 대신 **actual-dispatch 경로에서 이
+        값이 누락되는 것은 별도로 막는다** — ``DecisionAgentRunner.
+        _run_agents_in_subprocess_with_actual_dispatch()``는 이 메서드를
+        호출하기 **전에** ``request.correlation_id``가 비어 있으면 즉시
+        ``build_fallback_bundle()``로 fail-closed하고 아예 등록하지
+        않는다(불완전한 row를 만들지 않는 것이 사후 정리보다 우선).
+        그래도 불완전한 ``QUEUED`` row가 남아 있다면(migration 이전
+        데이터, 수동 복구 오류 등) ``list_resumable_real_jobs()``가
+        그 row를 발견 즉시 ``FDC_FAILED_FINAL``로 fail-closed 종결해
+        FIFO head 차단을 막는다 — 두 계층(등록 시점 예방 + 조회 시점
+        정리)이 함께 이 계약을 지킨다.
+
         이 메서드가 반환하는 ``job_id``는 이후 ``try_reserve(job_id=...)``
         에 그대로 전달돼야 한다 — ``job_id=None``으로 ``try_reserve()``를
         호출하면 이 job의 accounting(``queue_poll_count``/
@@ -2265,15 +2285,27 @@ class FdcQuotaRepository(Protocol):
         ``status='QUEUED'``는 "reservation을 한 번도 받지 못한 채 등록만
         돼 있음"을 뜻하며, ``register_real_job()``이 pre_fdc 완료 직후
         에만 호출되므로 이 job들은 전부 재개에 필요한 ``pre_fdc_result``/
-        ``correlation_id``를 이미 갖고 있다. 새 ``run_decision_loop.py``
-        프로세스가 시작할 때(첫 cycle의 universe를 읽은 직후) 이 목록을
-        조회해, 해당 symbol이 현재 universe에 여전히 존재하면 agent를
-        다시 호출하지 않고 이 job을 이어서 완결한다 — 존재하지 않으면
-        (예: 포지션이 이미 청산됨) 감사 가능한 이유로 fail-closed 종결한다
-        (``mark_job_terminal()``, 조용한 취소 금지).
+        ``correlation_id``를 이미 갖고 있어야 한다. 새 ``run_decision_
+        loop.py`` 프로세스가 시작할 때(첫 cycle의 universe를 읽은 직후)
+        이 목록을 조회해, 해당 symbol이 현재 universe에 여전히 존재하면
+        agent를 다시 호출하지 않고 이 job을 이어서 완결한다 — 존재하지
+        않으면(예: 포지션이 이미 청산됨) 호출자가 감사 가능한 이유로
+        fail-closed 종결한다(``mark_job_terminal()``, 조용한 취소 금지).
 
-        read-only — 어떤 상태도 갱신하지 않는다. 반환 순서는 FIFO
-        (``enqueue_sequence`` 오름차순)를 보장한다.
+        **2026-08-28 5차 리뷰 보정** — 이 메서드는 더 이상 완전히
+        read-only가 아니다. ``pre_fdc_result_json`` 또는
+        ``correlation_id``가 없는 ``QUEUED`` row(migration 이전 데이터,
+        부분 실패, 수동 복구 오류, 향후 코드 결함 등으로 발생 가능)는
+        조용히 건너뛰지 않고 그 자리에서 즉시 ``FDC_FAILED_FINAL``로
+        전이시킨다(``reason="fdc_carryover_payload_missing_data_
+        integrity_error"`` 또는 ``"fdc_carryover_correlation_id_
+        missing_data_integrity_error"``). 이렇게 하지 않고 로그만 남긴
+        채 건너뛰면, ``try_reserve()``의 FIFO admission("나보다 먼저
+        등록된 QUEUED job이 있으면 양보")이 이 불완전한 row 하나 때문에
+        뒤따르는 모든 held-position 실제 FDC job을 영구 대기시킨다(§17.3/
+        §17.7). 이 정리는 idempotent다 — 한 번 terminal로 전이된 job은
+        다음 호출부터 이 SELECT 자체에 다시 걸리지 않는다. 반환 순서는
+        FIFO(``enqueue_sequence`` 오름차순)를 보장한다.
         """
         ...
 

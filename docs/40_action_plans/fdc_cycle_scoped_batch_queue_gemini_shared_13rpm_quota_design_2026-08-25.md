@@ -249,6 +249,76 @@
 > 전환") 이 FIFO 인지 `try_reserve()` 설계를 그대로 재사용할 수 있다 —
 > job 등록 대상만 core lane까지 넓히면 되고, 새 아키텍처가 필요하지
 > 않다.
+>
+> **상태(2026-08-28 6차, 3~5차 리뷰로 §17.3/§17.7이 실제 구현과 어긋난
+> 부분을 정정 — PR #359 4~5차 리뷰 보정)**: 5차까지의 구현이 진행되며
+> §17.3("carryover는 in-memory 전용")과 §17.7("recovery scan이 QUEUED를
+> 포함한 모든 non-terminal 상태를 CANCELLED로 정리")의 전제가 실제
+> 아키텍처와 어긋나게 됐다 — 아래 §17.3/§17.7 본문을 이 상태에 맞게
+> 직접 정정했다. 핵심 변경 요지만 요약한다.
+>
+> 1. **carryover는 더 이상 in-memory 전용이 아니다.** ops-scheduler는
+>    항상 `scripts.run_decision_loop --count 1`로 단발 프로세스를
+>    spawn하므로("cycle 하나 끝나면 프로세스도 끝난다"), in-memory
+>    carryover만으로는 이 job이 quota 포화로 이번 cycle 안에
+>    완결되지 못했을 때 재개할 방법이 전혀 없었다. `fdc_queue_jobs`에
+>    `pre_fdc_result_json`(JSONB)/`correlation_id`(TEXT) 컬럼을 최소
+>    추가해(migration `0069`), `register_real_job()`이 pre_fdc(EI/AR/
+>    AC) 완료 직후 이 값을 함께 영속화한다.
+> 2. **저장하는 필드 vs. freshness-sensitive해서 저장하지 않는 필드**
+>    — §17.3의 원래 표(`assembled_context` 전체 직렬화 포함)는 채택되지
+>    않았다. 실제로 저장하는 것은 pre_fdc의 EI/AR/AC 산출물(`pre_fdc_
+>    result`, 그 자체가 이미 JSON-safe dict)과 `correlation_id`뿐이다.
+>    position/cash/risk snapshot 등 시간에 따라 낡을 수 있는 context는
+>    저장하지 않는다 — override→EV-gate→sizing→submit 단계는 재개
+>    시점에 항상 새로 조회한 fresh context로 재계산하는 기존
+>    `precomputed_agent_bundle` 경로(`DecisionOrchestratorService.
+>    assemble()`)를 그대로 쓴다. `complete_fdc_actual_dispatch()`도
+>    이 원칙에 맞춰 `assembled_context`를 아예 받지 않도록 바뀌었고,
+>    EV anchor 적용은 `assemble()`의 `precomputed_agent_bundle` 분기로
+>    옮겨졌다(그 분기가 이미 fresh context를 갖고 있으므로).
+> 3. **정상 `QUEUED` job의 resume 절차**: 새 `run_decision_loop.py`
+>    프로세스는 시작 시(universe를 읽은 직후, recovery scan 다음
+>    순서로) `list_resumable_real_jobs()`를 호출해 이 quota_scope의
+>    모든 `status='QUEUED'` real job을 조회한다. 해당 symbol이 현재
+>    universe에 있으면 agent(EI/AR/AC)를 다시 호출하지 않고 저장된
+>    `pre_fdc_result`를 그대로 재사용해 `complete_fdc_actual_dispatch()`
+>    → `_run_one_cycle(precomputed_agent_bundle=...)`로 완결한다.
+>    없으면(예: 포지션이 이미 청산됨) 조용히 버리지 않고 `FDC_FAILED_
+>    FINAL`(`reason=deadline_carryover_symbol_no_longer_in_universe`)로
+>    감사 가능하게 종결한다.
+> 4. **불완전한 carryover row의 fail-closed 처리(FIFO head 차단 방지,
+>    5차 보정)**: `list_resumable_real_jobs()`는 `pre_fdc_result_json`
+>    또는 `correlation_id`가 없는 `QUEUED` row(migration 이전 데이터,
+>    부분 실패, 수동 복구 오류, 향후 코드 결함 등으로 발생 가능)를
+>    조용히 건너뛰지 않는다 — `try_reserve()`의 FIFO admission("나보다
+>    먼저 등록된 QUEUED job이 있으면 양보")이 그런 row 하나 때문에
+>    뒤따르는 모든 real job을 영구 대기시킬 수 있기 때문이다. 발견
+>    즉시 `FDC_FAILED_FINAL`(`reason=fdc_carryover_payload_missing_
+>    data_integrity_error` 또는 `fdc_carryover_correlation_id_missing_
+>    data_integrity_error`)로 전이시켜 FIFO head를 비운다(idempotent —
+>    이미 terminal이 된 row는 다음 조회부터 대상에서 빠진다). 등록
+>    시점에서도 `DecisionAgentRunner._run_agents_in_subprocess_with_
+>    actual_dispatch()`가 `correlation_id`가 비어 있으면 애초에
+>    등록하지 않고 fail-closed하도록 이중으로 막는다 — 불완전한 row를
+>    만들지 않는 예방이 사후 정리보다 우선한다.
+> 5. **`RESERVATION_GRANTED` crash recovery와 `QUEUED` deadline defer
+>    resume의 책임 분리**: `cancel_stale_real_jobs()`(recovery scan)는
+>    더 이상 `QUEUED`를 다루지 않는다 — 그 job들은 이제
+>    `list_resumable_real_jobs()`가 안전하게 재개하므로 "재개할 방법이
+>    없어 취소한다"는 원래 전제가 성립하지 않는다. `cancel_stale_real_
+>    jobs()`는 정확히 "reservation을 실제로 받았지만(`status=
+>    'RESERVATION_GRANTED'`) process crash로 결과가 불명확하게 남은"
+>    job만 tri-state attempt lifecycle(`AttemptHttpLifecycle`)로
+>    분기해 처리한다 — HTTP가 나가지 않았으면 `CANCELLED`, HTTP가
+>    나갔을 수 있으면(`STARTED`) 중복 호출 위험 때문에 `FDC_FAILED_
+>    FINAL`로 fail-closed 종결한다. 이 좁아진 범위가 "process crash로
+>    결과가 불명확한 reservation만 정리하라"는 요구와 문자 그대로
+>    일치한다.
+>
+> §17.3/§17.7 본문 자체도 위 내용에 맞게 아래에서 직접 갱신했다 —
+> 이 blockquote는 변경 이력 요약이고, 실제 계약 문구는 각 절 본문이
+> 최신 근거다.
 
 ## 1. 배경과 문제 정의
 
@@ -1047,25 +1117,38 @@ PR에서 feature flag로 전환 여부를 감쌀 것을 권고).
   쓰이는 경로): 오늘과 완전히 동일 — EI→AR→AC→FDC를 한 번에 실행. **분리
   모드는 신규 feature flag(§20)가 켜졌을 때만 선택된다.**
 
-### 17.3 pre-FDC 결과 보관에 필요한 최소 상태(carryover 계약)
+### 17.3 pre-FDC 결과 보관에 필요한 최소 상태(carryover 계약, 2026-08-28
+6차 보정 — PR #359 4~5차 리뷰 보정으로 아래 표/결정을 실제 구현에 맞게
+정정)
 
-`decision_orchestrator.py`의 `assemble()` 문맥 조사(2867-2946행)로 확정한
-최소 집합 — 전부 이미 JSON-safe 직렬화 헬퍼(`serialize_agent_input`/
-`dataclass_to_dict`, `subprocess_helpers.py`)가 존재하는 타입이다.
+**최종 결정(원래 안과 다름)**: carryover는 **in-memory 전용이 아니다** —
+ops-scheduler는 항상 `scripts.run_decision_loop --count 1`로 단발
+프로세스를 spawn하므로, cycle 하나가 끝나면 이 job의 carryover를 들고
+있던 프로세스도 함께 종료된다. in-memory carryover만으로는 quota
+포화로 이번 cycle 안에 완결되지 못한 job을 **다음 프로세스가 재개할
+방법이 전혀 없다.** 이 때문에 `fdc_queue_jobs`에 최소 payload를
+영속화하는 쪽으로 방향을 바꿨다(migration `0069_add_fdc_queue_jobs_
+carryover_columns.sql`).
 
-| 필드 | 출처 | 비고 |
+| 필드 | 저장 여부 | 근거 |
 |---|---|---|
-| `event_output`/`risk_output`/`compliance_output` | EI/AR/AC의 structured output | 기존 `AgentExecutionBundle` 필드와 동일 dict 형태 |
-| `ei_skipped`/`ar_skipped`/`skip_reason_codes` | 기존 skip 관측 필드 | 그대로 유지 |
-| `decision_context_id`/`correlation_id` | `AgentExecutionRequest` | pre-FDC 단계에서 이미 확정 |
-| `assembled_context` 직렬화본 | `AssembledContext`(2867/2889행 조립) | position/cash/risk snapshot·recent_events·score 등 전체 — 이미 `dataclass_to_dict()`로 JSON 변환 가능한지 확인 필요(구현 PR에서 non-serializable 필드 존재 시 최소 변환 헬퍼 추가) |
-| `derivation` 요약 | `_derive_deterministic_context_components()`(2834행) 결과 | override/guard 판정에 필요한 부분만 |
-| `fdc_ready_at` | 기존 필드(PR #356으로 이미 payload에 포함됨) | FIFO 정렬 키, 변경 없음 |
+| `pre_fdc_result`(EI/AR/AC structured output 병합 dict, `requires_fdc_dispatch`/`fdc_ready_at` 포함) | **저장한다**(`fdc_queue_jobs.pre_fdc_result_json JSONB`) | pre_fdc subprocess가 이미 만드는 JSON-safe dict를 그대로 저장 — agent를 재호출하지 않고 재개하는 데 필수 |
+| `correlation_id` | **저장한다**(`fdc_queue_jobs.correlation_id TEXT`) | fdc_only payload 구성과 audit trail 연결에 필수 |
+| `symbol`/`source_type`/`decision_cycle_id`/`decision_context_id`/`fdc_ready_at` | **저장한다** | §8 원래 설계의 job 메타데이터 컬럼을 그대로 재사용(신규 컬럼 아님) |
+| `assembled_context`(position/cash/risk snapshot·recent_events·score 등) | **저장하지 않는다** | freshness-sensitive — 재개 시점에 이미 낡았을 수 있는 값을 그대로 쓰면 안전 가드(risk/EV/sizing)가 stale 데이터로 판정할 위험이 있다 |
+| `market`/`market_segment`/`index_memberships`/`universe_anchor` 등 cycle-local 메타데이터 | **저장하지 않는다** | resume 시점에 새 프로세스가 이미 다시 읽은 현재 universe에서 조회한다 — symbol이 더 이상 universe에 없으면 §17.7이 정의하는 fail-closed 종결로 처리 |
 
-**설계 결정**: carryover는 FDC dispatcher가 job과 함께 **in-memory**로 들고
-있는다(cycle 안에서만 존재, DB에 저장하지 않음) — `fdc_queue_jobs`는 기존
-설계(§8)대로 job 메타데이터만 갖고, EI/AR/AC의 전체 output까지 DB에 넣지
-않는다(스키마 팽창 방지, §8 변경 불필요).
+**핵심 원칙**: override→EV-gate→sizing→submit 단계는 **항상 fresh
+context로 재계산**한다(`DecisionOrchestratorService.assemble()`의
+`precomputed_agent_bundle` 분기가 그 시점에 새로 조회한 context를 그대로
+쓴다) — resume이 같은 프로세스 안에서 일어나든(cross-cycle) 다른
+프로세스에서 일어나든(durable, §17.7) 이 원칙은 동일하다. `complete_
+fdc_actual_dispatch()`는 이 원칙에 따라 `assembled_context`를 아예
+받지 않으며, EV anchor 적용도 `assemble()`의 `precomputed_agent_bundle`
+분기로 옮겨졌다 — freshness-sensitive한 값을 durable하게 들고 다닐
+필요를 원천적으로 없앤다. EI/AR/AC의 structured output(`pre_fdc_
+result`) 자체는 "그 시점의 분석 결과"이므로 freshness 문제가 없다 —
+재분석이 아니라 재사용이 목적이다.
 
 ### 17.4 dispatcher 통합 지점(§15 재사용)
 
@@ -1122,35 +1205,83 @@ override→EV→sizing→submit 경로(2976행 이후)를 재사용하려면 이
 | in-process로 EI/AR/AC/FDC 전체 재작성(subprocess 제거) | subprocess 격리가 존재하는 이유(개별 agent 크래시가 전체 cycle을 죽이지 않게 하기 위함으로 추정)를 되돌리는 것 — 이번 문서 조사 범위에서 원 설계 의도를 확정할 근거가 부족해 채택하지 않음 |
 | 매 FDC retry마다 EI/AR/AC까지 통째로 재실행 | 요구사항("EI/AR/AC 재실행 방지")에 정면 위배, 비용·지연 모두 악화 — 기각 |
 
-### 17.7 재기동/프로세스 종료 복구 계약(신설, 2026-08-27 2차 보정)
+### 17.7 재기동/프로세스 종료 복구 계약(신설, 2026-08-27 2차 보정;
+2026-08-28 6차 보정 — PR #359 4~5차 리뷰 보정으로 durable resume 신설에
+맞춰 전면 정정)
 
-carryover는 17.3에서 확정한 대로 **in-memory 전용**이다 — dispatcher 프로세스가
-죽으면 그 프로세스가 들고 있던 모든 carryover도 함께 소실된다. 반면 job의
-lifecycle 상태(§5)는 DB(`fdc_queue_jobs`)에 영속돼 있으므로, 재기동 직후 DB에는
-"아직 진행 중인 것처럼 보이지만 실제로는 재개할 수단이 없는" job이 남을 수
-있다. 이 절이 그 처리를 확정한다.
+17.3에서 확정한 대로 pre_fdc_result/correlation_id는 이제 `fdc_queue_
+jobs`에 durable하게 저장된다. 이 절은 재기동 시 이 두 가지를 **서로
+다른 방식으로** 처리해야 함을 확정한다 — **책임을 명확히 분리한다**:
 
-**recovery scan 계약(확정)**:
+- **`status='QUEUED'`인 job(reservation을 한 번도 받지 못함)**: pre_fdc가
+  이미 끝나 durable resume 정보를 갖고 있으므로 **재개 가능하다** —
+  `list_resumable_real_jobs()` + resume 절차(아래)가 담당한다. 더 이상
+  "재개할 방법이 없어 취소한다"고 보지 않는다.
+- **`status='RESERVATION_GRANTED'`인 job(reservation은 받았지만 process
+  crash로 결과가 불명확하게 남음)**: 이 job은 fdc_only HTTP 호출이 실제로
+  나갔을 수도, 안 나갔을 수도 있는 애매한 상태다 — `cancel_stale_real_
+  jobs()`(recovery scan)가 tri-state attempt lifecycle로 안전하게
+  정리한다. **recovery scan은 이 상태만 다룬다.**
 
-- **실행 주체**: dispatcher를 구동하는 프로세스(`ops-scheduler`)의 **시작
-  루틴**(cycle 루프 진입 전, 1회) — 별도 상시 프로세스나 cron이 아니다.
-- **대상**: `fdc_queue_jobs`에서 `mode='real'` AND `quota_scope`가 이
-  dispatcher가 다루는 scope AND `status`가 **terminal 상태가 아닌 것**
-  (`QUEUED`, `RESERVATION_GRANTED`, `FDC_RUNNING`, `RETRY_QUEUED`,
-  `RESERVED_BUT_HTTP_NOT_STARTED` — §5 상태 전이도에서 terminal이 아닌
-  전부. terminal은 `FDC_SUCCEEDED`/`FDC_FAILED_FINAL`/`CANCELLED`).
-- **처리**: 위 대상 전원을 `CANCELLED`로 전이시키되, 사유는 §5가 이미 확정한
-  3종 `CANCELLED` 사유 중 **"프로세스 종료"를 구체화**한
-  `reason=process_terminated_carryover_lost`를 쓴다 — 새로운 4번째
-  `CANCELLED` 범주를 만들지 않는다(사용자 지침 그대로 준수).
-- **idempotency**: recovery scan은 `status NOT IN (terminal states)`
-  조건으로만 동작하므로, 두 번 연속 실행해도(예: 재기동 직후 다시 크래시)
-  두 번째 실행은 첫 번째 실행이 이미 `CANCELLED`로 바꿔놓은 행을 다시
-  건드리지 않는다(WHERE 절 자체가 0 rows를 반환) — 별도의 lock이나
-  실행 이력 테이블이 필요 없다.
-- **이미 terminal인 job은 건드리지 않는다**: `FDC_SUCCEEDED`/`FDC_FAILED_
-  FINAL`로 이미 종결된 job, 그리고 이전 recovery scan이 이미 `CANCELLED`
-  처리한 job은 이번 scan의 UPDATE 대상에서 자동 제외된다.
+**A. `cancel_stale_real_jobs()`(recovery scan) 계약 — 대상 축소**:
+
+- **실행 주체**: `run_decision_loop.py::_run_loop()`(ops-scheduler가
+  cycle마다 새로 spawn하는 `--count 1` subprocess) 시작 루틴(cycle 루프
+  진입 전, 1회) — 별도 상시 프로세스나 cron이 아니다.
+- **대상**: `fdc_queue_jobs`에서 `mode='real'` AND 이 dispatcher가
+  다루는 `quota_scope` AND **`status='RESERVATION_GRANTED'`인 것만**
+  (`QUEUED`는 대상이 아니다 — durable resume이 담당).
+- **처리**: 대상 job의 가장 최근 attempt를 `get_latest_real_job_
+  attempt_lifecycle()`(tri-state: `NOT_FOUND`/`NOT_STARTED`/`STARTED`)로
+  조회해 분기한다.
+  - `NOT_FOUND`(데이터 정합성 이상, ERROR 로깅) 또는 `NOT_STARTED`(HTTP가
+    실제로 나가지 않음): 안전하게 `CANCELLED`(`reason=process_
+    terminated_carryover_lost` — §5가 이미 확정한 3종 `CANCELLED` 사유
+    중 "프로세스 종료"를 구체화한 것, 새 4번째 범주를 만들지 않는다).
+  - `STARTED`(HTTP가 실제로 나갔을 수 있음): 자동으로 안전하다고 볼 수
+    없으므로 `CANCELLED`가 아니라 `FDC_FAILED_FINAL`(`reason=fdc_only_
+    subprocess_crashed_after_http_start_result_unknown` — `complete_
+    fdc_actual_dispatch()`의 라이브 crash 판정과 동일한 reason)로
+    fail-closed 종결한다(중복 호출 위험 회피).
+- **idempotency**: `status='RESERVATION_GRANTED'` 조건만으로 동작하므로,
+  두 번 연속 실행해도 두 번째 실행의 영향 행 수는 0이다.
+- **이미 terminal인 job은 건드리지 않는다.**
+
+**B. `list_resumable_real_jobs()` + resume 절차(신설) — `status='QUEUED'`
+job의 durable resume**:
+
+- **실행 주체**: recovery scan 직후, `_run_loop()`가 첫 cycle의 universe를
+  읽은 뒤 1회.
+- **대상**: 이 `quota_scope`의 `status='QUEUED'`인 모든 `mode='real'`
+  job — FIFO 순서(`enqueue_sequence` 오름차순)로 반환된다.
+- **정상 절차**: 해당 symbol이 새 프로세스가 읽은 현재 universe에
+  존재하면, 저장된 `pre_fdc_result`를 그대로 재사용해 `complete_fdc_
+  actual_dispatch()`(reservation 대기 → fdc_only 1회 실행 → 병합,
+  17.2/§7 그대로) → `_run_one_cycle(precomputed_agent_bundle=...,
+  decision_context_id_override=...)`로 override→EV-gate→sizing→submit을
+  완결한다. **EI/AR/AC(pre_fdc)는 재호출하지 않는다** — 이것이 durable
+  resume의 핵심 목적이다.
+- **재개 불가 시(symbol이 더 이상 universe에 없음 — 예: 포지션 청산)**:
+  조용히 버리지 않고 `FDC_FAILED_FINAL`(`reason=deadline_carryover_
+  symbol_no_longer_in_universe`)로 감사 가능하게 종결한다.
+- **불완전한 carryover row의 fail-closed 처리(FIFO head 차단 방지)**:
+  `pre_fdc_result_json` 또는 `correlation_id`가 없는 `QUEUED` row(migration
+  이전 데이터, 부분 실패, 수동 복구 오류, 향후 코드 결함 등으로 발생
+  가능)는 조용히 건너뛰지 않는다 — `try_reserve()`의 FIFO admission
+  ("나보다 먼저 등록된 QUEUED job이 있으면 양보")이 그런 row 하나 때문에
+  뒤따르는 모든 real job을 영구 대기시킬 수 있기 때문이다(§4 "순번 탈락
+  금지"의 정신을 데이터 정합성 이상이 위반하지 않도록). 발견 즉시
+  `FDC_FAILED_FINAL`(`reason=fdc_carryover_payload_missing_data_
+  integrity_error` 또는 `fdc_carryover_correlation_id_missing_data_
+  integrity_error`)로 전이시켜 FIFO head를 비운다 — idempotent(이미
+  terminal이 된 row는 다음 조회부터 대상에서 빠진다). 등록 시점에서도
+  `DecisionAgentRunner._run_agents_in_subprocess_with_actual_dispatch()`
+  가 `correlation_id`가 비어 있으면 애초에 등록하지 않고 fail-closed
+  하도록 이중으로 막는다.
+- **동일 job 중복 처리 방지**: resume은 항상 `complete_fdc_actual_
+  dispatch()`의 `try_reserve()` 원자적 admission을 그대로 거친다 —
+  resume 경로가 별도의 reservation 로직을 우회하지 않으므로, 같은
+  `job_id`가 두 번 grant를 받거나 fdc_only가 중복 실행될 수 없다.
 
 **accounting 정합성(reservation은 소비됐으나 HTTP가 시작되지 않은 경우)**:
 
@@ -1163,32 +1294,40 @@ lifecycle 상태(§5)는 DB(`fdc_queue_jobs`)에 영속돼 있으므로, 재기�
 - `pre_http_execution_failure_count`/`RESERVED_BUT_HTTP_NOT_STARTED` 관련
   카운터(§9)도 recovery scan이 **증가시키지 않는다** — 이 카운터들은 "같은
   프로세스가 살아있는 동안 재시도가 실패한 횟수"를 뜻하는데, 프로세스 종료는
-  재시도 실패가 아니라 완전히 다른 종결 경로(`CANCELLED`)이기 때문이다.
-  recovery scan은 오직 `status` 컬럼과 `failure_or_cancel_reason`만 갱신한다.
+  재시도 실패가 아니라 완전히 다른 종결 경로(`CANCELLED`/`FDC_FAILED_
+  FINAL`)이기 때문이다. recovery scan은 오직 `status` 컬럼과 `failure_
+  or_cancel_reason`만 갱신한다.
 
-**"순번 탈락 금지" 원칙과의 구분**: 이 recovery 경로는 §1/§4가 금지하는 "순번이
-늦어서 탈락"과 **무관**하다 — 취소 사유가 순번(FIFO 대기 시간)이 아니라 "그
-job의 실행 컨텍스트(carryover)를 들고 있던 프로세스 자체가 더 이상 존재하지
-않는다"는 물리적 사실이기 때문이다. §5가 이미 "프로세스 종료"를 3대 `CANCELLED`
-허용 사유 중 하나로 확정해뒀으므로, 이 절은 그 사유를 구체화할 뿐 새 예외를
-만들지 않는다.
+**"순번 탈락 금지" 원칙과의 구분**: recovery scan/resume 모두 §1/§4가
+금지하는 "순번이 늦어서 탈락"과 **무관**하다 — recovery scan의 취소
+사유는 순번이 아니라 "그 job의 reservation 결과를 알 방법이 없는 프로세스
+crash"라는 물리적 사실이고, resume은 오히려 순번 탈락을 **막기 위한**
+메커니즘이다(불완전 row가 FIFO head를 막는 것을 적극적으로 정리한다).
 
-**다음 cycle과의 관계(재시도 vs 재평가 구분)**:
+**다음 cycle과의 관계(재시도/재개 vs 재평가 구분)**:
 
-- **같은 job의 재시도**(§5 `RETRY_QUEUED`, 프로세스가 살아있는 동안)는 carryover를
-  메모리에서 그대로 재사용하며 EI/AR/AC를 재실행하지 않는다(17.5 그대로).
+- **같은 job의 재시도**(§5 `RETRY_QUEUED`, `complete_fdc_actual_
+  dispatch()`의 provider-retryable 실패 시 새 reservation)와 **같은
+  job의 durable resume**(다른 프로세스가 `list_resumable_real_jobs()`로
+  이어받음)은 모두 `pre_fdc_result`를 재사용하며 EI/AR/AC를 재실행하지
+  않는다(17.5 그대로).
 - **다음 cycle의 동일 종목 재평가**는 **완전히 새로운 `job_id`**로 시작하는
-  독립적인 pre-FDC 실행이다 — 이전 job이 `CANCELLED`(recovery로든, 시장
-  마감으로든)였는지 `FDC_SUCCEEDED`였는지와 무관하게, 새 cycle은 그 종목을
-  처음부터(EI/AR/AC부터) 다시 평가한다. 즉 "다음 cycle의 재평가"는 이전 job의
-  재시도가 **아니며**, `job_id`로 서로 연결되지 않는다.
+  독립적인 pre-FDC 실행이다 — 이전 job이 `CANCELLED`/`FDC_FAILED_FINAL`
+  (recovery로든, resume 실패로든, 시장 마감으로든)였는지 `FDC_SUCCEEDED`
+  였는지와 무관하게, 새 cycle은 그 종목을 처음부터(EI/AR/AC부터) 다시
+  평가한다. 즉 "다음 cycle의 재평가"는 이전 job의 재시도/재개가
+  **아니며**, `job_id`로 서로 연결되지 않는다.
 
-**신규 테스트 항목**(§21에 병합): recovery scan이 non-terminal `mode='real'`
-job만 `CANCELLED(reason=process_terminated_carryover_lost)`로 전이하는지,
-이미 terminal인 job은 건드리지 않는지, 연속 2회 실행 시 두 번째 실행의 영향
-행 수가 0인지(idempotency), recovery scan이 reservation/attempt accounting
-카운터를 전혀 변경하지 않는지, 다음 cycle에서 생성되는 새 job이 이전
-`CANCELLED` job과 `job_id`로 연결되지 않는 독립 행인지.
+**신규 테스트 항목**(§21에 병합): recovery scan이 `status='RESERVATION_
+GRANTED'` job만(tri-state attempt lifecycle로 분기해) 전이하고 `QUEUED`는
+건드리지 않는지, `list_resumable_real_jobs()`가 정상 `QUEUED` job을
+agent 재호출 없이 재개하는지(EI/AR/AC subprocess 미호출 assert 포함),
+symbol이 universe에서 사라진 경우 fail-closed 종결되는지, 불완전한
+carryover row(payload 또는 correlation_id 없음)가 FIFO head를 막지 않고
+즉시 정리되는지(InMemory + 실제 PostgreSQL 양쪽), 두 scan 모두
+idempotent한지, reservation/attempt accounting 카운터를 recovery scan이
+전혀 변경하지 않는지, 다음 cycle에서 생성되는 새 job이 이전 종결된 job과
+`job_id`로 연결되지 않는 독립 행인지.
 
 ### 17.8 미확인 사항(구현 후 확인 필요)
 

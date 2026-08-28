@@ -445,14 +445,31 @@ class PostgresFdcQuotaRepository:
         resumable = []
         for row in rows:
             raw_pre_fdc = row["pre_fdc_result_json"]
-            if raw_pre_fdc is None:
-                # 이론상 register_real_job()이 항상 함께 저장하므로
-                # 발생하면 안 되지만, 재개 불가로 안전하게 건너뛴다
-                # (호출자가 이 job을 감사 가능한 terminal 상태로 정리한다).
+            correlation_id = row["correlation_id"]
+            # 2026-08-28 5차 리뷰 보정 — 불완전한 QUEUED row를 조용히
+            # 건너뛰고 로그만 남기면, try_reserve()의 FIFO admission이
+            # "나보다 먼저 등록된 QUEUED job이 있으면 양보"하므로 이
+            # row 하나가 뒤따르는 모든 real job을 영구 대기시킨다
+            # (§17.3/§17.7). 건너뛰지 않고 즉시 fail-closed로 종결해
+            # FIFO head를 비운다 — idempotent(다음 호출부터는 이미
+            # 'QUEUED'가 아니므로 이 SELECT 자체에 다시 걸리지 않는다).
+            if raw_pre_fdc is None or not correlation_id:
+                reason = (
+                    "fdc_carryover_payload_missing_data_integrity_error"
+                    if raw_pre_fdc is None
+                    else "fdc_carryover_correlation_id_missing_data_integrity_error"
+                )
                 logger.error(
                     "list_resumable_real_jobs: job_id=%s status=QUEUED인데 "
-                    "pre_fdc_result_json이 없다 — 데이터 정합성 이상.",
+                    "%s가 없다 — 데이터 정합성 이상. 재개하지 않고 "
+                    "FDC_FAILED_FINAL(reason=%s)로 즉시 종결해 FIFO head "
+                    "차단을 막는다.",
                     row["job_id"],
+                    "pre_fdc_result_json" if raw_pre_fdc is None else "correlation_id",
+                    reason,
+                )
+                await self.mark_job_terminal(
+                    job_id=row["job_id"], status="FDC_FAILED_FINAL", reason=reason,
                 )
                 continue
             resumable.append(ResumableRealJob(
@@ -462,7 +479,7 @@ class PostgresFdcQuotaRepository:
                 quota_scope=quota_scope,
                 decision_cycle_id=row["decision_cycle_id"],
                 decision_context_id=row["decision_context_id"],
-                correlation_id=row["correlation_id"],
+                correlation_id=correlation_id,
                 pre_fdc_result=json.loads(raw_pre_fdc),
                 fdc_ready_at=row["fdc_ready_at"],
             ))
