@@ -450,17 +450,29 @@ QUEUED
   → FDC_RUNNING(발급받은 grant로 HTTP one-shot 실행 — 새 reservation 요청 없음)
     → HTTP_SUCCEEDED → FDC_SUCCEEDED → 즉시 assemble()/저장
     → HTTP_FAILED_RETRYABLE(429/5xx/timeout/DNS)
-        → provider_retry_count += 1
-        → RETRY_QUEUED(provider 사유, 새 queue_entry_id, FIFO tail) → QUEUED로 복귀
-        → (provider_retry_count가 max_http_attempts-1=2 소진)
-            → FDC_FAILED_FINAL(reason=provider_429_exhausted|provider_5xx_exhausted|provider_timeout_exhausted)
+        → (재시도 가능 — 다음 시도가 max_http_attempts=3 이내)
+            → provider_retry_count += 1, queue_reenqueue_count += 1
+            → "RETRY_QUEUED"(설명용 표기일 뿐 persisted 상태 아님) —
+              실제로는 같은 job_id에 새 enqueue_sequence를 발급해
+              persisted 상태 QUEUED로 FIFO tail 재등록
+        → (소진 — 세 번째 실패, 재등록하지 않음)
+            → provider_retry_count/queue_reenqueue_count는 이 마지막
+              실패로 증가하지 않는다(§9 정정)
+            → FDC_FAILED_FINAL(reason=provider_rate_limit|provider_error|
+              provider_timeout, 실제 provider_final_status 값 그대로)
     → HTTP_FAILED_NONRETRYABLE(4xx/파싱오류) → FDC_FAILED_FINAL(즉시, reason=provider_nonretryable)
   → (reservation 성공 후 HTTP 시작 전 worker/subprocess 생성 실패)
-      → RESERVED_BUT_HTTP_NOT_STARTED(quota는 그 60초 동안 계속 소비된 것으로 기록)
-      → pre_http_execution_failure_count += 1
-      → (pre_http_execution_failure_count가 max_pre_http_execution_failures 미만)
-          → RETRY_QUEUED(pre-HTTP 사유, 새 queue_entry_id, FIFO tail) → QUEUED로 복귀
-      → (소진) → FDC_FAILED_FINAL(reason=worker_start_exhausted)
+      → outcome='reserved_but_http_not_started'는 **항상** 기록(quota는
+        그 60초 동안 계속 소비된 것으로 유지) — reserved_but_http_not_
+        started_count도 매번 함께 증가
+      → (재시도 가능 — 다음 시도가 max_pre_http_execution_failures=3 이내)
+          → pre_http_execution_failure_count += 1, queue_reenqueue_count += 1
+          → "RETRY_QUEUED"(설명용 표기일 뿐 persisted 상태 아님) —
+            새 enqueue_sequence로 persisted 상태 QUEUED FIFO tail 재등록
+      → (소진 — 세 번째 실패, 재등록하지 않음)
+          → pre_http_execution_failure_count/queue_reenqueue_count는 이
+            마지막 실패로 증가하지 않는다(§9 정정)
+          → FDC_FAILED_FINAL(reason=fdc_only_subprocess_exhausted)
   → (coordinator 호출이 COORDINATOR_UNAVAILABLE/COORDINATOR_LOCK_TIMEOUT/
      COORDINATOR_TRANSACTION_ERROR로 실패, 보정 4차 — §6 "coordinator 오류
      경로" 참고)
@@ -719,12 +731,26 @@ worker slot을 **먼저** 확보하는 이유: reservation과 실제 HTTP 시작
 > coordinator를 다시 호출하지 않는다(§12 표).
 
 - **reservation 거부**: worker slot 즉시 반환, job은 `QUEUED` 유지.
-- **reservation 성공 후 worker 시작 실패**: `RESERVED_BUT_HTTP_NOT_STARTED` 기록
-  (quota는 60초간 소비 유지), `pre_http_execution_failure_count`(§9)를 1 증가시킨다.
-  `max_pre_http_execution_failures`(신규 설정, 권고 초기값 3) 소진 전엔
-  `RETRY_QUEUED`, 소진 시 `FDC_FAILED_FINAL(reason=worker_start_exhausted)` —
-  **이 종료는 순번 탈락도 `CANCELLED`도 아닌, `provider_retry_count`와 무관하게
-  별도로 집계되는 내부 실행 실패 사유다(보정 3).**
+- **reservation 성공 후 worker 시작 실패**(2026-08-28 정정 — §9 및 실제
+  구현과 일치): `outcome='reserved_but_http_not_started'`는 **항상**
+  기록한다(quota는 60초간 소비 유지) — `reserved_but_http_not_started_
+  count`(§9)도 이 기록과 함께 매번 증가한다.
+  `pre_http_execution_failure_count`/`queue_reenqueue_count`(§9)는
+  **재시도가 실제로 이어질 때만**(`will_retry=True`) 증가한다 —
+  `max_pre_http_execution_failures`(권고 초기값 3) 미만이면 job을
+  **persisted 상태 `QUEUED`로 되돌리고**(FIFO tail용 새 `enqueue_
+  sequence` 발급) 재시도한다. "`RETRY_QUEUED`"는 이 전이를 부르는
+  설명용 표기일 뿐 — 실제 DB에 저장되는 값은 항상 `QUEUED`이며 별도의
+  `RETRY_QUEUED` 상태값은 존재하지 않는다.
+  소진 시(`will_retry=False`, 세 번째 실패)에는 재등록 없이(`pre_http_
+  execution_failure_count`/`queue_reenqueue_count`는 이 마지막 실패로
+  증가하지 않는다) 곧바로 `FDC_FAILED_FINAL(reason=fdc_only_subprocess_
+  exhausted)`로 종결한다 — **이 종료는 순번 탈락도 `CANCELLED`도 아닌,
+  `provider_retry_count`와 무관하게 별도로 집계되는 내부 실행 실패
+  사유다(보정 3).** 예를 들어 3회 연속 pre-HTTP 실패 후 소진되면
+  `reserved_but_http_not_started_count=3`(attempt 3건 전부 기록),
+  `pre_http_execution_failure_count=2`·`queue_reenqueue_count=2`
+  (실제 재등록은 2회뿐)로 끝난다 — §9의 불변식 정정과 동일하다.
 - **`FDC_WORKER_CONCURRENCY`**: 기존 `_SEMAPHORE_MAX`(종목 처리 동시성, 5)와는
   **별개의 설정**으로 신설한다. **초기값 5를 제안하되, 이는 확정값이 아니라
   실측 전 보수적 시작값**이다 — 13 RPM을 실제로 소진할 만큼 충분한지는 구현 후
@@ -1078,9 +1104,19 @@ fake clock 기반 테스트(§15)도 이 self-join 규칙과 동일한 경계(�
 **필수 테스트 시나리오**(구현 PR 대상, fake clock/fake PG repository/fake provider,
 실제 sleep·외부 API 없음): (1) 동시 2 caller가 합산 13건까지만 승인, (2) reservation
 0건 상태에서 phantom insert 미발생, (3) DB 장애 시 fail-closed, (4) worker slot
-확보 전 reservation 미소비, (5) reservation 후 HTTP 전 실패 시 quota 60초 소비 +
-`reserved_but_http_not_started` 기록 + `pre_http_execution_failure_count` 증가
-(보정 3), (6) `generate_structured_once(grant)`가 전달받은 grant만 소비하고
+확보 전 reservation 미소비, (5) reservation 후 HTTP 전 실패 — 두 하위 사례를
+구분해 검증한다(2026-08-28 정정, §9와 일치): **(5a) 재시도 가능한 pre-HTTP
+실패**(다음 시도가 `max_pre_http_execution_failures` 이내) — quota 60초 소비 +
+`outcome='reserved_but_http_not_started'` 기록 + `reserved_but_http_not_
+started_count`/`pre_http_execution_failure_count`/`queue_reenqueue_count`
+**모두** 1씩 증가 + `enqueue_sequence` 새로 발급돼 persisted 상태 `QUEUED`로
+FIFO tail 재등록. **(5b) 마지막 소진 pre-HTTP 실패**(재시도 상한 도달) —
+`outcome='reserved_but_http_not_started'` 기록 + `reserved_but_http_not_
+started_count`만 증가하고 `pre_http_execution_failure_count`/`queue_
+reenqueue_count`는 **불변**(재등록되지 않으므로) + `FDC_FAILED_FINAL(reason=
+fdc_only_subprocess_exhausted)`로 즉시 종결. 3회 연속 pre-HTTP 실패 소진 예시의
+기대값: `reserved_but_http_not_started_count=3` / `pre_http_execution_
+failure_count=2` / `queue_reenqueue_count=2`. (6) `generate_structured_once(grant)`가 전달받은 grant만 소비하고
 coordinator에게 새 reservation을 절대 요청하지 않음(보정 1의 핵심 검증), (7) 임의
 60초 구간 reservation/HTTP 시작 수 ≤ 13이며 **정확히 60초 전 reservation은 제외**
 (보정 4의 경계 규칙, §14 self-join과 동일 어서션), (8) 운영 시간대 `caller_id=
