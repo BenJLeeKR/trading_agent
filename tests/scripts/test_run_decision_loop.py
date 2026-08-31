@@ -2691,6 +2691,54 @@ class TestRunOneCycle:
         assert result["cycle"] == 1
 
 
+class TestFdcActualDispatchPendingSinkContextId:
+    """2026-08-31 리뷰 보정(운영 실측 결함) — ``pending_fdc_dispatch_sink``에
+    적재되는 ``decision_context_id``는 ``request.decision_context_id``
+    (``SubmitOrderRequest`` 필드, 명시적으로 채운 적이 없어 항상 None)가
+    아니라, ``SubmitResult.decision_context_id``(assemble() 내부에서 실제로
+    resolve되어 fdc_queue_jobs에도 저장된 값)여야 한다. 아니면 post-gather
+    dispatcher의 second pass가 새 context를 만들어 fdc_queue_jobs의 context와
+    최종 trade_decisions/agent_runs context가 서로 어긋난다."""
+
+    @pytest.mark.asyncio
+    async def test_pending_sink_uses_submit_result_context_id_not_request_field(
+        self,
+    ) -> None:
+        resolved_context_id = uuid4()
+
+        async with _mock_runtime_for_one_cycle() as runtime:
+            orchestrator = runtime["orchestrator"]
+
+            async def _fake_assemble_and_submit(request, **kwargs):
+                # request.decision_context_id(SubmitOrderRequest 필드)는
+                # 실제 운영에서도 채워진 적이 없으므로 여기서도 None을
+                # 유지한다 — sink가 이 필드를 읽고 있다면 테스트가 실패해야
+                # 정상이다.
+                assert request.decision_context_id is None
+                return SubmitResult(
+                    status="FDC_ACTUAL_DISPATCH_PENDING",
+                    decision_context_id=resolved_context_id,
+                    fdc_dispatch_job_id=uuid4(),
+                    fdc_dispatch_pre_fdc_result={"success": True},
+                )
+
+            orchestrator.assemble_and_submit = _fake_assemble_and_submit
+
+            sink: list[dict[str, object]] = []
+            await _run_one_cycle(
+                cycle=1,
+                submit=True,
+                dry_run=False,
+                output="text",
+                runtime=runtime,
+                source_type="held_position",
+                pending_fdc_dispatch_sink=sink,
+            )
+
+        assert len(sink) == 1
+        assert sink[0]["decision_context_id"] == resolved_context_id
+
+
 class TestHeldPositionSellBudget:
     """``evaluate_symbol_submit_lane()`` held_position sell lane 검증.
 

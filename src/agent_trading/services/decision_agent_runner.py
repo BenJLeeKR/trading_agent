@@ -186,6 +186,17 @@ class FdcActualDispatchPendingError(Exception):
     ``provider_runtime``/``subprocess_timeout``도 decision 시점에 종속된
     값이 아니라 프로세스의 현재 설정값일 뿐이므로, 호출자가 필요할 때
     그때그때 새로 만든다.
+
+    2026-08-31 리뷰 보정(운영 실측 결함) — ``decision_context_id``를
+    명시적으로 싣는다. 이 예외는 ``assemble()`` 내부에서 이미 resolve된
+    ``resolved_context_id``(``request.decision_context_id``로 전달됨,
+    ``fdc_queue_jobs.decision_context_id``에 저장되는 값과 동일)를 담아
+    호출자에게 전파한다 — 이전에는 이 값을 싣지 않아서, 이 예외를
+    잡는 ``_run_decision_pipeline()``의 핸들러가 (아직 resolve되기
+    전인) 바깥쪽 ``decision_context_id`` 인자(첫 호출에서는 ``None``)를
+    그대로 ``SubmitResult``에 넣었고, 그 결과 durable resume/second
+    pass가 항상 새 context를 만들어 ``fdc_queue_jobs``의 context와
+    최종 ``trade_decisions``/``agent_runs`` context가 서로 어긋났다.
     """
 
     def __init__(
@@ -193,10 +204,12 @@ class FdcActualDispatchPendingError(Exception):
         *,
         job_id: uuid.UUID,
         pre_fdc_result: dict[str, Any],
+        decision_context_id: uuid.UUID | None,
     ) -> None:
         super().__init__(f"FDC actual dispatch pending: job_id={job_id}")
         self.job_id = job_id
         self.pre_fdc_result = pre_fdc_result
+        self.decision_context_id = decision_context_id
 
 
 async def _spawn_agent_subprocess_impl(
@@ -1373,6 +1386,7 @@ class DecisionAgentRunner:
         )
         raise FdcActualDispatchPendingError(
             job_id=job_id, pre_fdc_result=pre_fdc_result,
+            decision_context_id=request.decision_context_id,
         )
 
     def _apply_expected_value_anchor(
