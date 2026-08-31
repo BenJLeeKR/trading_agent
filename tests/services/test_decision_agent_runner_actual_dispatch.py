@@ -24,6 +24,7 @@ fake만 사용 — 실제 subprocess/DB/HTTP/sleep 없음.
 from __future__ import annotations
 
 import asyncio
+import uuid
 from datetime import datetime, timezone
 from typing import Any
 from unittest.mock import MagicMock
@@ -89,9 +90,19 @@ def _core_context() -> AIPolicyContextView:
     return AIPolicyContextView(source_type="core")
 
 
-def _make_request() -> AgentExecutionRequest:
+def _make_request(
+    *, decision_context_id: uuid.UUID | None = None,
+) -> AgentExecutionRequest:
+    # 2026-08-31 리뷰 보정(운영 실측 결함) — decision_context_id=None을
+    # 기본값으로 두면 assemble()이 실제로 resolve해 넘기는 논-None
+    # context id 계약을 테스트가 검증하지 못하고 가려버린다(운영에서는
+    # orchestrator가 항상 resolve된 UUID를 여기 채워 넣는다). 명시적으로
+    # 넘기지 않으면 고정된 real UUID를 기본으로 사용해 그 계약을
+    # 실제로 검증하게 한다.
+    if decision_context_id is None:
+        decision_context_id = uuid.UUID("11111111-1111-1111-1111-111111111111")
     return AgentExecutionRequest(
-        decision_context_id=None, correlation_id="test-corr",
+        decision_context_id=decision_context_id, correlation_id="test-corr",
         context=_held_position_context(), symbol="005930", market="KRX",
         source_type="held_position",
     )
@@ -272,9 +283,11 @@ class TestActualDispatchOrchestration:
 
         monkeypatch.setattr(runner, "_spawn_agent_subprocess", _fake_spawn)
 
+        resolved_context_id = uuid.UUID("22222222-2222-2222-2222-222222222222")
         with pytest.raises(FdcActualDispatchPendingError) as exc_info:
             await runner._run_agents_in_subprocess_with_actual_dispatch(
-                _make_request(), _held_position_context(),
+                _make_request(decision_context_id=resolved_context_id),
+                _held_position_context(),
             )
 
         assert spawn_calls == ["pre_fdc"]
@@ -282,6 +295,13 @@ class TestActualDispatchOrchestration:
         assert job_id in repo._jobs  # type: ignore[attr-defined]
         assert repo._jobs[job_id]["status"] == "QUEUED"  # type: ignore[attr-defined]
         assert exc_info.value.pre_fdc_result == _pre_fdc_ready_result()
+        # 2026-08-31 리뷰 보정(운영 실측 결함) — assemble()에서 resolve된
+        # decision_context_id(=fdc_queue_jobs에 저장된 값)를 예외가 그대로
+        # 실어 날라야 한다. 아니면 호출자(_run_decision_pipeline())가
+        # 바깥쪽(아직 resolve 전인) 값으로 되돌아가 second pass에서
+        # 새 context를 만들게 된다.
+        assert exc_info.value.decision_context_id == resolved_context_id
+        assert repo._jobs[job_id]["decision_context_id"] == resolved_context_id  # type: ignore[attr-defined]
 
 
 class TestCompleteFdcActualDispatch:

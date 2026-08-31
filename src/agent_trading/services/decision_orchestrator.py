@@ -3701,15 +3701,31 @@ class DecisionOrchestratorService:
             # job이 quota reservation을 기다려야 한다. 오류가 아니다 —
             # 호출자(run_decision_loop.py)가 이 상태를 보고 post-gather
             # dispatcher의 pending sink에 적재한다.
+            #
+            # 2026-08-31 리뷰 보정(운영 실측 결함) — 여기서 쓰던 바깥쪽
+            # ``decision_context_id`` 인자는 첫 호출에서 거의 항상
+            # ``None``이다(호출자가 아직 아무 context도 만들지 않은
+            # 상태이기 때문 — assemble()이 만드는 게 정상 흐름). 이
+            # 인자를 그대로 SubmitResult에 넣으면, fdc_queue_jobs에 이미
+            # 저장된 resolve된 context id와 어긋나 durable resume/second
+            # pass가 새 context를 만들게 된다. ``exc.decision_context_id``
+            # (assemble() 내부에서 실제로 resolve된 값, request.decision_
+            # context_id로 전달돼 fdc_queue_jobs에도 이미 저장된 값)를
+            # 우선 사용하고, 방어적으로만 바깥쪽 값을 fallback으로 둔다.
+            _resolved_pending_context_id = (
+                exc.decision_context_id
+                if exc.decision_context_id is not None
+                else decision_context_id
+            )
             logger.info(
                 "FDC actual dispatch pending: symbol=%s job_id=%s "
                 "decision_context_id=%s",
-                _symbol, exc.job_id, decision_context_id,
+                _symbol, exc.job_id, _resolved_pending_context_id,
             )
             _add_phase("ai_assemble", "fdc_dispatch_pending")
             return None, None, SubmitResult(
                 status="FDC_ACTUAL_DISPATCH_PENDING",
-                decision_context_id=decision_context_id,
+                decision_context_id=_resolved_pending_context_id,
                 fdc_dispatch_job_id=exc.job_id,
                 fdc_dispatch_pre_fdc_result=exc.pre_fdc_result,
             )

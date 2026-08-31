@@ -42,7 +42,8 @@ from agent_trading.services.ai_agents.schemas import (
     EventInterpretationOutput,
     FinalDecisionComposerOutput,
 )
-from agent_trading.services.common_types import AgentExecutionBundle
+from agent_trading.services.common_types import AgentExecutionBundle, PhaseTraceEntry
+from agent_trading.services.decision_agent_runner import FdcActualDispatchPendingError
 from agent_trading.services.decision_orchestrator import (
     AIDecisionInputs,
     AssembledContext,
@@ -5536,3 +5537,72 @@ class TestHeldPositionReduceSkipShadowObservation:
             fdc_raw_decision_type="REDUCE",
         )
         repos.trade_decisions.sync_shadow_held_position_reduce_skip_observation.assert_awaited_once()
+
+
+class TestFdcActualDispatchPendingContextPropagation:
+    """2026-08-31 리뷰 보정(운영 실측 결함) — ``_run_decision_pipeline()``의
+    ``except FdcActualDispatchPendingError`` 핸들러가 예외에 실려온
+    (assemble() 내부에서 실제로 resolve된) decision_context_id를 그대로
+    ``SubmitResult``에 담아야 한다. 이전에는 아직 resolve되기 전(첫 호출
+    에서는 항상 None)인 바깥쪽 ``decision_context_id`` 인자를 그대로
+    써서, fdc_queue_jobs에 저장된 context와 second pass가 만드는 context가
+    서로 어긋났다(운영 로그 ``decision_context_id=None``으로 관측됨)."""
+
+    @pytest.mark.asyncio
+    async def test_pending_error_context_id_flows_into_submit_result(
+        self, service, sample_request,
+    ) -> None:
+        resolved_context_id = uuid4()
+
+        async def _fake_assemble(*args, **kwargs):
+            raise FdcActualDispatchPendingError(
+                job_id=uuid4(),
+                pre_fdc_result={"success": True},
+                decision_context_id=resolved_context_id,
+            )
+
+        service.assemble = _fake_assemble  # type: ignore[method-assign]
+
+        phase_trace: list[PhaseTraceEntry] = []
+        intent, trade_decision_id, pipeline_result = await service._run_decision_pipeline(
+            sample_request,
+            decision_context_id=None,  # 첫 호출 — 아직 아무 context도 resolve되지 않은 상태
+            _add_phase=lambda *a, **kw: None,
+            _phase_trace=phase_trace,
+        )
+
+        assert intent is None
+        assert trade_decision_id is None
+        assert pipeline_result is not None
+        assert pipeline_result.status == "FDC_ACTUAL_DISPATCH_PENDING"
+        # 핵심 회귀 방지 지점 — 바깥쪽 None이 아니라 예외가 실어온
+        # resolve된 context id가 그대로 SubmitResult에 들어가야 한다.
+        assert pipeline_result.decision_context_id == resolved_context_id
+
+    @pytest.mark.asyncio
+    async def test_pending_error_without_resolved_context_id_falls_back_to_outer(
+        self, service, sample_request,
+    ) -> None:
+        """assemble()이 예외적으로 context id 없이 pending을 던지는
+        경우(이론상 발생해서는 안 되지만) 방어적으로 바깥쪽 인자를
+        fallback으로 사용한다 — 크래시하지 않는다."""
+        outer_context_id = uuid4()
+
+        async def _fake_assemble(*args, **kwargs):
+            raise FdcActualDispatchPendingError(
+                job_id=uuid4(), pre_fdc_result={"success": True},
+                decision_context_id=None,
+            )
+
+        service.assemble = _fake_assemble  # type: ignore[method-assign]
+
+        phase_trace: list[PhaseTraceEntry] = []
+        _, _, pipeline_result = await service._run_decision_pipeline(
+            sample_request,
+            decision_context_id=outer_context_id,
+            _add_phase=lambda *a, **kw: None,
+            _phase_trace=phase_trace,
+        )
+
+        assert pipeline_result is not None
+        assert pipeline_result.decision_context_id == outer_context_id

@@ -61,8 +61,16 @@ from agent_trading.repositories.bootstrap import build_in_memory_repositories
 from agent_trading.repositories.container import RepositoryContainer
 from agent_trading.repositories.contracts import SnapshotSyncHealthSummary
 from agent_trading.repositories.memory import InMemoryExternalEventRepository
+from agent_trading.services.ai_agents.schemas import (
+    AIComplianceOutput,
+    AIRiskOutput,
+    EventInterpretationOutput,
+    FinalDecisionComposerOutput,
+)
+from agent_trading.services.common_types import dataclass_to_dict
 from agent_trading.services.decision_orchestrator import (
     DecisionOrchestratorService,
+    DeterministicDerivationBundle,
     OrderIntent,
     SubmitResult,
 )
@@ -97,6 +105,7 @@ from scripts.run_decision_loop import (
     _replay_fdc_ready_shadow_events_for_cycle,
     _resolve_symbol_price,
     _general_lane_priority_key,
+    _run_fdc_actual_dispatch_phase,
     _run_general_lane_pass2,
     _run_loop,
     _run_one_cycle,
@@ -2689,6 +2698,262 @@ class TestRunOneCycle:
         # Cycle 정상 완료 확인
         assert result["status"] == "DRY_RUN"
         assert result["cycle"] == 1
+
+
+class TestFdcActualDispatchPendingSinkContextId:
+    """2026-08-31 리뷰 보정(운영 실측 결함) — ``pending_fdc_dispatch_sink``에
+    적재되는 ``decision_context_id``는 ``request.decision_context_id``
+    (``SubmitOrderRequest`` 필드, 명시적으로 채운 적이 없어 항상 None)가
+    아니라, ``SubmitResult.decision_context_id``(assemble() 내부에서 실제로
+    resolve되어 fdc_queue_jobs에도 저장된 값)여야 한다. 아니면 post-gather
+    dispatcher의 second pass가 새 context를 만들어 fdc_queue_jobs의 context와
+    최종 trade_decisions/agent_runs context가 서로 어긋난다."""
+
+    @pytest.mark.asyncio
+    async def test_pending_sink_uses_submit_result_context_id_not_request_field(
+        self,
+    ) -> None:
+        resolved_context_id = uuid4()
+
+        async with _mock_runtime_for_one_cycle() as runtime:
+            orchestrator = runtime["orchestrator"]
+
+            async def _fake_assemble_and_submit(request, **kwargs):
+                # request.decision_context_id(SubmitOrderRequest 필드)는
+                # 실제 운영에서도 채워진 적이 없으므로 여기서도 None을
+                # 유지한다 — sink가 이 필드를 읽고 있다면 테스트가 실패해야
+                # 정상이다.
+                assert request.decision_context_id is None
+                return SubmitResult(
+                    status="FDC_ACTUAL_DISPATCH_PENDING",
+                    decision_context_id=resolved_context_id,
+                    fdc_dispatch_job_id=uuid4(),
+                    fdc_dispatch_pre_fdc_result={"success": True},
+                )
+
+            orchestrator.assemble_and_submit = _fake_assemble_and_submit
+
+            sink: list[dict[str, object]] = []
+            await _run_one_cycle(
+                cycle=1,
+                submit=True,
+                dry_run=False,
+                output="text",
+                runtime=runtime,
+                source_type="held_position",
+                pending_fdc_dispatch_sink=sink,
+            )
+
+        assert len(sink) == 1
+        assert sink[0]["decision_context_id"] == resolved_context_id
+
+
+def _reduce_candidate_trigger() -> DeterministicTriggerAssessment:
+    """held_position REDUCE_CANDIDATE 판정을 강제하는 최소 fixture.
+
+    실제 deterministic trigger engine의 임계값 계산(entry/exit score
+    등)은 이 테스트의 검증 대상이 아니다(다른 테스트 스위트가 이미
+    검증한다) — 여기서는 decision_context_id 종단 간 연속성 계약만
+    검증하므로, ``DecisionOrchestratorService._derive_deterministic_
+    context_components()``를 fake하여 판정 결과만 고정한다.
+    """
+    return DeterministicTriggerAssessment(
+        trigger_version="v1",
+        primary_candidate="REDUCE_CANDIDATE",
+        candidate_set=("REDUCE_CANDIDATE",),
+        watch_candidate=False,
+        buy_candidate=False,
+        sell_candidate=False,
+        reduce_candidate=True,
+        candidate_confidence=0.7,
+        entry_score=None,
+        exit_score=0.65,
+        watch_score=None,
+    )
+
+
+def _pre_fdc_ready_payload() -> dict[str, Any]:
+    return {
+        "success": True,
+        "event_output": dataclass_to_dict(EventInterpretationOutput(symbol=SYMBOL)),
+        "risk_output": dataclass_to_dict(AIRiskOutput(risk_opinion="allow")),
+        "compliance_output": dataclass_to_dict(
+            AIComplianceOutput(compliance_opinion="allow")
+        ),
+        "composer_output": {},
+        "fdc_skipped": False,
+        "requires_fdc_dispatch": True,
+        "fdc_ready_at": "2026-08-31T01:00:00+00:00",
+        "skip_reason_codes": [],
+        "duration_seconds": 0.1,
+    }
+
+
+def _fdc_only_hold_payload() -> dict[str, Any]:
+    # HOLD — 주문 생성/제출을 강제하지 않는 안전한 결과(broker 호출 없음).
+    return {
+        "success": True,
+        "composer_output": dataclass_to_dict(
+            FinalDecisionComposerOutput(symbol=SYMBOL, decision_type="HOLD", confidence=0.5)
+        ),
+        "provider_final_status": "success",
+        "provider_http_attempt_count": 1,
+        "provider_http_429_count": 0,
+        "provider_execution_seconds": 0.2,
+    }
+
+
+class TestFdcActualDispatchEndToEndContextContinuity:
+    """PR #361 종단 간 회귀 테스트 — decision_context_id가 다음 경로
+    전체를 거치는 동안 단절 없이 동일하게 유지되는지 in-memory
+    repository row로 직접 검증한다.
+
+        assemble() 1차 pass(pending 등록)
+        → FdcActualDispatchPendingError
+        → SubmitResult(FDC_ACTUAL_DISPATCH_PENDING)
+        → pending_fdc_dispatch_sink
+        → _run_fdc_actual_dispatch_phase()
+        → complete_fdc_actual_dispatch()(실제 FIFO reservation)
+        → second-pass _run_one_cycle()/assemble_and_submit()
+        → agent_runs / trade_decisions 영속화
+
+    fake로 대체하는 것은 pre_fdc/fdc_only subprocess의 실제 프로세스
+    스폰(``_spawn_agent_subprocess_impl``)과 deterministic trigger
+    engine의 후보 판정(``_derive_deterministic_context_components``)
+    뿐이다 — 나머지(예외 전파, pending sink, post-gather dispatcher,
+    실제 FIFO reservation, second pass, agent_runs/trade_decisions
+    영속화)는 전부 실제 코드 경로를 그대로 실행한다.
+    """
+
+    @pytest.mark.asyncio
+    async def test_context_id_identical_across_queue_job_agent_run_and_trade_decision(
+        self, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        async with _mock_runtime_for_one_cycle() as runtime:
+            repos: RepositoryContainer = runtime["repositories"]
+            orchestrator: DecisionOrchestratorService = runtime["orchestrator"]
+
+            # ── 대상 lane 강제: held_position + REDUCE_CANDIDATE ──────────
+            # (position_snapshot은 _seed_repos()가 이미 quantity=10으로
+            # 실제 시딩했다 — has_position=True는 real row로 성립한다.)
+            async def _fake_derive(*args: Any, **kwargs: Any) -> DeterministicDerivationBundle:
+                return DeterministicDerivationBundle(
+                    source_type="held_position",
+                    deterministic_trigger=_reduce_candidate_trigger(),
+                )
+
+            orchestrator._derive_deterministic_context_components = _fake_derive  # type: ignore[method-assign]
+            orchestrator._use_subprocess_isolation = True
+            orchestrator._agent_runner._fdc_actual_dispatch_enabled = True
+
+            spawn_calls: list[str] = []
+
+            async def _fake_spawn_impl(
+                input_bytes: bytes, *, subprocess_timeout: int,
+                decision_context_id: object, correlation_id: str,
+            ) -> tuple[dict[str, Any], bytes]:
+                import json as _json
+                payload = _json.loads(input_bytes)
+                mode = payload["mode"]
+                spawn_calls.append(mode)
+                if mode == "pre_fdc":
+                    return _pre_fdc_ready_payload(), b"{}"
+                assert mode == "fdc_only"
+                return _fdc_only_hold_payload(), b"{}"
+
+            import agent_trading.services.decision_agent_runner as runner_module
+            monkeypatch.setattr(
+                runner_module, "_spawn_agent_subprocess_impl", _fake_spawn_impl,
+            )
+
+            broker = runtime["primary_broker_adapter"]
+
+            # ── 1차 pass — FDC-ready pending 등록, 즉시 반환(대기 없음) ──
+            sink: list[dict[str, object]] = []
+            first_pass_result = await _run_one_cycle(
+                cycle=1,
+                submit=True,
+                dry_run=False,
+                output="text",
+                runtime=runtime,
+                source_type="held_position",
+                pending_fdc_dispatch_sink=sink,
+            )
+
+            assert spawn_calls == ["pre_fdc"]
+            assert first_pass_result["status"] == "FDC_ACTUAL_DISPATCH_PENDING"
+            assert len(sink) == 1
+            expected_context_id = sink[0]["decision_context_id"]
+            assert expected_context_id is not None
+
+            queue_jobs_before = list(repos.fdc_quota._jobs.values())  # type: ignore[attr-defined]
+            assert len(queue_jobs_before) == 1
+            queue_job = queue_jobs_before[0]
+            assert queue_job["decision_context_id"] == expected_context_id
+
+            decision_contexts_after_first_pass = len(repos.decision_contexts._items)  # type: ignore[attr-defined]
+
+            # ── post-gather phase — 실제 FIFO reservation + fdc_only 실행 +
+            # second pass(assemble_and_submit) ──────────────────────────
+            import time as _time_module
+            results, deferred = await _run_fdc_actual_dispatch_phase(
+                sink,
+                runtime=runtime,
+                cycle_precheck=None,
+                output="text",
+                cycle_count=2,
+                phase_deadline_monotonic=_time_module.monotonic() + 3600,
+            )
+
+            assert deferred == []
+            assert len(results) == 1
+            assert spawn_calls == ["pre_fdc", "fdc_only"]
+
+            second_pass_result = results[0]
+            # fdc_only 결과를 HOLD로 고정했으므로 second pass는
+            # "Decision type 'HOLD' produced no order request"로
+            # translation을 건너뛰고 SKIPPED로 종결되는 것이 유일한 정상
+            # 결과다 — ERROR/SUBMITTED/DRY_RUN 등은 이 시나리오에서는
+            # 전부 회귀다.
+            assert second_pass_result["status"] == "SKIPPED"
+            assert second_pass_result["stop_reason"] == "decision_hold"
+            assert second_pass_result["decision_context_id"] == str(expected_context_id)
+            broker.submit_order.assert_not_awaited()
+
+            # ── job이 정확히 1건, terminal 상태로 종결 ────────────────────
+            queue_jobs_after = list(repos.fdc_quota._jobs.values())  # type: ignore[attr-defined]
+            assert len(queue_jobs_after) == 1
+            assert queue_jobs_after[0]["status"] in ("FDC_SUCCEEDED", "FDC_FAILED_FINAL")
+            assert queue_jobs_after[0]["decision_context_id"] == expected_context_id
+
+            # ── second pass가 새 decision_context를 추가로 만들지 않음 ────
+            assert (
+                len(repos.decision_contexts._items) == decision_contexts_after_first_pass  # type: ignore[attr-defined]
+            )
+
+            # ── 핵심 계약: queue_job / agent_run / trade_decision의
+            # decision_context_id가 전부 동일해야 한다 ───────────────────
+            agent_runs = list(
+                await repos.agent_runs.list_by_decision_context(expected_context_id)
+            )
+            assert agent_runs, (
+                "expected_context_id로 저장된 agent_run이 하나도 없다 — "
+                "second pass가 새 context를 만들었을 가능성이 있다."
+            )
+            fdc_runs = [
+                run for run in agent_runs if run.agent_type == "final_decision_composer"
+            ]
+            assert fdc_runs, "동일 context에 FDC agent run이 존재해야 한다."
+
+            trade_decision = await repos.trade_decisions.get_by_context(expected_context_id)
+            assert trade_decision is not None
+            assert trade_decision.decision_context_id == expected_context_id
+
+            # ── 비대상 lane/broker 외부 호출이 발생하지 않았음(대상 lane
+            # 하나만 처리됐고, 그 외 어떤 symbol도 actual dispatch 경로를
+            # 타지 않았다는 것은 spawn_calls가 정확히 pre_fdc 1회 +
+            # fdc_only 1회뿐이라는 사실 자체로 이미 증명된다) ────────────
+            assert spawn_calls == ["pre_fdc", "fdc_only"]
 
 
 class TestHeldPositionSellBudget:

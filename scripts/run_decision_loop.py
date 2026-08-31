@@ -2381,6 +2381,15 @@ async def _run_one_cycle(
                         # post-gather dispatcher가 job_id로 예약을 완료한
                         # 뒤 이 symbol을 precomputed_agent_bundle과 함께
                         # 재실행해 나머지 파이프라인을 마무리한다.
+                        #
+                        # 2026-08-31 리뷰 보정(운영 실측 결함) — 여기서 쓰던
+                        # ``request.decision_context_id``(SubmitOrderRequest
+                        # 필드, 기본값 None — 이 시점에서 명시적으로 채워진
+                        # 적이 없다)는 항상 None이었다. assemble() 내부에서
+                        # 실제로 resolve되어 fdc_queue_jobs에 저장된 context
+                        # id는 SubmitResult.decision_context_id에 담겨
+                        # 돌아오므로, 그 값을 써야 second pass가 동일한
+                        # context로 이어진다.
                         pending_fdc_dispatch_sink.append({
                             "cycle_index": cycle_index,
                             "symbol": symbol,
@@ -2391,7 +2400,7 @@ async def _run_one_cycle(
                             "job_id": result.fdc_dispatch_job_id,
                             "pre_fdc_result": result.fdc_dispatch_pre_fdc_result,
                             "correlation_id": request.correlation_id,
-                            "decision_context_id": request.decision_context_id,
+                            "decision_context_id": result.decision_context_id,
                             "decision_cycle_id": decision_cycle_id,
                             "universe_anchor": universe_anchor,
                             "deterministic_trigger_override": (
