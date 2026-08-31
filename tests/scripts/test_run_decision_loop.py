@@ -2827,7 +2827,7 @@ class TestFdcActualDispatchEndToEndContextContinuity:
 
     @pytest.mark.asyncio
     async def test_context_id_identical_across_queue_job_agent_run_and_trade_decision(
-        self,
+        self, monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         async with _mock_runtime_for_one_cycle() as runtime:
             repos: RepositoryContainer = runtime["repositories"]
@@ -2862,7 +2862,9 @@ class TestFdcActualDispatchEndToEndContextContinuity:
                 return _fdc_only_hold_payload(), b"{}"
 
             import agent_trading.services.decision_agent_runner as runner_module
-            runner_module._spawn_agent_subprocess_impl = _fake_spawn_impl  # type: ignore[assignment]
+            monkeypatch.setattr(
+                runner_module, "_spawn_agent_subprocess_impl", _fake_spawn_impl,
+            )
 
             broker = runtime["primary_broker_adapter"]
 
@@ -2908,11 +2910,14 @@ class TestFdcActualDispatchEndToEndContextContinuity:
             assert spawn_calls == ["pre_fdc", "fdc_only"]
 
             second_pass_result = results[0]
-            # HOLD/translation skip — 주문 생성·제출은 이 테스트의 목적이
-            # 아니다. broker 외부 호출이 전혀 없었는지만 확인한다.
-            assert second_pass_result["status"] in (
-                "SKIPPED", "SUBMITTED", "ERROR", "DRY_RUN",
-            )
+            # fdc_only 결과를 HOLD로 고정했으므로 second pass는
+            # "Decision type 'HOLD' produced no order request"로
+            # translation을 건너뛰고 SKIPPED로 종결되는 것이 유일한 정상
+            # 결과다 — ERROR/SUBMITTED/DRY_RUN 등은 이 시나리오에서는
+            # 전부 회귀다.
+            assert second_pass_result["status"] == "SKIPPED"
+            assert second_pass_result["stop_reason"] == "decision_hold"
+            assert second_pass_result["decision_context_id"] == str(expected_context_id)
             broker.submit_order.assert_not_awaited()
 
             # ── job이 정확히 1건, terminal 상태로 종결 ────────────────────
