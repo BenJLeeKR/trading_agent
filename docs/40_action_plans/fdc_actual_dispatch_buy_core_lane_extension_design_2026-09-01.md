@@ -628,10 +628,16 @@ HOLD(또는 해당 lane에서 이미 쓰던 fallback 결과)로 귀결되는 원
 
 ### 검증 계약
 
-- `bash scripts/harness/run.sh accept env` — 위 8개 파일 항목(2개 key ×
-  4개 파일) 중 하나라도 누락되면 `runtime_env_wiring_missing_count`가
-  1 이상, `runtime_env_wiring_contract_parse_failed_count`가 0이어야
-  통과.
+- `bash scripts/harness/run.sh accept env` — `scripts/harness/run.sh`의
+  `passed` 판정(해당 스크립트 내 `runtime_env_wiring_missing_count == 0
+  and runtime_env_wiring_contract_parse_failed_count == 0` 조건 포함)을
+  그대로 따른다. 위 8개 파일 항목(2개 key × 4개 파일) 중 하나라도
+  누락되면 `runtime_env_wiring_missing_count`가 1 이상이 되어 `accept
+  env`는 **실패**한다. `runtime_env_wiring.json` 계약 자체의 형식이
+  잘못되면 `runtime_env_wiring_contract_parse_failed_count`가 1 이상이
+  되어 마찬가지로 **실패**한다. **통과 조건은 두 카운트가 모두 정확히
+  0인 것뿐이다** — `missing_count`가 1 이상인 상태로 통과하는 경우는
+  없다.
 - settings/배선 테스트: 기존 `FDC_ACTUAL_DISPATCH_ENABLED`를 검증하는
   테스트와 동일한 패턴으로, 두 신규 key 각각에 대해 env 미설정 시 기본
   `False`, `"true"` 설정 시 `True`가 되는지 단위 테스트로 검증. 두 값을
