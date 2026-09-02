@@ -2981,28 +2981,52 @@ class TestFdcActualDispatchCallerIdResolution:
             _resolve_fdc_actual_dispatch_caller_id("")
 
     @pytest.mark.asyncio
-    async def test_pending_job_with_unexpected_source_type_fails_closed_as_error(
-        self,
+    @pytest.mark.parametrize("malformed_source_type", ["core", ""])
+    async def test_pending_job_with_unexpected_source_type_terminates_without_fifo_block(
+        self, monkeypatch: pytest.MonkeyPatch, malformed_source_type: str,
     ) -> None:
-        """durable resume이나 데이터 정합성 이상으로 pending job에
-        held_position이 아닌 source_type이 실려 있으면, "held_position"
-        으로 자동 치환하지 않고 ERROR 결과로 보고한다 — job의 DB 상태는
-        건드리지 않는다(불완전 처리를 성공으로 숨기지 않는다)."""
+        """2026-09-02 FIFO 차단 결함 보정 — durable resume이나 데이터
+        정합성 이상으로 pending job에 held_position이 아닌(또는 빈)
+        source_type이 실려 있으면 "held_position"으로 자동 치환하지
+        않고 즉시 FDC_FAILED_FINAL로 종결한다. 이전에는 job이 QUEUED로
+        남아 try_reserve()의 FIFO admission이 뒤따르는 정상 held_
+        position job을 영구히 막았다 — 이 테스트는 그 회귀를 직접
+        재현해 방지한다."""
         async with _mock_runtime_for_one_cycle() as runtime:
             repos: RepositoryContainer = runtime["repositories"]
 
-            job_id = await repos.fdc_quota.register_real_job(
+            try_reserve_calls: list[str] = []
+            from agent_trading.services.fdc_quota_coordinator import FdcQuotaCoordinator
+            original_try_reserve = FdcQuotaCoordinator.try_reserve
+
+            async def _spying_try_reserve(self, **kwargs):
+                try_reserve_calls.append(str(kwargs.get("job_id")))
+                return await original_try_reserve(self, **kwargs)
+
+            monkeypatch.setattr(FdcQuotaCoordinator, "try_reserve", _spying_try_reserve)
+
+            spawn_calls: list[str] = []
+
+            async def _fake_spawn_impl(input_bytes, *, subprocess_timeout, decision_context_id, correlation_id):
+                spawn_calls.append("fdc_only")
+                return _fdc_only_hold_payload(), b"{}"
+
+            import agent_trading.services.decision_agent_runner as runner_module
+            monkeypatch.setattr(
+                runner_module, "_spawn_agent_subprocess_impl", _fake_spawn_impl,
+            )
+
+            malformed_job_id = await repos.fdc_quota.register_real_job(
                 decision_cycle_id="c1", decision_context_id=None,
-                symbol="005930", source_type="core",
+                symbol="005930", source_type=malformed_source_type,
                 quota_scope="gemini:shared-operational",
                 fdc_ready_at=datetime.now(timezone.utc),
                 pre_fdc_result={"success": True}, correlation_id="test-corr",
             )
-
-            pending_job = {
+            malformed_pending_job = {
                 "cycle_index": None, "symbol": "005930", "market": "KRX",
-                "source_type": "core", "market_segment": None,
-                "index_memberships": (), "job_id": job_id,
+                "source_type": malformed_source_type, "market_segment": None,
+                "index_memberships": (), "job_id": malformed_job_id,
                 "pre_fdc_result": {"success": True},
                 "correlation_id": "test-corr", "decision_context_id": None,
                 "decision_cycle_id": None, "universe_anchor": None,
@@ -3012,7 +3036,7 @@ class TestFdcActualDispatchCallerIdResolution:
 
             import time as _time_module
             results, deferred = await _run_fdc_actual_dispatch_phase(
-                [pending_job],
+                [malformed_pending_job],
                 runtime=runtime,
                 cycle_precheck=None,
                 output="text",
@@ -3023,8 +3047,58 @@ class TestFdcActualDispatchCallerIdResolution:
             assert deferred == []
             assert len(results) == 1
             assert results[0]["status"] == "ERROR"
-            # job의 DB 상태는 전혀 바뀌지 않았다 — 여전히 QUEUED다.
-            assert repos.fdc_quota._jobs[job_id]["status"] == "QUEUED"  # type: ignore[attr-defined]
+            # try_reserve()/fdc_only 어느 쪽도 호출되지 않았다 — reservation
+            # 자체를 시도하지 않았다.
+            assert try_reserve_calls == []
+            assert spawn_calls == []
+            # job은 더 이상 QUEUED가 아니라 FDC_FAILED_FINAL로 종결됐고,
+            # reason이 source type 데이터 정합성 오류임을 감사 가능하게
+            # 구분한다.
+            malformed_row = repos.fdc_quota._jobs[malformed_job_id]  # type: ignore[attr-defined]
+            assert malformed_row["status"] == "FDC_FAILED_FINAL"
+            assert malformed_row["failure_or_cancel_reason"] == (
+                "fdc_actual_dispatch_unsupported_source_type_data_integrity_error"
+            )
+
+            # ── 이어서 정상 held_position job을 등록하고 dispatcher를
+            # 실행했을 때, 앞선 malformed job(이제 FDC_FAILED_FINAL로
+            # 종결됨) 때문에 FIFO 거부가 발생하지 않는지 확인한다 ──────
+            normal_job_id = await repos.fdc_quota.register_real_job(
+                decision_cycle_id="c1", decision_context_id=None,
+                symbol="005930", source_type="held_position",
+                quota_scope="gemini:shared-operational",
+                fdc_ready_at=datetime.now(timezone.utc),
+                pre_fdc_result=_pre_fdc_ready_payload(),
+                correlation_id="test-corr-2",
+            )
+            normal_pending_job = {
+                "cycle_index": None, "symbol": "005930", "market": "KRX",
+                "source_type": "held_position", "market_segment": None,
+                "index_memberships": (), "job_id": normal_job_id,
+                "pre_fdc_result": _pre_fdc_ready_payload(),
+                "correlation_id": "test-corr-2", "decision_context_id": None,
+                "decision_cycle_id": None, "universe_anchor": None,
+                "deterministic_trigger_override": None,
+                "r3b_alpha_percentile": None,
+            }
+
+            results2, deferred2 = await _run_fdc_actual_dispatch_phase(
+                [normal_pending_job],
+                runtime=runtime,
+                cycle_precheck=None,
+                output="text",
+                cycle_count=2,
+                phase_deadline_monotonic=_time_module.monotonic() + 3600,
+            )
+
+            assert deferred2 == []
+            assert len(results2) == 1
+            # 정상 held_position job이 FIFO 거부 없이 실제로 grant를
+            # 받아 fdc_only까지 실행됐다(malformed job에 막히지 않음).
+            assert str(normal_job_id) in try_reserve_calls
+            assert spawn_calls == ["fdc_only"]
+            normal_row = repos.fdc_quota._jobs[normal_job_id]  # type: ignore[attr-defined]
+            assert normal_row["status"] == "FDC_SUCCEEDED"
 
 
 class TestHeldPositionSellBudget:

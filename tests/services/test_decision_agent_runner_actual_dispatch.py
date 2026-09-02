@@ -364,7 +364,7 @@ class TestActualDispatchSourceTypeFailClosed:
 
     @pytest.mark.asyncio
     async def test_empty_source_type_in_complete_fdc_actual_dispatch_fails_closed(
-        self,
+        self, monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """post-gather dispatcher(complete_fdc_actual_dispatch())도
         source_type이 비어 있으면 "held_position"으로 대체하지 않고
@@ -385,8 +385,11 @@ class TestActualDispatchSourceTypeFailClosed:
             spawn_calls.append("fdc_only")
             return _fdc_only_success_result(), b"{}"
 
-        import agent_trading.services.decision_agent_runner as runner_mod2
-        runner_mod2._spawn_agent_subprocess_impl = _fake_spawn_impl  # type: ignore[assignment]
+        # 2026-09-02 보정 — module-level 직접 대입 대신 monkeypatch.setattr()로
+        # 바꿔 테스트 종료/실패와 무관하게 원본 함수가 항상 복원되도록 한다.
+        monkeypatch.setattr(
+            runner_module, "_spawn_agent_subprocess_impl", _fake_spawn_impl,
+        )
 
         result = await runner_module.complete_fdc_actual_dispatch(
             fdc_quota_repo=repo, provider_runtime={},
