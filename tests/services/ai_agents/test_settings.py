@@ -15,6 +15,7 @@ from agent_trading.config.settings import (
     AppSettings,
     KIS_DEFAULT_REST_URLS,
     KIS_DEFAULT_WS_URLS,
+    _resolve_fdc_actual_dispatch_buy_enabled,
     _resolve_fdc_actual_dispatch_enabled,
     _resolve_kis_api_key,
     _resolve_kis_api_secret,
@@ -192,6 +193,58 @@ class TestResolveFdcActualDispatchEnabled:
         assert AppSettings().fdc_actual_dispatch_enabled is True
         monkeypatch.setenv("FDC_ACTUAL_DISPATCH_ENABLED", "false")
         assert AppSettings().fdc_actual_dispatch_enabled is False
+
+
+class TestResolveFdcActualDispatchBuyEnabled:
+    """2026-09-02, BUY/core lane 확장 PR B —
+    ``_resolve_fdc_actual_dispatch_buy_enabled()`` 기본값 False,
+    ``FDC_ACTUAL_DISPATCH_BUY_ENABLED`` env로만 True 전환. 기존
+    ``FDC_ACTUAL_DISPATCH_ENABLED``(held_position)와 완전히 독립적인
+    별도 key임을 함께 검증한다."""
+
+    def test_default_is_false(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.delenv("FDC_ACTUAL_DISPATCH_BUY_ENABLED", raising=False)
+        assert _resolve_fdc_actual_dispatch_buy_enabled() is False
+
+    def test_true_string_enables(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("FDC_ACTUAL_DISPATCH_BUY_ENABLED", "true")
+        assert _resolve_fdc_actual_dispatch_buy_enabled() is True
+
+    def test_false_string_stays_disabled(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("FDC_ACTUAL_DISPATCH_BUY_ENABLED", "false")
+        assert _resolve_fdc_actual_dispatch_buy_enabled() is False
+
+    def test_case_insensitive(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("FDC_ACTUAL_DISPATCH_BUY_ENABLED", "TRUE")
+        assert _resolve_fdc_actual_dispatch_buy_enabled() is True
+
+    def test_app_settings_field_wires_to_resolver(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("FDC_ACTUAL_DISPATCH_BUY_ENABLED", "true")
+        assert AppSettings().fdc_actual_dispatch_buy_enabled is True
+        monkeypatch.setenv("FDC_ACTUAL_DISPATCH_BUY_ENABLED", "false")
+        assert AppSettings().fdc_actual_dispatch_buy_enabled is False
+
+    def test_independent_from_held_position_actual_dispatch_flag(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """두 key를 4가지 조합으로 섞어도 서로의 리졸버 결과에 영향을
+        주지 않는다."""
+        for held_position_raw, buy_raw in (
+            ("false", "false"), ("true", "false"),
+            ("false", "true"), ("true", "true"),
+        ):
+            monkeypatch.setenv("FDC_ACTUAL_DISPATCH_ENABLED", held_position_raw)
+            monkeypatch.setenv("FDC_ACTUAL_DISPATCH_BUY_ENABLED", buy_raw)
+            assert _resolve_fdc_actual_dispatch_enabled() is (
+                held_position_raw == "true"
+            )
+            assert _resolve_fdc_actual_dispatch_buy_enabled() is (
+                buy_raw == "true"
+            )
 
 
 # ===========================================================================

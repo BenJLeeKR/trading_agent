@@ -699,6 +699,30 @@ def _resolve_fdc_actual_dispatch_enabled() -> bool:
     return raw.strip().lower() == "true"
 
 
+def _resolve_fdc_actual_dispatch_buy_enabled() -> bool:
+    """BUY/core lane FDC **실제 dispatch** on/off 스위치를
+    ``FDC_ACTUAL_DISPATCH_BUY_ENABLED`` env에서 읽는다(2026-09-02,
+    BUY/core lane 확장 PR B).
+
+    설계 근거: docs/40_action_plans/fdc_actual_dispatch_buy_core_lane_
+    extension_design_2026-09-01.md §7/§8 PR B — 이 값은
+    ``FDC_ACTUAL_DISPATCH_ENABLED``(held_position 전용)와 완전히
+    독립적인 별도 key다. 어느 한쪽을 바꿔도 다른 쪽의 리졸버 결과나
+    의미에 영향을 주지 않는다. 기본값 ``False``.
+
+    **이 PR(PR B) 시점에는 이 값을 읽는 runtime 실행 분기가 아직
+    존재하지 않는다** — ``AppSettings`` 파싱 결과로만 존재하며,
+    ``run_agents_in_subprocess()``/``_run_agents_in_subprocess_with_
+    actual_dispatch()``/``_run_fdc_actual_dispatch_phase()`` 등 실제
+    BUY job 등록·reservation·``fdc_only``·주문 제출로 이어지는 어떤
+    코드도 이 값을 조회하지 않는다. 즉 운영에서 이 값이 ``True``여도
+    현재 코드 기준으로는 아무 실행 경로도 바뀌지 않는다 — 그 연결은
+    설계 문서 §8의 PR D(provider 전체 quota 통합) 이후 PR E의 범위다.
+    """
+    raw = os.getenv("FDC_ACTUAL_DISPATCH_BUY_ENABLED", "false")
+    return raw.strip().lower() == "true"
+
+
 def _resolve_fdc_provider_target_rpm() -> int:
     """``FDC_PROVIDER_TARGET_RPM`` env — 공용 quota coordinator의 운영
     목표 RPM. 기본값 ``13``(Gemini 선언 한도 15보다 여유 2를 둔 값,
@@ -1069,6 +1093,18 @@ class AppSettings:
     `REDUCE_CANDIDATE`/`SELL_CANDIDATE`(보유 포지션 존재) 조건에 한해서만
     공용 quota coordinator를 실제로 거친다 — BUY/일반 universe/그 밖의
     held_position 상태는 영향받지 않는다."""
+
+    fdc_actual_dispatch_buy_enabled: bool = field(
+        default_factory=_resolve_fdc_actual_dispatch_buy_enabled
+    )
+    """`FDC_ACTUAL_DISPATCH_BUY_ENABLED` env로 제어하는 BUY/core lane
+    전용 스위치(2026-09-02, PR B). 기본값 ``False``.
+    `FDC_ACTUAL_DISPATCH_ENABLED`(held_position)와 완전히 독립적인
+    별도 key다. **이번 PR 시점에는 이 값을 읽는 runtime 실행 분기가
+    존재하지 않는다** — settings 파싱 결과로만 존재하며, `True`여도
+    BUY job 등록/reservation/`fdc_only`/주문 제출 중 어느 것도
+    시작되지 않는다(설계 문서 §7/§8 PR B, 실행 경로 연결은 PR D 이후
+    PR E 범위)."""
 
     fdc_provider_target_rpm: int = field(
         default_factory=_resolve_fdc_provider_target_rpm
