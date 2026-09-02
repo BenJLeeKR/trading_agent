@@ -109,6 +109,37 @@ def _is_fdc_actual_dispatch_target(assembled_context: AIPolicyContextView) -> bo
     )
 
 
+def _is_fdc_actual_dispatch_buy_target(assembled_context: AIPolicyContextView) -> bool:
+    """core lane BUY_CANDIDATE 조건을 만족하는지만 판정하는 순수 함수
+    (2026-09-02, BUY/core lane 확장 PR B — 설계 문서
+    ``fdc_actual_dispatch_buy_core_lane_extension_design_2026-09-01.md``
+    §5). ``FDC_ACTUAL_DISPATCH_BUY_ENABLED`` 자체는 이 함수의 관심사가
+    아니다 — 호출부가 별도로 AND 한다. **이번 PR에서는 이 함수를 어떤
+    runtime 분기에서도 호출하지 않는다** — 테스트 가능한 순수 함수로만
+    존재하며, 실제 BUY dispatcher 경로 연결은 후속 PR(PR D 이후의
+    PR E) 범위다.
+
+    ``deterministic_trigger_engine.py``의 후보 생성 로직을 직접 확인한
+    결과(assess_deterministic_triggers(), 266-297행), ``BUY_CANDIDATE``
+    는 ``normalized_source_type != "held_position"``인 분기에서만
+    ``entry_score >= buy_candidate_threshold`` 등 BUY eligibility를
+    만족할 때 생성된다 — held_position 분기(SELL_CANDIDATE/
+    REDUCE_CANDIDATE/WATCH만 생성)와는 서로 다른 코드 경로이므로
+    이 함수와 ``_is_fdc_actual_dispatch_target()``(위)은 겹칠 수 없다.
+
+    risk gate/eligibility/quote/sizing/submit-lane/reconciliation
+    lock 같은 downstream 안전장치는 이 함수가 중복 구현하거나 우회하지
+    않는다 — ``entry_score``/eligibility 판정 자체는 이미
+    ``deterministic_trigger_engine.py``가 끝낸 뒤의 ``primary_
+    candidate`` 값만 읽는다.
+    """
+    source_type = (assembled_context.source_type or "").strip().lower()
+    primary_candidate = (
+        getattr(assembled_context.deterministic_trigger, "primary_candidate", "") or ""
+    ).strip().upper()
+    return source_type == "core" and primary_candidate == "BUY_CANDIDATE"
+
+
 def _should_skip_final_decision_composer(
     assembled_context: AIPolicyContextView,
     risk_output: AIRiskOutput,

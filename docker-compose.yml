@@ -406,6 +406,12 @@ services:
       # 영향을 준다. 실행 경로 선택 키이므로 배선 누락을 accept env가
       # 하드 실패로 검사한다(runtime_env_wiring.json required_in_compose).
       FDC_ACTUAL_DISPATCH_ENABLED: "${FDC_ACTUAL_DISPATCH_ENABLED:-false}"
+      # BUY/core lane 전용 FDC 실제 dispatch 스위치(2026-09-02, PR B) —
+      # 위 FDC_ACTUAL_DISPATCH_ENABLED(held_position)와 완전히 독립적인
+      # 별도 key다. 이 PR 시점에는 이 값을 읽는 runtime 실행 분기가
+      # 존재하지 않는다 — true여도 BUY job 등록/reservation/fdc_only/
+      # 주문 제출 중 어느 것도 시작되지 않는다.
+      FDC_ACTUAL_DISPATCH_BUY_ENABLED: "${FDC_ACTUAL_DISPATCH_BUY_ENABLED:-false}"
       FDC_PROVIDER_TARGET_RPM: "${FDC_PROVIDER_TARGET_RPM:-13}"
       FDC_PROVIDER_RATE_WINDOW_SECONDS: "${FDC_PROVIDER_RATE_WINDOW_SECONDS:-60}"
       GEMINI_PROVIDER_DECLARED_RPM_LIMIT: "${GEMINI_PROVIDER_DECLARED_RPM_LIMIT:-15}"

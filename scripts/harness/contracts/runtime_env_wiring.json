@@ -61,6 +61,12 @@
       "services": ["ops-scheduler"],
       "required_in_compose": true,
       "note": "held_position lane의 REDUCE_CANDIDATE/SELL_CANDIDATE에 한해 FDC 공용 quota coordinator 실제 reservation/one-shot HTTP 경로로 전환하는 실행 경로 선택 키(2026-08-27). 켜지는 순간 실제 FDC 호출 방식이 바뀌므로(레거시 10 RPM strict limiter vs coordinator 강제) 배선 누락을 하드 실패로 잡는다. 기본값 false는 기존 운영 동작을 그대로 유지한다."
+    },
+    {
+      "key": "FDC_ACTUAL_DISPATCH_BUY_ENABLED",
+      "services": ["ops-scheduler"],
+      "required_in_compose": true,
+      "note": "BUY/core lane 전용 FDC 실제 dispatch 스위치(2026-09-02, PR B). FDC_ACTUAL_DISPATCH_ENABLED(held_position)와 완전히 독립적인 별도 key다. 이 PR 시점에는 이 값을 읽는 runtime 실행 분기가 존재하지 않는다 — settings 파싱 결과로만 존재하며, true여도 BUY job 등록/reservation/fdc_only/주문 제출 중 어느 것도 시작되지 않는다. 실행 경로 연결은 설계 문서 §8의 PR D(provider 전체 quota 통합) 이후 PR E 범위다. 기본값 false."
     }
   ]
 }

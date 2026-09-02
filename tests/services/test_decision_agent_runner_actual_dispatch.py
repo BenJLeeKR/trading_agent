@@ -149,6 +149,80 @@ def _fdc_only_retryable_failure_result() -> dict[str, Any]:
     }
 
 
+class TestIsFdcActualDispatchBuyTarget:
+    """2026-09-02, BUY/core lane 확장 PR B —
+    ``_is_fdc_actual_dispatch_buy_target()``(순수 함수) 단위 테스트.
+    이 함수는 이번 PR에서 어떤 runtime 분기에도 연결되지 않는다 —
+    여기서는 함수 자체의 판정 로직만 검증한다."""
+
+    def _context(
+        self, *, source_type: str, primary_candidate: str | None,
+    ) -> AIPolicyContextView:
+        from types import SimpleNamespace
+
+        return AIPolicyContextView(
+            source_type=source_type,
+            deterministic_trigger=(
+                SimpleNamespace(primary_candidate=primary_candidate)
+                if primary_candidate is not None else None
+            ),
+        )
+
+    def test_core_buy_candidate_is_target(self) -> None:
+        import agent_trading.services.decision_agent_runner as runner_module
+
+        context = self._context(source_type="core", primary_candidate="BUY_CANDIDATE")
+        assert runner_module._is_fdc_actual_dispatch_buy_target(context) is True
+
+    def test_held_position_buy_candidate_is_not_target(self) -> None:
+        """BUY_CANDIDATE 라벨 자체는 deterministic_trigger_engine.py상
+        held_position 분기에서는 생성될 수 없지만(§3 확정 사실), 방어적으로
+        source_type이 "core"가 아니면 다른 조건과 무관하게 false여야
+        한다."""
+        import agent_trading.services.decision_agent_runner as runner_module
+
+        context = self._context(
+            source_type="held_position", primary_candidate="BUY_CANDIDATE",
+        )
+        assert runner_module._is_fdc_actual_dispatch_buy_target(context) is False
+
+    @pytest.mark.parametrize(
+        "primary_candidate",
+        ["NO_ACTION", "WATCH", "SELL_CANDIDATE", "REDUCE_CANDIDATE"],
+    )
+    def test_core_non_buy_candidates_are_not_target(
+        self, primary_candidate: str,
+    ) -> None:
+        import agent_trading.services.decision_agent_runner as runner_module
+
+        context = self._context(source_type="core", primary_candidate=primary_candidate)
+        assert runner_module._is_fdc_actual_dispatch_buy_target(context) is False
+
+    def test_missing_trigger_info_fails_closed(self) -> None:
+        import agent_trading.services.decision_agent_runner as runner_module
+
+        context = self._context(source_type="core", primary_candidate=None)
+        assert runner_module._is_fdc_actual_dispatch_buy_target(context) is False
+
+    def test_empty_source_type_fails_closed(self) -> None:
+        import agent_trading.services.decision_agent_runner as runner_module
+
+        context = self._context(source_type="", primary_candidate="BUY_CANDIDATE")
+        assert runner_module._is_fdc_actual_dispatch_buy_target(context) is False
+
+    def test_does_not_duplicate_or_bypass_downstream_safety_gates(self) -> None:
+        """이 함수는 risk gate/eligibility/quote/sizing/submit-lane/
+        reconciliation lock 같은 downstream 안전장치를 전혀 참조하지
+        않는다 — position_snapshot/risk 관련 속성이 없는 최소 context
+        (source_type+deterministic_trigger.primary_candidate만 존재)
+        로도 정확히 동작해야 한다는 것으로 이를 검증한다."""
+        import agent_trading.services.decision_agent_runner as runner_module
+
+        context = self._context(source_type="core", primary_candidate="BUY_CANDIDATE")
+        assert context.position_snapshot is None  # 이 함수가 참조하지 않음
+        assert runner_module._is_fdc_actual_dispatch_buy_target(context) is True
+
+
 class TestFlagAndLaneGating:
     @pytest.mark.asyncio
     async def test_flag_false_never_calls_actual_dispatch(
