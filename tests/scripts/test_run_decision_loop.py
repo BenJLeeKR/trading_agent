@@ -3321,6 +3321,174 @@ class TestReplayFdcActualDispatchBuyShadowEventsForCycle:
         assert repo._shadow_jobs == {}  # type: ignore[attr-defined]
 
 
+class TestSharedAndBuyShadowCombinedRegistersExactlyOnce:
+    """PR #365 후속 보완 작업 1 — ``FDC_BATCH_QUEUE_LIFECYCLE_SHADOW_
+    ENABLED=true``와 ``FDC_ACTUAL_DISPATCH_BUY_SHADOW_ENABLED=true``가
+    동시에 켜진 상태에서, 실제 ``_run_one_cycle()``이 한 사이클 안에서
+    호출하는 순서 그대로(일반 shadow replay 먼저, BUY shadow replay
+    다음) 두 replay 함수를 **함께** 호출했을 때 최종적으로 shadow 행이
+    정확히 1건만 남는지를 검증한다.
+
+    ``TestReplayFdcActualDispatchBuyShadowEventsForCycle``의 개별
+    no-op 테스트만으로는, 일반 shadow replay가 실제로 그 자리를
+    채워 넣는지(즉 BUY 후보가 정말 기록되는지)까지는 증명하지 못한다
+    — 이 테스트는 두 replay를 모두 실행한 뒤의 최종 repository 상태를
+    직접 검사해 그 공백을 메운다."""
+
+    @staticmethod
+    def _shared_shadow_event(
+        *, symbol: str, fdc_ready_at_iso: str, decision_context_id: str,
+    ) -> dict[str, object]:
+        return {
+            "decision_cycle_id": "cycle-1#1",
+            "decision_context_id": decision_context_id,
+            "symbol": symbol,
+            "source_type": "core",
+            "fdc_ready_at": fdc_ready_at_iso,
+        }
+
+    @staticmethod
+    def _buy_shadow_event(
+        *, symbol: str, fdc_ready_at_iso: str, decision_context_id: str,
+    ) -> dict[str, object]:
+        return {
+            "decision_cycle_id": "cycle-1#1",
+            "decision_context_id": decision_context_id,
+            "symbol": symbol,
+            "source_type": "core",
+            "fdc_ready_at": fdc_ready_at_iso,
+        }
+
+    @pytest.fixture
+    def _combined_repo(self, monkeypatch: pytest.MonkeyPatch):
+        """일반 shadow replay와 BUY shadow replay가 각자 내부에서
+        새로 만드는 ``AppSettings``/``build_postgres_repositories``/
+        ``transaction`` 호출을 **동일한** fake/동일한 repo 인스턴스로
+        고정해, 두 호출이 같은 저장소 상태를 공유하도록 만든다(실제
+        운영에서도 같은 트랜잭션 루프 안에서 순차 호출되므로 동일한
+        전제)."""
+        from agent_trading.repositories.memory import InMemoryFdcQuotaRepository
+
+        repo = InMemoryFdcQuotaRepository()
+
+        class _FakeRepos:
+            fdc_quota = repo
+
+        class _FakeSettings:
+            fdc_batch_queue_lifecycle_shadow_enabled = True
+            fdc_actual_dispatch_buy_shadow_enabled = True
+            fdc_provider_target_rpm = 13
+            fdc_provider_rate_window_seconds = 60
+            gemini_provider_declared_rpm_limit = 15
+
+        class _FakeTx:
+            connection = None
+
+            async def commit(self) -> None:
+                return None
+
+        class _FakeTxCM:
+            async def __aenter__(self) -> "_FakeTx":
+                return _FakeTx()
+
+            async def __aexit__(self, *exc: object) -> bool:
+                return False
+
+        monkeypatch.setattr(
+            "agent_trading.config.settings.AppSettings",
+            lambda: _FakeSettings(),
+        )
+        monkeypatch.setattr(
+            "agent_trading.repositories.postgres.bootstrap.build_postgres_repositories",
+            lambda tx: _FakeRepos(),
+        )
+        monkeypatch.setattr(
+            "agent_trading.db.transaction.transaction",
+            lambda: _FakeTxCM(),
+        )
+        return repo
+
+    @pytest.mark.asyncio
+    async def test_both_flags_true_together_leaves_exactly_one_shadow_row(
+        self, _combined_repo: object,
+    ) -> None:
+        repo = _combined_repo
+        decision_context_id = "11111111-1111-1111-1111-111111111111"
+        fdc_ready_at_iso = "2026-09-02T01:00:00+00:00"
+        # 실제 _run_one_cycle()이 한 cycle 결과 dict에 두 캡처 키를
+        # 함께 채워 넣는 것과 동일한 모양 — core BUY 후보 1건.
+        cycle_results: list[dict[str, object]] = [
+            {
+                "_fdc_ready_shadow_event": self._shared_shadow_event(
+                    symbol=SYMBOL,
+                    fdc_ready_at_iso=fdc_ready_at_iso,
+                    decision_context_id=decision_context_id,
+                ),
+                "_fdc_actual_dispatch_buy_shadow_event": self._buy_shadow_event(
+                    symbol=SYMBOL,
+                    fdc_ready_at_iso=fdc_ready_at_iso,
+                    decision_context_id=decision_context_id,
+                ),
+            },
+        ]
+
+        # 실제 _run_one_cycle() 호출 순서와 동일하게: 일반 shadow replay
+        # 먼저, BUY shadow replay 다음.
+        await _replay_fdc_ready_shadow_events_for_cycle(cycle_results, cycle_count=1)
+        await _replay_fdc_actual_dispatch_buy_shadow_events_for_cycle(
+            cycle_results, cycle_count=1,
+        )
+
+        jobs = repo._shadow_jobs.get("gemini:shared-operational", [])  # type: ignore[attr-defined]
+        # 일반 shadow replay가 BUY 후보를 실제로 기록했다는 것과
+        # (그렇지 않다면 아래 len(jobs) == 1이 거짓 통과할 수 있으므로),
+        # BUY shadow replay가 두 번째 행을 추가하지 않았다는 것을 함께
+        # 증명해야 하므로 정확히 1건, 그 1건의 내용까지 구체적으로 검사한다.
+        assert len(jobs) == 1, (
+            f"shadow 행이 정확히 1건이어야 하는데 {len(jobs)}건 기록됨: {jobs}"
+        )
+        job = jobs[0]
+        assert job["mode"] == "shadow"
+        assert job["source_type"] == "core"
+        assert job["symbol"] == SYMBOL
+        assert str(job["decision_context_id"]) == decision_context_id
+        assert job["status"] in ("SHADOW_WOULD_GRANT", "SHADOW_QUEUED")
+        # mode='real' job(실제 reservation)은 전혀 만들어지지 않았다.
+        assert repo._jobs == {}  # type: ignore[attr-defined]
+
+    @pytest.mark.asyncio
+    async def test_shared_shadow_alone_already_covers_buy_candidate(
+        self, _combined_repo: object,
+    ) -> None:
+        """위 테스트가 '어쩌다 1건'이 아니라 실제로 일반 shadow가
+        BUY 후보를 기록했기 때문에 1건인지를 별도로 증명한다 — BUY
+        shadow replay를 호출하지 않고 일반 shadow replay만 호출해도
+        이미 1건이 기록돼야 한다."""
+        repo = _combined_repo
+        decision_context_id = "22222222-2222-2222-2222-222222222222"
+        fdc_ready_at_iso = "2026-09-02T02:00:00+00:00"
+        cycle_results: list[dict[str, object]] = [
+            {
+                "_fdc_ready_shadow_event": self._shared_shadow_event(
+                    symbol=SYMBOL,
+                    fdc_ready_at_iso=fdc_ready_at_iso,
+                    decision_context_id=decision_context_id,
+                ),
+            },
+        ]
+
+        await _replay_fdc_ready_shadow_events_for_cycle(cycle_results, cycle_count=1)
+
+        jobs = repo._shadow_jobs.get("gemini:shared-operational", [])  # type: ignore[attr-defined]
+        assert len(jobs) == 1, (
+            "일반 shadow replay 단독으로도 core BUY 후보를 기록해야 한다 "
+            "(그렇지 않으면 위 combined 테스트의 1건은 BUY shadow replay가 "
+            "낸 결과일 수 있어 중복 방지 계약을 증명하지 못한다)"
+        )
+        assert jobs[0]["source_type"] == "core"
+        assert jobs[0]["symbol"] == SYMBOL
+
+
 class TestFdcActualDispatchBuyShadowCapture:
     """``_run_one_cycle()``의 BUY shadow 이벤트 캡처(2026-09-02, PR C) —
     실제 ``assemble()``/agent 파이프라인을 그대로 실행하고
