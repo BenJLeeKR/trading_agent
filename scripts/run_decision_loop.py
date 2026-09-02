@@ -83,6 +83,7 @@ from agent_trading.runtime.bootstrap import (
 from agent_trading.services.common_types import PhaseTraceEntry, SubmitResult
 from agent_trading.services.decision_agent_runner import (
     FdcDispatchDeferredError,
+    _is_fdc_actual_dispatch_buy_target,
     complete_fdc_actual_dispatch,
 )
 from agent_trading.services.core_risk_off_topk_projection import (
@@ -1945,6 +1946,152 @@ async def _replay_fdc_ready_shadow_events_for_cycle(
         )
 
 
+async def _replay_fdc_actual_dispatch_buy_shadow_events_for_cycle(
+    cycle_results: list[dict[str, object]],
+    *,
+    cycle_count: int,
+) -> None:
+    """BUY/core lane FDC actual-dispatch shadow 관측 전용 재생
+    (2026-09-02, PR C, ``FDC_ACTUAL_DISPATCH_BUY_SHADOW_ENABLED``).
+
+    **금지된 해석(설계 문서 §7~§11 PR C)**: 이 함수와 그 대상이 되는
+    ``register_shadow_job_and_judge()`` 결과(``SHADOW_WOULD_GRANT``/
+    ``SHADOW_QUEUED``)는 "동일 quota_scope의 shared-shadow FIFO 결과"
+    일 뿐이다. 다음 어느 것도 아니다:
+    - provider 전체 실제 13 RPM 준수의 증거
+    - held-position actual reservation의 실제 대기시간/거부율 예측값
+    - "BUY만의" 격리된 FIFO/포화/거부율(§3 확정 사실 — window_count
+      SQL에 ``source_type`` 조건이 없어 동일 scope의 다른 shadow 행과
+      판정을 공유한다)
+    - BUY actual-dispatch 활성화를 승인하는 근거
+
+    **단일 기록 계약(중복 방지)**: 일반 lifecycle shadow(``FDC_BATCH_
+    QUEUE_LIFECYCLE_SHADOW_ENABLED``)가 이미 켜져 있으면, 그 경로
+    (``_replay_fdc_ready_shadow_events_for_cycle()``)가 ``source_type``
+    과 무관하게 **모든** FDC-ready 이벤트(BUY_CANDIDATE core 후보 포함)
+    를 이미 등록한다 — 이 함수는 그 경우 아무 것도 하지 않고 즉시
+    반환한다. 즉 이 함수는 "일반 shadow가 꺼져 있고 BUY shadow만 켜져
+    있는" 경우에만 실제로 등록을 수행한다 — 두 flag가 동시에 켜져도
+    같은 BUY 후보가 두 번 등록되지 않는다(단일 조건문으로 강제되므로
+    코드 경로 자체가 중복을 만들 수 없다).
+
+    BUY shadow 대상은 이미 ``_run_one_cycle()``에서 PR B의
+    ``_is_fdc_actual_dispatch_buy_target()``로 걸러진 것만
+    ``cycle_results[i]["_fdc_actual_dispatch_buy_shadow_event"]``에
+    담겨 있다 — 이 함수는 그 사전 필터링을 다시 하지 않는다.
+
+    ``mode='shadow'`` 행만 만든다 — 실제 reservation(``try_reserve()``,
+    ``mode='real'``)/``fdc_only`` subprocess/Gemini HTTP/주문 제출/
+    submit budget 소비는 이 함수도, 이 함수가 호출하는
+    ``register_shadow_job_and_judge()``도 전혀 발생시키지 않는다.
+    """
+    from agent_trading.config.settings import AppSettings
+    from agent_trading.db.transaction import transaction as _db_transaction
+    from agent_trading.repositories.postgres.bootstrap import (
+        build_postgres_repositories,
+    )
+
+    settings = AppSettings()
+    if not settings.fdc_actual_dispatch_buy_shadow_enabled:
+        return
+    if settings.fdc_batch_queue_lifecycle_shadow_enabled:
+        # 단일 기록 계약 — 일반 lifecycle shadow가 이미 이 BUY 후보를
+        # (그리고 다른 모든 lane도) 등록했거나 등록할 것이다. 여기서
+        # 또 등록하면 같은 (symbol, fdc_ready_at) 조합이 shadow FIFO에
+        # 중복 행으로 들어가 window_count가 실제보다 부풀려진다.
+        logger.info(
+            "fdc_actual_dispatch_buy_shadow replay skipped: cycle=%d — "
+            "fdc_batch_queue_lifecycle_shadow_enabled=true이므로 일반 "
+            "shadow 경로가 이미 이번 사이클의 모든 FDC-ready 이벤트를 "
+            "등록한다(BUY 후보 포함) — 중복 등록 방지.",
+            cycle_count,
+        )
+        return
+
+    pending: list[tuple[int, dict[str, object]]] = []
+    for idx, r in enumerate(cycle_results):
+        if not isinstance(r, dict):
+            continue
+        raw_event = r.get("_fdc_actual_dispatch_buy_shadow_event")
+        if isinstance(raw_event, dict):
+            pending.append((idx, raw_event))
+
+    if not pending:
+        return
+
+    def _sort_key(pair: tuple[int, dict[str, object]]) -> tuple[str, int]:
+        idx, raw_event = pair
+        return (str(raw_event.get("fdc_ready_at", "")), idx)
+
+    pending.sort(key=_sort_key)
+
+    try:
+        async with _db_transaction() as tx:
+            repos = build_postgres_repositories(tx)
+            coordinator = FdcQuotaCoordinator(
+                repo=repos.fdc_quota,
+                target_rpm=settings.fdc_provider_target_rpm,
+                window_seconds=settings.fdc_provider_rate_window_seconds,
+                declared_rpm_limit=settings.gemini_provider_declared_rpm_limit,
+            )
+            for idx, raw_event in pending:
+                symbol = str(raw_event.get("symbol", ""))
+                try:
+                    fdc_ready_at = datetime.fromisoformat(
+                        str(raw_event.get("fdc_ready_at", ""))
+                    )
+                except ValueError:
+                    logger.warning(
+                        "fdc_actual_dispatch_buy_shadow replay: invalid "
+                        "fdc_ready_at cycle=%d cycle_index=%d symbol=%s",
+                        cycle_count, idx, symbol,
+                    )
+                    continue
+                decision_context_id_raw = raw_event.get("decision_context_id")
+                decision_context_id = (
+                    UUID(str(decision_context_id_raw))
+                    if decision_context_id_raw
+                    else None
+                )
+                # source_type은 항상 "core"로 감사 가능하게 보존한다 —
+                # _is_fdc_actual_dispatch_buy_target()이 이미 이 값을
+                # 확인했으므로(§5 PR B) 여기서는 raw_event에 실제로
+                # 캡처된 값을 그대로 쓴다(재검증하지 않음, 신뢰 경계는
+                # _run_one_cycle()의 캡처 지점).
+                try:
+                    judge_result = await coordinator.register_shadow_job_and_judge(
+                        decision_cycle_id=raw_event.get("decision_cycle_id"),
+                        decision_context_id=decision_context_id,
+                        symbol=symbol,
+                        source_type=str(raw_event.get("source_type", "core")),
+                        fdc_ready_at=fdc_ready_at,
+                        caller_id="ops-scheduler:buy_shadow",
+                    )
+                    if isinstance(judge_result, CoordinatorError):
+                        logger.warning(
+                            "fdc_actual_dispatch_buy_shadow replay coordinator "
+                            "error: cycle=%d cycle_index=%d symbol=%s "
+                            "error_class=%s detail=%s",
+                            cycle_count, idx, symbol,
+                            judge_result.error_class.value, judge_result.detail,
+                        )
+                except Exception:
+                    logger.warning(
+                        "fdc_actual_dispatch_buy_shadow replay failed: "
+                        "cycle=%d cycle_index=%d symbol=%s",
+                        cycle_count, idx, symbol,
+                        exc_info=True,
+                    )
+            await tx.commit()
+    except Exception:
+        logger.warning(
+            "fdc_actual_dispatch_buy_shadow replay transaction failed: "
+            "cycle=%d",
+            cycle_count,
+            exc_info=True,
+        )
+
+
 async def _run_one_cycle(
     cycle: int,
     *,
@@ -2522,6 +2669,49 @@ async def _run_one_cycle(
                     "fdc_ready_at": _pending_shadow_event.fdc_ready_at.isoformat(),
                 }
 
+            # BUY/core lane FDC actual-dispatch shadow 관측(2026-09-02,
+            # PR C, FDC_ACTUAL_DISPATCH_BUY_SHADOW_ENABLED) — 위 일반
+            # lifecycle shadow(FDC_BATCH_QUEUE_LIFECYCLE_SHADOW_ENABLED)
+            # 와 완전히 별개인 캡처 지점이다. decision_orchestrator.py를
+            # 건드리지 않기 위해, orchestrator.pending_fdc_ready_shadow_
+            # event(그 flag에 종속됨)에 의존하지 않고, 이미 항상 채워지는
+            # ``AIDecisionInputs.fdc_ready_at``(FDC skip 판정 직후 캡처된
+            # ISO-8601 타임스탬프, 결정론적 skip이면 빈 문자열)와
+            # ``result.order_intent.context``(AssembledContext — source_
+            # type/deterministic_trigger 속성이 AIPolicyContextView와
+            # 동일해 PR B의 ``_is_fdc_actual_dispatch_buy_target()``를
+            # 그대로 재사용할 수 있다)만으로 독립적으로 재구성한다.
+            #
+            # **실제 DB 등록(및 일반 shadow와의 중복 방지 판단)은 여기서
+            # 하지 않는다** — 사이클 종료 후
+            # ``_replay_fdc_actual_dispatch_buy_shadow_events_for_cycle()``
+            # 가 정렬 재생하며, 그 함수가 "일반 lifecycle shadow가 이미
+            # 켜져 있으면 이 BUY 전용 경로는 등록을 건너뛴다"는 단일
+            # 기록 계약을 강제한다(동일 BUY 후보가 두 경로에서 중복
+            # 등록되는 것을 막기 위함 — 설계 문서 §7~§11 PR C).
+            fdc_actual_dispatch_buy_shadow_event: dict[str, object] | None = None
+            if (
+                settings.fdc_actual_dispatch_buy_shadow_enabled
+                and result is not None
+                and result.order_intent is not None
+            ):
+                _buy_ai_inputs = result.order_intent.ai_backend_inputs
+                _buy_fdc_ready_at_raw = _buy_ai_inputs.fdc_ready_at
+                if _buy_fdc_ready_at_raw and _is_fdc_actual_dispatch_buy_target(
+                    result.order_intent.context,
+                ):
+                    fdc_actual_dispatch_buy_shadow_event = {
+                        "decision_cycle_id": decision_cycle_id,
+                        "decision_context_id": (
+                            str(result.decision_context_id)
+                            if result.decision_context_id is not None
+                            else None
+                        ),
+                        "symbol": symbol,
+                        "source_type": result.order_intent.context.source_type,
+                        "fdc_ready_at": _buy_fdc_ready_at_raw,
+                    }
+
             # ── 5. Commit per-symbol transaction ─────────────────────────
             await tx.commit()
 
@@ -2546,6 +2736,9 @@ async def _run_one_cycle(
                 universe_anchor=universe_anchor,
             )
             serialized["_fdc_ready_shadow_event"] = fdc_ready_shadow_event
+            serialized["_fdc_actual_dispatch_buy_shadow_event"] = (
+                fdc_actual_dispatch_buy_shadow_event
+            )
             return serialized
 
     except asyncio.TimeoutError:
@@ -4085,6 +4278,22 @@ async def _run_loop(
             except Exception:
                 logger.warning(
                     "fdc_batch_queue_lifecycle_shadow replay call failed: cycle=%d",
+                    cycle_count,
+                    exc_info=True,
+                )
+
+            # BUY/core lane FDC actual-dispatch shadow 관측(2026-09-02,
+            # PR C) — 위 일반 lifecycle shadow 재생 직후 호출한다. 함수
+            # 내부의 단일 기록 계약(일반 shadow가 켜져 있으면 즉시
+            # no-op)이 중복 등록을 막으므로 호출 순서 자체는 결과에
+            # 영향을 주지 않는다.
+            try:
+                await _replay_fdc_actual_dispatch_buy_shadow_events_for_cycle(
+                    cycle_results, cycle_count=cycle_count,
+                )
+            except Exception:
+                logger.warning(
+                    "fdc_actual_dispatch_buy_shadow replay call failed: cycle=%d",
                     cycle_count,
                     exc_info=True,
                 )

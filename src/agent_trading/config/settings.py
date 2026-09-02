@@ -723,6 +723,42 @@ def _resolve_fdc_actual_dispatch_buy_enabled() -> bool:
     return raw.strip().lower() == "true"
 
 
+def _resolve_fdc_actual_dispatch_buy_shadow_enabled() -> bool:
+    """BUY/core lane FDC actual-dispatch **shadow 관측 전용** on/off
+    스위치를 ``FDC_ACTUAL_DISPATCH_BUY_SHADOW_ENABLED`` env에서
+    읽는다(2026-09-02, BUY/core lane 확장 PR C).
+
+    설계 근거: docs/40_action_plans/fdc_actual_dispatch_buy_core_lane_
+    extension_design_2026-09-01.md §7~§11 PR C. 이 값은
+    ``FDC_ACTUAL_DISPATCH_BUY_ENABLED``(actual, quota를 실제 소비)와도,
+    ``FDC_ACTUAL_DISPATCH_ENABLED``(held_position actual)와도, 기존
+    ``FDC_BATCH_QUEUE_LIFECYCLE_SHADOW_ENABLED``(모든 lane 대상 일반
+    shadow)와도 별개인 key다. 기본값 ``False``.
+
+    ``True``여도 실제 reservation(``try_reserve()``)/``mode='real'``
+    job/``fdc_only`` subprocess/추가 Gemini HTTP/주문 제출/submit
+    budget 소비는 전혀 발생하지 않는다 — ``mode='shadow'`` 행만
+    만든다. 관측 대상은 ``core`` lane의 ``BUY_CANDIDATE``만이다
+    (``_is_fdc_actual_dispatch_buy_target()``).
+
+    **결과 해석 제한**: 이 shadow의 판정(``SHADOW_WOULD_GRANT``/
+    ``SHADOW_QUEUED``)은 동일 quota_scope의 shared-shadow FIFO 결과일
+    뿐이다 — provider 전체 실제 13 RPM 준수 증거도, held-position
+    actual reservation의 실제 대기시간/거부율 예측값도, "BUY만의"
+    격리된 FIFO 결과도 아니며, 이 값만으로 BUY actual-dispatch
+    활성화를 승인할 수 없다.
+
+    **`FDC_BATCH_QUEUE_LIFECYCLE_SHADOW_ENABLED`가 이미 켜져 있으면
+    이 스위치가 true여도 실제 등록은 일어나지 않는다**(중복 등록
+    방지 — 일반 shadow가 이미 모든 lane의 FDC-ready 이벤트를 등록
+    하므로, BUY 전용 경로가 같은 후보를 다시 등록하면 shadow FIFO에
+    중복 행이 생긴다). 상세: ``scripts/run_decision_loop.py``의
+    ``_replay_fdc_actual_dispatch_buy_shadow_events_for_cycle()``.
+    """
+    raw = os.getenv("FDC_ACTUAL_DISPATCH_BUY_SHADOW_ENABLED", "false")
+    return raw.strip().lower() == "true"
+
+
 def _resolve_fdc_provider_target_rpm() -> int:
     """``FDC_PROVIDER_TARGET_RPM`` env — 공용 quota coordinator의 운영
     목표 RPM. 기본값 ``13``(Gemini 선언 한도 15보다 여유 2를 둔 값,
@@ -1105,6 +1141,20 @@ class AppSettings:
     BUY job 등록/reservation/`fdc_only`/주문 제출 중 어느 것도
     시작되지 않는다(설계 문서 §7/§8 PR B, 실행 경로 연결은 PR D 이후
     PR E 범위)."""
+
+    fdc_actual_dispatch_buy_shadow_enabled: bool = field(
+        default_factory=_resolve_fdc_actual_dispatch_buy_shadow_enabled
+    )
+    """`FDC_ACTUAL_DISPATCH_BUY_SHADOW_ENABLED` env로 제어하는 BUY/core
+    lane 전용 **shadow 관측** 스위치(2026-09-02, PR C). 기본값
+    ``False``. `FDC_ACTUAL_DISPATCH_BUY_ENABLED`(actual)와도,
+    `FDC_ACTUAL_DISPATCH_ENABLED`(held_position actual)와도,
+    `FDC_BATCH_QUEUE_LIFECYCLE_SHADOW_ENABLED`(일반 shadow)와도 별개인
+    key다. `True`여도 `mode='shadow'` 행만 만들며 실제 reservation/
+    `fdc_only`/주문 제출은 발생하지 않는다. `FDC_BATCH_QUEUE_
+    LIFECYCLE_SHADOW_ENABLED`가 이미 켜져 있으면 이 값이 `True`여도
+    실제 등록은 일어나지 않는다(중복 등록 방지, 상세는 리졸버
+    docstring)."""
 
     fdc_provider_target_rpm: int = field(
         default_factory=_resolve_fdc_provider_target_rpm
