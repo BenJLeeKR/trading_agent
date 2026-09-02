@@ -3329,6 +3329,47 @@ async def _run_general_lane_pass2(
     return submit_budget_consumed_count
 
 
+# 2026-09-02 PR A 보정(BUY/core lane 확장 선행 작업) — 이전에는
+# complete_fdc_actual_dispatch() 내부에 caller_id가
+# "ops-scheduler:held_position_reduce_sell"로 고정돼 있었다. 이제는
+# 호출부(여기)가 job의 실제 source_type을 기준으로 명시적으로 전달한다.
+# 현재 유일한 운영 lane인 held_position만 등록돼 있다 — 다른 source_
+# type이 들어오면 "held_position"으로 조용히 대체하지 않고
+# _resolve_fdc_actual_dispatch_caller_id()가 KeyError를 낸다.
+#
+# 2026-09-02 FIFO 차단 결함 보정 — 이 KeyError를 _complete_one()의
+# broad except Exception까지 전파시키지 않는다(전파되면 job의 DB row가
+# QUEUED로 남아, try_reserve()의 FIFO admission이 뒤따르는 정상
+# held_position job을 영구히 막을 수 있었다). _complete_one()은 이제
+# 이 함수를 별도 try/except로 감싸 즉시 FDC_FAILED_FINAL로 terminal
+# 전이한 뒤 ERROR 결과를 반환한다 — try_reserve()/fdc_only는 전혀
+# 시도되지 않는다.
+_FDC_ACTUAL_DISPATCH_CALLER_ID_BY_SOURCE_TYPE: dict[str, str] = {
+    "held_position": "ops-scheduler:held_position_reduce_sell",
+}
+
+
+def _resolve_fdc_actual_dispatch_caller_id(source_type: str) -> str:
+    """job의 source_type에 대응하는 ``caller_id``를 반환한다.
+
+    등록되지 않은 source_type(현재는 held_position 외 전부, 빈 문자열
+    포함)이 들어오면 "held_position"으로 조용히 대체하지 않고
+    ``KeyError``를 낸다 — 호출자(``_complete_one()``)는 이 예외를
+    ``complete_fdc_actual_dispatch()`` 호출 전(=``try_reserve()``/
+    ``fdc_only`` 시도 전)에 잡아 job을 명시적으로 ``FDC_FAILED_FINAL``
+    로 종결한다(아래 참고) — job의 DB row가 ``QUEUED``로 남아 FIFO
+    admission을 막는 일이 없도록 한다.
+    """
+    try:
+        return _FDC_ACTUAL_DISPATCH_CALLER_ID_BY_SOURCE_TYPE[source_type]
+    except KeyError:
+        raise KeyError(
+            f"FDC actual dispatch: source_type={source_type!r}에 대응하는 "
+            "caller_id가 등록돼 있지 않다(현재 held_position만 지원) — "
+            "fail-closed."
+        ) from None
+
+
 async def _run_fdc_actual_dispatch_phase(
     pending_jobs: list[dict[str, object]],
     *,
@@ -3391,6 +3432,38 @@ async def _run_fdc_actual_dispatch_phase(
     ) -> tuple[dict[str, object] | None, dict[str, object] | None]:
         """(result, deferred_job) 튜플을 반환한다 — 정확히 하나만
         non-None이다."""
+        _job_source_type = str(job.get("source_type") or "")
+        try:
+            caller_id = _resolve_fdc_actual_dispatch_caller_id(_job_source_type)
+        except KeyError:
+            # 2026-09-02 보정 — source_type이 비어 있거나 미지원 값이면
+            # try_reserve()/fdc_only를 전혀 시도하지 않고 이 job을 즉시
+            # FDC_FAILED_FINAL로 종결한다. 이전에는 이 예외가 아래
+            # broad except Exception까지 전파돼 ERROR 결과만 반환하고
+            # job의 DB row는 QUEUED로 남았다 — try_reserve()의 FIFO
+            # admission("나보다 먼저 등록된 QUEUED job이 있으면 양보")
+            # 규칙상, QUEUED로 남은 이 malformed job 하나가 뒤따르는
+            # 모든 정상 held_position job의 reservation을 영구히 막을
+            # 수 있었다(§3 확정 사실). 여기서 broad except Exception에
+            # 도달하기 전에 명시적으로 terminal 전이해 그 FIFO 차단을
+            # 제거한다.
+            logger.error(
+                "FDC actual dispatch: job_id=%s symbol=%s source_type=%r가 "
+                "지원되지 않는다 — try_reserve()/fdc_only를 시도하지 않고 "
+                "fail-closed로 종결한다(FIFO 차단 방지).",
+                job["job_id"], job["symbol"], _job_source_type,
+            )
+            await repos.fdc_quota.mark_job_terminal(
+                job_id=job["job_id"], status="FDC_FAILED_FINAL",
+                reason="fdc_actual_dispatch_unsupported_source_type_data_integrity_error",
+            )
+            return {
+                "status": "ERROR", "symbol": job["symbol"],
+                "market": job["market"], "job_id": str(job["job_id"]),
+                "error": f"unsupported source_type={_job_source_type!r}",
+                "duration_seconds": 0.0,
+            }, None
+
         try:
             bundle = await complete_fdc_actual_dispatch(
                 fdc_quota_repo=repos.fdc_quota,
@@ -3400,6 +3473,8 @@ async def _run_fdc_actual_dispatch_phase(
                 pre_fdc_result=job["pre_fdc_result"],
                 correlation_id=job["correlation_id"],
                 decision_context_id=job["decision_context_id"],
+                source_type=_job_source_type,
+                caller_id=caller_id,
                 worker_semaphore=worker_semaphore,
                 deadline_monotonic=phase_deadline_monotonic,
             )

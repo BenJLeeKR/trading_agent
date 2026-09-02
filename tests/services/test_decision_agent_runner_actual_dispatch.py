@@ -302,6 +302,115 @@ class TestActualDispatchOrchestration:
         # 새 context를 만들게 된다.
         assert exc_info.value.decision_context_id == resolved_context_id
         assert repo._jobs[job_id]["decision_context_id"] == resolved_context_id  # type: ignore[attr-defined]
+        # 2026-09-02 PR A 보정 — register_real_job()에 전달되는 source_type이
+        # assembled_context에서 확인된 실제 값("held_position")과 일치하는지
+        # 명시적으로 확인한다(이전에는 `request.source_type or "held_position"`
+        # 기본값 대입이었으나, 지금은 assembled_context.source_type을 그대로
+        # 검증해 전달한다 — 결과값은 동일해야 한다).
+        assert repo._jobs[job_id]["source_type"] == "held_position"  # type: ignore[attr-defined]
+
+
+class TestActualDispatchSourceTypeFailClosed:
+    """2026-09-02 PR A 보정 — held_position 하드코딩 파라미터화. 예상 밖
+    source_type이 이 경로에 들어오면 "held_position"으로 조용히 치환하지
+    않고 fail-closed로 종결한다(register_real_job() 호출 자체를 하지
+    않음 — 불완전한 queue row를 만들지 않는다)."""
+
+    @pytest.mark.asyncio
+    async def test_unexpected_source_type_fails_closed_without_registering_job(
+        self, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """_is_fdc_actual_dispatch_target() 게이트를 우회해 직접 호출하는
+        상황(정합성 이상)을 재현한다 — 실제 운영에서는 게이트가 held_
+        position만 통과시키므로 도달해서는 안 되는 방어 코드 경로다."""
+        from types import SimpleNamespace
+        from decimal import Decimal
+
+        repo = InMemoryFdcQuotaRepository()
+        runner = _make_runner(fdc_actual_dispatch_enabled=True, repo=repo)
+
+        # source_type="core"인데도 SELL_CANDIDATE+포지션 보유 조건을 만든
+        # 비정상 context — 실제로는 _is_fdc_actual_dispatch_target()가
+        # source_type=="held_position"을 요구하므로 발생할 수 없지만,
+        # 이 메서드 자체가 그 게이트에 의존하지 않고 자체적으로 fail-closed
+        # 처리하는지 검증한다.
+        unexpected_context = AIPolicyContextView(
+            source_type="core",
+            position_snapshot=SimpleNamespace(quantity=Decimal("10")),
+            deterministic_trigger=SimpleNamespace(primary_candidate="SELL_CANDIDATE"),
+        )
+
+        spawn_calls: list[str] = []
+
+        async def _fake_spawn(input_bytes, *, request):
+            import json as _json
+            payload = _json.loads(input_bytes)
+            spawn_calls.append(payload["mode"])
+            return _pre_fdc_ready_result(), b"{}"
+
+        monkeypatch.setattr(runner, "_spawn_agent_subprocess", _fake_spawn)
+
+        result = await runner._run_agents_in_subprocess_with_actual_dispatch(
+            _make_request(), unexpected_context,
+        )
+
+        # pre_fdc는 스폰됐지만(FDC-ready 판정까지는 도달), source_type
+        # 검증에서 fail-closed되어 register_real_job()이 호출되지 않았다
+        # — 불완전한 queue row가 생기지 않는다.
+        assert spawn_calls == ["pre_fdc"]
+        assert repo._jobs == {}  # type: ignore[attr-defined]
+        # 성공으로 위장하지 않고 안전한 fallback(HOLD)을 반환한다.
+        assert result.ai_inputs.decision_type == "HOLD"
+
+    @pytest.mark.asyncio
+    async def test_empty_source_type_in_complete_fdc_actual_dispatch_fails_closed(
+        self, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """post-gather dispatcher(complete_fdc_actual_dispatch())도
+        source_type이 비어 있으면 "held_position"으로 대체하지 않고
+        fail-closed로 job을 종결한다 — durable resume이 불완전한 DB row를
+        읽었거나 호출부 버그로 빈 값이 들어온 상황을 재현한다."""
+        import agent_trading.services.decision_agent_runner as runner_module
+
+        repo = InMemoryFdcQuotaRepository()
+        job_id = await repo.register_real_job(
+            decision_cycle_id="c1", decision_context_id=None, symbol="005930",
+            source_type="held_position", quota_scope="gemini:shared-operational",
+            fdc_ready_at=datetime.now(timezone.utc),
+        )
+
+        spawn_calls: list[str] = []
+
+        async def _fake_spawn_impl(input_bytes, *, subprocess_timeout, decision_context_id, correlation_id):
+            spawn_calls.append("fdc_only")
+            return _fdc_only_success_result(), b"{}"
+
+        # 2026-09-02 보정 — module-level 직접 대입 대신 monkeypatch.setattr()로
+        # 바꿔 테스트 종료/실패와 무관하게 원본 함수가 항상 복원되도록 한다.
+        monkeypatch.setattr(
+            runner_module, "_spawn_agent_subprocess_impl", _fake_spawn_impl,
+        )
+
+        result = await runner_module.complete_fdc_actual_dispatch(
+            fdc_quota_repo=repo, provider_runtime={},
+            subprocess_timeout=90, job_id=job_id,
+            pre_fdc_result=_pre_fdc_ready_result(),
+            correlation_id="test-corr", decision_context_id=None,
+            source_type="",
+            caller_id="ops-scheduler:held_position_reduce_sell",
+            worker_semaphore=asyncio.Semaphore(5),
+        )
+
+        # fdc_only가 전혀 스폰되지 않았다 — reservation 자체를 시도하지
+        # 않고 즉시 fail-closed 종결했다.
+        assert spawn_calls == []
+        assert repo._jobs[job_id]["status"] == "FDC_FAILED_FINAL"  # type: ignore[attr-defined]
+        assert repo._jobs[job_id]["failure_or_cancel_reason"] == (  # type: ignore[attr-defined]
+            "fdc_actual_dispatch_source_type_missing_data_integrity_error"
+        )
+        # 실패를 성공으로 위장하지 않고 안전한 fallback을 반환한다.
+        assert result is not None
+        assert result.ai_inputs.decision_type == "HOLD"
 
 
 class TestCompleteFdcActualDispatch:
@@ -330,11 +439,13 @@ class TestCompleteFdcActualDispatch:
         )
 
         spawn_calls: list[str] = []
+        fdc_only_payloads: list[dict[str, Any]] = []
 
         async def _fake_spawn_impl(input_bytes, *, subprocess_timeout, decision_context_id, correlation_id):
             import json as _json
             payload = _json.loads(input_bytes)
             spawn_calls.append(payload["mode"])
+            fdc_only_payloads.append(payload)
             return _fdc_only_success_result(), b"{}"
 
         import agent_trading.services.decision_agent_runner as runner_module
@@ -342,17 +453,38 @@ class TestCompleteFdcActualDispatch:
             runner_module, "_spawn_agent_subprocess_impl", _fake_spawn_impl,
         )
 
+        # try_reserve()에 실제로 전달되는 caller_id를 가로채 확인한다
+        # (2026-09-02 PR A 보정 — 하드코딩 제거 이후에도 held_position의
+        # 기존 caller_id 값이 그대로 유지되는지 명시적으로 검증).
+        captured_caller_ids: list[str] = []
+        from agent_trading.services.fdc_quota_coordinator import FdcQuotaCoordinator
+
+        original_try_reserve = FdcQuotaCoordinator.try_reserve
+
+        async def _spying_try_reserve(self, **kwargs):
+            captured_caller_ids.append(kwargs["caller_id"])
+            return await original_try_reserve(self, **kwargs)
+
+        monkeypatch.setattr(FdcQuotaCoordinator, "try_reserve", _spying_try_reserve)
+
         result = await runner_module.complete_fdc_actual_dispatch(
             fdc_quota_repo=repo, provider_runtime=self._provider_runtime(),
             subprocess_timeout=90, job_id=job_id,
             pre_fdc_result=_pre_fdc_ready_result(),
             correlation_id="test-corr", decision_context_id=None,
+            source_type="held_position",
+            caller_id="ops-scheduler:held_position_reduce_sell",
             worker_semaphore=asyncio.Semaphore(5),
         )
 
         assert spawn_calls == ["fdc_only"]
         assert result.ai_inputs.decision_type == "REDUCE"
         assert repo._jobs[job_id]["status"] == "FDC_SUCCEEDED"  # type: ignore[attr-defined]
+        # 필수 테스트 1 — held_position 정상 경로: caller ID/fdc_only
+        # payload의 source type이 기존 값과 동일해야 한다(하드코딩
+        # 제거가 실질 동작을 바꾸지 않았음을 증명).
+        assert captured_caller_ids == ["ops-scheduler:held_position_reduce_sell"]
+        assert fdc_only_payloads[0]["source_type"] == "held_position"
 
     @pytest.mark.asyncio
     async def test_fifo_denied_then_granted_waits_and_succeeds(
@@ -397,6 +529,8 @@ class TestCompleteFdcActualDispatch:
             pre_fdc_result=_pre_fdc_ready_result(),
             correlation_id="test-corr", decision_context_id=None,
             sleep_fn=_fake_sleep,
+            source_type="held_position",
+            caller_id="ops-scheduler:held_position_reduce_sell",
             worker_semaphore=asyncio.Semaphore(5),
         )
 
@@ -439,6 +573,8 @@ class TestCompleteFdcActualDispatch:
             subprocess_timeout=90, job_id=job_id,
             pre_fdc_result=_pre_fdc_ready_result(),
             correlation_id="test-corr", decision_context_id=None,
+            source_type="held_position",
+            caller_id="ops-scheduler:held_position_reduce_sell",
             worker_semaphore=asyncio.Semaphore(5),
         )
 
@@ -471,6 +607,8 @@ class TestCompleteFdcActualDispatch:
             subprocess_timeout=90, job_id=job_id,
             pre_fdc_result=_pre_fdc_ready_result(),
             correlation_id="test-corr", decision_context_id=None,
+            source_type="held_position",
+            caller_id="ops-scheduler:held_position_reduce_sell",
             worker_semaphore=asyncio.Semaphore(5),
         )
 
@@ -536,6 +674,8 @@ class TestCompleteFdcActualDispatch:
             pre_fdc_result=_pre_fdc_ready_result(),
             correlation_id="test-corr", decision_context_id=None,
             sleep_fn=_fake_sleep,
+            source_type="held_position",
+            caller_id="ops-scheduler:held_position_reduce_sell",
             worker_semaphore=asyncio.Semaphore(5),
         )
 
@@ -574,6 +714,8 @@ class TestCompleteFdcActualDispatch:
             subprocess_timeout=90, job_id=job_id,
             pre_fdc_result=_pre_fdc_ready_result(),
             correlation_id="test-corr", decision_context_id=None,
+            source_type="held_position",
+            caller_id="ops-scheduler:held_position_reduce_sell",
             worker_semaphore=asyncio.Semaphore(5),
         )
 
@@ -623,6 +765,8 @@ class TestCompleteFdcActualDispatch:
             subprocess_timeout=90, job_id=job_id,
             pre_fdc_result=_pre_fdc_ready_result(),
             correlation_id="test-corr", decision_context_id=None,
+            source_type="held_position",
+            caller_id="ops-scheduler:held_position_reduce_sell",
             worker_semaphore=asyncio.Semaphore(5),
         )
 
@@ -670,7 +814,9 @@ class TestPhaseDeadlineDoesNotCancelLiveProcess:
                     subprocess_timeout=90, job_id=job_id,
                     pre_fdc_result=_pre_fdc_ready_result(),
                     correlation_id="test-corr", decision_context_id=None,
-                    worker_semaphore=asyncio.Semaphore(5),
+                    source_type="held_position",
+            caller_id="ops-scheduler:held_position_reduce_sell",
+            worker_semaphore=asyncio.Semaphore(5),
                     # 이미 지난 데드라인 — 첫 iteration에서 즉시 defer.
                     deadline_monotonic=0.0,
                 )
@@ -744,7 +890,9 @@ class TestReservationWaitDoesNotHoldWorkerSlot:
                 subprocess_timeout=90, job_id=job_a,
                 pre_fdc_result=_pre_fdc_ready_result(),
                 correlation_id="test-corr-a", decision_context_id=None,
-                worker_semaphore=worker_semaphore,
+                source_type="held_position",
+            caller_id="ops-scheduler:held_position_reduce_sell",
+            worker_semaphore=worker_semaphore,
                 sleep_fn=lambda _s: asyncio.sleep(0),
             )
         )
@@ -754,7 +902,9 @@ class TestReservationWaitDoesNotHoldWorkerSlot:
                 subprocess_timeout=90, job_id=job_b,
                 pre_fdc_result=_pre_fdc_ready_result(),
                 correlation_id="test-corr-b", decision_context_id=None,
-                worker_semaphore=worker_semaphore,
+                source_type="held_position",
+            caller_id="ops-scheduler:held_position_reduce_sell",
+            worker_semaphore=worker_semaphore,
             )
         )
 
@@ -821,7 +971,9 @@ class TestConcurrentJobsRespectFifoAndWorkerConcurrency:
                 subprocess_timeout=90, job_id=job_id,
                 pre_fdc_result=_pre_fdc_ready_result(),
                 correlation_id=f"test-corr-{i}", decision_context_id=None,
-                worker_semaphore=worker_semaphore,
+                source_type="held_position",
+            caller_id="ops-scheduler:held_position_reduce_sell",
+            worker_semaphore=worker_semaphore,
             )
             for i, job_id in enumerate(job_ids)
         ])
@@ -878,6 +1030,8 @@ class TestAttemptRowMissingIsFailClosed:
             subprocess_timeout=90, job_id=job_id,
             pre_fdc_result=_pre_fdc_ready_result(),
             correlation_id="test-corr", decision_context_id=None,
+            source_type="held_position",
+            caller_id="ops-scheduler:held_position_reduce_sell",
             worker_semaphore=asyncio.Semaphore(5),
         )
 
@@ -928,6 +1082,8 @@ class TestOperationalDispatchNeverSetsManualRunId:
             subprocess_timeout=90, job_id=job_id,
             pre_fdc_result=_pre_fdc_ready_result(),
             correlation_id="test-corr", decision_context_id=None,
+            source_type="held_position",
+            caller_id="ops-scheduler:held_position_reduce_sell",
             worker_semaphore=asyncio.Semaphore(5),
         )
 
@@ -981,7 +1137,9 @@ class TestDurableResumeAcrossProcessRestart:
                 subprocess_timeout=90, job_id=job_id,
                 pre_fdc_result=pre_fdc_result,
                 correlation_id="orig-corr", decision_context_id=None,
-                worker_semaphore=asyncio.Semaphore(5),
+                source_type="held_position",
+            caller_id="ops-scheduler:held_position_reduce_sell",
+            worker_semaphore=asyncio.Semaphore(5),
                 deadline_monotonic=0.0,
             )
         assert fdc_only_spawn_calls["n"] == 0
@@ -1004,6 +1162,8 @@ class TestDurableResumeAcrossProcessRestart:
             pre_fdc_result=resumable[0].pre_fdc_result,
             correlation_id=resumable[0].correlation_id,
             decision_context_id=resumable[0].decision_context_id,
+            source_type="held_position",
+            caller_id="ops-scheduler:held_position_reduce_sell",
             worker_semaphore=asyncio.Semaphore(5),
         )
 
@@ -1087,7 +1247,9 @@ class TestWorkerSlotAcquiredBeforeReservation:
                 subprocess_timeout=90, job_id=job_id,
                 pre_fdc_result=_pre_fdc_ready_result(),
                 correlation_id="test-corr", decision_context_id=None,
-                worker_semaphore=worker_semaphore,
+                source_type="held_position",
+            caller_id="ops-scheduler:held_position_reduce_sell",
+            worker_semaphore=worker_semaphore,
             )
         )
         await asyncio.sleep(0.05)  # dispatch가 slot 대기 상태에 들어갈 시간을 준다
@@ -1147,6 +1309,8 @@ class TestRecordAttemptOutcomeRaceIsFailClosed:
             subprocess_timeout=90, job_id=job_id,
             pre_fdc_result=_pre_fdc_ready_result(),
             correlation_id="test-corr", decision_context_id=None,
+            source_type="held_position",
+            caller_id="ops-scheduler:held_position_reduce_sell",
             worker_semaphore=asyncio.Semaphore(5),
         )
 
@@ -1253,6 +1417,8 @@ class TestRetryFifoTailReenqueue:
             subprocess_timeout=90, job_id=job_id,
             pre_fdc_result=_pre_fdc_ready_result(),
             correlation_id="test-corr", decision_context_id=None,
+            source_type="held_position",
+            caller_id="ops-scheduler:held_position_reduce_sell",
             worker_semaphore=asyncio.Semaphore(5),
         )
 
@@ -1295,6 +1461,8 @@ class TestRetryFifoTailReenqueue:
             subprocess_timeout=90, job_id=job_id,
             pre_fdc_result=_pre_fdc_ready_result(),
             correlation_id="test-corr", decision_context_id=None,
+            source_type="held_position",
+            caller_id="ops-scheduler:held_position_reduce_sell",
             worker_semaphore=asyncio.Semaphore(5),
         )
 
@@ -1340,6 +1508,8 @@ class TestRetryFifoTailReenqueue:
             subprocess_timeout=90, job_id=job_id,
             pre_fdc_result=_pre_fdc_ready_result(),
             correlation_id="test-corr", decision_context_id=None,
+            source_type="held_position",
+            caller_id="ops-scheduler:held_position_reduce_sell",
             worker_semaphore=asyncio.Semaphore(5),
         )
 
@@ -1378,6 +1548,8 @@ class TestRetryFifoTailReenqueue:
             subprocess_timeout=90, job_id=job_id,
             pre_fdc_result=_pre_fdc_ready_result(),
             correlation_id="test-corr", decision_context_id=None,
+            source_type="held_position",
+            caller_id="ops-scheduler:held_position_reduce_sell",
             worker_semaphore=asyncio.Semaphore(5),
         )
 
@@ -1430,6 +1602,8 @@ class TestRetryFifoTailReenqueue:
             subprocess_timeout=90, job_id=job_id,
             pre_fdc_result=_pre_fdc_ready_result(),
             correlation_id="test-corr", decision_context_id=None,
+            source_type="held_position",
+            caller_id="ops-scheduler:held_position_reduce_sell",
             worker_semaphore=asyncio.Semaphore(5),
         )
 
@@ -1476,6 +1650,8 @@ class TestRetryFifoTailReenqueue:
             subprocess_timeout=90, job_id=job_id,
             pre_fdc_result=_pre_fdc_ready_result(),
             correlation_id="test-corr", decision_context_id=None,
+            source_type="held_position",
+            caller_id="ops-scheduler:held_position_reduce_sell",
             worker_semaphore=asyncio.Semaphore(5),
         )
 

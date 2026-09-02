@@ -362,6 +362,8 @@ async def complete_fdc_actual_dispatch(
     pre_fdc_result: dict[str, Any],
     correlation_id: str,
     decision_context_id: uuid.UUID | None,
+    source_type: str,
+    caller_id: str,
     worker_semaphore: asyncio.Semaphore,
     deadline_monotonic: float | None = None,
     sleep_fn: Any = None,
@@ -399,6 +401,18 @@ async def complete_fdc_actual_dispatch(
     ``job_id``에 대응하는 ``fdc_queue_jobs`` row는 이미 등록돼 있다는
     전제로 호출된다. 종결(성공/최종 실패)되면 job을 ``FDC_SUCCEEDED``/
     ``FDC_FAILED_FINAL``로 표시한다.
+
+    2026-09-02 PR A 보정(BUY/core lane 확장 선행 작업) — ``source_type``/
+    ``caller_id``는 호출부가 명시적으로 전달하는 keyword-only 인자다.
+    이전에는 ``caller_id``가 ``"ops-scheduler:held_position_reduce_
+    sell"``로, ``fdc_only`` payload의 ``source_type``이 ``"held_
+    position"``으로 이 함수 내부에 고정돼 있었다 — 현재 유일한 호출부
+    (``run_decision_loop.py``)는 여전히 이 두 값을 그대로 전달해야
+    하며, 값 자체의 의미는 전혀 바뀌지 않는다(순수 파라미터화). 이
+    함수는 ``source_type``이 무엇이어야 하는지 스스로 판단하지 않고
+    호출부가 검증한 값을 그대로 신뢰한다 — 다만 빈 문자열처럼 명백히
+    누락된 값은 ``"held_position"``으로 조용히 대입하지 않고 fail-
+    closed로 종결한다(아래 참고).
     """
     from agent_trading.config.settings import (
         _resolve_fdc_provider_rate_window_seconds,
@@ -418,7 +432,24 @@ async def complete_fdc_actual_dispatch(
     if sleep_fn is None:
         sleep_fn = asyncio.sleep
 
-    caller_id = "ops-scheduler:held_position_reduce_sell"
+    if not source_type or not source_type.strip():
+        # 2026-09-02 PR A 보정 — source_type 누락을 "held_position"으로
+        # 조용히 대입하지 않는다. durable resume이 불완전한 DB row를
+        # 읽었거나 호출부 버그로 빈 값이 들어온 것이므로, 원인을 숨기지
+        # 않고 fail-closed로 즉시 종결한다(불완전한 fdc_only payload를
+        # 만들어 실제 HTTP를 내보내지 않는다).
+        logger.error(
+            "complete_fdc_actual_dispatch: job_id=%s source_type이 "
+            "비어 있다 — 호출부 데이터 정합성 이상. 기본값으로 대체하지 "
+            "않고 fail-closed로 종결한다.",
+            job_id,
+        )
+        await fdc_quota_repo.mark_job_terminal(
+            job_id=job_id, status="FDC_FAILED_FINAL",
+            reason="fdc_actual_dispatch_source_type_missing_data_integrity_error",
+        )
+        return build_fallback_bundle()
+
     quota_scope = DEFAULT_QUOTA_SCOPE
     max_provider_attempts = 3
     poll_interval_seconds = 2.0
@@ -469,7 +500,7 @@ async def complete_fdc_actual_dispatch(
                     "correlation_id": correlation_id,
                     "symbol": pre_fdc_result.get("event_output", {}).get("symbol"),
                     "market": None,
-                    "source_type": "held_position",
+                    "source_type": source_type,
                     "context": {},
                     "llm_provider": provider_runtime.get("llm_provider", ""),
                     "provider_api_key": provider_runtime.get("provider_api_key", ""),
@@ -1368,11 +1399,33 @@ class DecisionAgentRunner:
             )
             return build_fallback_bundle()
 
+        # 2026-09-02 PR A 보정(BUY/core lane 확장 선행 작업) — 이전에는
+        # ``request.source_type or "held_position"``로 값이 비어 있으면
+        # 조용히 "held_position"을 대입했다. 이 메서드는
+        # ``run_agents_in_subprocess()``의 ``_is_fdc_actual_dispatch_
+        # target()`` 게이트(3조건 AND, held_position 전용, 무변경)를
+        # 통과한 뒤에만 호출되므로, 이 시점의 ``assembled_context.
+        # source_type``은 항상 ``"held_position"``이어야 한다 — 그 외
+        # 값(빈 문자열 포함)이 들어오면 게이트와 실제 호출 사이에 정합성
+        # 이상이 있다는 뜻이다. "held_position"으로 자동 치환하지 않고
+        # 원인을 숨기지 않는 fail-closed로 종결한다.
+        resolved_source_type = (assembled_context.source_type or "").strip()
+        if resolved_source_type != "held_position":
+            logger.error(
+                "_run_agents_in_subprocess_with_actual_dispatch: 예상치 "
+                "못한 source_type=%r로 이 경로에 도달했다(_is_fdc_"
+                "actual_dispatch_target()가 held_position만 통과시켜야 "
+                "하므로 발생해서는 안 되는 상태) — 'held_position'으로 "
+                "조용히 치환하지 않고 fail-closed로 종결한다.",
+                resolved_source_type,
+            )
+            return build_fallback_bundle()
+
         job_id = await self._repos.fdc_quota.register_real_job(
             decision_cycle_id=request.correlation_id,
             decision_context_id=request.decision_context_id,
             symbol=request.symbol or "",
-            source_type=request.source_type or "held_position",
+            source_type=resolved_source_type,
             quota_scope=quota_scope,
             fdc_ready_at=fdc_ready_at,
             # 2026-08-28 4차 리뷰 보정(PR #359, durable carryover) —
