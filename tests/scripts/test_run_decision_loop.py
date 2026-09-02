@@ -102,6 +102,7 @@ from scripts.run_decision_loop import (
     _parse_args,
     _parse_universe_symbols,
     _read_trading_universe,
+    _replay_fdc_actual_dispatch_buy_shadow_events_for_cycle,
     _replay_fdc_ready_shadow_events_for_cycle,
     _resolve_symbol_price,
     _general_lane_priority_key,
@@ -2803,6 +2804,64 @@ def _fdc_only_hold_payload() -> dict[str, Any]:
     }
 
 
+def _buy_candidate_trigger() -> DeterministicTriggerAssessment:
+    """core BUY_CANDIDATE 판정을 강제하는 최소 fixture(2026-09-02, PR C)
+    — ``_reduce_candidate_trigger()``와 동일한 패턴. 실제 threshold
+    계산은 이 테스트의 검증 대상이 아니다."""
+    return DeterministicTriggerAssessment(
+        trigger_version="v1",
+        primary_candidate="BUY_CANDIDATE",
+        candidate_set=("BUY_CANDIDATE",),
+        watch_candidate=False,
+        buy_candidate=True,
+        sell_candidate=False,
+        reduce_candidate=False,
+        candidate_confidence=0.7,
+        entry_score=0.72,
+        exit_score=None,
+        watch_score=None,
+    )
+
+
+def _no_action_trigger() -> DeterministicTriggerAssessment:
+    """core NO_ACTION 판정 fixture(2026-09-02, PR C) — BUY shadow
+    비대상 회귀 확인용."""
+    return DeterministicTriggerAssessment(
+        trigger_version="v1",
+        primary_candidate="NO_ACTION",
+        candidate_set=("NO_ACTION",),
+        watch_candidate=False,
+        buy_candidate=False,
+        sell_candidate=False,
+        reduce_candidate=False,
+        candidate_confidence=0.1,
+        entry_score=0.1,
+        exit_score=None,
+        watch_score=None,
+    )
+
+
+def _core_full_mode_ready_payload(*, decision_type: str = "HOLD") -> dict[str, Any]:
+    """core lane 기본 ``mode="full"`` subprocess 성공 payload(2026-09-02,
+    PR C) — FDC가 결정론적으로 skip되지 않아 ``fdc_ready_at``이 채워진
+    상태를 재현한다. decision_type은 HOLD로 고정해 주문 생성/제출을
+    강제하지 않는다(broker 호출 없음)."""
+    return {
+        "success": True,
+        "event_output": dataclass_to_dict(EventInterpretationOutput(symbol=SYMBOL)),
+        "risk_output": dataclass_to_dict(AIRiskOutput(risk_opinion="allow")),
+        "compliance_output": dataclass_to_dict(
+            AIComplianceOutput(compliance_opinion="allow")
+        ),
+        "composer_output": dataclass_to_dict(
+            FinalDecisionComposerOutput(symbol=SYMBOL, decision_type=decision_type, confidence=0.3)
+        ),
+        "fdc_skipped": False,
+        "fdc_ready_at": "2026-09-02T01:00:00+00:00",
+        "skip_reason_codes": [],
+    }
+
+
 class TestFdcActualDispatchEndToEndContextContinuity:
     """PR #361 종단 간 회귀 테스트 — decision_context_id가 다음 경로
     전체를 거치는 동안 단절 없이 동일하게 유지되는지 in-memory
@@ -3099,6 +3158,283 @@ class TestFdcActualDispatchCallerIdResolution:
             assert spawn_calls == ["fdc_only"]
             normal_row = repos.fdc_quota._jobs[normal_job_id]  # type: ignore[attr-defined]
             assert normal_row["status"] == "FDC_SUCCEEDED"
+
+
+class TestReplayFdcActualDispatchBuyShadowEventsForCycle:
+    """``_replay_fdc_actual_dispatch_buy_shadow_events_for_cycle()``
+    (2026-09-02, PR C) — flag on/off, 일반 lifecycle shadow와의 단일
+    기록(중복 방지) 계약, mode/source_type 보존을 직접 검증한다.
+    ``TestReplayFdcReadyShadowEventsForCycle``과 동일한 패턴으로 실제
+    Postgres 연결 없이 ``InMemoryFdcQuotaRepository``의 진짜 FIFO/
+    window 판정 로직은 그대로 실행한다."""
+
+    @staticmethod
+    def _buy_shadow_event(
+        *, symbol: str = SYMBOL, fdc_ready_at_iso: str = "2026-09-02T01:00:00+00:00",
+    ) -> dict[str, object]:
+        return {
+            "decision_cycle_id": "cycle-1#1",
+            "decision_context_id": None,
+            "symbol": symbol,
+            "source_type": "core",
+            "fdc_ready_at": fdc_ready_at_iso,
+        }
+
+    @staticmethod
+    def _make_fake_repos_settings_tx(
+        monkeypatch: pytest.MonkeyPatch,
+        *, buy_shadow_enabled: bool, general_shadow_enabled: bool,
+    ):
+        from agent_trading.repositories.memory import InMemoryFdcQuotaRepository
+
+        repo = InMemoryFdcQuotaRepository()
+
+        class _FakeRepos:
+            fdc_quota = repo
+
+        class _FakeSettings:
+            fdc_actual_dispatch_buy_shadow_enabled = buy_shadow_enabled
+            fdc_batch_queue_lifecycle_shadow_enabled = general_shadow_enabled
+            fdc_provider_target_rpm = 13
+            fdc_provider_rate_window_seconds = 60
+            gemini_provider_declared_rpm_limit = 15
+
+        class _FakeTx:
+            connection = None
+
+            async def commit(self) -> None:
+                return None
+
+        class _FakeTxCM:
+            async def __aenter__(self) -> "_FakeTx":
+                return _FakeTx()
+
+            async def __aexit__(self, *exc: object) -> bool:
+                return False
+
+        monkeypatch.setattr(
+            "agent_trading.config.settings.AppSettings",
+            lambda: _FakeSettings(),
+        )
+        monkeypatch.setattr(
+            "agent_trading.repositories.postgres.bootstrap.build_postgres_repositories",
+            lambda tx: _FakeRepos(),
+        )
+        monkeypatch.setattr(
+            "agent_trading.db.transaction.transaction",
+            lambda: _FakeTxCM(),
+        )
+        return repo
+
+    @pytest.mark.asyncio
+    async def test_buy_shadow_flag_false_is_full_noop(
+        self, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        repo = self._make_fake_repos_settings_tx(
+            monkeypatch, buy_shadow_enabled=False, general_shadow_enabled=False,
+        )
+        cycle_results = [{"_fdc_actual_dispatch_buy_shadow_event": self._buy_shadow_event()}]
+
+        await _replay_fdc_actual_dispatch_buy_shadow_events_for_cycle(
+            cycle_results, cycle_count=1,
+        )
+
+        assert repo._jobs == {}  # type: ignore[attr-defined]
+        assert repo._shadow_jobs == {}  # type: ignore[attr-defined]
+
+    @pytest.mark.asyncio
+    async def test_buy_shadow_flag_true_general_off_registers_shadow_row(
+        self, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        repo = self._make_fake_repos_settings_tx(
+            monkeypatch, buy_shadow_enabled=True, general_shadow_enabled=False,
+        )
+        cycle_results = [{"_fdc_actual_dispatch_buy_shadow_event": self._buy_shadow_event()}]
+
+        await _replay_fdc_actual_dispatch_buy_shadow_events_for_cycle(
+            cycle_results, cycle_count=1,
+        )
+
+        jobs = repo._shadow_jobs.get("gemini:shared-operational", [])  # type: ignore[attr-defined]
+        assert len(jobs) == 1
+        # source_type/mode가 감사 가능하게 보존된다.
+        assert jobs[0]["mode"] == "shadow"
+        assert jobs[0]["source_type"] == "core"
+        assert jobs[0]["symbol"] == SYMBOL
+        assert jobs[0]["status"] in ("SHADOW_WOULD_GRANT", "SHADOW_QUEUED")
+        # mode='real' job은 전혀 만들어지지 않았다.
+        assert repo._jobs == {}  # type: ignore[attr-defined]
+
+    @pytest.mark.asyncio
+    async def test_buy_shadow_true_and_general_true_skips_to_avoid_duplicate(
+        self, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """단일 기록 계약 — 일반 lifecycle shadow가 이미 켜져 있으면
+        (그 경로가 모든 lane의 FDC-ready 이벤트를 이미 등록하므로) BUY
+        전용 경로는 완전히 no-op이어야 한다."""
+        repo = self._make_fake_repos_settings_tx(
+            monkeypatch, buy_shadow_enabled=True, general_shadow_enabled=True,
+        )
+        cycle_results = [{"_fdc_actual_dispatch_buy_shadow_event": self._buy_shadow_event()}]
+
+        await _replay_fdc_actual_dispatch_buy_shadow_events_for_cycle(
+            cycle_results, cycle_count=1,
+        )
+
+        assert repo._jobs == {}  # type: ignore[attr-defined]
+        assert repo._shadow_jobs == {}  # type: ignore[attr-defined]
+
+    @pytest.mark.asyncio
+    async def test_buy_shadow_false_and_general_true_is_also_noop_for_buy_path(
+        self, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """네 번째 조합 — BUY shadow가 꺼져 있으면 일반 shadow 상태와
+        무관하게 이 경로는 등록하지 않는다(일반 shadow 자체의 등록은
+        ``_replay_fdc_ready_shadow_events_for_cycle()``의 책임이며 이
+        테스트의 대상이 아니다)."""
+        repo = self._make_fake_repos_settings_tx(
+            monkeypatch, buy_shadow_enabled=False, general_shadow_enabled=True,
+        )
+        cycle_results = [{"_fdc_actual_dispatch_buy_shadow_event": self._buy_shadow_event()}]
+
+        await _replay_fdc_actual_dispatch_buy_shadow_events_for_cycle(
+            cycle_results, cycle_count=1,
+        )
+
+        assert repo._jobs == {}  # type: ignore[attr-defined]
+        assert repo._shadow_jobs == {}  # type: ignore[attr-defined]
+
+    @pytest.mark.asyncio
+    async def test_no_pending_events_is_noop_even_when_enabled(
+        self, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        repo = self._make_fake_repos_settings_tx(
+            monkeypatch, buy_shadow_enabled=True, general_shadow_enabled=False,
+        )
+        cycle_results: list[dict[str, object]] = [{"_fdc_actual_dispatch_buy_shadow_event": None}]
+
+        await _replay_fdc_actual_dispatch_buy_shadow_events_for_cycle(
+            cycle_results, cycle_count=1,
+        )
+
+        assert repo._jobs == {}  # type: ignore[attr-defined]
+        assert repo._shadow_jobs == {}  # type: ignore[attr-defined]
+
+
+class TestFdcActualDispatchBuyShadowCapture:
+    """``_run_one_cycle()``의 BUY shadow 이벤트 캡처(2026-09-02, PR C) —
+    실제 ``assemble()``/agent 파이프라인을 그대로 실행하고
+    ``_derive_deterministic_context_components()``만 fake해 core
+    BUY_CANDIDATE/NO_ACTION 후보를 재현한다. 이 클래스는 캡처 시점의
+    대상 필터링(``_is_fdc_actual_dispatch_buy_target()`` 재사용)과,
+    BUY shadow가 켜져 있어도 실제 actual-dispatch(real job 등록/
+    reservation/fdc_only)가 전혀 시작되지 않음을 검증한다."""
+
+    @staticmethod
+    async def _run_core_cycle(
+        monkeypatch: pytest.MonkeyPatch, runtime: dict[str, Any],
+        *, trigger: DeterministicTriggerAssessment,
+    ) -> tuple[dict[str, object], Any]:
+        orchestrator: DecisionOrchestratorService = runtime["orchestrator"]
+
+        async def _fake_derive(*args: Any, **kwargs: Any) -> DeterministicDerivationBundle:
+            return DeterministicDerivationBundle(
+                source_type="core", deterministic_trigger=trigger,
+            )
+
+        orchestrator._derive_deterministic_context_components = _fake_derive  # type: ignore[method-assign]
+        orchestrator._use_subprocess_isolation = True
+
+        async def _fake_spawn_impl(
+            input_bytes: bytes, *, subprocess_timeout: int,
+            decision_context_id: object, correlation_id: str,
+        ) -> tuple[dict[str, Any], bytes]:
+            import json as _json
+            payload = _json.loads(input_bytes)
+            assert payload["mode"] == "full"
+            # _finalize_subprocess_result()는 (result, stdout) 중
+            # stdout(원본 JSON bytes)만 deserialize_agent_output()에
+            # 넘긴다 — result dict는 success 여부 확인에만 쓰인다.
+            # stdout도 실제 payload로 채워야 fdc_ready_at 등이 반영된다.
+            response = _core_full_mode_ready_payload()
+            return response, _json.dumps(response).encode("utf-8")
+
+        import agent_trading.services.decision_agent_runner as runner_module
+        monkeypatch.setattr(
+            runner_module, "_spawn_agent_subprocess_impl", _fake_spawn_impl,
+        )
+
+        result = await _run_one_cycle(
+            cycle=1, submit=False, dry_run=True, output="text",
+            runtime=runtime, source_type="core",
+        )
+        return result, orchestrator
+
+    @pytest.mark.asyncio
+    async def test_core_buy_candidate_captures_buy_shadow_event_when_flag_true(
+        self, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monkeypatch.setenv("FDC_ACTUAL_DISPATCH_BUY_SHADOW_ENABLED", "true")
+        monkeypatch.setenv("FDC_BATCH_QUEUE_LIFECYCLE_SHADOW_ENABLED", "false")
+        async with _mock_runtime_for_one_cycle() as runtime:
+            result, _ = await self._run_core_cycle(
+                monkeypatch, runtime, trigger=_buy_candidate_trigger(),
+            )
+
+        event = result.get("_fdc_actual_dispatch_buy_shadow_event")
+        assert event is not None
+        assert event["source_type"] == "core"
+        assert event["symbol"] == SYMBOL
+        assert event["fdc_ready_at"] == "2026-09-02T01:00:00+00:00"
+
+    @pytest.mark.asyncio
+    async def test_buy_shadow_flag_false_never_captures_event(
+        self, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monkeypatch.setenv("FDC_ACTUAL_DISPATCH_BUY_SHADOW_ENABLED", "false")
+        async with _mock_runtime_for_one_cycle() as runtime:
+            result, _ = await self._run_core_cycle(
+                monkeypatch, runtime, trigger=_buy_candidate_trigger(),
+            )
+
+        assert result.get("_fdc_actual_dispatch_buy_shadow_event") is None
+
+    @pytest.mark.asyncio
+    async def test_non_buy_candidate_never_captures_event_even_when_flag_true(
+        self, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monkeypatch.setenv("FDC_ACTUAL_DISPATCH_BUY_SHADOW_ENABLED", "true")
+        async with _mock_runtime_for_one_cycle() as runtime:
+            result, _ = await self._run_core_cycle(
+                monkeypatch, runtime, trigger=_no_action_trigger(),
+            )
+
+        assert result.get("_fdc_actual_dispatch_buy_shadow_event") is None
+
+    @pytest.mark.asyncio
+    async def test_buy_actual_flag_true_does_not_start_actual_dispatch(
+        self, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """FDC_ACTUAL_DISPATCH_BUY_ENABLED=true여도(§2 actual flag),
+        BUY shadow 경로는 real job 등록/reservation을 전혀 유발하지
+        않는다 — 두 flag가 완전히 분리돼 있음을 증명한다."""
+        monkeypatch.setenv("FDC_ACTUAL_DISPATCH_BUY_SHADOW_ENABLED", "true")
+        monkeypatch.setenv("FDC_ACTUAL_DISPATCH_BUY_ENABLED", "true")
+        async with _mock_runtime_for_one_cycle() as runtime:
+            repos: RepositoryContainer = runtime["repositories"]
+            result, _ = await self._run_core_cycle(
+                monkeypatch, runtime, trigger=_buy_candidate_trigger(),
+            )
+
+            # 이 사이클에서 등록된 mode='real' job이 0건이어야 한다 —
+            # actual-dispatch가 전혀 시작되지 않았다는 직접 증거.
+            real_jobs = [
+                job for job in repos.fdc_quota._jobs.values()  # type: ignore[attr-defined]
+                if job.get("mode") == "real"
+            ]
+            assert real_jobs == []
+
+        assert result.get("_fdc_actual_dispatch_buy_shadow_event") is not None
 
 
 class TestHeldPositionSellBudget:

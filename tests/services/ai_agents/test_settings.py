@@ -16,6 +16,7 @@ from agent_trading.config.settings import (
     KIS_DEFAULT_REST_URLS,
     KIS_DEFAULT_WS_URLS,
     _resolve_fdc_actual_dispatch_buy_enabled,
+    _resolve_fdc_actual_dispatch_buy_shadow_enabled,
     _resolve_fdc_actual_dispatch_enabled,
     _resolve_kis_api_key,
     _resolve_kis_api_secret,
@@ -244,6 +245,66 @@ class TestResolveFdcActualDispatchBuyEnabled:
             )
             assert _resolve_fdc_actual_dispatch_buy_enabled() is (
                 buy_raw == "true"
+            )
+
+
+class TestResolveFdcActualDispatchBuyShadowEnabled:
+    """2026-09-02, BUY/core lane 확장 PR C —
+    ``_resolve_fdc_actual_dispatch_buy_shadow_enabled()`` 기본값 False,
+    ``FDC_ACTUAL_DISPATCH_BUY_SHADOW_ENABLED`` env로만 True 전환.
+    actual flag/기존 held_position actual flag/기존 일반 lifecycle
+    shadow flag와 완전히 독립적인 별도 key임을 함께 검증한다."""
+
+    def test_default_is_false(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.delenv("FDC_ACTUAL_DISPATCH_BUY_SHADOW_ENABLED", raising=False)
+        assert _resolve_fdc_actual_dispatch_buy_shadow_enabled() is False
+
+    def test_true_string_enables(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("FDC_ACTUAL_DISPATCH_BUY_SHADOW_ENABLED", "true")
+        assert _resolve_fdc_actual_dispatch_buy_shadow_enabled() is True
+
+    def test_false_string_stays_disabled(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("FDC_ACTUAL_DISPATCH_BUY_SHADOW_ENABLED", "false")
+        assert _resolve_fdc_actual_dispatch_buy_shadow_enabled() is False
+
+    def test_case_insensitive(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("FDC_ACTUAL_DISPATCH_BUY_SHADOW_ENABLED", "TRUE")
+        assert _resolve_fdc_actual_dispatch_buy_shadow_enabled() is True
+
+    def test_app_settings_field_wires_to_resolver(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("FDC_ACTUAL_DISPATCH_BUY_SHADOW_ENABLED", "true")
+        assert AppSettings().fdc_actual_dispatch_buy_shadow_enabled is True
+        monkeypatch.setenv("FDC_ACTUAL_DISPATCH_BUY_SHADOW_ENABLED", "false")
+        assert AppSettings().fdc_actual_dispatch_buy_shadow_enabled is False
+
+    def test_independent_from_other_fdc_flags(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """actual flag/held_position actual flag/일반 lifecycle shadow
+        flag와 임의로 조합해도 서로의 리졸버 결과에 영향을 주지
+        않는다."""
+        for held_position_raw, buy_actual_raw, buy_shadow_raw in (
+            ("false", "false", "false"), ("true", "false", "false"),
+            ("false", "true", "false"), ("false", "false", "true"),
+            ("true", "true", "true"),
+        ):
+            monkeypatch.setenv("FDC_ACTUAL_DISPATCH_ENABLED", held_position_raw)
+            monkeypatch.setenv("FDC_ACTUAL_DISPATCH_BUY_ENABLED", buy_actual_raw)
+            monkeypatch.setenv(
+                "FDC_ACTUAL_DISPATCH_BUY_SHADOW_ENABLED", buy_shadow_raw,
+            )
+            assert _resolve_fdc_actual_dispatch_enabled() is (
+                held_position_raw == "true"
+            )
+            assert _resolve_fdc_actual_dispatch_buy_enabled() is (
+                buy_actual_raw == "true"
+            )
+            assert _resolve_fdc_actual_dispatch_buy_shadow_enabled() is (
+                buy_shadow_raw == "true"
             )
 
 

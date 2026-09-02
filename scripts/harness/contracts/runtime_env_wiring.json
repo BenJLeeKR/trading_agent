@@ -67,6 +67,12 @@
       "services": ["ops-scheduler"],
       "required_in_compose": true,
       "note": "BUY/core lane 전용 FDC 실제 dispatch 스위치(2026-09-02, PR B). FDC_ACTUAL_DISPATCH_ENABLED(held_position)와 완전히 독립적인 별도 key다. 이 PR 시점에는 이 값을 읽는 runtime 실행 분기가 존재하지 않는다 — settings 파싱 결과로만 존재하며, true여도 BUY job 등록/reservation/fdc_only/주문 제출 중 어느 것도 시작되지 않는다. 실행 경로 연결은 설계 문서 §8의 PR D(provider 전체 quota 통합) 이후 PR E 범위다. 기본값 false."
+    },
+    {
+      "key": "FDC_ACTUAL_DISPATCH_BUY_SHADOW_ENABLED",
+      "services": ["ops-scheduler"],
+      "required_in_compose": true,
+      "note": "BUY/core lane 전용 FDC actual-dispatch shadow 관측 스위치(2026-09-02, PR C). FDC_ACTUAL_DISPATCH_BUY_ENABLED(actual)와도, FDC_BATCH_QUEUE_LIFECYCLE_SHADOW_ENABLED(일반 shadow)와도 별개인 key다. true여도 mode='shadow' 행만 만들며 실제 reservation/fdc_only/주문 제출은 발생하지 않는다. FDC_BATCH_QUEUE_LIFECYCLE_SHADOW_ENABLED가 이미 true면 이 값이 true여도 실제 등록은 일어나지 않는다(일반 shadow가 이미 모든 lane을 등록하므로 중복 방지). 기본값 false."
     }
   ]
 }

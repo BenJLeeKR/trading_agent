@@ -412,6 +412,12 @@ services:
       # 존재하지 않는다 — true여도 BUY job 등록/reservation/fdc_only/
       # 주문 제출 중 어느 것도 시작되지 않는다.
       FDC_ACTUAL_DISPATCH_BUY_ENABLED: "${FDC_ACTUAL_DISPATCH_BUY_ENABLED:-false}"
+      # BUY/core lane 전용 FDC actual-dispatch shadow 관측 스위치
+      # (2026-09-02, PR C) — 위 FDC_ACTUAL_DISPATCH_BUY_ENABLED(actual)
+      # 와도, FDC_BATCH_QUEUE_LIFECYCLE_SHADOW_ENABLED(일반 shadow)와도
+      # 별개인 key다. true여도 mode='shadow' 행만 만들며 실제
+      # reservation/fdc_only/주문 제출은 발생하지 않는다.
+      FDC_ACTUAL_DISPATCH_BUY_SHADOW_ENABLED: "${FDC_ACTUAL_DISPATCH_BUY_SHADOW_ENABLED:-false}"
       FDC_PROVIDER_TARGET_RPM: "${FDC_PROVIDER_TARGET_RPM:-13}"
       FDC_PROVIDER_RATE_WINDOW_SECONDS: "${FDC_PROVIDER_RATE_WINDOW_SECONDS:-60}"
       GEMINI_PROVIDER_DECLARED_RPM_LIMIT: "${GEMINI_PROVIDER_DECLARED_RPM_LIMIT:-15}"
