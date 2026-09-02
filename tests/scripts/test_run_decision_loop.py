@@ -2956,6 +2956,77 @@ class TestFdcActualDispatchEndToEndContextContinuity:
             assert spawn_calls == ["pre_fdc", "fdc_only"]
 
 
+class TestFdcActualDispatchCallerIdResolution:
+    """2026-09-02 PR A 보정(BUY/core lane 확장 선행 작업) —
+    ``complete_fdc_actual_dispatch()``의 ``caller_id`` 하드코딩을
+    제거하고 호출부(``_run_fdc_actual_dispatch_phase()``)가 job의
+    ``source_type``을 기준으로 명시적으로 결정하도록 바꿨다. 등록되지
+    않은 source_type(현재는 held_position 외 전부)은 "held_position"
+    으로 조용히 대체되지 않고 fail-closed 처리돼야 한다."""
+
+    def test_resolve_caller_id_for_held_position(self) -> None:
+        from scripts.run_decision_loop import _resolve_fdc_actual_dispatch_caller_id
+
+        assert (
+            _resolve_fdc_actual_dispatch_caller_id("held_position")
+            == "ops-scheduler:held_position_reduce_sell"
+        )
+
+    def test_resolve_caller_id_for_unknown_source_type_raises(self) -> None:
+        from scripts.run_decision_loop import _resolve_fdc_actual_dispatch_caller_id
+
+        with pytest.raises(KeyError):
+            _resolve_fdc_actual_dispatch_caller_id("core")
+        with pytest.raises(KeyError):
+            _resolve_fdc_actual_dispatch_caller_id("")
+
+    @pytest.mark.asyncio
+    async def test_pending_job_with_unexpected_source_type_fails_closed_as_error(
+        self,
+    ) -> None:
+        """durable resume이나 데이터 정합성 이상으로 pending job에
+        held_position이 아닌 source_type이 실려 있으면, "held_position"
+        으로 자동 치환하지 않고 ERROR 결과로 보고한다 — job의 DB 상태는
+        건드리지 않는다(불완전 처리를 성공으로 숨기지 않는다)."""
+        async with _mock_runtime_for_one_cycle() as runtime:
+            repos: RepositoryContainer = runtime["repositories"]
+
+            job_id = await repos.fdc_quota.register_real_job(
+                decision_cycle_id="c1", decision_context_id=None,
+                symbol="005930", source_type="core",
+                quota_scope="gemini:shared-operational",
+                fdc_ready_at=datetime.now(timezone.utc),
+                pre_fdc_result={"success": True}, correlation_id="test-corr",
+            )
+
+            pending_job = {
+                "cycle_index": None, "symbol": "005930", "market": "KRX",
+                "source_type": "core", "market_segment": None,
+                "index_memberships": (), "job_id": job_id,
+                "pre_fdc_result": {"success": True},
+                "correlation_id": "test-corr", "decision_context_id": None,
+                "decision_cycle_id": None, "universe_anchor": None,
+                "deterministic_trigger_override": None,
+                "r3b_alpha_percentile": None,
+            }
+
+            import time as _time_module
+            results, deferred = await _run_fdc_actual_dispatch_phase(
+                [pending_job],
+                runtime=runtime,
+                cycle_precheck=None,
+                output="text",
+                cycle_count=1,
+                phase_deadline_monotonic=_time_module.monotonic() + 3600,
+            )
+
+            assert deferred == []
+            assert len(results) == 1
+            assert results[0]["status"] == "ERROR"
+            # job의 DB 상태는 전혀 바뀌지 않았다 — 여전히 QUEUED다.
+            assert repos.fdc_quota._jobs[job_id]["status"] == "QUEUED"  # type: ignore[attr-defined]
+
+
 class TestHeldPositionSellBudget:
     """``evaluate_symbol_submit_lane()`` held_position sell lane 검증.
 

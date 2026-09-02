@@ -3329,6 +3329,39 @@ async def _run_general_lane_pass2(
     return submit_budget_consumed_count
 
 
+# 2026-09-02 PR A 보정(BUY/core lane 확장 선행 작업) — 이전에는
+# complete_fdc_actual_dispatch() 내부에 caller_id가
+# "ops-scheduler:held_position_reduce_sell"로 고정돼 있었다. 이제는
+# 호출부(여기)가 job의 실제 source_type을 기준으로 명시적으로 전달한다.
+# 현재 유일한 운영 lane인 held_position만 등록돼 있다 — 다른 source_
+# type이 들어오면 "held_position"으로 조용히 대체하지 않고
+# _resolve_fdc_actual_dispatch_caller_id()가 KeyError를 내어(아래
+# _complete_one()의 기존 fail-closed except 절이 ERROR 결과로 처리)
+# 원인을 숨기지 않는다.
+_FDC_ACTUAL_DISPATCH_CALLER_ID_BY_SOURCE_TYPE: dict[str, str] = {
+    "held_position": "ops-scheduler:held_position_reduce_sell",
+}
+
+
+def _resolve_fdc_actual_dispatch_caller_id(source_type: str) -> str:
+    """job의 source_type에 대응하는 ``caller_id``를 반환한다.
+
+    등록되지 않은 source_type(현재는 held_position 외 전부)이 들어오면
+    "held_position"으로 조용히 대체하지 않고 ``KeyError``를 낸다 —
+    호출자(``_complete_one()``)의 기존 fail-closed ``except Exception``
+    절이 이를 잡아 job의 DB 상태는 그대로 둔 채 ``ERROR`` 결과로
+    보고한다.
+    """
+    try:
+        return _FDC_ACTUAL_DISPATCH_CALLER_ID_BY_SOURCE_TYPE[source_type]
+    except KeyError:
+        raise KeyError(
+            f"FDC actual dispatch: source_type={source_type!r}에 대응하는 "
+            "caller_id가 등록돼 있지 않다(현재 held_position만 지원) — "
+            "fail-closed."
+        ) from None
+
+
 async def _run_fdc_actual_dispatch_phase(
     pending_jobs: list[dict[str, object]],
     *,
@@ -3392,6 +3425,7 @@ async def _run_fdc_actual_dispatch_phase(
         """(result, deferred_job) 튜플을 반환한다 — 정확히 하나만
         non-None이다."""
         try:
+            _job_source_type = str(job["source_type"])
             bundle = await complete_fdc_actual_dispatch(
                 fdc_quota_repo=repos.fdc_quota,
                 provider_runtime=_provider_runtime,
@@ -3400,6 +3434,8 @@ async def _run_fdc_actual_dispatch_phase(
                 pre_fdc_result=job["pre_fdc_result"],
                 correlation_id=job["correlation_id"],
                 decision_context_id=job["decision_context_id"],
+                source_type=_job_source_type,
+                caller_id=_resolve_fdc_actual_dispatch_caller_id(_job_source_type),
                 worker_semaphore=worker_semaphore,
                 deadline_monotonic=phase_deadline_monotonic,
             )
