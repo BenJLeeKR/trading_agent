@@ -203,7 +203,12 @@ legacy limiter를 먼저 두는 이유: legacy 고유의 FIFO 재대기(`allow_r
 **legacy limiter permit 획득 후 global gate가 timeout/거부할 때**:
 
 - **실제 HTTP는 0건**이다 — gate 통과 실패 시 `acquire()`는 `client.post()`를 호출하는 지점(`provider_client.py:426` 이후)에 도달하지 못하도록 `PermitResult(granted=False, denial_reason=...)`를 반환한다. 이는 **기존 `PermitDeniedError` 메커니즘을 그대로 재사용**한다(`provider_client.py:74`, `:426` — `acquire_permit()`이 `granted=False`를 반환하면 즉시 `PermitDeniedError`를 던지고 HTTP를 시작하지 않는 것은 이미 구현돼 있는 동작이다).
-- **fallback reason 처리**: 기존 `provider_queue_timeout`(legacy limiter 자신의 큐 timeout)과 **혼동하지 않도록, global gate 전용 새 `denial_reason` 값**(예: `"global_gate_timeout"`/`"global_gate_denied"`)을 추가하고, `_classify_provider_exception()`(`final_decision_composer.py:71-101`)의 매핑 딕셔너리에 이에 대응하는 새 마커(예: `"provider_global_gate_unavailable"`)를 추가한다 — `provider_queue_timeout`은 "legacy 자신의 FIFO 큐가 찼다"는 의미이고 새 마커는 "legacy 심사는 통과했으나 provider 전체 합산 관문에서 막혔다"는 의미로 원인을 구분해 관측한다. 어느 쪽이든 `decision_type="HOLD"` fallback 정책 자체는 동일하게 유지된다(에러를 성공으로 위장하지 않음).
+- **fallback marker 계약 확정(2026-09-03 보정, 예시 아님 — 문서 전체에서 이 이름을 그대로 쓴다)**: 기존 `PermitDeniedError`/`PermitResult.denial_reason` → `_classify_provider_exception()`(`final_decision_composer.py:71-101`) 매핑은 `denial_reason` 원문 그대로 쓰지 않고 `provider_` 접두 marker로 옮기는 방식이다(기존 실증: `denial_reason="queue_timeout"` → `reason_codes=("provider_queue_timeout",)`, `denial_reason="state_file_error"` → `reason_codes=("provider_limiter_unavailable",)`, `tests/services/ai_agents/test_agents.py:1968-1987,1998-2011`가 이미 이 매핑을 고정 검증한다). 같은 convention을 그대로 따라 global gate 전용 값 2개를 확정한다:
+  - **legacy limiter 자체 timeout**: 기존 `denial_reason="queue_timeout"` → `reason_codes=("provider_queue_timeout",)` **그대로 유지**(변경 없음) — legacy 자신의 FIFO 큐가 찼다는 의미.
+  - **global gate timeout**(gate가 대기 끝에 시간 초과로 거부): `denial_reason="global_gate_timeout"` → `reason_codes=("provider_global_gate_timeout",)`(신설) — legacy 심사는 통과했으나 provider 전체 합산 관문에서 대기 끝에 막혔다는 의미.
+  - **global gate DB/lock/connection 오류**(gate 자체가 판정 불능): `denial_reason="global_gate_error"` → `reason_codes=("provider_global_gate_unavailable",)`(신설) — `"state_file_error"→"provider_limiter_unavailable"`와 동일하게 "원인 자체가 판정 불능"임을 나타내는 `_unavailable` 접미 네이밍을 그대로 따른다.
+  - 세 경우 모두 **실제 HTTP 시작 0건**, `decision_type="HOLD"`, 실패를 성공으로 위장하지 않는 기존 fallback 구조·reason code 기록 방식(`reason_codes` 튜플, `agent.last_provider_observation` 관측 필드)을 그대로 유지한다 — 새 결과 스키마나 새 필드를 추가하지 않는다.
+  - **429/5xx와의 구분**: 429/5xx는 실제 HTTP가 최소 1회 이상 나간 뒤의 재시도 소진이므로 `reason_codes=("provider_rate_limit",)`/`("provider_error",)`로 그대로 남고, global gate 마커(`provider_global_gate_timeout`/`provider_global_gate_unavailable`)와는 "HTTP가 실제로 나갔는가"라는 기준으로 구조적으로 겹치지 않는다 — gate 마커는 HTTP가 전혀 시작되지 않은 경우에만 발생한다.
 - **global gate 기록은 "HTTP 시작"과 구분되는 보수적 소비 규칙을 따른다**: gate가 **grant를 내주는 시점**(HTTP 시작 전, 물리적 전송 여부와 무관)에 이미 자신의 window 슬롯을 소비한 것으로 집계한다 — actual-dispatch의 `try_reserve()`가 `reservation_granted` 시점에 이미 슬롯을 소비하는 것과 **동일한 보수적 원칙**(§4 대안 C 상세)이다. 즉 gate 통과 직후 HTTP 시작 전에 legacy 쪽에서 실패(process kill 등)해도, 그 슬롯은 환불되지 않고 그대로 소비된 채로 남는다.
 - **과대 집계 여부와 처리 방식(확정)**: gate grant 후 HTTP 시작 전 실패는 provider 전체 "실제 물리적 HTTP 시작 수"를 **과대 집계하지 않는다** — gate의 window는 "실제 HTTP 시작 수"가 아니라 "gate가 내준 grant 수"를 세는 것으로 **의도적으로 재정의**되며, grant는 HTTP 시작의 상한(ceiling)이지 하한이 아니다. 이 설계는 정확히 13건의 물리적 HTTP만 보장하는 대신, 아주 드물게 "grant는 받았지만 HTTP를 못 띄운" 슬롯 낭비를 허용해 **13 RPM을 절대 넘지 않는 안전한 방향으로만 오차가 생기게** 만든다(과소 활용은 허용, 과다 사용은 구조적으로 불가능). legacy는 job/큐 개념이 없어 재시도가 필요하면 상위 호출자가 `generate_structured()`를 처음부터 다시 호출하며, 그 새 시도는 legacy limiter와 gate를 처음부터 다시 통과한다(기존 reservation/grant 재사용 없음 — actual-dispatch의 "새 attempt_no로 재시도"와 동일한 원칙).
 
@@ -214,7 +219,7 @@ legacy limiter를 먼저 두는 이유: legacy 고유의 FIFO 재대기(`allow_r
 | gate grant 후 `client.post()` 사이에서 예외 발생(HTTP 시작 전) | gate 슬롯은 소비된 채 유지(환불 없음, 위 보수적 규칙). legacy는 `PermitDeniedError`가 아닌 일반 예외 경로로 흘러 기존 `_classify_provider_exception()`의 다른 분류(예: `provider_error`)로 fallback HOLD 처리. |
 | process kill(legacy 호출 프로세스 자체가 죽음) | legacy에는 durable job 개념이 없으므로 별도 정리(cleanup) 대상이 없다 — 다음 호출이 다시 처음부터 gate를 통과해야 한다. gate 쪽 slot은 자연히 60초 window가 지나면 자동으로 만료(sliding window)되므로 별도 복구 로직이 필요 없다. |
 | 429/5xx 재시도 | `provider_client.py`의 `MAX_RETRIES` 루프가 매 attempt마다 `acquire_permit()`(=`_FdcPermitAccumulator.acquire()`)을 다시 호출하므로, **legacy limiter와 global gate 모두 attempt마다 정확히 1회씩** 다시 통과해야 한다 — 이중 계산도 누락도 없다(호출 지점이 하나이므로 구조적으로 보장됨). |
-| global gate 자체의 DB 오류(예: lock timeout, connection error) | **fail-closed** — gate는 오류 시 grant하지 않고 거부로 취급한다(`denial_reason="global_gate_error"` → `_classify_provider_exception()`에 새 마커 추가, 예: `"provider_global_gate_unavailable"`). 기존 `FdcQuotaCoordinator`의 `_classify_error()`(`fdc_quota.py:45-53`)가 이미 이 방향(오류=거부)으로 설계돼 있어 동일한 철학을 그대로 계승한다. |
+| global gate 자체의 DB 오류(lock timeout, connection error 등) | **fail-closed** — gate는 오류 시 grant하지 않고 거부로 취급한다(`denial_reason="global_gate_error"` → `reason_codes=("provider_global_gate_unavailable",)`, 확정 마커). 기존 `FdcQuotaCoordinator`의 `_classify_error()`(`fdc_quota.py:45-53`)가 이미 이 방향(오류=거부)으로 설계돼 있어 동일한 철학을 그대로 계승한다. |
 
 **책임 분리(재확인)**: legacy limiter는 legacy FDC 고유의 대기/재시도/FIFO 재대기 의미론을 그대로 보존하는 것만 책임지고, global gate는 legacy+actual을 합산한 provider 전체 물리적 HTTP 시작 상한만 책임진다. 어느 한쪽이 거부해도 다른 쪽이 그 실패를 성공으로 바꾸지 않는다 — legacy limiter가 grant해도 gate가 거부하면 여전히 HOLD fallback이고, gate가 grant해도(legacy는 애초에 gate 이전에 이미 grant했으므로 이 순서에서는 항상 legacy가 먼저 통과된 상태) 이후 실제 HTTP가 429/5xx로 실패하면 여전히 기존 legacy 재시도/소진 규칙이 그대로 적용된다.
 
@@ -233,7 +238,9 @@ provider(Gemini) 전체로 나가는 실제 HTTP 호출(legacy `mode="full"` + h
 - `src/agent_trading/services/fdc_quota_coordinator.py` 또는 신규 모듈(예: `fdc_provider_global_gate.py`) — gate 컴포넌트 본체
 - migration 파일 (신규 테이블이 필요한 경우만 — §5.7 참고)
 - `src/agent_trading/config/settings.py` + `.env.example` + `docker-compose.yml` + `scripts/harness/contracts/runtime_env_wiring.json` (gate on/off shadow 플래그, 예: `FDC_PROVIDER_GLOBAL_QUOTA_GATE_ENABLED`)
-- 관련 테스트 파일 전부
+- **`src/agent_trading/services/ai_agents/final_decision_composer.py`(2026-09-03 보정 추가)** — `_classify_provider_exception()`(line 71-101)의 `denial_reason`→`reason_codes` 매핑 딕셔너리에 `"global_gate_timeout"`→`"provider_global_gate_timeout"`, `"global_gate_error"`→`"provider_global_gate_unavailable"` 두 항목만 추가한다. 기존 분류 로직(429/5xx/timeout/parse_error 등)과 `decision_type="HOLD"` fallback 정책 자체는 변경하지 않는다.
+- **`tests/services/ai_agents/test_agents.py`(2026-09-03 보정 추가, 실제 경로 확인됨)** — `class TestFinalDecisionComposerAgent`(line 1684 부근)에 이미 `PermitDeniedError`/`denial_reason`→`reason_codes` 매핑을 직접 검증하는 테스트(`test_run_fallback_on_permit_queue_timeout_sets_reason_no_http`, `test_run_fallback_on_permit_state_file_error_sets_reason_no_http`, line 1968-2011)가 있다 — 같은 패턴으로 `denial_reason="global_gate_timeout"`/`"global_gate_error"` 케이스를 추가한다.
+- 관련 테스트 파일 전부(그 외 신규/기존 파일 포함)
 
 ### 5.3 금지 변경
 - `FDC_ACTUAL_DISPATCH_BUY_ENABLED`를 runtime 조건 분기에서 읽는 코드 추가 금지 — 이번 PR은 BUY actual-dispatch를 연결하지 않는다.
@@ -254,8 +261,9 @@ provider(Gemini) 전체로 나가는 실제 HTTP 호출(legacy `mode="full"` + h
 9. **(보정 1 신설)** actual coordinator의 window(엔타이틀먼트 판정)와 global gate의 window(물리적 HTTP 총량 판정)가 각각 독립적으로 13 RPM을 판단하되, 어느 한쪽의 grant/거부가 다른 쪽의 카운트를 이중 반영하거나 상쇄하지 않는다(§4 대안 C 상세의 책임 분리 서술 참고).
 10. **(보정 2 신설)** `OpenAICompatibleClient`/`LiveGeminiProviderClient`(EI/AR/AC 및 일반 호출이 공유하는 클래스)는 gate 도입 전후로 코드 변경이 0건이며, gate 호출은 `_FdcPermitAccumulator.acquire()`와 `PreGrantedFdcProviderClient`/`execute_fdc_one_shot_attempt()` 두 곳에서만 이뤄진다.
 11. **(2026-09-03 보정 신설)** legacy `mode="full"` 경로에서 `_FdcPermitAccumulator.acquire()`는 항상 `wait_for_fdc_slot()` grant를 먼저 확인한 뒤에만 global gate를 호출한다(순서 역전 없음) — legacy limiter가 거부하면 gate는 아예 호출되지 않는다.
-12. **(2026-09-03 보정 신설)** legacy limiter grant 후 global gate가 timeout/거부/DB 오류를 내면 실제 HTTP는 0건이며, `PermitDeniedError` 기존 메커니즘을 통해 `decision_type="HOLD"` fallback으로 귀결되고, `reason_codes`에 legacy 자신의 `provider_queue_timeout`과 구분되는 gate 전용 마커(예: `provider_global_gate_unavailable`)가 남는다.
+12. **(2026-09-03 보정 신설)** legacy limiter grant 후 global gate가 timeout/DB 오류를 내면 실제 HTTP는 0건이며, `PermitDeniedError` 기존 메커니즘을 통해 `decision_type="HOLD"` fallback으로 귀결되고, `reason_codes`에 legacy 자신의 `provider_queue_timeout`과 구분되는 확정 마커(`provider_global_gate_timeout` 또는 `provider_global_gate_unavailable`)가 남는다.
 13. **(2026-09-03 보정 신설)** global gate의 window 슬롯은 grant 시점에 소비되며(HTTP 실제 시작 여부와 무관, 보수적 소비), gate grant 후 HTTP 시작 전에 실패해도 window count가 환불되지 않는다 — 이 규칙으로 인해 provider 전체 실제 HTTP 시작 수가 13을 넘는 방향으로는 절대 오차가 나지 않음을 테스트로 증명한다.
+14. **(2026-09-03 마커 정합성 보정, 2026-09-03 2차 보정으로 호출 계층 수정)** `tests/services/ai_agents/test_agents.py::TestFinalDecisionComposerAgent`에 `denial_reason="global_gate_timeout"`/`"global_gate_error"` 각각에 대해 `provider.generate_structured()`가 정확히 1회 호출되고(그 호출 내부에서 `PermitDeniedError`가 발생), `reason_codes==("provider_global_gate_timeout",)`/`("provider_global_gate_unavailable",)`을 검증하는 테스트가 존재하며, 기존 `provider_queue_timeout`/`provider_limiter_unavailable` 테스트가 gate 마커 신설 후에도 그대로 통과한다(오분류 없음). **하위 실제 HTTP(`client.post()`) 0회는 이 FDC 계층 테스트가 아니라 provider client/FDC 전용 adapter 계층의 별도 테스트가 증명한다**(§5.5 참고) — 하나의 테스트로 두 계층을 동시에 증명한다고 서술하지 않는다.
 
 ### 5.5 단위/통합 테스트 목록 (최소)
 - gate 단독: 60초 sliding window 13 RPM 강제(정상/경계값/초과 케이스), 429 재시도 2~3회 시나리오, legacy+actual 동시 시뮬레이션 혼합 케이스
@@ -278,6 +286,14 @@ provider(Gemini) 전체로 나가는 실제 HTTP 호출(legacy `mode="full"` + h
 - **(2026-09-03 보정 신설)** 429 재시도 3회 시나리오에서 legacy limiter 호출 횟수와 global gate 호출 횟수가 각각 정확히 3회(attempt 수만큼)씩만 기록되는지 검증(이중 계산/누락 없음)
 - **(2026-09-03 보정 신설)** EI/AR/AC 호출 경로에서 global gate mock이 0회 호출되는지 검증(legacy/actual 전용 주입 경계 재확인 — 보정 2 테스트와 중복 방지를 위해 별도 시나리오로 유지하되 동일 assertion 재사용 가능)
 - **(2026-09-03 보정 신설)** legacy+actual+gate를 모두 동시에 시뮬레이션해도 실제 HTTP 시작 시각 기준 60초 window 최대 13건이 유지되는지(legacy limiter grant 후 gate timeout으로 낭비되는 슬롯이 있어도 물리적 HTTP 총량이 13을 넘지 않음을 종합 검증)
+- **(2026-09-03 마커 정합성 보정, 2026-09-03 2차 보정으로 호출 계층 수정)** 호출 계층을 정확히 두 층으로 나눠 책임을 분리한다 — `PermitDeniedError`는 FDC agent가 호출하는 `provider.generate_structured()` **내부**(provider client의 permit/global gate 평가 단계)에서 발생하므로, FDC agent 관점에서는 `generate_structured()` 자체가 정확히 **1회 호출**되고 그 호출 안에서 permit/global gate 평가도 정확히 1회 일어난 뒤 `PermitDeniedError`가 올라온다. "실제 HTTP(`client.post()`)가 0회"라는 사실은 `generate_structured()` 호출 여부와는 다른 계층의 사실이며, FDC fallback 단위 테스트 하나만으로 동시에 증명된다고 쓰지 않는다.
+  - **`tests/services/ai_agents/test_agents.py::TestFinalDecisionComposerAgent`가 검증하는 것**(FDC agent 계층, provider를 mock으로 대체): `denial_reason="global_gate_timeout"`/`"global_gate_error"` 각각에 대해 (1) `FinalDecisionComposerAgent`가 `provider.generate_structured()`를 정확히 1회 호출함, (2) 그 호출이 `PermitDeniedError`를 던짐, (3) 결과 `decision_type=="HOLD"`, (4) `reason_codes==("provider_global_gate_timeout",)`/`("provider_global_gate_unavailable",)`. 이 테스트는 provider 내부를 mock으로 대체하므로 **실제 HTTP 미발생을 증명하지 않는다** — provider 자체가 mock이라 애초에 HTTP를 보낼 수 없기 때문이다.
+  - **provider client 또는 FDC 전용 adapter의 별도 테스트가 검증하는 것**(provider 계층, 실제 permit/global gate 로직을 실행): global gate가 `denial_reason="global_gate_timeout"`/`"global_gate_error"`로 거부할 때 provider client(legacy는 `_FdcPermitAccumulator.acquire()`를 경유하는 `OpenAICompatibleClient.generate_structured()`, actual은 `PreGrantedFdcProviderClient`)가 **`client.post()`(하위 실제 HTTP 전송)를 호출하지 않는지**를 mock HTTP transport(또는 이에 준하는 방법)로 직접 검증한다. 기존 `tests/services/ai_agents/test_provider_client.py::TestAcquirePermitGating`가 이미 이 계층 책임 분리 관례를 따르고 있다(§2 확정 사실의 근거 각주 — legacy `queue_timeout`/`state_file_error` 케이스도 이 파일에서 HTTP 미발생을 실증하고, `test_agents.py`는 그 예외가 FDC 계층까지 전파됐을 때의 분류만 검증한다).
+  - PR D 필수 테스트에 다음 4개 시나리오를 위 책임 분리에 맞춰 추가한다:
+    1. `tests/services/ai_agents/test_agents.py`: `denial_reason="global_gate_timeout"` → `generate_structured()` 1회 호출(mock 호출 카운트로 확인) → `PermitDeniedError` → `decision_type=="HOLD"` → `reason_codes==("provider_global_gate_timeout",)`
+    2. `tests/services/ai_agents/test_agents.py`: `denial_reason="global_gate_error"` → 동일 호출 경계 → `reason_codes==("provider_global_gate_unavailable",)`
+    3. provider client/FDC adapter 테스트(정확한 파일은 §4.1의 주입 경계에 맞춰 legacy는 `test_provider_client.py` 또는 `_FdcPermitAccumulator` 전용 테스트, actual은 `fdc_manual_provider_gate.py` 대응 테스트에 배치 — 구현 착수 시 확정): global gate가 timeout/error로 거부하면 `client.post()` 호출이 0회임을 직접 검증
+    4. 위 3개 시나리오 및 기존 legacy `queue_timeout`(`reason_codes==("provider_queue_timeout",)`)/429·5xx 소진(`reason_codes==("provider_rate_limit",)`/`("provider_error",)`) 회귀 테스트가 gate 마커 신설 후에도 서로 오분류되지 않고 그대로 통과하는지 재확인
 
 ### 5.6 Harness 검증 명령
 
@@ -285,16 +301,19 @@ provider(Gemini) 전체로 나가는 실제 HTTP 호출(legacy `mode="full"` + h
 
 ```bash
 bash scripts/harness/run.sh accept backend-file src/agent_trading/repositories/postgres/fdc_quota.py
+bash scripts/harness/run.sh accept backend-file src/agent_trading/services/ai_agents/final_decision_composer.py
 bash scripts/harness/run.sh accept script-file scripts/run_agent_subprocess.py
 bash scripts/harness/run.sh accept script-file scripts/fdc_manual_provider_gate.py
 bash scripts/harness/run.sh test-file tests/services/test_fdc_quota_coordinator.py
+bash scripts/harness/run.sh test-file tests/services/ai_agents/test_agents.py
+bash scripts/harness/run.sh test-file tests/services/ai_agents/test_provider_client.py
 bash scripts/harness/run.sh accept env
 bash scripts/harness/run.sh accept db-structure
 bash scripts/harness/run.sh accept no-bypass
 bash scripts/harness/run.sh accept architecture
 ```
 
-`accept db-structure`는 migration 파일명/번호 연속성과 Repository Protocol wiring만 정적으로 검사하며 DB 접속·외부 네트워크·전체 테스트를 실행하지 않는다(`database_connection_run=0`/`external_network_run=0`/`full_test_run=0` 지표로 harness 자체가 보증, `scripts/harness/README.md:314-323`) — 신규 테이블/migration이 실제로 추가되는 경우 이 명령으로 검증한다. `provider_client.py`는 §5.3에서 수정 자체를 금지하므로 이 파일에 대한 `accept backend-file`은 이 목록에 포함하지 않는다.
+`accept db-structure`는 migration 파일명/번호 연속성과 Repository Protocol wiring만 정적으로 검사하며 DB 접속·외부 네트워크·전체 테스트를 실행하지 않는다(`database_connection_run=0`/`external_network_run=0`/`full_test_run=0` 지표로 harness 자체가 보증, `scripts/harness/README.md:314-323`) — 신규 테이블/migration이 실제로 추가되는 경우 이 명령으로 검증한다. `provider_client.py`는 §5.3에서 수정 자체를 금지하므로 이 파일에 대한 `accept backend-file`은 이 목록에 포함하지 않는다. `accept backend-file final_decision_composer.py`가 import-graph로 `tests/services/ai_agents/test_agents.py`를 자동 선택하지 않는 경우를 대비해 `test-file`로 직접 명시했다(실제 선택 여부는 구현 착수 시 `accept backend-file` 출력의 `selected_test_candidates`로 재확인).
 
 ### 5.7 migration 필요 여부
 **미확정 — PR D 구현 착수 시 최우선으로 재확인할 사항.** 권고안(대안 C)은 기존 `fdc_provider_attempts` 재사용을 우선 검토하도록 권고했으나, `mode` CHECK 제약이 `'shadow'|'real'`만 허용하고 legacy 전용 구분자가 없어 `caller_id` 컬럼만으로 legacy/actual을 구분할 수 있는지, 혹은 gate 전용 신규 경량 테이블(예: `fdc_provider_http_starts`)이 필요한지는 스키마 제약 조건을 다시 정밀히 검토해야 한다. 신규 테이블이 필요하면 최소 컬럼(gate_scope, started_at, caller_id 정도)으로 범위를 최소화할 것. 신규 테이블/migration 파일 작성 후에는 §5.6의 `accept db-structure`(migration 파일명·번호 연속성, Repository Protocol wiring 정적 검사)로 검증한다 — `accept migration`이라는 명령은 harness에 존재하지 않는다.
