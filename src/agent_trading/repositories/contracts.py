@@ -2127,6 +2127,34 @@ class ResumableRealJob:
     fdc_ready_at: datetime
 
 
+@dataclass(frozen=True, slots=True)
+class ProviderGlobalGateGranted:
+    """PR D(2026-09-03) — provider 전체(legacy+actual) 물리적 HTTP-start
+    global gate가 grant했을 때의 결과.
+
+    ``fdc_provider_global_gate_grants``에 append-only로 1행이 INSERT된
+    시점의 결과다 — 이 grant는 실제 HTTP가 시작되기 **전**에 이미
+    window 슬롯을 소비한 것으로 집계된다(보수적 소비 규칙, 환불 없음)."""
+
+    grant_id: UUID
+    gate_scope: str
+    window_count_before_grant: int
+
+
+@dataclass(frozen=True, slots=True)
+class ProviderGlobalGateDenied:
+    """global gate가 window 포화로 거부한 결과 — DB/lock 오류가 아닌
+    정상적인 "지금은 자리가 없다" 판정이다(``CoordinatorError``와 구분)."""
+
+    gate_scope: str
+    window_count: int
+
+
+ProviderGlobalGateResult = (
+    ProviderGlobalGateGranted | ProviderGlobalGateDenied | CoordinatorError
+)
+
+
 class FdcQuotaRepository(Protocol):
     """FDC 공용 13 RPM quota의 atomic reservation과 lifecycle shadow 관측.
 
@@ -2479,5 +2507,42 @@ class FdcQuotaRepository(Protocol):
         actual_dispatch()``의 crash 판정과 동일한 tri-state 규칙을
         적용하기 위해 쓰인다. 해당 job에 attempt 행이 하나도 없으면
         ``NOT_FOUND``를 반환한다(read-only, 상태를 갱신하지 않는다).
+        """
+        ...
+
+    async def try_acquire_provider_global_gate_permit(
+        self,
+        *,
+        gate_scope: str,
+        target_rpm: int,
+        window_seconds: int,
+        caller_lane: str,
+        caller_id: str,
+        lock_timeout_ms: int = 3000,
+    ) -> ProviderGlobalGateResult:
+        """PR D(2026-09-03) — legacy `mode="full"` FDC와 held_position/
+        BUY actual-dispatch FDC의 실제 provider HTTP 시작만 합산하는
+        durable global gate.
+
+        ``fdc_quota_state``/``fdc_provider_attempts``/``fdc_queue_jobs``
+        (기존 actual coordinator의 FIFO/window 판정 테이블)를 전혀
+        참조하지 않는다 — 별도의 ``fdc_provider_global_gate_state``
+        (singleton anchor)/``fdc_provider_global_gate_grants``
+        (append-only)만 다룬다. anchor 행을 ``SELECT ... FOR UPDATE``로
+        잠근 뒤 ``(t-window_seconds, t]`` 구간의 grant 수를 세고,
+        ``target_rpm`` 미만이면 새 grant 행을 INSERT해 승인한다.
+
+        **grant는 실제 HTTP 시작 여부와 무관하게, 이 함수가 반환하는
+        순간 이미 window 슬롯을 소비한 것으로 집계된다** — grant 후
+        호출자가 실제 HTTP를 시작하지 못해도(pre-HTTP 실패) 이 슬롯은
+        환불되지 않는다(보수적 소비 규칙 — provider 전체 실제 HTTP
+        시작 수가 ``target_rpm``을 넘는 방향으로는 절대 오차가 나지
+        않고, 아주 드물게 낭비되는 슬롯만 과소 활용으로 허용한다).
+
+        anchor 행이 없거나(seed 누락) DB/lock 오류가 나면 ``Coordinator
+        Error``를 반환한다(fail-closed — grant하지 않는다). ``caller_
+        lane``(``"legacy"``|``"actual"``)은 감사 관측용일 뿐 window
+        판정에는 영향을 주지 않는다 — ``gate_scope`` 전체를 lane 구분
+        없이 합산한다(이것이 이 gate의 존재 이유다).
         """
         ...

@@ -759,6 +759,30 @@ def _resolve_fdc_actual_dispatch_buy_shadow_enabled() -> bool:
     return raw.strip().lower() == "true"
 
 
+def _resolve_fdc_provider_global_gate_enabled() -> bool:
+    """legacy `mode="full"` FDC와 held_position/BUY actual-dispatch FDC의
+    실제 provider HTTP 시작을 하나의 durable global gate로 합산 제한할지
+    여부를 ``FDC_PROVIDER_GLOBAL_GATE_ENABLED`` env에서 읽는다(PR D,
+    2026-09-03).
+
+    설계 근거: docs/40_action_plans/fdc_pr_d_provider_global_quota_design_
+    2026-09-02.md (대안 C). 기본값 ``False`` — 꺼져 있으면 legacy
+    limiter(``wait_for_fdc_slot()``)와 actual-dispatch coordinator(``try_
+    reserve()``)가 지금과 완전히 동일하게 독립 동작한다(gate 호출 자체가
+    발생하지 않는 완전 no-op). ``True``면 두 경로 모두 실제 HTTP 시작
+    직전에 이 gate를 추가로 통과해야 하며, gate가 강제하는 window/RPM은
+    ``FDC_PROVIDER_TARGET_RPM``/``FDC_PROVIDER_RATE_WINDOW_SECONDS``를
+    그대로 재사용한다(별도 target 설정을 두지 않는다 — 같은 물리적 13
+    RPM 상한이므로).
+
+    이 값은 BUY actual-dispatch(``FDC_ACTUAL_DISPATCH_BUY_ENABLED``)를
+    runtime 실행 분기에 연결하지 않는다 — 이 PR도 그 연결을 하지 않는다
+    (PR E 범위).
+    """
+    raw = os.getenv("FDC_PROVIDER_GLOBAL_GATE_ENABLED", "false")
+    return raw.strip().lower() == "true"
+
+
 def _resolve_fdc_provider_target_rpm() -> int:
     """``FDC_PROVIDER_TARGET_RPM`` env — 공용 quota coordinator의 운영
     목표 RPM. 기본값 ``13``(Gemini 선언 한도 15보다 여유 2를 둔 값,
@@ -1155,6 +1179,18 @@ class AppSettings:
     LIFECYCLE_SHADOW_ENABLED`가 이미 켜져 있으면 이 값이 `True`여도
     실제 등록은 일어나지 않는다(중복 등록 방지, 상세는 리졸버
     docstring)."""
+
+    fdc_provider_global_gate_enabled: bool = field(
+        default_factory=_resolve_fdc_provider_global_gate_enabled
+    )
+    """`FDC_PROVIDER_GLOBAL_GATE_ENABLED` env로 제어하는 provider 전체
+    (legacy `mode="full"` + held_position/BUY actual-dispatch) 물리적
+    HTTP-start global gate 스위치(PR D, 2026-09-03). 기본값 ``False`` —
+    꺼져 있으면 두 경로 모두 gate 호출 자체가 발생하지 않는 완전 no-op.
+    `True`면 두 경로 모두 실제 HTTP 시작 직전에 이 gate를 추가로
+    통과해야 하며, `FDC_PROVIDER_TARGET_RPM`/`FDC_PROVIDER_RATE_WINDOW_
+    SECONDS`를 그대로 재사용한다. BUY actual-dispatch를 runtime 실행
+    분기에 연결하지 않는다(PR E 범위, 상세는 리졸버 docstring)."""
 
     fdc_provider_target_rpm: int = field(
         default_factory=_resolve_fdc_provider_target_rpm

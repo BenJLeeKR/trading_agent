@@ -121,6 +121,7 @@ def _install_common_main_stubs(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any
     def _fake_build_agent_triplet(
         *, provider_client: Any, model_id: Any, acquire_permit: Any = None,
     ) -> tuple[Any, Any, Any, Any]:
+        captured["build_agent_triplet_acquire_permit"] = acquire_permit
         return (
             _FakeEventInterpretationAgent(), _FakeAIRiskAgent(),
             _FakeAIComplianceAgent(), _FakeFdcAgent(),
@@ -159,6 +160,96 @@ async def test_mode_full_calls_fdc_and_produces_full_output(
     assert output.success is True
     assert output.requires_fdc_dispatch is False
     assert output.composer_output["decision_type"] == "HOLD"
+
+
+@pytest.mark.asyncio
+async def test_mode_full_flag_off_never_opens_db_pool(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """PR D(2026-09-03) 회귀 방지 — FDC_PROVIDER_GLOBAL_GATE_ENABLED가
+    꺼져 있으면(기본값) legacy mode="full" 경로는 여전히 DB pool을 전혀
+    열지 않는다(기존 동작 100% 보존)."""
+    payload = _base_payload(mode="full")
+    monkeypatch.setattr(
+        script.sys, "stdin", SimpleNamespace(buffer=_FakeStdinBuffer(payload))
+    )
+    captured = _install_common_main_stubs(monkeypatch)
+
+    import agent_trading.config.settings as settings_module
+    monkeypatch.setattr(
+        settings_module, "_resolve_fdc_provider_global_gate_enabled", lambda: False,
+    )
+    pool_calls: list[str] = []
+
+    async def _fake_create_pool(*args: Any, **kwargs: Any) -> None:
+        pool_calls.append("create")
+
+    import agent_trading.db.connection as db_connection_module
+    monkeypatch.setattr(db_connection_module, "create_pool", _fake_create_pool)
+
+    await script.main()
+
+    assert captured["fdc_run_count"] == 1
+    assert pool_calls == [], "flag off면 legacy 경로는 DB pool을 열면 안 된다"
+
+
+@pytest.mark.asyncio
+async def test_mode_full_flag_on_opens_and_closes_db_pool_and_wires_gate(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """flag on이면 legacy mode="full" 경로가 DB pool을 열어 global gate를
+    구성하고, subprocess 종료 전 반드시 pool을 닫는다."""
+    payload = _base_payload(mode="full")
+    monkeypatch.setattr(
+        script.sys, "stdin", SimpleNamespace(buffer=_FakeStdinBuffer(payload))
+    )
+    captured = _install_common_main_stubs(monkeypatch)
+
+    import agent_trading.config.settings as settings_module
+    monkeypatch.setattr(
+        settings_module, "_resolve_fdc_provider_global_gate_enabled", lambda: True,
+    )
+    pool_calls: list[str] = []
+
+    async def _fake_create_pool(*args: Any, **kwargs: Any) -> None:
+        pool_calls.append("create")
+
+    async def _fake_close_pool(*args: Any, **kwargs: Any) -> None:
+        pool_calls.append("close")
+
+    import agent_trading.db.connection as db_connection_module
+    monkeypatch.setattr(db_connection_module, "create_pool", _fake_create_pool)
+    monkeypatch.setattr(db_connection_module, "close_pool", _fake_close_pool)
+
+    class _FakeAmbientTx:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *exc):
+            return False
+
+    import agent_trading.db.transaction as db_transaction_module
+    monkeypatch.setattr(
+        db_transaction_module, "TransactionManager", lambda: _FakeAmbientTx()
+    )
+
+    from agent_trading.repositories.memory import InMemoryFdcQuotaRepository
+
+    import agent_trading.repositories.postgres.fdc_quota as fdc_quota_module
+    monkeypatch.setattr(
+        fdc_quota_module, "PostgresFdcQuotaRepository",
+        lambda tx: InMemoryFdcQuotaRepository(),
+    )
+
+    await script.main()
+
+    assert captured["fdc_run_count"] == 1
+    assert pool_calls == ["create", "close"], (
+        "flag on이면 legacy 경로가 DB pool을 열고 반드시 닫아야 한다"
+    )
+    # _build_agent_triplet()에 넘어간 acquire_permit이 실제로 구성된
+    # _FdcPermitAccumulator.acquire 메서드다(gate가 wiring됐다는 증거).
+    assert captured["build_agent_triplet_acquire_permit"] is not None
 
 
 @pytest.mark.asyncio
@@ -336,6 +427,98 @@ async def test_fdc_only_mode_success_calls_fdc_once_and_closes_pool(
 
 
 @pytest.mark.asyncio
+async def test_fdc_only_mode_flag_on_wires_global_gate_into_pre_granted_client(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """PR D(2026-09-03) — flag on이면 ``_run_fdc_only_mode()``가
+    ``FdcProviderGlobalGate``를 구성해 ``PreGrantedFdcProviderClient``에
+    전달한다(flag off인 기존 테스트는 ``global_gate=None``으로 여전히
+    통과 — 회귀 없음)."""
+    payload = _base_payload(mode="fdc_only")
+    payload["event_interpretation_output"] = {"symbol": "005930"}
+    payload["ai_risk_output"] = {"risk_opinion": "allow"}
+    payload["ai_compliance_output"] = {"compliance_opinion": "allow"}
+    payload["reservation_id"] = "11111111-1111-1111-1111-111111111111"
+    payload["reservation_job_id"] = "22222222-2222-2222-2222-222222222222"
+    payload["reservation_quota_scope"] = "gemini:shared-operational"
+    payload["reservation_attempt_no"] = 1
+    payload["reservation_window_count_before_grant"] = 3
+    monkeypatch.setattr(
+        script.sys, "stdin", SimpleNamespace(buffer=_FakeStdinBuffer(payload))
+    )
+
+    import agent_trading.config.settings as settings_module
+    monkeypatch.setattr(
+        settings_module, "_resolve_fdc_provider_global_gate_enabled", lambda: True,
+    )
+
+    async def _fake_create_pool(*args: Any, **kwargs: Any) -> None:
+        return None
+
+    async def _fake_close_pool(*args: Any, **kwargs: Any) -> None:
+        return None
+
+    import agent_trading.db.connection as db_connection_module
+    monkeypatch.setattr(db_connection_module, "create_pool", _fake_create_pool)
+    monkeypatch.setattr(db_connection_module, "close_pool", _fake_close_pool)
+
+    class _FakeAmbientTx:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *exc):
+            return False
+
+    import agent_trading.db.transaction as db_transaction_module
+    monkeypatch.setattr(
+        db_transaction_module, "TransactionManager", lambda: _FakeAmbientTx()
+    )
+
+    from agent_trading.repositories.memory import InMemoryFdcQuotaRepository
+
+    import agent_trading.repositories.postgres.fdc_quota as fdc_quota_module
+    monkeypatch.setattr(
+        fdc_quota_module, "PostgresFdcQuotaRepository",
+        lambda tx: InMemoryFdcQuotaRepository(),
+    )
+
+    import scripts.fdc_manual_provider_gate as gate_module
+
+    captured_kwargs: dict[str, Any] = {}
+    real_pre_granted_client = gate_module.PreGrantedFdcProviderClient
+
+    class _CapturingPreGrantedClient(real_pre_granted_client):
+        def __init__(self, **kwargs: Any) -> None:
+            captured_kwargs.update(kwargs)
+            super().__init__(**kwargs)
+
+    monkeypatch.setattr(
+        gate_module, "PreGrantedFdcProviderClient", _CapturingPreGrantedClient,
+    )
+
+    class _FakeFdcAgent:
+        def __init__(self, **kwargs: Any) -> None:
+            pass
+
+        async def run(self, request: Any) -> FinalDecisionComposerOutput:
+            return FinalDecisionComposerOutput(
+                symbol="005930", decision_type="HOLD", confidence=0.5,
+            )
+
+    monkeypatch.setattr(script, "FinalDecisionComposerAgent", _FakeFdcAgent)
+    monkeypatch.setattr(script, "_write_output", lambda output: None)
+
+    await script.main()
+
+    from agent_trading.services.fdc_provider_global_gate import FdcProviderGlobalGate
+
+    assert isinstance(captured_kwargs.get("global_gate"), FdcProviderGlobalGate), (
+        "flag on이면 PreGrantedFdcProviderClient가 실제 FdcProviderGlobalGate "
+        "인스턴스를 받아야 한다"
+    )
+
+
+@pytest.mark.asyncio
 async def test_fdc_only_mode_pool_closed_even_when_fdc_raises(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -396,3 +579,169 @@ async def test_fdc_only_mode_pool_closed_even_when_fdc_raises(
     assert exc_info.value.code == 1
     assert pool_calls == ["create", "close"]
     assert written_errors
+
+
+# ===========================================================================
+# _FdcPermitAccumulator.acquire() — PR D(2026-09-03) global gate 주입
+# ===========================================================================
+#
+# legacy limiter(wait_for_fdc_slot())는 파일 기반이라 여기서는 monkeypatch로
+# 결과를 직접 통제한다 — 실제 파일 I/O 없음. global gate는 InMemoryFdcQuota
+# Repository로 실제 window 로직을 그대로 실행한다(mock으로 gate 판정
+# 자체를 대체하지 않는다).
+
+
+def _fake_rate_limit_result(
+    *, granted: bool, queue_timeout: bool = False, state_file_error: bool = False,
+) -> Any:
+    from agent_trading.services.ai_agents.fdc_rate_limiter import FdcRateLimitResult
+
+    return FdcRateLimitResult(
+        granted=granted, waited_seconds=0.0,
+        queue_timeout=queue_timeout, state_file_error=state_file_error,
+    )
+
+
+class TestFdcPermitAccumulatorGlobalGate:
+    @pytest.mark.asyncio
+    async def test_legacy_denied_gate_never_called(
+        self, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """legacy limiter가 거부하면 global gate는 아예 호출되지 않는다
+        (§4.2 확정 순서 — legacy 먼저, grant 후에만 gate)."""
+        async def _fake_wait_for_fdc_slot(**kwargs: Any) -> Any:
+            return _fake_rate_limit_result(granted=False, queue_timeout=True)
+
+        monkeypatch.setattr(script, "wait_for_fdc_slot", _fake_wait_for_fdc_slot)
+
+        gate_call_count = {"n": 0}
+
+        class _CountingGate:
+            async def acquire(self, **kwargs: Any) -> Any:
+                gate_call_count["n"] += 1
+                raise AssertionError("gate should not be called when legacy denies")
+
+        accumulator = script._FdcPermitAccumulator(
+            lane="held_position", global_gate=_CountingGate(),
+        )
+        result = await accumulator.acquire()
+
+        assert result.granted is False
+        assert result.denial_reason == "queue_timeout"
+        assert gate_call_count["n"] == 0
+
+    @pytest.mark.asyncio
+    async def test_legacy_granted_gate_granted_final_result_granted(
+        self, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        from agent_trading.repositories.memory import InMemoryFdcQuotaRepository
+        from agent_trading.services.fdc_provider_global_gate import (
+            FdcProviderGlobalGate,
+        )
+
+        async def _fake_wait_for_fdc_slot(**kwargs: Any) -> Any:
+            return _fake_rate_limit_result(granted=True)
+
+        monkeypatch.setattr(script, "wait_for_fdc_slot", _fake_wait_for_fdc_slot)
+
+        global_gate = FdcProviderGlobalGate(
+            repo=InMemoryFdcQuotaRepository(), target_rpm=13, window_seconds=60,
+        )
+        accumulator = script._FdcPermitAccumulator(
+            lane="held_position", global_gate=global_gate,
+        )
+        result = await accumulator.acquire()
+
+        assert result.granted is True
+        assert result.denial_reason is None
+
+    @pytest.mark.asyncio
+    async def test_legacy_granted_gate_denied_final_result_denied_with_gate_reason(
+        self, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """legacy는 grant했지만 gate window가 가득 찼으면 최종 결과는
+        거부이며, denial_reason은 gate의 것("global_gate_timeout")으로
+        치환된다 — legacy 자신의 queue_timeout/state_file_error와
+        혼동되지 않는다."""
+        from agent_trading.repositories.memory import InMemoryFdcQuotaRepository
+        from agent_trading.services.fdc_provider_global_gate import (
+            FdcProviderGlobalGate,
+        )
+
+        async def _fake_wait_for_fdc_slot(**kwargs: Any) -> Any:
+            return _fake_rate_limit_result(granted=True)
+
+        monkeypatch.setattr(script, "wait_for_fdc_slot", _fake_wait_for_fdc_slot)
+
+        global_gate = FdcProviderGlobalGate(
+            repo=InMemoryFdcQuotaRepository(), target_rpm=1, window_seconds=60,
+        )
+        # target_rpm=1인 정상 설정에서 첫 grant로 window를 채워 포화
+        # 상태를 만든다(invalid config에 의존하지 않는다).
+        prefill = await global_gate.acquire(caller_lane="legacy", caller_id="prefill")
+        assert prefill.granted is True
+
+        accumulator = script._FdcPermitAccumulator(
+            lane="held_position", global_gate=global_gate,
+        )
+        result = await accumulator.acquire()
+
+        assert result.granted is False
+        assert result.denial_reason == "global_gate_timeout"
+
+    @pytest.mark.asyncio
+    async def test_global_gate_none_is_full_noop_regression(
+        self, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """``global_gate=None``(기본값, flag off)이면 기존(PR D 이전)
+        동작과 100% 동일하다 — gate 관련 코드가 전혀 실행되지 않는다."""
+        async def _fake_wait_for_fdc_slot(**kwargs: Any) -> Any:
+            return _fake_rate_limit_result(granted=True)
+
+        monkeypatch.setattr(script, "wait_for_fdc_slot", _fake_wait_for_fdc_slot)
+
+        accumulator = script._FdcPermitAccumulator(lane="held_position")
+        result = await accumulator.acquire()
+
+        assert result.granted is True
+        assert result.denial_reason is None
+
+    @pytest.mark.asyncio
+    async def test_429_retry_calls_gate_once_per_attempt(
+        self, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """provider_client.py의 재시도 루프가 매 attempt마다 acquire()
+        (=이 accumulator)를 다시 호출하므로, gate도 attempt마다 정확히
+        1회씩 통과한다(이중 계산/누락 없음)."""
+        from agent_trading.repositories.memory import InMemoryFdcQuotaRepository
+        from agent_trading.services.fdc_provider_global_gate import (
+            FdcProviderGlobalGate,
+        )
+
+        async def _fake_wait_for_fdc_slot(**kwargs: Any) -> Any:
+            return _fake_rate_limit_result(granted=True)
+
+        monkeypatch.setattr(script, "wait_for_fdc_slot", _fake_wait_for_fdc_slot)
+
+        gate_call_count = {"n": 0}
+        inner_repo = InMemoryFdcQuotaRepository()
+
+        class _CountingGateRepo:
+            async def try_acquire_provider_global_gate_permit(self, **kwargs: Any):
+                gate_call_count["n"] += 1
+                return await inner_repo.try_acquire_provider_global_gate_permit(**kwargs)
+
+        global_gate = FdcProviderGlobalGate(
+            repo=_CountingGateRepo(), target_rpm=13, window_seconds=60,
+        )
+        accumulator = script._FdcPermitAccumulator(
+            lane="held_position", global_gate=global_gate,
+        )
+
+        # provider_client.py의 MAX_RETRIES 루프가 매 attempt(최초+429
+        # 재시도 2회)마다 acquire()를 호출하는 것을 그대로 재현한다.
+        for _ in range(3):
+            result = await accumulator.acquire()
+            assert result.granted is True
+
+        assert gate_call_count["n"] == 3

@@ -68,6 +68,9 @@ from agent_trading.repositories.contracts import (
     ResumableRealJob,
     FillSyncHealthSummary,
     LossCutShadowObservationRow,
+    ProviderGlobalGateDenied,
+    ProviderGlobalGateGranted,
+    ProviderGlobalGateResult,
     ReservationDenied,
     ReservationGrant,
     ReservationResult,
@@ -3172,7 +3175,7 @@ class InMemoryFdcQuotaRepository:
 
     __slots__ = (
         "_lock", "_attempts", "_attempts_by_id", "_jobs", "_shadow_jobs",
-        "_enqueue_sequence_counter",
+        "_enqueue_sequence_counter", "_global_gate_grants",
     )
 
     def __init__(self) -> None:
@@ -3186,6 +3189,10 @@ class InMemoryFdcQuotaRepository:
         # quota_scope -> list of shadow job dicts(FIFO 큐 전용, real과 완전 분리)
         self._shadow_jobs: dict[str, list[dict[str, Any]]] = {}
         self._enqueue_sequence_counter = 0
+        # gate_scope -> list of grant dicts(PR D global gate 전용 — 위
+        # _jobs/_attempts/_shadow_jobs와 완전히 분리된 독립 저장 구조,
+        # actual coordinator의 window/FIFO 상태를 전혀 참조하지 않는다)
+        self._global_gate_grants: dict[str, list[dict[str, Any]]] = {}
 
     def _window_count(self, *, quota_scope: str, window_seconds: int) -> int:
         cutoff = datetime.now(timezone.utc) - timedelta(seconds=window_seconds)
@@ -3578,3 +3585,41 @@ class InMemoryFdcQuotaRepository:
             if latest.http_started_at is None:
                 return AttemptHttpLifecycle.NOT_STARTED
             return AttemptHttpLifecycle.STARTED
+
+    async def try_acquire_provider_global_gate_permit(
+        self,
+        *,
+        gate_scope: str,
+        target_rpm: int,
+        window_seconds: int,
+        caller_lane: str,
+        caller_id: str,
+        lock_timeout_ms: int = 3000,
+    ) -> ProviderGlobalGateResult:
+        """PR D(2026-09-03) — ``self._global_gate_grants``는 ``self._jobs``/
+        ``self._attempts``/``self._shadow_jobs``와 완전히 분리된 독립
+        저장 구조다(actual coordinator의 window/FIFO 상태를 전혀 참조
+        하지 않는다). grant는 INSERT 시점에 이미 window 슬롯을 소비한
+        것으로 집계되며 환불되지 않는다(Postgres 구현과 동일한 보수적
+        소비 규칙)."""
+        async with self._lock:
+            cutoff = datetime.now(timezone.utc) - timedelta(seconds=window_seconds)
+            grants = self._global_gate_grants.setdefault(gate_scope, [])
+            window_count = sum(1 for g in grants if g["granted_at"] > cutoff)
+            if window_count >= target_rpm:
+                return ProviderGlobalGateDenied(
+                    gate_scope=gate_scope, window_count=window_count,
+                )
+            grant_id = uuid4()
+            grants.append({
+                "grant_id": grant_id,
+                "gate_scope": gate_scope,
+                "caller_lane": caller_lane,
+                "caller_id": caller_id,
+                "granted_at": datetime.now(timezone.utc),
+            })
+            return ProviderGlobalGateGranted(
+                grant_id=grant_id,
+                gate_scope=gate_scope,
+                window_count_before_grant=window_count,
+            )

@@ -82,9 +82,19 @@ def _classify_provider_exception(exc: Exception) -> str:
     (실제 429)과 DB에서 명확히 구분돼야 한다.
     """
     if isinstance(exc, PermitDeniedError):
+        # 2026-09-03 PR D 보정 — global gate(legacy limiter 통과 후,
+        # 또는 actual-dispatch의 execute_fdc_one_shot_attempt()가 HTTP
+        # 시작 직전에 통과시키는 provider 전체 물리적 상한)도 같은
+        # PermitDeniedError 경로를 재사용한다. "global_gate_timeout"
+        # (window 포화, 정상 거부)과 "global_gate_error"(gate 자체
+        # DB/lock/connection 오류)는 기존 queue_timeout/state_file_error
+        # 와 원인이 다르므로 별도 marker로 구분한다 — 두 경우 모두 실제
+        # HTTP는 0건이었다는 점은 기존 PermitDeniedError 계약과 동일하다.
         return {
             "queue_timeout": "provider_queue_timeout",
             "state_file_error": "provider_limiter_unavailable",
+            "global_gate_timeout": "provider_global_gate_timeout",
+            "global_gate_error": "provider_global_gate_unavailable",
         }.get(exc.result.denial_reason or "", "provider_limiter_unavailable")
     if isinstance(exc, httpx.HTTPStatusError):
         status = exc.response.status_code

@@ -18,6 +18,7 @@ import pytest
 from agent_trading.repositories.contracts import ReservationGrant
 from agent_trading.repositories.memory import InMemoryFdcQuotaRepository
 from agent_trading.services.ai_agents.base import RawProviderResponse
+from agent_trading.services.fdc_provider_global_gate import FdcProviderGlobalGate
 from agent_trading.services.fdc_quota_coordinator import FdcQuotaCoordinator
 from agent_trading.services.market_session import SessionInfo
 from scripts import fdc_manual_provider_gate as gate
@@ -290,6 +291,161 @@ class TestCallWithCoordinator:
                 reservation_id=grant.reservation_id, outcome="http_started",
                 http_started_at=datetime.now(timezone.utc),
             )
+
+
+async def _grant_only(coordinator: FdcQuotaCoordinator) -> ReservationGrant:
+    result = await coordinator.try_reserve(job_id=None, caller_id="manual:test")
+    assert isinstance(result, ReservationGrant)
+    return result
+
+
+class TestExecuteFdcOneShotAttemptGlobalGate:
+    """PR D(2026-09-03) — ``execute_fdc_one_shot_attempt()``의
+    ``global_gate`` 주입 지점. gate 호출은 ``record_attempt_outcome
+    (outcome="http_started")`` 직전(=``client.post()`` 전)에 일어나므로,
+    gate가 거부하면 ``_FakeClient.calls``(=실제 HTTP에 해당)가 전혀
+    늘어나지 않는다는 것으로 "실제 HTTP 0회"를 직접 증명한다."""
+
+    @pytest.mark.asyncio
+    async def test_gate_granted_allows_http_normally(self) -> None:
+        coordinator = _make_coordinator()
+        global_gate = FdcProviderGlobalGate(
+            repo=InMemoryFdcQuotaRepository(), target_rpm=13, window_seconds=60,
+        )
+        client = _FakeClient([_success_response()])
+
+        result = await gate.execute_fdc_one_shot_attempt(
+            coordinator=coordinator, client=client,
+            grant=await _grant_only(coordinator),
+            job_id=None, attempt_no=1, model_id="m", system_prompt="s",
+            user_prompt="u", response_format=_FakeOutput,
+            temperature=0.0, seed=None, global_gate=global_gate,
+        )
+
+        assert result.parsed.symbol == "AAPL"
+        assert len(client.calls) == 1, "gate가 grant했으므로 실제 HTTP가 1회 나가야 한다"
+
+    @pytest.mark.asyncio
+    async def test_gate_denied_window_full_sends_zero_http_and_records_reserved_but_not_started(
+        self,
+    ) -> None:
+        coordinator = _make_coordinator()
+        global_gate = FdcProviderGlobalGate(
+            repo=InMemoryFdcQuotaRepository(), target_rpm=1, window_seconds=60,
+        )
+        # target_rpm=1인 정상 설정에서 첫 grant로 window를 채워 포화
+        # 상태를 만든다(invalid config에 의존하지 않는다).
+        prefill = await global_gate.acquire(caller_lane="legacy", caller_id="prefill")
+        assert prefill.granted is True
+        client = _FakeClient([_success_response()])
+        grant = await _grant_only(coordinator)
+
+        with pytest.raises(gate._RetryableAttemptError) as exc_info:
+            await gate.execute_fdc_one_shot_attempt(
+                coordinator=coordinator, client=client, grant=grant,
+                job_id=None, attempt_no=1, model_id="m", system_prompt="s",
+                user_prompt="u", response_format=_FakeOutput,
+                temperature=0.0, seed=None, global_gate=global_gate,
+            )
+
+        cause = exc_info.value.__cause__
+        assert isinstance(cause, gate.PermitDeniedError)
+        assert cause.result.denial_reason == "global_gate_timeout"
+        assert client.calls == [], "gate가 거부했으므로 실제 HTTP는 0회여야 한다"
+        assert client.http_started_count == 0
+        assert _attempt_outcome(coordinator, grant.reservation_id) == (
+            "reserved_but_http_not_started"
+        )
+
+    @pytest.mark.asyncio
+    async def test_gate_error_sends_zero_http_and_denial_reason_is_global_gate_error(
+        self,
+    ) -> None:
+        coordinator = _make_coordinator()
+
+        class _FailingGateRepo:
+            async def try_acquire_provider_global_gate_permit(self, **kwargs: Any):
+                from agent_trading.repositories.contracts import (
+                    CoordinatorError,
+                    CoordinatorErrorClass,
+                )
+                return CoordinatorError(
+                    CoordinatorErrorClass.COORDINATOR_UNAVAILABLE, "db down",
+                )
+
+        global_gate = FdcProviderGlobalGate(
+            repo=_FailingGateRepo(), target_rpm=13, window_seconds=60,
+        )
+        client = _FakeClient([_success_response()])
+        grant = await _grant_only(coordinator)
+
+        with pytest.raises(gate._RetryableAttemptError) as exc_info:
+            await gate.execute_fdc_one_shot_attempt(
+                coordinator=coordinator, client=client, grant=grant,
+                job_id=None, attempt_no=1, model_id="m", system_prompt="s",
+                user_prompt="u", response_format=_FakeOutput,
+                temperature=0.0, seed=None, global_gate=global_gate,
+            )
+
+        cause = exc_info.value.__cause__
+        assert isinstance(cause, gate.PermitDeniedError)
+        assert cause.result.denial_reason == "global_gate_error"
+        assert client.calls == []
+
+    @pytest.mark.asyncio
+    async def test_gate_none_is_full_noop_regression(self) -> None:
+        """``global_gate`` 기본값(``None``)은 gate 호출 자체가 없다 —
+        기존(PR D 이전) 동작과 100% 동일하다(회귀 방지)."""
+        coordinator = _make_coordinator()
+        client = _FakeClient([_success_response()])
+
+        result = await gate.execute_fdc_one_shot_attempt(
+            coordinator=coordinator, client=client,
+            grant=await _grant_only(coordinator),
+            job_id=None, attempt_no=1, model_id="m", system_prompt="s",
+            user_prompt="u", response_format=_FakeOutput,
+            temperature=0.0, seed=None,
+        )
+        assert result.parsed.symbol == "AAPL"
+        assert len(client.calls) == 1
+
+    @pytest.mark.asyncio
+    async def test_429_retry_calls_gate_exactly_once_per_attempt(self) -> None:
+        """429 재시도 2회 시나리오 — global gate는 attempt마다(=재시도
+        포함) 정확히 1회씩 통과해야 한다(이중 계산/누락 없음). attempt 1은
+        429(post-HTTP retryable)로 실패, 호출자(여기서는 테스트가 직접
+        dispatcher 재시도 루프를 흉내낸다)가 새 grant로 attempt 2를
+        시도해 성공한다."""
+        coordinator = _make_coordinator()
+        call_count = {"n": 0}
+        inner_repo = InMemoryFdcQuotaRepository()
+
+        class _CountingGateRepo:
+            async def try_acquire_provider_global_gate_permit(self, **kwargs: Any):
+                call_count["n"] += 1
+                return await inner_repo.try_acquire_provider_global_gate_permit(**kwargs)
+
+        global_gate = FdcProviderGlobalGate(
+            repo=_CountingGateRepo(), target_rpm=13, window_seconds=60,
+        )
+
+        client = _FakeClient([_retryable_429(), _success_response()])
+        result = None
+        for attempt_no in (1, 2):
+            grant = await _grant_only(coordinator)
+            try:
+                result = await gate.execute_fdc_one_shot_attempt(
+                    coordinator=coordinator, client=client, grant=grant,
+                    job_id=None, attempt_no=attempt_no, model_id="m",
+                    system_prompt="s", user_prompt="u",
+                    response_format=_FakeOutput, temperature=0.0, seed=None,
+                    global_gate=global_gate,
+                )
+                break
+            except gate._RetryableAttemptError:
+                continue
+        assert call_count["n"] == 2, "attempt마다 gate가 정확히 1회씩 호출돼야 한다"
+        assert result is not None and result.parsed.symbol == "AAPL"
 
 
 class TestCoordinatedFdcProviderClient:
