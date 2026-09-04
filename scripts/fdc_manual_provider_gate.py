@@ -80,8 +80,10 @@ from agent_trading.services.ai_agents.base import RawProviderResponse
 from agent_trading.services.ai_agents.provider_client import (
     LiveGeminiProviderClient,
     PermitCallback,
+    PermitDeniedError,
     _is_retryable_http_status,
 )
+from agent_trading.services.fdc_provider_global_gate import FdcProviderGlobalGate
 from agent_trading.services.fdc_quota_coordinator import (
     FdcQuotaCoordinator,
     ManualCallPolicy,
@@ -298,6 +300,7 @@ async def execute_fdc_one_shot_attempt(
     response_format: type,
     temperature: float,
     seed: int | None,
+    global_gate: FdcProviderGlobalGate | None = None,
 ) -> RawProviderResponse:
     """이미 발급된 ``grant`` 하나로 provider one-shot HTTP를 실행하고
     ``fdc_provider_attempts``에 결과를 기록한다(``call_with_coordinator()``
@@ -311,11 +314,28 @@ async def execute_fdc_one_shot_attempt(
       ``_RetryableAttemptError``(원본 예외를 ``__cause__``에 담음)를
       던진다 — 호출자가 새 reservation으로 재시도할지 결정한다.
     - 재시도 불가(non-retryable): 원본 예외를 그대로 던진다.
-    """
+
+    ``global_gate``(PR D, 2026-09-03 신설 — 기본값 ``None``, ``call_
+    with_coordinator()``/``run_real_dispatch_job()``의 기존 manual 호출은
+    이 인자를 넘기지 않으므로 동작이 완전히 그대로 보존된다):
+    ``PreGrantedFdcProviderClient``(actual-dispatch)만 이 인자를 넘겨,
+    ``http_started`` 기록 **직전**에 provider 전체 물리적 HTTP-start
+    global gate를 통과시킨다. gate가 거부하면 ``PermitDeniedError``를
+    던져 ``client.post()``를 호출하지 않는다 — 아래 except 블록이
+    ``http_started=False``인 이 실패를 기존 ``reserved_but_http_not_
+    started`` 경로로 그대로 처리하므로 새 상태를 만들지 않는다."""
     http_started = False
 
     async def _on_http_start(_grant: ReservationGrant = grant) -> None:
         nonlocal http_started
+        if global_gate is not None:
+            gate_lane = "actual" if job_id is not None else "manual"
+            gate_result = await global_gate.acquire(
+                caller_lane=gate_lane,
+                caller_id=f"{gate_lane}:job={job_id}" if job_id else f"{gate_lane}:manual",
+            )
+            if not gate_result.granted:
+                raise PermitDeniedError(gate_result)
         await coordinator.record_attempt_outcome(
             reservation_id=_grant.reservation_id,
             outcome="http_started",
@@ -560,11 +580,13 @@ class PreGrantedFdcProviderClient:
         live_client: LiveGeminiProviderClient,
         grant: ReservationGrant,
         job_id: uuid.UUID | None,
+        global_gate: FdcProviderGlobalGate | None = None,
     ) -> None:
         self._coordinator = coordinator
         self._live_client = live_client
         self._grant = grant
         self._job_id = job_id
+        self._global_gate = global_gate
 
     async def generate_structured(
         self,
@@ -596,6 +618,7 @@ class PreGrantedFdcProviderClient:
                 response_format=response_format,
                 temperature=temperature,
                 seed=seed,
+                global_gate=self._global_gate,
             )
         except _RetryableAttemptError as exc:
             raise exc.__cause__ from None

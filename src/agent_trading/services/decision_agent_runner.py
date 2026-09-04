@@ -362,6 +362,17 @@ def apply_expected_value_anchor(
     )
 
 
+# PR D(2026-09-03) — global gate가 거부(timeout/DB 오류)해 실제 HTTP가
+# 시작되지 않았을 때 fdc_only subprocess가 success=True로 남기는
+# provider_final_status 값. final_decision_composer.py의
+# _classify_provider_exception()이 PermitDeniedError.result.denial_reason
+# ("global_gate_timeout"/"global_gate_error")을 이 두 문자열로 매핑한다.
+_GLOBAL_GATE_DENIAL_STATUSES = frozenset({
+    "provider_global_gate_timeout",
+    "provider_global_gate_unavailable",
+})
+
+
 class FdcDispatchDeferredError(Exception):
     """post-gather dispatcher phase의 소프트 데드라인을 넘겨 이 job을
     시작(또는 재시도)할 시간이 없음을 알리는 신호(2026-08-27 3차 리뷰
@@ -649,6 +660,34 @@ async def complete_fdc_actual_dispatch(
                     )
                     return build_fallback_bundle()
 
+                # 2026-09-03 PR D 보정 — success=True(=subprocess가
+                # 결과 없이 죽지 않고 정상 종료)이지만 "HTTP가 실제로
+                # 나갔다"는 6차 리뷰 보정의 전제가 깨지는 유일한 경우가
+                # global gate 거부다. execute_fdc_one_shot_attempt()는
+                # http_started를 기록하기 **직전**에 gate를 통과시키므로
+                # (fdc_manual_provider_gate.py), 이 두 marker는 항상
+                # pre-HTTP 실패이며 http_attempt_count를 건드리면 안
+                # 된다 — record_http_attempt_counters() 호출보다 먼저
+                # 갈라내, 기존 crash 경로(NOT_STARTED lifecycle)와 동일한
+                # reason="pre_http_execution_failure"로 새 reservation
+                # (새 try_reserve()/attempt_no)으로만 재시도한다(기존
+                # reservation을 재사용하지 않는다).
+                provider_final_status = fdc_only_result.get("provider_final_status", "")
+                if provider_final_status in _GLOBAL_GATE_DENIAL_STATUSES:
+                    will_retry = provider_attempt_no < max_provider_attempts
+                    await fdc_quota_repo.apply_retry_failure(
+                        job_id=job_id, reason="pre_http_execution_failure",
+                        will_retry=will_retry,
+                    )
+                    if will_retry:
+                        provider_attempt_no += 1
+                        continue
+                    await fdc_quota_repo.mark_job_terminal(
+                        job_id=job_id, status="FDC_FAILED_FINAL",
+                        reason=provider_final_status,
+                    )
+                    return build_fallback_bundle()
+
                 # 2026-08-28 6차 리뷰 보정 — 이 시점에 fdc_only_result가
                 # success=True이므로 HTTP가 실제로 나갔다(subprocess가
                 # 결과 없이 죽은 경우는 위 branch에서 이미 처리됨). 성공/
@@ -661,7 +700,6 @@ async def complete_fdc_actual_dispatch(
                     ),
                 )
 
-                provider_final_status = fdc_only_result.get("provider_final_status", "")
                 retryable_statuses = {
                     "provider_rate_limit", "provider_error", "provider_timeout",
                 }

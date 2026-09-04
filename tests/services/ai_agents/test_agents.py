@@ -2013,6 +2013,140 @@ class TestFinalDecisionComposerAgent:
         assert agent.last_provider_observation.rate_limiter_state_file_error is True
         assert agent.last_provider_observation.rate_limiter_queue_timeout is False
 
+    # ── PR D(2026-09-03) — provider 전체 global HTTP-start gate가 legacy/
+    # actual 양쪽에서 재사용하는 PermitDeniedError 경로. 이 gate는
+    # generate_structured() **내부**(legacy는 acquire_permit 콜백,
+    # actual은 execute_fdc_one_shot_attempt()의 on_http_start)에서
+    # 거부되므로, FDC agent 관점에서는 generate_structured()가 정확히
+    # 1회 호출된 뒤 그 호출이 PermitDeniedError를 던지는 것으로
+    # 관측된다 — "generate_structured() 호출 자체가 0회"가 아니다.
+
+    @pytest.mark.asyncio
+    async def test_run_fallback_on_global_gate_timeout_calls_generate_structured_once(
+        self,
+        sample_request: AgentExecutionRequest,
+    ) -> None:
+        """``denial_reason="global_gate_timeout"``이면 generate_
+        structured()가 정확히 1회 호출되고, decision_type="HOLD",
+        reason_codes=('provider_global_gate_timeout',)로 분류돼야
+        한다."""
+        provider = AsyncMock(spec=AIProviderClient)
+        call_count = {"n": 0}
+
+        async def _deny(**kwargs: object) -> object:
+            call_count["n"] += 1
+            raise PermitDeniedError(
+                PermitResult(
+                    granted=False, waited_seconds=0.0,
+                    denial_reason="global_gate_timeout",
+                )
+            )
+
+        provider.generate_structured = _deny  # type: ignore[method-assign]
+
+        agent = FinalDecisionComposerAgent(provider_client=provider)
+        result = await agent.run(sample_request)
+
+        assert call_count["n"] == 1, (
+            "FDC agent 계층에서는 generate_structured()가 정확히 1회 "
+            "호출돼야 한다 — gate 거부는 그 호출 내부에서 일어난 일이지, "
+            "호출 자체가 생략된 것이 아니다"
+        )
+        assert result.decision_type == "HOLD"
+        assert result.reason_codes == ("provider_global_gate_timeout",)
+        assert agent.last_provider_observation is not None
+        assert agent.last_provider_observation.http_attempt_count == 0, (
+            "PermitDeniedError는 http_attempt_count=0을 부착한다 — 실제 "
+            "HTTP(client.post())는 0회였다는 뜻이며, 이는 이 테스트가 "
+            "아니라 provider client/adapter 계층 테스트(예: "
+            "tests/scripts/test_fdc_manual_provider_gate.py::"
+            "TestExecuteFdcOneShotAttemptGlobalGate)가 별도로 직접 "
+            "증명한다"
+        )
+
+    @pytest.mark.asyncio
+    async def test_run_fallback_on_global_gate_error_calls_generate_structured_once(
+        self,
+        sample_request: AgentExecutionRequest,
+    ) -> None:
+        """``denial_reason="global_gate_error"``(gate 자체 DB/lock/
+        connection 오류)이면 reason_codes=
+        ('provider_global_gate_unavailable',)로 분류돼야 한다 —
+        window 포화(정상 거부, global_gate_timeout)와 원인이 다르므로
+        marker로 구분된다."""
+        provider = AsyncMock(spec=AIProviderClient)
+        call_count = {"n": 0}
+
+        async def _deny(**kwargs: object) -> object:
+            call_count["n"] += 1
+            raise PermitDeniedError(
+                PermitResult(
+                    granted=False, waited_seconds=0.0,
+                    denial_reason="global_gate_error",
+                )
+            )
+
+        provider.generate_structured = _deny  # type: ignore[method-assign]
+
+        agent = FinalDecisionComposerAgent(provider_client=provider)
+        result = await agent.run(sample_request)
+
+        assert call_count["n"] == 1
+        assert result.decision_type == "HOLD"
+        assert result.reason_codes == ("provider_global_gate_unavailable",)
+
+    @pytest.mark.asyncio
+    async def test_run_fallback_existing_queue_timeout_not_reclassified_as_gate_marker(
+        self,
+        sample_request: AgentExecutionRequest,
+    ) -> None:
+        """회귀 방지 — gate marker 신설 후에도 기존 legacy limiter
+        ``queue_timeout``은 여전히 ``provider_queue_timeout``으로만
+        분류되고, 새 gate marker로 오분류되지 않는다."""
+        provider = AsyncMock(spec=AIProviderClient)
+
+        async def _deny(**kwargs: object) -> object:
+            raise PermitDeniedError(
+                PermitResult(granted=False, waited_seconds=1.0, denial_reason="queue_timeout")
+            )
+
+        provider.generate_structured = _deny  # type: ignore[method-assign]
+
+        agent = FinalDecisionComposerAgent(provider_client=provider)
+        result = await agent.run(sample_request)
+        assert result.reason_codes == ("provider_queue_timeout",)
+        assert result.reason_codes != ("provider_global_gate_timeout",)
+        assert result.reason_codes != ("provider_global_gate_unavailable",)
+
+    @pytest.mark.asyncio
+    async def test_run_fallback_after_429_exhaustion_not_reclassified_as_gate_marker(
+        self,
+        sample_request: AgentExecutionRequest,
+    ) -> None:
+        """회귀 방지 — 429 소진 fallback(``provider_rate_limit``)이 gate
+        marker와 혼동되지 않는다."""
+        import httpx
+
+        provider = AsyncMock(spec=AIProviderClient)
+
+        async def _rate_limited(**kwargs: object) -> object:
+            req = httpx.Request("POST", "https://x/v1/chat/completions")
+            resp = httpx.Response(429, request=req)
+            exc = httpx.HTTPStatusError("429", request=req, response=resp)
+            exc.http_attempt_count = 3  # type: ignore[attr-defined]
+            exc.http_429_count = 3  # type: ignore[attr-defined]
+            raise exc
+
+        provider.generate_structured = _rate_limited  # type: ignore[method-assign]
+
+        agent = FinalDecisionComposerAgent(provider_client=provider)
+        result = await agent.run(sample_request)
+        assert result.reason_codes == ("provider_rate_limit",)
+        assert result.reason_codes not in (
+            ("provider_global_gate_timeout",),
+            ("provider_global_gate_unavailable",),
+        )
+
     @pytest.mark.asyncio
     async def test_run_fallback_on_permit_denied_after_429_retry_halts_with_queue_timeout(
         self,

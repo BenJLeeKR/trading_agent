@@ -418,6 +418,10 @@ services:
       # 별개인 key다. true여도 mode='shadow' 행만 만들며 실제
       # reservation/fdc_only/주문 제출은 발생하지 않는다.
       FDC_ACTUAL_DISPATCH_BUY_SHADOW_ENABLED: "${FDC_ACTUAL_DISPATCH_BUY_SHADOW_ENABLED:-false}"
+      # provider 전체(legacy mode="full" + held_position/BUY actual-
+      # dispatch) 물리적 HTTP-start global gate 스위치(PR D, 2026-09-03).
+      # false(기본값)면 gate 호출 자체가 발생하지 않는 완전 no-op.
+      FDC_PROVIDER_GLOBAL_GATE_ENABLED: "${FDC_PROVIDER_GLOBAL_GATE_ENABLED:-false}"
       FDC_PROVIDER_TARGET_RPM: "${FDC_PROVIDER_TARGET_RPM:-13}"
       FDC_PROVIDER_RATE_WINDOW_SECONDS: "${FDC_PROVIDER_RATE_WINDOW_SECONDS:-60}"
       GEMINI_PROVIDER_DECLARED_RPM_LIMIT: "${GEMINI_PROVIDER_DECLARED_RPM_LIMIT:-15}"

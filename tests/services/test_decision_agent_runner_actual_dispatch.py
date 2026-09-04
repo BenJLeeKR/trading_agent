@@ -149,6 +149,23 @@ def _fdc_only_retryable_failure_result() -> dict[str, Any]:
     }
 
 
+def _fdc_only_gate_denied_result(status: str) -> dict[str, Any]:
+    """PR D(2026-09-03) — global gate 거부 시 fdc_only subprocess가
+    남기는 결과 모양. ``FinalDecisionComposerAgent``가 ``PermitDenied
+    Error``를 graceful하게 HOLD로 swallow하므로 success=True다(HTTP는
+    0회 — provider_http_attempt_count=0)."""
+    return {
+        "success": True,
+        "composer_output": dataclass_to_dict(
+            FinalDecisionComposerOutput(symbol="005930", decision_type="HOLD", confidence=0.0)
+        ),
+        "provider_final_status": status,
+        "provider_http_attempt_count": 0,
+        "provider_http_429_count": 0,
+        "provider_execution_seconds": 0.1,
+    }
+
+
 class TestIsFdcActualDispatchBuyTarget:
     """2026-09-02, BUY/core lane 확장 PR B —
     ``_is_fdc_actual_dispatch_buy_target()``(순수 함수) 단위 테스트.
@@ -1598,6 +1615,105 @@ class TestRetryFifoTailReenqueue:
         # attempt 단위 관측값은 재등록 여부와 무관하게 3회 전부 반영된다.
         assert job["reserved_but_http_not_started_count"] == 3
         assert job["http_attempt_count"] == 0  # HTTP는 한 번도 시작되지 않았다
+
+    @pytest.mark.asyncio
+    async def test_global_gate_timeout_retries_via_pre_http_execution_failure_path(
+        self, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """2026-09-03 PR D 보정 — global gate가 거부(``provider_final_
+        status="provider_global_gate_timeout"``)하면 subprocess는
+        success=True(FinalDecisionComposerAgent가 graceful하게 HOLD로
+        swallow)로 돌아오지만, 이는 crash 경로(NOT_STARTED lifecycle)와
+        동일하게 ``reason="pre_http_execution_failure"``로 새
+        try_reserve()/attempt로만 재시도돼야 한다 — ``http_attempt_
+        count``는 건드리지 않는다(실제 HTTP가 없었으므로)."""
+        import agent_trading.services.decision_agent_runner as runner_module
+
+        repo = InMemoryFdcQuotaRepository()
+        job_id = await repo.register_real_job(
+            decision_cycle_id="c1", decision_context_id=None, symbol="005930",
+            source_type="held_position", quota_scope="gemini:shared-operational",
+            fdc_ready_at=datetime.now(timezone.utc),
+        )
+
+        call_count = {"n": 0}
+
+        async def _fake_spawn_impl(input_bytes, *, subprocess_timeout, decision_context_id, correlation_id):
+            call_count["n"] += 1
+            if call_count["n"] == 1:
+                return _fdc_only_gate_denied_result("provider_global_gate_timeout"), b"{}"
+            return _fdc_only_success_result(), b"{}"
+
+        monkeypatch.setattr(runner_module, "_spawn_agent_subprocess_impl", _fake_spawn_impl)
+
+        result = await runner_module.complete_fdc_actual_dispatch(
+            fdc_quota_repo=repo, provider_runtime={},
+            subprocess_timeout=90, job_id=job_id,
+            pre_fdc_result=_pre_fdc_ready_result(),
+            correlation_id="test-corr", decision_context_id=None,
+            source_type="held_position",
+            caller_id="ops-scheduler:held_position_reduce_sell",
+            worker_semaphore=asyncio.Semaphore(5),
+        )
+
+        assert call_count["n"] == 2, "gate 거부 후 새 try_reserve()로 재시도돼야 한다"
+        assert result is not None
+        job = repo._jobs[job_id]  # type: ignore[attr-defined]
+        assert job["status"] == "FDC_SUCCEEDED"
+        assert job["pre_http_execution_failure_count"] == 1, (
+            "gate 거부는 기존 pre_http_execution_failure 경로로 합류해야 "
+            "한다(provider_retryable_failure가 아니다)"
+        )
+        assert job["provider_retry_count"] == 0
+        assert job["queue_reenqueue_count"] == 1
+        assert job["reserved_but_http_not_started_count"] == 1
+        # gate 거부 시도 자체는 HTTP가 나가지 않았으므로 http_attempt_
+        # count에 반영되지 않는다 — 재시도(2차, 실제 성공)만 반영된다.
+        assert job["http_attempt_count"] == 1
+
+    @pytest.mark.asyncio
+    async def test_global_gate_error_exhaustion_marks_terminal_with_gate_marker_reason(
+        self, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """gate 자체 DB 오류(``provider_global_gate_unavailable``)가
+        max_provider_attempts까지 소진되면, 기존 소진 종결과 동일하게
+        ``FDC_FAILED_FINAL``로 끝나되 reason이 gate marker 그대로
+        남는다 — 새로운 job 상태를 만들지 않는다."""
+        import agent_trading.services.decision_agent_runner as runner_module
+
+        repo = InMemoryFdcQuotaRepository()
+        job_id = await repo.register_real_job(
+            decision_cycle_id="c1", decision_context_id=None, symbol="005930",
+            source_type="held_position", quota_scope="gemini:shared-operational",
+            fdc_ready_at=datetime.now(timezone.utc),
+        )
+
+        call_count = {"n": 0}
+
+        async def _fake_spawn_impl(input_bytes, *, subprocess_timeout, decision_context_id, correlation_id):
+            call_count["n"] += 1
+            return _fdc_only_gate_denied_result("provider_global_gate_unavailable"), b"{}"
+
+        monkeypatch.setattr(runner_module, "_spawn_agent_subprocess_impl", _fake_spawn_impl)
+
+        result = await runner_module.complete_fdc_actual_dispatch(
+            fdc_quota_repo=repo, provider_runtime={},
+            subprocess_timeout=90, job_id=job_id,
+            pre_fdc_result=_pre_fdc_ready_result(),
+            correlation_id="test-corr", decision_context_id=None,
+            source_type="held_position",
+            caller_id="ops-scheduler:held_position_reduce_sell",
+            worker_semaphore=asyncio.Semaphore(5),
+        )
+
+        assert call_count["n"] == 3
+        assert result is not None
+        job = repo._jobs[job_id]  # type: ignore[attr-defined]
+        assert job["status"] == "FDC_FAILED_FINAL"
+        assert job["failure_or_cancel_reason"] == "provider_global_gate_unavailable"
+        assert job["pre_http_execution_failure_count"] == 2  # 마지막 실패는 재등록 아님
+        assert job["queue_reenqueue_count"] == 2
+        assert job["http_attempt_count"] == 0
 
     @pytest.mark.asyncio
     async def test_success_on_first_attempt_does_not_touch_retry_counters(

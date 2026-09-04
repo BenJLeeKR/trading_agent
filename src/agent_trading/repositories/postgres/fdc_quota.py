@@ -19,6 +19,9 @@ from agent_trading.repositories.contracts import (
     AttemptHttpLifecycle,
     CoordinatorError,
     CoordinatorErrorClass,
+    ProviderGlobalGateDenied,
+    ProviderGlobalGateGranted,
+    ProviderGlobalGateResult,
     ResumableRealJob,
     ReservationDenied,
     ReservationGrant,
@@ -697,3 +700,71 @@ class PostgresFdcQuotaRepository:
         if row["http_started_at"] is None:
             return AttemptHttpLifecycle.NOT_STARTED
         return AttemptHttpLifecycle.STARTED
+
+    async def try_acquire_provider_global_gate_permit(
+        self,
+        *,
+        gate_scope: str,
+        target_rpm: int,
+        window_seconds: int,
+        caller_lane: str,
+        caller_id: str,
+        lock_timeout_ms: int = 3000,
+    ) -> ProviderGlobalGateResult:
+        """PR D(2026-09-03) — ``fdc_provider_global_gate_state``/
+        ``fdc_provider_global_gate_grants``만 다룬다. 기존 actual
+        coordinator의 ``fdc_quota_state``/``fdc_provider_attempts``/
+        ``fdc_queue_jobs``는 전혀 참조하지 않는다(독립 window)."""
+        try:
+            async with TransactionManager() as gate_tx:
+                await gate_tx.connection.execute(
+                    f"SET LOCAL lock_timeout = {int(lock_timeout_ms)}"
+                )
+                anchor_row = await gate_tx.connection.fetchrow(
+                    "SELECT gate_scope FROM trading.fdc_provider_global_gate_state "
+                    "WHERE gate_scope = $1 FOR UPDATE",
+                    gate_scope,
+                )
+                if anchor_row is None:
+                    await gate_tx.rollback()
+                    return CoordinatorError(
+                        CoordinatorErrorClass.COORDINATOR_TRANSACTION_ERROR,
+                        f"anchor row missing for gate_scope={gate_scope!r} "
+                        "in trading.fdc_provider_global_gate_state — seed the "
+                        "anchor row before use (fail-closed, gate not granted)",
+                    )
+
+                window_count = await gate_tx.connection.fetchval(
+                    "SELECT count(*) FROM trading.fdc_provider_global_gate_grants "
+                    "WHERE gate_scope = $1 "
+                    "AND granted_at > now() - make_interval(secs => $2)",
+                    gate_scope,
+                    window_seconds,
+                )
+
+                if window_count >= target_rpm:
+                    await gate_tx.commit()
+                    return ProviderGlobalGateDenied(
+                        gate_scope=gate_scope, window_count=window_count,
+                    )
+
+                grant_id = uuid.uuid4()
+                await gate_tx.connection.execute(
+                    "INSERT INTO trading.fdc_provider_global_gate_grants "
+                    "(grant_id, gate_scope, caller_lane, caller_id, granted_at) "
+                    "VALUES ($1, $2, $3, $4, now())",
+                    grant_id,
+                    gate_scope,
+                    caller_lane,
+                    caller_id,
+                )
+                await gate_tx.commit()
+                return ProviderGlobalGateGranted(
+                    grant_id=grant_id,
+                    gate_scope=gate_scope,
+                    window_count_before_grant=window_count,
+                )
+        except asyncpg.PostgresError as exc:
+            return CoordinatorError(_classify_error(exc), str(exc))
+        except (OSError, ConnectionError) as exc:
+            return CoordinatorError(_classify_error(exc), str(exc))

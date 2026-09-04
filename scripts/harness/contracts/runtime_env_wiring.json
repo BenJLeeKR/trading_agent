@@ -73,6 +73,12 @@
       "services": ["ops-scheduler"],
       "required_in_compose": true,
       "note": "BUY/core lane 전용 FDC actual-dispatch shadow 관측 스위치(2026-09-02, PR C). FDC_ACTUAL_DISPATCH_BUY_ENABLED(actual)와도, FDC_BATCH_QUEUE_LIFECYCLE_SHADOW_ENABLED(일반 shadow)와도 별개인 key다. true여도 mode='shadow' 행만 만들며 실제 reservation/fdc_only/주문 제출은 발생하지 않는다. FDC_BATCH_QUEUE_LIFECYCLE_SHADOW_ENABLED가 이미 true면 이 값이 true여도 실제 등록은 일어나지 않는다(일반 shadow가 이미 모든 lane을 등록하므로 중복 방지). 기본값 false."
+    },
+    {
+      "key": "FDC_PROVIDER_GLOBAL_GATE_ENABLED",
+      "services": ["ops-scheduler"],
+      "required_in_compose": true,
+      "note": "provider 전체(legacy mode=\"full\" + held_position/BUY actual-dispatch) 물리적 HTTP-start global gate 스위치(PR D, 2026-09-03). false(기본값)면 두 경로 모두 gate 호출 자체가 발생하지 않는 완전 no-op. true면 두 경로 모두 실제 HTTP 시작 직전 이 gate를 추가로 통과해야 하며, FDC_PROVIDER_TARGET_RPM/FDC_PROVIDER_RATE_WINDOW_SECONDS를 그대로 재사용해 두 경로 합산 60초 sliding window 13 RPM을 강제한다. BUY actual-dispatch를 runtime 실행 분기에 연결하지 않는다(PR E 범위)."
     }
   ]
 }

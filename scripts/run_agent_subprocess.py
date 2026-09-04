@@ -66,6 +66,7 @@ from agent_trading.services.ai_agents.provider_client import (
     PermitCallback,
     PermitResult,
 )
+from agent_trading.services.fdc_provider_global_gate import FdcProviderGlobalGate
 from agent_trading.services.ai_agents.schemas import (
     AIComplianceOutput,
     AIRiskOutput,
@@ -360,7 +361,9 @@ class _FdcPermitAccumulator:
     판단한다.
     """
 
-    def __init__(self, *, lane: str = "unknown") -> None:
+    def __init__(
+        self, *, lane: str = "unknown", global_gate: FdcProviderGlobalGate | None = None,
+    ) -> None:
         self.total_waited_seconds = 0.0
         self.slot_acquired = False
         self.queue_timeout = False
@@ -372,6 +375,7 @@ class _FdcPermitAccumulator:
         self.final_waited_seconds = 0.0
         self.queue_deadline_exceeded = False
         self._call_count = 0
+        self._global_gate = global_gate
 
     async def acquire(self) -> PermitResult:
         self._call_count += 1
@@ -400,6 +404,22 @@ class _FdcPermitAccumulator:
             denial_reason = "queue_timeout"
         elif result.state_file_error:
             denial_reason = "state_file_error"
+
+        # PR D(2026-09-03) — legacy limiter가 거부하면 global gate는
+        # 아예 호출하지 않는다(§4.2 설계 문서 확정 순서: legacy limiter
+        # 먼저, grant 후에만 global gate). ``self._global_gate``가
+        # ``None``이면(flag off) 이 블록 전체가 완전 no-op이다.
+        if result.granted and denial_reason is None and self._global_gate is not None:
+            gate_result = await self._global_gate.acquire(
+                caller_lane="legacy", caller_id=f"legacy:{self.lane}",
+            )
+            if not gate_result.granted:
+                return PermitResult(
+                    granted=False,
+                    waited_seconds=result.waited_seconds,
+                    denial_reason=gate_result.denial_reason,
+                )
+
         return PermitResult(
             granted=result.granted,
             waited_seconds=result.waited_seconds,
@@ -1268,6 +1288,7 @@ async def _run_fdc_only_mode(inp: AgentSubprocessInput, t0: float) -> None:
             raise ValueError("mode='fdc_only'는 provider 설정이 필요하다")
 
         from agent_trading.config.settings import (
+            _resolve_fdc_provider_global_gate_enabled,
             _resolve_fdc_provider_rate_window_seconds,
             _resolve_fdc_provider_target_rpm,
             _resolve_gemini_provider_declared_rpm_limit,
@@ -1295,6 +1316,18 @@ async def _run_fdc_only_mode(inp: AgentSubprocessInput, t0: float) -> None:
             window_seconds=_resolve_fdc_provider_rate_window_seconds(),
             declared_rpm_limit=_resolve_gemini_provider_declared_rpm_limit(),
         )
+        # PR D(2026-09-03) — flag가 꺼져 있으면 global_gate=None이라
+        # execute_fdc_one_shot_attempt()가 gate 호출 자체를 하지 않는다
+        # (완전 no-op, 기존 동작 그대로).
+        global_gate = (
+            FdcProviderGlobalGate(
+                repo=repo,
+                target_rpm=_resolve_fdc_provider_target_rpm(),
+                window_seconds=_resolve_fdc_provider_rate_window_seconds(),
+            )
+            if _resolve_fdc_provider_global_gate_enabled()
+            else None
+        )
         live_client = LiveGeminiProviderClient(
             coordinator=coordinator,
             api_key=inp.provider_api_key,
@@ -1310,7 +1343,7 @@ async def _run_fdc_only_mode(inp: AgentSubprocessInput, t0: float) -> None:
         )
         pre_granted_client = PreGrantedFdcProviderClient(
             coordinator=coordinator, live_client=live_client,
-            grant=grant, job_id=grant.job_id,
+            grant=grant, job_id=grant.job_id, global_gate=global_gate,
         )
         fdc_agent = FinalDecisionComposerAgent(
             provider_client=pre_granted_client,
@@ -1418,12 +1451,41 @@ async def main() -> None:
             "set" if inp.provider_base_url else "not set",
         )
         _diag("No provider client created")
+    # PR D(2026-09-03) — flag가 켜져 있고 legacy FDC 호출이 실제로
+    # 있을 때만(provider_client가 있을 때만) DB pool을 연다. flag가
+    # 꺼져 있으면(기본값) 이 블록 전체가 아무 것도 하지 않는다 — legacy
+    # 경로는 지금처럼 DB에 전혀 접속하지 않는다.
+    global_gate_pool_opened = False
+    fdc_global_gate: FdcProviderGlobalGate | None = None
+    if provider_client is not None:
+        from agent_trading.config.settings import (
+            _resolve_fdc_provider_global_gate_enabled,
+            _resolve_fdc_provider_rate_window_seconds,
+            _resolve_fdc_provider_target_rpm,
+        )
+        if _resolve_fdc_provider_global_gate_enabled():
+            from agent_trading.db.connection import create_pool
+            from agent_trading.db.transaction import TransactionManager
+            from agent_trading.repositories.postgres.fdc_quota import (
+                PostgresFdcQuotaRepository,
+            )
+            await create_pool()
+            global_gate_pool_opened = True
+            async with TransactionManager() as _gate_ambient_tx:
+                _gate_repo = PostgresFdcQuotaRepository(_gate_ambient_tx)
+            fdc_global_gate = FdcProviderGlobalGate(
+                repo=_gate_repo,
+                target_rpm=_resolve_fdc_provider_target_rpm(),
+                window_seconds=_resolve_fdc_provider_rate_window_seconds(),
+            )
     # 2026-08-21: FDC 1회 호출(최초 요청 + 재시도 전부) 동안의 permit
     # 판정을 누적할 accumulator. provider 미설정(Stub 경로)이면 애초에
     # HTTP 호출이 없으므로 만들지 않는다 — Stub은 permit 대기 없이
     # 기존 동작을 그대로 유지한다.
     fdc_permit_accumulator = (
-        _FdcPermitAccumulator(lane=inp.source_type or "unknown")
+        _FdcPermitAccumulator(
+            lane=inp.source_type or "unknown", global_gate=fdc_global_gate,
+        )
         if provider_client is not None else None
     )
     ei_agent, ar_agent, ac_agent, fdc_agent = _build_agent_triplet(
@@ -1785,6 +1847,14 @@ async def main() -> None:
         logger.exception("Agent subprocess failed after %.2fs", duration)
         _write_error_output(str(exc), duration=duration)
         sys.exit(1)
+    finally:
+        # PR D(2026-09-03) — global gate 때문에 이 subprocess가 DB pool을
+        # 열었을 때만(flag on + legacy provider 호출 있음) 닫는다. flag가
+        # 꺼져 있으면 global_gate_pool_opened가 False라 이 블록은 아무
+        # 것도 하지 않는다(기존 동작 그대로).
+        if global_gate_pool_opened:
+            from agent_trading.db.connection import close_pool
+            await close_pool()
 
 
 def _write_output(output: AgentSubprocessOutput) -> None:
