@@ -331,8 +331,12 @@ class TestExecuteFdcOneShotAttemptGlobalGate:
     ) -> None:
         coordinator = _make_coordinator()
         global_gate = FdcProviderGlobalGate(
-            repo=InMemoryFdcQuotaRepository(), target_rpm=0, window_seconds=60,
+            repo=InMemoryFdcQuotaRepository(), target_rpm=1, window_seconds=60,
         )
+        # target_rpm=1인 정상 설정에서 첫 grant로 window를 채워 포화
+        # 상태를 만든다(invalid config에 의존하지 않는다).
+        prefill = await global_gate.acquire(caller_lane="legacy", caller_id="prefill")
+        assert prefill.granted is True
         client = _FakeClient([_success_response()])
         grant = await _grant_only(coordinator)
 

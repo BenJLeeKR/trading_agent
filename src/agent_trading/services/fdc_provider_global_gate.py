@@ -26,6 +26,19 @@ from agent_trading.services.ai_agents.provider_client import PermitResult
 
 DEFAULT_GATE_SCOPE = "gemini:provider-global"
 
+# 2026-09-03 Finding 1 보정 — global gate가 강제해야 하는 "legacy+actual
+# 합산 60초 sliding window 최대 13건" 계약 자체를 이 gate가 스스로
+# 지키도록 하는 최소/최대 불변식. FDC_PROVIDER_TARGET_RPM/FDC_PROVIDER_
+# RATE_WINDOW_SECONDS는 원래 held_position actual coordinator만을
+# 염두에 두고 만들어진 설정값이라 최소값만 검사했고, 13 초과나 60초가
+# 아닌 window로도 얼마든지 설정될 수 있었다 — global gate가 활성화된
+# 상태에서 이런 설정이 들어오면 "13 RPM을 넘지 않는다"는 계약 자체가
+# 깨진다. 13보다 낮은 target은 더 보수적이므로(gate가 더 일찍 거부할
+# 뿐, 13 RPM 상한을 절대 넘지 않는다는 계약은 그대로 유지되므로) 허용한다.
+_MIN_TARGET_RPM = 1
+_MAX_TARGET_RPM = 13
+_REQUIRED_WINDOW_SECONDS = 60
+
 
 class FdcProviderGlobalGate:
     """``FdcQuotaRepository.try_acquire_provider_global_gate_permit()``를
@@ -65,7 +78,21 @@ class FdcProviderGlobalGate:
           아님) — ``ProviderGlobalGateDenied``.
         - ``"global_gate_error"``: gate 자체의 DB/lock/connection
           오류(fail-closed — grant하지 않는다) — ``CoordinatorError``.
+          2026-09-03 보정: ``target_rpm``/``window_seconds`` 설정값
+          자체가 "legacy+actual 합산 13 RPM 상한"을 보장할 수 없는
+          범위(``target_rpm`` 1~13 밖, ``window_seconds`` != 60)여도
+          같은 marker로 fail-closed한다 — repository/DB 호출 자체를
+          하지 않는다(설정 오류를 DB에 떠넘기지 않는다).
         """
+        if not (_MIN_TARGET_RPM <= self._target_rpm <= _MAX_TARGET_RPM):
+            return PermitResult(
+                granted=False, waited_seconds=0.0, denial_reason="global_gate_error",
+            )
+        if self._window_seconds != _REQUIRED_WINDOW_SECONDS:
+            return PermitResult(
+                granted=False, waited_seconds=0.0, denial_reason="global_gate_error",
+            )
+
         result = await self._repo.try_acquire_provider_global_gate_permit(
             gate_scope=self._gate_scope,
             target_rpm=self._target_rpm,

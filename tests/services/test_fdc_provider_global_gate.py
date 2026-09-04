@@ -120,6 +120,69 @@ class TestFdcProviderGlobalGateAcquire:
     async def test_default_gate_scope_constant(self) -> None:
         assert DEFAULT_GATE_SCOPE == "gemini:provider-global"
 
+    # ── Finding 1 보정(2026-09-03) — global gate 자체의 rate 불변식.
+    # FDC_PROVIDER_TARGET_RPM/FDC_PROVIDER_RATE_WINDOW_SECONDS가
+    # "legacy+actual 합산 13 RPM"을 보장할 수 없는 값이면, gate는
+    # repository/DB를 전혀 건드리지 않고 즉시 fail-closed(denial_
+    # reason="global_gate_error")한다.
+
+    @pytest.mark.asyncio
+    async def test_target_rpm_14_fails_closed_without_touching_repo(self) -> None:
+        call_count = {"n": 0}
+
+        class _CountingRepo:
+            async def try_acquire_provider_global_gate_permit(self, **kwargs):
+                call_count["n"] += 1
+                raise AssertionError("repository should not be called for invalid config")
+
+        gate = FdcProviderGlobalGate(repo=_CountingRepo(), target_rpm=14, window_seconds=60)
+        result = await gate.acquire(caller_lane="legacy", caller_id="legacy:test")
+
+        assert result.granted is False
+        assert result.denial_reason == "global_gate_error"
+        assert call_count["n"] == 0
+
+    @pytest.mark.asyncio
+    async def test_window_seconds_30_fails_closed_without_touching_repo(self) -> None:
+        call_count = {"n": 0}
+
+        class _CountingRepo:
+            async def try_acquire_provider_global_gate_permit(self, **kwargs):
+                call_count["n"] += 1
+                raise AssertionError("repository should not be called for invalid config")
+
+        gate = FdcProviderGlobalGate(repo=_CountingRepo(), target_rpm=13, window_seconds=30)
+        result = await gate.acquire(caller_lane="legacy", caller_id="legacy:test")
+
+        assert result.granted is False
+        assert result.denial_reason == "global_gate_error"
+        assert call_count["n"] == 0
+
+    @pytest.mark.asyncio
+    async def test_target_rpm_below_13_is_allowed_more_conservative(self) -> None:
+        """13보다 낮은 target은 더 보수적일 뿐 13 RPM 상한 계약을
+        깨지 않으므로 허용된다(fail-closed 대상이 아니다)."""
+        gate = _make_gate(target_rpm=1, window_seconds=60)
+        result = await gate.acquire(caller_lane="legacy", caller_id="legacy:test")
+        assert result.granted is True
+
+    @pytest.mark.asyncio
+    async def test_target_rpm_1_is_allowed_boundary(self) -> None:
+        gate = _make_gate(target_rpm=1, window_seconds=60)
+        result = await gate.acquire(caller_lane="legacy", caller_id="legacy:test")
+        assert result.granted is True
+
+    @pytest.mark.asyncio
+    async def test_target_rpm_13_window_60_boundary_still_valid(self) -> None:
+        """정상 경계(target=13, window=60)는 여전히 유효한 설정이다 —
+        13번째까지 grant, 14번째부터 window 포화로 거부(§ 기존 테스트
+        test_13th_grant_succeeds_14th_denied_with_global_gate_timeout
+        과 동일 계약, 여기서는 유효성 검사 자체만 별도로 재확인)."""
+        gate = _make_gate(target_rpm=13, window_seconds=60)
+        result = await gate.acquire(caller_lane="legacy", caller_id="legacy:test")
+        assert result.granted is True
+        assert result.denial_reason is None
+
 
 class TestInMemoryTryAcquireProviderGlobalGatePermit:
     """``InMemoryFdcQuotaRepository.try_acquire_provider_global_gate_

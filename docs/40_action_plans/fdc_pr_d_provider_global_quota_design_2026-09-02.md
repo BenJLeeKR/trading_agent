@@ -223,6 +223,18 @@ legacy limiter를 먼저 두는 이유: legacy 고유의 FIFO 재대기(`allow_r
 
 **책임 분리(재확인)**: legacy limiter는 legacy FDC 고유의 대기/재시도/FIFO 재대기 의미론을 그대로 보존하는 것만 책임지고, global gate는 legacy+actual을 합산한 provider 전체 물리적 HTTP 시작 상한만 책임진다. 어느 한쪽이 거부해도 다른 쪽이 그 실패를 성공으로 바꾸지 않는다 — legacy limiter가 grant해도 gate가 거부하면 여전히 HOLD fallback이고, gate가 grant해도(legacy는 애초에 gate 이전에 이미 grant했으므로 이 순서에서는 항상 legacy가 먼저 통과된 상태) 이후 실제 HTTP가 429/5xx로 실패하면 여전히 기존 legacy 재시도/소진 규칙이 그대로 적용된다.
 
+### 4.3 global gate rate 불변식 (2026-09-03 구현 후 보정 — Finding 1)
+
+PR D 구현(`FdcProviderGlobalGate`) 완료 후 리뷰에서 발견 — `FDC_PROVIDER_TARGET_RPM`/`FDC_PROVIDER_RATE_WINDOW_SECONDS`는 원래 held_position actual coordinator 자신의 shadow 판단용으로만 만들어진 설정값이라 최솟값만 검사했다. global gate가 이 두 값을 그대로 재사용하는 이상, 값 자체가 "legacy+actual 합산 60초 sliding window 최대 13건"이라는 gate의 존재 이유를 깨뜨릴 수 있는 범위(예: target 14 이상, window 60초가 아닌 값)로 설정되면 gate를 활성화해도 계약이 지켜지지 않는다.
+
+**확정한 불변식(gate가 활성화된 경우, 즉 `FDC_PROVIDER_GLOBAL_GATE_ENABLED=true`일 때만 적용)**:
+
+- `FDC_PROVIDER_TARGET_RPM`은 **13을 초과할 수 없다**(1~13만 허용). 13보다 낮은 값은 더 보수적일 뿐 "13 RPM을 넘지 않는다"는 계약을 깨지 않으므로 허용한다.
+- `FDC_PROVIDER_RATE_WINDOW_SECONDS`는 **반드시 60이어야 한다**(그 외 값은 전부 거부).
+- 위반하면 `FdcProviderGlobalGate.acquire()`가 repository/DB를 전혀 호출하지 않고 즉시 `PermitResult(granted=False, denial_reason="global_gate_error")`로 fail-closed한다 — 새 예외 타입·새 fallback marker·새 DB 상태를 만들지 않고 기존 "gate 자체 오류" 경로(`_classify_provider_exception()`의 `provider_global_gate_unavailable`)를 그대로 재사용한다. legacy는 기존 `PermitDeniedError` → HOLD fallback, actual은 기존 `reserved_but_http_not_started` + `apply_retry_failure(reason="pre_http_execution_failure")` 경로를 그대로 탄다(§4.2와 동일).
+- `FDC_PROVIDER_GLOBAL_GATE_ENABLED=false`(기본값)면 이 불변식 검사 자체가 무의미하다 — gate가 아예 호출되지 않으므로 기존 no-op 동작은 변경 없이 유지된다.
+- 생성자에서 예외를 던지지 않는다 — 잘못된 설정으로 subprocess 전체가 비정상 종료하면 legacy/actual 양쪽 모두 기존 fallback 경로를 우회한 채 하드 크래시하게 되므로, 반드시 `acquire()` 호출 시점에 기존 결과 타입으로 귀결시킨다.
+
 ---
 
 ## 5. PR D 구현 Task Spec
