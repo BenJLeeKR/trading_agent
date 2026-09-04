@@ -1,7 +1,9 @@
 # PR D 사전 설계: Gemini provider 전체 13 RPM quota 통합
 
-- 작성일: 2026-09-02
-- 상태: 설계 검토용 초안 (코드 미반영, BUY actual-dispatch 미연결)
+- 작성일: 2026-09-02 (2026-09-04 문서-구현 정합성 보정)
+- 상태: **구현 완료, main에 병합됨**(PR D 구현 PR, `main` merge commit `fed46d3f`). BUY actual-dispatch는 여전히 미연결(PR E 범위, §6 참고).
+  - 기본 flag(`FDC_PROVIDER_GLOBAL_GATE_ENABLED`)는 여전히 `false` — 병합 자체가 운영 enforce 활성화를 의미하지 않는다.
+  - 운영 DB에는 이 문서가 다루는 migration `0070_add_fdc_provider_global_gate.sql`이 **아직 적용되지 않았다**(2026-09-04 read-only 점검 기준, `trading.schema_migrations` 최신 항목은 `0069_...`) — flag를 켜기 전 반드시 §5.8의 선행 조건을 순서대로 확인해야 한다.
 - 선행 문서: `docs/40_action_plans/fdc_actual_dispatch_buy_core_lane_extension_design_2026-09-01.md` (§4, §8, §9 — PR D 스코프/AC/대안이 이미 정의돼 있음. 이 문서는 그 정의를 실제 코드 지점까지 추적해 구현 가능한 Task Spec으로 구체화한다.)
 - 조사 방법: 전체 read-only (코드/문서/설정 수정 없음, DB write 없음, 외부 호출 없음)
 
@@ -140,20 +142,26 @@ legacy `mode="full"` 호출도 `_FdcPermitAccumulator.acquire()` 대신 `FdcQuot
 
 **실행 순서**: `coordinator.try_reserve()` grant(부모 프로세스) → `fdc_only` subprocess 스폰 → subprocess 내부에서 `record_attempt_outcome("http_started")`를 호출하기 직전에 **global gate를 통과**(신설) → 통과 시에만 실제 `client.post()`.
 
-**global gate가 대기/거부/timeout/프로세스 종료될 때의 전이 규칙**은 기존에 이미 구현돼 있는 "HTTP 시작 전 실패"(`AttemptHttpLifecycle.NOT_STARTED`) 처리 경로를 **그대로 재사용**한다 — 새 상태를 만들지 않는다:
+**global gate에는 큐/대기/polling이 없다(2026-09-04 정정 — 구현 확인)**: `FdcProviderGlobalGate.acquire()`(`src/agent_trading/services/fdc_provider_global_gate.py:68-112`)는 내부 재시도 루프·sleep·polling이 전혀 없는 **단일 원자 판정**이다 — DB(또는 in-memory) 왕복 1회로 즉시 `grant`/`deny`/`error` 중 하나가 확정된다. `denial_reason="global_gate_timeout"`이라는 이름과 달리, 이것은 "대기 deadline을 초과했다"는 뜻이 **아니라** "이 판정 시점에 60초 window가 이미 포화돼 있어 즉시 거부됐다"는 뜻이다(이름은 기존 `PermitResult`/`PermitDeniedError` convention을 재사용한 결과이며, legacy limiter의 "queue_timeout"처럼 실제 대기 후 포기하는 의미가 아니다). `PermitResult.waited_seconds`는 gate 자체에서는 **항상 `0.0`**이다(`fdc_provider_global_gate.py:88,92,104,107,111` — 모든 반환 경로가 `waited_seconds=0.0`) — legacy limiter(`wait_for_fdc_slot()`)가 자신의 FIFO 대기 시간을 별도로 채우는 `waited_seconds`와 혼동하지 않는다(gate가 grant한 이후에도 legacy 쪽 `waited_seconds`는 legacy 자신의 대기 시간만 담고 있다).
+
+**gate 거부/오류/프로세스 종료될 때의 전이 규칙**은 기존에 이미 구현돼 있는 "HTTP 시작 전 실패"(`AttemptHttpLifecycle.NOT_STARTED`) 처리 경로를 **그대로 재사용**한다 — 새 상태를 만들지 않는다:
 
 | 상황 | `fdc_provider_attempts.outcome` | `http_started_at` | `fdc_queue_jobs.status` | `permit_consumed_count` | `queue_reenqueue_count` | `provider_retry_count` |
 |---|---|---|---|---|---|---|
-| gate 통과 대기 중(아직 결과 없음) | `reservation_granted`(변경 없음) | NULL | `RESERVATION_GRANTED`(변경 없음) | 이미 반영됨(변경 없음) | 변경 없음 | 변경 없음 |
-| gate가 timeout/거부해 HTTP를 시작하지 못함 | `reserved_but_http_not_started`로 갱신(subprocess가 `record_attempt_outcome(outcome="reserved_but_http_not_started")` 호출, 기존 `decision_agent_runner.py:590-594`와 동일 패턴) | NULL 유지 | `apply_retry_failure(reason="pre_http_execution_failure", will_retry=...)`가 `will_retry=True`면 `QUEUED`로 되돌리고 `enqueue_sequence`를 새로 발급(FIFO tail 재등록, `fdc_quota.py:637-640`) | 재시도 시 **새 `try_reserve()`가 새 attempt_no로 재차 소비**(중복 아님 — 새로운 실행 기회이므로 정당) | `will_retry=True`일 때만 +1(`fdc_quota.py:636`) | 변경 없음(이 경로는 `reason="pre_http_execution_failure"`이지 `"provider_retryable_failure"`가 아니므로 이 counter는 증가하지 않음, `fdc_quota.py:631-632`) |
+| `try_reserve()` grant 직후, 아직 gate를 호출하지 않음 | `reservation_granted`(변경 없음) | NULL | `RESERVATION_GRANTED`(변경 없음) | 이미 반영됨(변경 없음) | 변경 없음 | 변경 없음 |
+| gate가 window 포화로 즉시 거부(`global_gate_timeout`) 또는 gate 자체 오류(`global_gate_error`)로 HTTP를 시작하지 못함 | `reserved_but_http_not_started`로 갱신(subprocess가 `record_attempt_outcome(outcome="reserved_but_http_not_started")` 호출, 기존 `decision_agent_runner.py:590-594`와 동일 패턴) | NULL 유지 | `apply_retry_failure(reason="pre_http_execution_failure", will_retry=...)`가 `will_retry=True`면 `QUEUED`로 되돌리고 `enqueue_sequence`를 새로 발급(FIFO tail 재등록, `fdc_quota.py:637-640`) | 재시도 시 **새 `try_reserve()`가 새 attempt_no로 재차 소비**(중복 아님 — 새로운 실행 기회이므로 정당) | `will_retry=True`일 때만 +1(`fdc_quota.py:636`) | 변경 없음(이 경로는 `reason="pre_http_execution_failure"`이지 `"provider_retryable_failure"`가 아니므로 이 counter는 증가하지 않음, `fdc_quota.py:631-632`) |
 | gate 통과 후 물리적 HTTP 시작 | `http_started`로 갱신, 이후 성공/실패 최종 outcome | 실제 시각 기록 | 변경 없음(subprocess 종료 후 부모가 최종 처리) | 변경 없음 | 변경 없음 | HTTP 시작 후 429/5xx 재시도면 +1(`"provider_retryable_failure"` 경로) |
-| gate 대기 중 subprocess 강제 종료(SIGKILL/timeout) | 부모가 `get_attempt_http_lifecycle()`로 조회 — `http_started_at`이 NULL이면 `NOT_STARTED`로 판정(기존 로직 그대로) | NULL(gate 대기 중이었으므로 애초에 안 채워짐) | 위 "gate 거부" 행과 동일하게 `apply_retry_failure` 경로로 합류 | 위와 동일 | 위와 동일 | 위와 동일 |
+| gate 판정(단일 DB 왕복) 도중 또는 그 직후 subprocess가 강제 종료(SIGKILL/timeout) | 부모가 `get_attempt_http_lifecycle()`로 조회 — `http_started_at`이 NULL이면 `NOT_STARTED`로 판정(기존 로직 그대로) | NULL(gate 판정이 끝나기 전에 프로세스가 죽었으므로 애초에 안 채워짐 — "대기 중"이 아니라 이 짧은 DB 왕복 구간 자체가 끊긴 것) | 위 "gate 거부" 행과 동일하게 `apply_retry_failure` 경로로 합류 | 위와 동일 | 위와 동일 | 위와 동일 |
 
 **gate 실패 시 새 actual reservation이 필요한가(질문 3의 확정)**: **그렇다.** 기존 `while True` 재시도 루프(`decision_agent_runner.py:498-501`, `provider_attempt_no` 증가)가 이미 "HTTP 시작 전 실패 → 새 attempt_no로 새 `try_reserve()`"를 정상 흐름으로 다루고 있으므로, gate 거부도 이 흐름에 합류시키는 것이 최소 변경이다. gate가 막았다고 해서 기존 reservation을 "부활"시켜 재사용하지 않는다 — 새 reservation을 받아 actual coordinator의 FIFO/window 판정을 다시 통과해야 한다(다른 job에게 새치기 기회를 주지 않기 위해 `enqueue_sequence`도 새로 발급되어 FIFO 뒤로 밀린다).
 
-**global gate와 actual coordinator가 각각 13 RPM을 독립 판단해도 충돌하지 않는 이유**: 두 판정은 서로 다른 질문에 답한다. actual coordinator의 window(`fdc_quota.py:113-121`)는 "이 quota_scope 안에서 최근 60초간 몇 개의 **reservation**이 소비됐는가"(actual/BUY 레인 사이의 공정성·FIFO 판단)를 답하고, global gate는 "provider 전체(legacy 포함)에서 최근 60초간 몇 건의 **물리적 HTTP가 실제로 시작됐는가**"를 답한다. reservation은 HTTP 시작의 필요조건이지 충분조건이 아니므로(위 표의 "gate 대기/거부" 행), actual coordinator가 자신의 window 안에서 13개까지 reservation을 내주더라도 그중 일부가 gate에서 대기하며 물리적 HTTP 총량은 legacy 몫까지 합쳐 여전히 13을 넘지 않게 gate가 최종 관문 역할을 한다. 즉 **actual coordinator = "누가 다음 실행 기회를 가질 자격이 있는가"(entitlement), global gate = "지금 물리적으로 내보내도 되는가"(physical throttle)**로 책임이 완전히 분리되어 있어 두 판정이 서로의 결과를 뒤집거나 이중 집계할 여지가 없다.
+**gate 전용 backoff는 존재하지 않는다(2026-09-04 정정 — 구현 확인, `decision_agent_runner.py:676-689`)**: `provider_final_status`가 gate 마커(`_GLOBAL_GATE_DENIAL_STATUSES`)에 해당하면 `apply_retry_failure(reason="pre_http_execution_failure", will_retry=...)` 호출 후 `will_retry=True`이면 곧바로 `provider_attempt_no += 1; continue`로 `while True` 루프 맨 위로 돌아가 **sleep 없이 즉시** 새 `try_reserve()`를 시도한다 — gate 거부에만 적용되는 별도 backoff/지연이 없다(`ReservationDenied`/`CoordinatorError` 분기와 달리 이 분기에는 `sleep_fn` 호출이 전혀 없다).
+- **확정된 코드 사실**: window가 아직 포화된 구간에도 이 루프는 gate 전용 backoff 없이 새 시도를 진행하므로, 재시도가 연속으로 거부되어 `max_provider_attempts`(기본 3) 예산이 짧은 시간 안에 소진될 수 있다. 실제 소진 시간은 subprocess 생성, DB 왕복, scheduler 부하 및 queue 상태에 좌우되므로 운영 관측으로 측정해야 한다.
+- **운영상 영향 검증 필요(미확인, 이 문서가 단정하지 않음)**: 이 빠른 예산 소진이 held_position REDUCE/SELL의 실제 성공률·최종 실패(`FDC_FAILED_FINAL`) 발생 빈도에 어느 정도 영향을 주는지는 아직 운영 관측으로 검증되지 않았다. 현재 PR(문서 정정 대상 PR)은 이 문제에 대한 backoff/지연 기능을 구현하지 않는다 — 필요성 검증과 (필요하다면) backoff 구현은 **별도 Task Spec으로 분리**한다.
 
-**held_position SELL의 FIFO head 영구 차단 방지 규칙**: gate 대기가 아무리 길어져도, 위 표의 "gate가 timeout/거부" 행이 곧 기존 `apply_retry_failure(will_retry=...)` 예산 판정(`provider_attempt_no < max_provider_attempts`, `decision_agent_runner.py:612,669`)에 그대로 편입되므로, 기존 durable-resume/fail-closed 계약(예산 소진 시 `mark_job_terminal(status="FDC_FAILED_FINAL")`)이 변경 없이 그대로 적용된다. gate 대기가 FIFO head를 "새로운 방식으로" 영구 차단할 방법이 구조적으로 없다 — gate는 기존 lifecycle 상태 밖의 새로운 정지 상태를 만들지 않고, 기존 "HTTP 시작 전 실패" 카테고리 안으로만 합류하기 때문이다.
+**global gate와 actual coordinator가 각각 13 RPM을 독립 판단해도 충돌하지 않는 이유**: 두 판정은 서로 다른 질문에 답한다. actual coordinator의 window(`fdc_quota.py:113-121`)는 "이 quota_scope 안에서 최근 60초간 몇 개의 **reservation**이 소비됐는가"(actual/BUY 레인 사이의 공정성·FIFO 판단)를 답하고, global gate는 "provider 전체(legacy 포함)에서 최근 60초간 몇 건의 **물리적 HTTP가 실제로 시작됐는가**"를 답한다. reservation은 HTTP 시작의 필요조건이지 충분조건이 아니므로(위 표의 "gate 거부" 행), actual coordinator가 자신의 window 안에서 13개까지 reservation을 내주더라도 그중 일부는 gate 판정에서 즉시 거부되며(대기가 아니라 즉시 결정), 물리적 HTTP 총량은 legacy 몫까지 합쳐 여전히 13을 넘지 않게 gate가 최종 관문 역할을 한다. 즉 **actual coordinator = "누가 다음 실행 기회를 가질 자격이 있는가"(entitlement), global gate = "지금 물리적으로 내보내도 되는가"(physical throttle)**로 책임이 완전히 분리되어 있어 두 판정이 서로의 결과를 뒤집거나 이중 집계할 여지가 없다.
+
+**held_position SELL의 FIFO head 영구 차단 방지 규칙**: gate 거부가 같은 job에 반복적으로 일어나도(대기가 길어지는 것이 아니라 즉시 거부가 반복되는 것 — 위 "gate 전용 backoff는 존재하지 않는다" 참고), 위 표의 "gate가 거부" 행이 곧 기존 `apply_retry_failure(will_retry=...)` 예산 판정(`provider_attempt_no < max_provider_attempts`, `decision_agent_runner.py:612,669,677`)에 그대로 편입되므로, 기존 durable-resume/fail-closed 계약(예산 소진 시 `mark_job_terminal(status="FDC_FAILED_FINAL")`)이 변경 없이 그대로 적용된다. gate 거부가 FIFO head를 "새로운 방식으로" 영구 차단할 방법이 구조적으로 없다 — gate는 기존 lifecycle 상태 밖의 새로운 정지 상태를 만들지 않고, 기존 "HTTP 시작 전 실패" 카테고리 안으로만 합류하기 때문이다. 다만 앞서 밝힌 대로 예산이 "gate 전용 backoff 부재"로 인해 정상보다 빠르게 소진될 수 있다는 점은 별개의 미검증 운영 리스크다.
 
 ### 비교 요약표
 
@@ -205,7 +213,7 @@ legacy limiter를 먼저 두는 이유: legacy 고유의 FIFO 재대기(`allow_r
 - **실제 HTTP는 0건**이다 — gate 통과 실패 시 `acquire()`는 `client.post()`를 호출하는 지점(`provider_client.py:426` 이후)에 도달하지 못하도록 `PermitResult(granted=False, denial_reason=...)`를 반환한다. 이는 **기존 `PermitDeniedError` 메커니즘을 그대로 재사용**한다(`provider_client.py:74`, `:426` — `acquire_permit()`이 `granted=False`를 반환하면 즉시 `PermitDeniedError`를 던지고 HTTP를 시작하지 않는 것은 이미 구현돼 있는 동작이다).
 - **fallback marker 계약 확정(2026-09-03 보정, 예시 아님 — 문서 전체에서 이 이름을 그대로 쓴다)**: 기존 `PermitDeniedError`/`PermitResult.denial_reason` → `_classify_provider_exception()`(`final_decision_composer.py:71-101`) 매핑은 `denial_reason` 원문 그대로 쓰지 않고 `provider_` 접두 marker로 옮기는 방식이다(기존 실증: `denial_reason="queue_timeout"` → `reason_codes=("provider_queue_timeout",)`, `denial_reason="state_file_error"` → `reason_codes=("provider_limiter_unavailable",)`, `tests/services/ai_agents/test_agents.py:1968-1987,1998-2011`가 이미 이 매핑을 고정 검증한다). 같은 convention을 그대로 따라 global gate 전용 값 2개를 확정한다:
   - **legacy limiter 자체 timeout**: 기존 `denial_reason="queue_timeout"` → `reason_codes=("provider_queue_timeout",)` **그대로 유지**(변경 없음) — legacy 자신의 FIFO 큐가 찼다는 의미.
-  - **global gate timeout**(gate가 대기 끝에 시간 초과로 거부): `denial_reason="global_gate_timeout"` → `reason_codes=("provider_global_gate_timeout",)`(신설) — legacy 심사는 통과했으나 provider 전체 합산 관문에서 대기 끝에 막혔다는 의미.
+  - **global gate timeout**(gate가 현재 60초 window 포화 상태를 즉시 판정해 거부 — 대기·polling 없음, `waited_seconds=0.0` 고정): `denial_reason="global_gate_timeout"` → `reason_codes=("provider_global_gate_timeout",)`(신설) — legacy 심사는 통과했으나 provider 전체 합산 관문에서 즉시 거부됐다는 의미. 이름에 "timeout"이 들어가지만 실제로는 "대기 시간 초과"가 아니라 "판정 시점의 window 포화"다.
   - **global gate DB/lock/connection 오류**(gate 자체가 판정 불능): `denial_reason="global_gate_error"` → `reason_codes=("provider_global_gate_unavailable",)`(신설) — `"state_file_error"→"provider_limiter_unavailable"`와 동일하게 "원인 자체가 판정 불능"임을 나타내는 `_unavailable` 접미 네이밍을 그대로 따른다.
   - 세 경우 모두 **실제 HTTP 시작 0건**, `decision_type="HOLD"`, 실패를 성공으로 위장하지 않는 기존 fallback 구조·reason code 기록 방식(`reason_codes` 튜플, `agent.last_provider_observation` 관측 필드)을 그대로 유지한다 — 새 결과 스키마나 새 필드를 추가하지 않는다.
   - **429/5xx와의 구분**: 429/5xx는 실제 HTTP가 최소 1회 이상 나간 뒤의 재시도 소진이므로 `reason_codes=("provider_rate_limit",)`/`("provider_error",)`로 그대로 남고, global gate 마커(`provider_global_gate_timeout`/`provider_global_gate_unavailable`)와는 "HTTP가 실제로 나갔는가"라는 기준으로 구조적으로 겹치지 않는다 — gate 마커는 HTTP가 전혀 시작되지 않은 경우에만 발생한다.
@@ -249,7 +257,7 @@ provider(Gemini) 전체로 나가는 실제 HTTP 호출(legacy `mode="full"` + h
 - `src/agent_trading/repositories/postgres/fdc_quota.py` (gate용 window 판정 함수 추가 — 신규 테이블이 필요하면 여기; `apply_retry_failure()`/`get_attempt_http_lifecycle()` 등 기존 함수는 재사용만 하고 시그니처를 바꾸지 않는다)
 - `src/agent_trading/services/fdc_quota_coordinator.py` 또는 신규 모듈(예: `fdc_provider_global_gate.py`) — gate 컴포넌트 본체
 - migration 파일 (신규 테이블이 필요한 경우만 — §5.7 참고)
-- `src/agent_trading/config/settings.py` + `.env.example` + `docker-compose.yml` + `scripts/harness/contracts/runtime_env_wiring.json` (gate on/off shadow 플래그, 예: `FDC_PROVIDER_GLOBAL_QUOTA_GATE_ENABLED`)
+- `src/agent_trading/config/settings.py` + `.env.example` + `docker-compose.yml` + `scripts/harness/contracts/runtime_env_wiring.json` (gate on/off 플래그 — 실제 구현된 키 이름은 `FDC_PROVIDER_GLOBAL_GATE_ENABLED`, §5.8 참고. 이 플래그는 shadow 관측용이 아니라 on/off enforce 스위치다.)
 - **`src/agent_trading/services/ai_agents/final_decision_composer.py`(2026-09-03 보정 추가)** — `_classify_provider_exception()`(line 71-101)의 `denial_reason`→`reason_codes` 매핑 딕셔너리에 `"global_gate_timeout"`→`"provider_global_gate_timeout"`, `"global_gate_error"`→`"provider_global_gate_unavailable"` 두 항목만 추가한다. 기존 분류 로직(429/5xx/timeout/parse_error 등)과 `decision_type="HOLD"` fallback 정책 자체는 변경하지 않는다.
 - **`tests/services/ai_agents/test_agents.py`(2026-09-03 보정 추가, 실제 경로 확인됨)** — `class TestFinalDecisionComposerAgent`(line 1684 부근)에 이미 `PermitDeniedError`/`denial_reason`→`reason_codes` 매핑을 직접 검증하는 테스트(`test_run_fallback_on_permit_queue_timeout_sets_reason_no_http`, `test_run_fallback_on_permit_state_file_error_sets_reason_no_http`, line 1968-2011)가 있다 — 같은 패턴으로 `denial_reason="global_gate_timeout"`/`"global_gate_error"` 케이스를 추가한다.
 - 관련 테스트 파일 전부(그 외 신규/기존 파일 포함)
@@ -286,7 +294,7 @@ provider(Gemini) 전체로 나가는 실제 HTTP 호출(legacy `mode="full"` + h
 - 프로세스 재시작/강제종료 시 gate 상태 정리 테스트
 - **(보정 1 신설)** legacy가 global gate window를 이미 점유한 상태에서, actual job이 `try_reserve()` reservation은 받았지만 global gate에서 대기하는 시나리오 — reservation은 성공했으나 HTTP는 아직 시작되지 않은 중간 상태를 직접 검증
 - **(보정 1 신설)** global gate 거부/timeout 시 `fdc_provider_attempts.outcome`/`http_started_at`/`fdc_queue_jobs.status`/`permit_consumed_count`/`queue_reenqueue_count`/`provider_retry_count`가 §4 대안 C 상세 표와 정확히 일치하는지 검증
-- **(보정 1 신설)** global gate 대기 중 subprocess가 강제 종료되는 시나리오 — `get_attempt_http_lifecycle()`이 `NOT_STARTED`로 판정하고 기존 recovery 경로(재개 또는 fail-closed 종결)로 정확히 합류하는지 검증
+- **(보정 1 신설)** global gate 판정(단일 DB 왕복) 도중 또는 직후 subprocess가 강제 종료되는 시나리오 — `get_attempt_http_lifecycle()`이 `NOT_STARTED`로 판정하고 기존 recovery 경로(재개 또는 fail-closed 종결)로 정확히 합류하는지 검증
 - **(보정 1 신설)** 재시도 시나리오에서 global gate 기록(gate 자체의 통과/거부 로그 또는 카운터)과 actual `fdc_provider_attempts` 기록이 각각 정확히 1회씩만 남는지 검증(이중 기록 없음)
 - **(보정 1 신설)** 위 모든 이중 관문 시나리오에서 실제 HTTP 시작 시각 기준 60초 window 최대 13건이 유지되는지 종합 검증
 - **(보정 2 신설)** FDC 최초 호출과 429/5xx 재시도가 매번 gate를 통과하는지 검증(호출 횟수만큼 gate 통과 기록이 남는지)
@@ -327,30 +335,71 @@ bash scripts/harness/run.sh accept architecture
 
 `accept db-structure`는 migration 파일명/번호 연속성과 Repository Protocol wiring만 정적으로 검사하며 DB 접속·외부 네트워크·전체 테스트를 실행하지 않는다(`database_connection_run=0`/`external_network_run=0`/`full_test_run=0` 지표로 harness 자체가 보증, `scripts/harness/README.md:314-323`) — 신규 테이블/migration이 실제로 추가되는 경우 이 명령으로 검증한다. `provider_client.py`는 §5.3에서 수정 자체를 금지하므로 이 파일에 대한 `accept backend-file`은 이 목록에 포함하지 않는다. `accept backend-file final_decision_composer.py`가 import-graph로 `tests/services/ai_agents/test_agents.py`를 자동 선택하지 않는 경우를 대비해 `test-file`로 직접 명시했다(실제 선택 여부는 구현 착수 시 `accept backend-file` 출력의 `selected_test_candidates`로 재확인).
 
-### 5.7 migration 필요 여부
-**미확정 — PR D 구현 착수 시 최우선으로 재확인할 사항.** 권고안(대안 C)은 기존 `fdc_provider_attempts` 재사용을 우선 검토하도록 권고했으나, `mode` CHECK 제약이 `'shadow'|'real'`만 허용하고 legacy 전용 구분자가 없어 `caller_id` 컬럼만으로 legacy/actual을 구분할 수 있는지, 혹은 gate 전용 신규 경량 테이블(예: `fdc_provider_http_starts`)이 필요한지는 스키마 제약 조건을 다시 정밀히 검토해야 한다. 신규 테이블이 필요하면 최소 컬럼(gate_scope, started_at, caller_id 정도)으로 범위를 최소화할 것. 신규 테이블/migration 파일 작성 후에는 §5.6의 `accept db-structure`(migration 파일명·번호 연속성, Repository Protocol wiring 정적 검사)로 검증한다 — `accept migration`이라는 명령은 harness에 존재하지 않는다.
+### 5.7 migration 필요 여부 (2026-09-04 확정 — 구현 완료)
 
-### 5.8 shadow/actual rollout 순서
-1. **Phase D-1 (shadow)**: gate를 신설하되 `FDC_PROVIDER_GLOBAL_QUOTA_GATE_ENABLED=false` 기본값으로 배선만 완료, 실제 HTTP 경로에는 연결하지 않음(PR C와 동일한 패턴 — 배선 검증만).
-2. **Phase D-2 (shadow-observe)**: gate를 관측 전용으로 켜서(HTTP를 막지 않고 window 카운트만 기록) legacy+actual 합산 실제 트래픽이 13 RPM 안에 들어오는지 스테이징/운영에서 최소 수일 관측.
-3. **Phase D-3 (enforce)**: 관측 결과 문제 없으면 gate를 실제 강제(permit 거부 가능) 모드로 전환.
-4. **PR D 완료 후에도 `FDC_ACTUAL_DISPATCH_BUY_ENABLED`는 여전히 runtime에서 읽지 않는 상태를 유지** — BUY actual-dispatch 연결은 PR D 이후의 별도 PR E 범위(§6 참고).
+**확정: 신규 테이블 2개가 필요했고, 실제로 추가됐다.** `fdc_provider_attempts` 재사용안(§4 권고안이 우선 검토하도록 권고했던 방식)은 채택되지 않았다 — `mode` CHECK 제약(`'shadow'|'real'`만 허용)과 legacy 전용 구분자 부재 때문이 아니라, **재사용 시 legacy 트래픽이 actual coordinator 자신의 `try_reserve()` window count SQL(quota_scope+mode='real' 전체 합산)에 섞여 "global gate와 actual coordinator의 독립성" 계약이 깨지기 때문**이다(구현 중 확정한 이유, §4.3 참고).
 
-### 5.9 즉시 중단 및 rollback 조건
-- gate 강제 모드 전환 후 provider 전체 429 비율이 도입 전 대비 유의미하게 증가하면 즉시 관측 모드로 롤백.
-- held_position REDUCE/SELL의 실제 dispatch 성공률이 gate 도입 전후로 하락하면 즉시 `FDC_PROVIDER_GLOBAL_QUOTA_GATE_ENABLED=false`로 롤백(no-op 복귀가 설계상 보장돼야 함 — AC 4).
-- gate 자체의 버그로 인해 정상 permit이 부당하게 거부되는 사례가 1건이라도 확인되면 강제 모드를 즉시 중단.
+실제 추가된 migration: `db/migrations/0070_add_fdc_provider_global_gate.sql`
+- `trading.fdc_provider_global_gate_state` — singleton anchor 테이블(`gate_scope` PK), seed 행 `gate_scope='gemini:provider-global'`.
+- `trading.fdc_provider_global_gate_grants` — append-only grant 로그(`grant_id`, `gate_scope`, `caller_lane`, `caller_id`, `granted_at`).
+
+**운영 반영 상태(2026-09-04 read-only 점검)**: 이 migration은 저장소에 존재하고 `main`에 병합됐으나, **운영 DB에는 아직 적용되지 않았다** — `docker exec trading_db psql ... "SELECT to_regclass('trading.fdc_provider_global_gate_state')"`가 NULL을 반환했고, `trading.schema_migrations`의 최신 적용 항목은 `0069_add_fdc_queue_jobs_carryover_columns.sql`이다. migration 적용은 별도 명시 승인 없이는 수행하지 않는다(운영 DB DDL은 이 문서 갱신 범위 밖).
+
+migration/schema 검증은 `accept db-structure`(migration 파일명·번호 연속성, Repository Protocol wiring 정적 검사)로 한다 — `accept migration`이라는 명령은 harness에 존재하지 않는다.
+
+### 5.8 rollout 순서 (2026-09-04 정정 — 실제 구현은 shadow-observe 단계 없이 enforce-only다)
+
+**중요한 정정**: 이전 버전의 이 절은 "Phase D-1(shadow, 배선만) → Phase D-2(shadow-observe, HTTP를 막지 않고 카운트만 기록) → Phase D-3(enforce)"라는 3단계 점진 전환과, 존재하지 않는 flag 이름 `FDC_PROVIDER_GLOBAL_QUOTA_GATE_ENABLED`를 전제로 했다. **실제 구현(`FdcProviderGlobalGate.acquire()`, `src/agent_trading/services/fdc_provider_global_gate.py`)에는 "HTTP를 막지 않고 카운트만 기록"하는 관측 전용 중간 상태가 없다** — flag는 아래 두 값만 갖는 단순 on/off이며, 실제 설정 키 이름은 `FDC_PROVIDER_GLOBAL_GATE_ENABLED`다.
+
+- `FDC_PROVIDER_GLOBAL_GATE_ENABLED=false`(기본값): gate 호출 자체가 발생하지 않는 완전 no-op — legacy(`_FdcPermitAccumulator.acquire()`, `scripts/run_agent_subprocess.py`)와 actual-dispatch(`execute_fdc_one_shot_attempt()`, `scripts/fdc_manual_provider_gate.py`) 모두 지금과 동일하게 독립 동작.
+- `FDC_PROVIDER_GLOBAL_GATE_ENABLED=true`: **관측 전용이 아니라 즉시 enforce다.** 두 경로 모두 실제 HTTP 시작 직전에 gate를 통과해야 하며, gate가 거부하면 그 시도는 실제로 막힌다(window 카운트만 남기고 HTTP를 그대로 보내는 경로는 없다) — 거부 시 결과는:
+  - **legacy**: 기존 `PermitDeniedError` 경로로 흘러 HTTP 없이 `decision_type="HOLD"` fallback으로 귀결(`reason_codes`에 `provider_global_gate_timeout`/`provider_global_gate_unavailable` 마커).
+  - **actual-dispatch**: `fdc_provider_attempts.outcome="reserved_but_http_not_started"`로 기록된 뒤 `apply_retry_failure(reason="pre_http_execution_failure", will_retry=...)` 경로로 새 `try_reserve()`/`attempt_no`로 **재시도 전용 backoff/sleep 없이 즉시** 재시도되거나(`will_retry=True`), 재시도 예산 소진 시 `FDC_FAILED_FINAL`로 fail-closed 종결된다(`will_retry=False`) — 이 결과 자체는 기존 legacy/actual fallback 계약을 그대로 재사용한 것이며 새로운 job 상태를 만들지 않는다. gate 거부에만 적용되는 backoff가 없다는 사실과 그로 인한 운영 리스크는 §4.2 "gate 전용 backoff는 존재하지 않는다" 항목에서 상세히 다룬다.
+
+**실제 rollout 순서(구현 완료 후, 운영 활성화 전 반드시 이 순서로 확인)**:
+
+1. **migration 및 anchor 확인**: `trading.fdc_provider_global_gate_state`/`trading.fdc_provider_global_gate_grants` 테이블 존재, `gemini:provider-global` anchor 행 존재를 read-only 조회로 확인한다. 하나라도 없으면 이후 단계로 진행하지 않는다.
+2. **설정 불변식과 활성화 전 provider 전체 기준선 확인**: `FDC_PROVIDER_TARGET_RPM`(1~13)/`FDC_PROVIDER_RATE_WINDOW_SECONDS`(정확히 60) 값을 확인하고, legacy+actual 합산 실제 Gemini HTTP 시작 건수의 60초 window 기준선을 활성화 전에 확보한다(§5.10 지표 계약 참고 — 로그 건수·DB attempt 건수·실제 wire HTTP 건수를 혼동하지 않는다).
+3. **별도 운영 승인 후 enforce 제한 활성화**: 1·2가 모두 충족된 뒤에만, 별도 명시적 운영 승인 하에 `FDC_PROVIDER_GLOBAL_GATE_ENABLED=true`로 전환하고 ops-scheduler 서비스만 최소 범위로 recreate한다(다른 서비스 재시작·Compose 전체 down/up·scheduler 수동 실행 금지).
+4. **자연 cycle 관측 및 rollback 기준 적용**: 활성화 직후 자연 scheduler cycle만(수동 실행 금지) 관측하며, §5.9의 즉시 rollback 조건을 그대로 적용한다.
+
+**PR D 완료 후에도 `FDC_ACTUAL_DISPATCH_BUY_ENABLED`는 여전히 runtime에서 읽지 않는 상태를 유지** — BUY actual-dispatch 연결은 PR D 이후의 별도 PR E 범위(§6 참고).
+
+### 5.9 즉시 중단 및 rollback 조건 (2026-09-04 정정 — flag 이름·enforce-only·최우선 지표 반영)
+
+**최우선 판단 지표(둘 중 하나라도 관측되면 다른 지표를 더 볼 것 없이 즉시 rollback)**:
+1. `provider_global_gate_unavailable` marker 또는 migration/테이블/anchor 관련 오류가 1건이라도 관측됨.
+2. global gate 거부(`provider_global_gate_timeout`/`provider_global_gate_unavailable`)와 연관돼 held_position actual-dispatch job이 `FDC_FAILED_FINAL`에 도달함 — `fdc_queue_jobs.failure_or_cancel_reason`이 이 두 marker 중 하나인 종결 건을 가리킨다(§4.2 "gate 전용 backoff는 존재하지 않는다" 항목이 지적한 예산 급속 소진 리스크의 실제 발현).
+
+**그 외 rollback 조건(위 최우선 지표와 함께, 종합적으로 판단)**:
+- 활성화 후 provider 전체 실제 HTTP 시작 건수가 60초 기준 13건을 초과하면(§5.10의 "provider 전체 실제 wire HTTP 건수" 지표로 산출 — DB attempt 건수나 로그 건수만으로 판단하지 않는다) 즉시 rollback.
+- ops-scheduler가 비정상 종료·반복 재시작·결정 loop 실패 상태가 되면 즉시 rollback.
+- 설정 불변식 위반(target RPM 범위 밖, window≠60)으로 gate가 전량 fail-closed(`global_gate_error`)되면 즉시 rollback.
+
+**"queue timeout 감소"만으로 활성화 성공을 판단하지 않는다**: legacy `provider_queue_timeout` 발생 건수가 줄었다는 사실 하나만으로는 gate가 정상 작동한다고 결론 내리지 않는다 — 반드시 (a) 429 발생 추이, (b) global gate 거부(`provider_global_gate_timeout`/`_unavailable`) 발생 여부와 빈도, (c) §5.10의 provider 전체 실제 wire HTTP 60초 최대값이 13을 넘지 않는지, (d) held_position 최종 실패(`FDC_FAILED_FINAL`) 발생 여부를 **함께** 확인한 뒤에만 판단한다.
+
+**rollback 방법**: `FDC_PROVIDER_GLOBAL_GATE_ENABLED=false`로 되돌리고 ops-scheduler 서비스만 최소 범위로 recreate한다(no-op 복귀가 설계상 보장됨 — AC 4). rollback 후 자연 cycle 1개를 관측해 기존 legacy/actual 경로가 정상 복귀했는지 확인한다. DB의 grant 기록(append-only 감사 로그)은 삭제·수정하지 않고 그대로 유지한다.
+
+### 5.10 관측 지표 계약 (2026-09-04 신설 — 지표 혼동 방지)
+
+이 gate와 관련해 서로 다른 3개의 지표를 **같은 것으로 취급하지 않는다**:
+
+1. **actual-dispatch DB attempt 지표**(`trading.fdc_provider_attempts`의 `outcome` 분포, 예: `http_succeeded`/`http_failed_retryable` 건수 합계): 이것은 **held_position/BUY actual-dispatch 경로만의 구조화된 attempt 기록**이다. legacy `mode="full"` 경로는 이 테이블에 전혀 기록되지 않는다(§1.3 "공유/비공유 상태" 참고) — 따라서 이 지표를 "provider 전체 HTTP 시작 수"로 읽으면 legacy 트래픽이 누락돼 과소 집계된다.
+2. **legacy 로그 건수**(`fdc_rate_limiter`/`provider_client`의 WARNING/INFO 로그, 예: `queue_timeout`/`permit denied` 카운트): legacy 경로만의 관측이며, actual-dispatch를 포함하지 않는다.
+3. **provider 전체 실제 wire HTTP 건수**: legacy+actual 양쪽이 각자 남기는 `httpx: HTTP Request: POST https://generativelanguage.googleapis.com/... "HTTP/1.1 <status>"` 표준 로그 라인(두 경로 모두 실제 `client.post()` 직전/직후에 이 로그가 남는다)을 **시간순으로 합쳐** 60초 단위로 집계해야 "legacy+actual 합산 실제 HTTP 시작 수"가 된다. 이 문서 작성 시점(2026-09-04)에는 이 합산을 자동 산출하는 코드/쿼리/대시보드가 없다 — 필요 시 수동으로 두 소스의 로그를 합쳐 60초 window로 재구성하거나, 별도 계측 작업으로 분리한다(§8 참고 — 이 문서의 코드 변경 범위 밖).
+
+이 문서에 구체적인 관측 수치(예: "지난 2시간 동안 N건")를 적을 때는 반드시 관측 시간 범위·데이터 출처(로그 vs DB attempt vs wire HTTP)·집계 기준(어느 지표인지)을 함께 명시한다. 위 세 지표 중 어느 것을 가리키는지 근거 없이 숫자만 적지 않는다.
 
 ---
 
 ## 6. BUY actual-dispatch 활성화의 명시적 선행 조건
 
-BUY/core lane actual-dispatch(`FDC_ACTUAL_DISPATCH_BUY_ENABLED`를 실제 실행 경로에 연결하는 PR E)를 시작하기 전에 다음이 모두 충족돼야 한다:
+BUY/core lane actual-dispatch(`FDC_ACTUAL_DISPATCH_BUY_ENABLED`를 실제 실행 경로에 연결하는 PR E)를 시작하기 전에 다음이 모두 충족돼야 한다(2026-09-04 정정 — 실제 구현에 shadow-observe 단계가 없으므로, "Phase D-2 완료"가 아니라 아래 조건으로 대체한다):
 
-1. PR D(본 설계)가 병합되고, gate가 최소 Phase D-2(shadow-observe)까지 완료되어 legacy+actual 합산 실제 트래픽이 13 RPM 이내임이 운영/스테이징 관측으로 확인됨.
+1. `FDC_PROVIDER_GLOBAL_GATE_ENABLED=true`(enforce)가 §5.8의 rollout 순서대로 운영에서 최소 일정 기간 안정적으로 유지되어, legacy+actual 합산 실제 트래픽이 60초 window 13건 상한 안에서 gate 거부 없이(또는 허용 가능한 수준의 거부만으로) 처리됨이 §5.10 지표(특히 provider 전체 실제 wire HTTP 건수)로 확인됨.
 2. held_position REDUCE/SELL의 기존 회귀 테스트 스위트가 gate 도입 후에도 전부 통과 상태 유지.
 3. PR D의 AC 3(gate 우회 경로 0건)이 정적 검사로 지속 강제됨(harness `accept no-bypass`/`accept architecture` 등에 편입 권장).
 4. BUY/core PR C의 shadow 관측(`FDC_ACTUAL_DISPATCH_BUY_SHADOW_ENABLED`)이 최소 1주 이상 운영에서 관측되어, BUY 후보 발생 빈도와 FDC-ready 타이밍 분포가 gate의 13 RPM 여유 안에서 감당 가능한 수준임이 데이터로 확인됨.
 5. gate의 rollback 절차(§5.9)가 실제로 1회 이상 드릴(dry-run) 형태로 검증됨.
 
-이 문서는 설계 검토용이며 코드 변경을 포함하지 않는다. BUY actual-dispatch 연결이나 `FDC_ACTUAL_DISPATCH_BUY_ENABLED`의 runtime 조건 분기 추가는 이번 작업 범위에서 수행하지 않았다.
+이 문서의 §0~§5는 구현 완료(main 병합) 상태를 반영하도록 2026-09-04에 정정됐다. 이번 정정 작업 자체는 문서만 수정했으며, 코드·설정·migration·운영 환경(container, `/etc/agent_trading`, `.env`, DB)은 전혀 변경하지 않았다. BUY actual-dispatch 연결이나 `FDC_ACTUAL_DISPATCH_BUY_ENABLED`의 runtime 조건 분기 추가는 여전히 이 범위 밖이다.
