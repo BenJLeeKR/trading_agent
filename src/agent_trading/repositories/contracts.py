@@ -2546,3 +2546,35 @@ class FdcQuotaRepository(Protocol):
         없이 합산한다(이것이 이 gate의 존재 이유다).
         """
         ...
+
+    async def record_legacy_http_start_event(
+        self,
+        *,
+        event_id: UUID,
+        provider_scope: str,
+        decision_context_id: str | None,
+        correlation_id: str | None,
+        attempt_no: int,
+        observed_at: datetime,
+    ) -> None:
+        """legacy FDC(``mode="full"``)가 Gemini ``client.post()``를
+        실제로 시작하기 직전(2026-09-05, provider 전체 HTTP-start 기준선
+        관측 신설)을 ``fdc_legacy_http_start_events``에 append-only로
+        1행 기록한다.
+
+        actual-dispatch의 ``record_attempt_outcome(outcome="http_
+        started")``와 동일한 "``client.post()`` 직전" 의미를 가지며,
+        같은 ``(t-window_seconds, t]`` 기준으로 합산 가능하도록
+        ``observed_at``은 항상 UTC로 저장한다. 이 메서드는 순수 관측
+        기록일 뿐 quota reservation/global gate window 판정에는 전혀
+        관여하지 않는다 — ``fdc_quota_state``/``fdc_provider_attempts``/
+        ``fdc_provider_global_gate_grants``를 전혀 참조/갱신하지 않는다.
+
+        호출자(``run_agent_subprocess.py``의 legacy 전용 recorder)는
+        이 메서드가 예외를 던져도 **HTTP 요청 자체를 막지 않는다** —
+        관측 기록 실패가 매매 흐름에 영향을 주면 안 되므로, 호출자
+        쪽에서 예외를 흡수하고 경고 로그만 남긴다(fail-open, actual-
+        dispatch의 ``on_http_start`` fail-closed 계약과 의도적으로
+        다르다 — 이 기록은 quota 소비를 대변하지 않기 때문이다).
+        """
+        ...

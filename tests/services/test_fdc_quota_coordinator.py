@@ -2454,3 +2454,94 @@ class TestPostgresRealJobDispatch:
         assert row_n["provider_retry_count"] == 0
         assert row_n["queue_reenqueue_count"] == 0
         assert row_n["http_attempt_count"] == 1
+
+
+# ---------------------------------------------------------------------------
+# record_legacy_http_start_event() — 2026-09-05 신설(legacy HTTP-start
+# 관측 기준선). fdc_quota_state/fdc_queue_jobs/fdc_provider_attempts와
+# 완전히 분리된 테이블(fdc_legacy_http_start_events)이므로 db_ready의
+# quota_scope anchor 행과 무관하게 동작해야 한다.
+# ---------------------------------------------------------------------------
+
+
+@pytestmark_db
+class TestPostgresRecordLegacyHttpStartEvent:
+    @pytest_asyncio.fixture(loop_scope="function")
+    async def legacy_events_db_ready(self):
+        from agent_trading.db.connection import close_pool, connection, create_pool
+        from agent_trading.db.migrations.run import run_all_migrations
+
+        await create_pool()
+        await run_all_migrations()
+        scope = f"test:legacy-http-start:{uuid4()}"
+        try:
+            yield scope
+        finally:
+            async with connection() as conn:
+                await conn.execute(
+                    "DELETE FROM trading.fdc_legacy_http_start_events "
+                    "WHERE provider_scope = $1",
+                    scope,
+                )
+            await close_pool()
+
+    @pytest.mark.asyncio
+    async def test_inserts_one_row_with_expected_fields(
+        self, legacy_events_db_ready: str,
+    ) -> None:
+        from agent_trading.db.connection import connection
+        from agent_trading.db.transaction import TransactionManager
+        from agent_trading.repositories.postgres.fdc_quota import (
+            PostgresFdcQuotaRepository,
+        )
+
+        scope = legacy_events_db_ready
+        repo = PostgresFdcQuotaRepository(TransactionManager())
+        event_id = uuid4()
+        observed_at = datetime.now(timezone.utc)
+
+        await repo.record_legacy_http_start_event(
+            event_id=event_id, provider_scope=scope,
+            decision_context_id="dc-1", correlation_id="corr-1",
+            attempt_no=1, observed_at=observed_at,
+        )
+
+        async with connection() as conn:
+            row = await conn.fetchrow(
+                "SELECT provider_scope, decision_context_id, correlation_id, "
+                "attempt_no, observed_at FROM trading.fdc_legacy_http_start_events "
+                "WHERE event_id = $1",
+                event_id,
+            )
+        assert row is not None
+        assert row["provider_scope"] == scope
+        assert row["decision_context_id"] == "dc-1"
+        assert row["correlation_id"] == "corr-1"
+        assert row["attempt_no"] == 1
+
+    @pytest.mark.asyncio
+    async def test_multiple_attempts_all_recorded_independently(
+        self, legacy_events_db_ready: str,
+    ) -> None:
+        from agent_trading.db.connection import connection
+        from agent_trading.db.transaction import TransactionManager
+        from agent_trading.repositories.postgres.fdc_quota import (
+            PostgresFdcQuotaRepository,
+        )
+
+        scope = legacy_events_db_ready
+        repo = PostgresFdcQuotaRepository(TransactionManager())
+        for attempt_no in (1, 2, 3):
+            await repo.record_legacy_http_start_event(
+                event_id=uuid4(), provider_scope=scope,
+                decision_context_id="dc-1", correlation_id="corr-1",
+                attempt_no=attempt_no, observed_at=datetime.now(timezone.utc),
+            )
+
+        async with connection() as conn:
+            count = await conn.fetchval(
+                "SELECT count(*) FROM trading.fdc_legacy_http_start_events "
+                "WHERE provider_scope = $1",
+                scope,
+            )
+        assert count == 3

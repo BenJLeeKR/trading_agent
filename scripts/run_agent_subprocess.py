@@ -34,7 +34,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from decimal import Decimal
 from typing import Any
-from uuid import UUID
+from uuid import UUID, uuid4
 
 # ---------------------------------------------------------------------------
 # Agent imports — these trigger httpx client creation, which is fine in a
@@ -63,10 +63,14 @@ from agent_trading.services.ai_agents.fdc_rate_limiter import (
     wait_for_fdc_slot,
 )
 from agent_trading.services.ai_agents.provider_client import (
+    OpenAICompatibleClient,
     PermitCallback,
     PermitResult,
 )
-from agent_trading.services.fdc_provider_global_gate import FdcProviderGlobalGate
+from agent_trading.services.fdc_provider_global_gate import (
+    DEFAULT_GATE_SCOPE,
+    FdcProviderGlobalGate,
+)
 from agent_trading.services.ai_agents.schemas import (
     AIComplianceOutput,
     AIRiskOutput,
@@ -424,6 +428,126 @@ class _FdcPermitAccumulator:
             granted=result.granted,
             waited_seconds=result.waited_seconds,
             denial_reason=denial_reason,
+        )
+
+
+class _LegacyFdcHttpStartRecorder:
+    """legacy FDC(``mode="full"``)의 실제 ``client.post()`` 직전 시각을
+    ``fdc_legacy_http_start_events``에 append-only로 기록한다(2026-09-05
+    신설, 2026-09-06 보정 — provider 전체 HTTP-start 기준선 관측).
+
+    ``_LegacyObservedProviderClient._single_http_attempt()``가 매
+    물리적 HTTP attempt 직전 정확히 1회 호출한다(인자 없는 콜백이므로
+    attempt 번호는 이 recorder가 스스로 순증가시켜 부여한다).
+
+    **DB pool을 lazy하게 자체적으로 연다**(2026-09-06 보정) — 생성자는
+    어떤 I/O도 하지 않고, 이 recorder가 실제로 처음 호출될 때(=legacy
+    FDC가 실제로 permit을 얻어 물리적 HTTP를 막 시작하려는 순간)에만
+    ``create_pool()``을 시도한다. 이렇게 해야:
+
+    1. global gate flag가 꺼져 있어도, FDC가 permit 거부/deterministic
+       skip으로 애초에 HTTP를 시작하지 않는 모든 경로에서는 DB 연결을
+       전혀 시도하지 않는다(호출 자체가 없으므로).
+    2. 이 recorder가 생성만 되고 한 번도 호출되지 않는 한(예: FDC
+       deterministic skip), subprocess는 DB에 전혀 접속하지 않는다.
+
+    **fail-open**: pool 생성이든 기록(INSERT)이든 이 메서드 안에서
+    예외가 나면 전부 삼키고 경고 로그만 남긴다 — 이 recorder는 순수
+    관측이며, 기록/연결 실패가 실제 Gemini HTTP 요청을 막으면 안
+    된다(actual-dispatch의 ``on_http_start``가 fail-closed인 것과
+    의도적으로 다르다 — 그쪽은 quota grant 소비를 대변하지만 이
+    recorder는 아니다).
+    """
+
+    def __init__(
+        self,
+        *,
+        provider_scope: str,
+        decision_context_id: str | None,
+        correlation_id: str | None,
+    ) -> None:
+        self._provider_scope = provider_scope
+        self._decision_context_id = decision_context_id
+        self._correlation_id = correlation_id
+        self._attempt_no = 0
+        # 이 recorder 자신이 실제로 pool을 열었는지(cleanup 판단용 —
+        # main()이 이 값을 보고 close_pool() 호출 여부를 결정한다).
+        self.pool_opened = False
+
+    async def __call__(self) -> None:
+        self._attempt_no += 1
+        try:
+            from agent_trading.db.connection import create_pool
+            from agent_trading.db.transaction import TransactionManager
+            from agent_trading.repositories.postgres.fdc_quota import (
+                PostgresFdcQuotaRepository,
+            )
+
+            await create_pool()
+            self.pool_opened = True
+            async with TransactionManager() as tx:
+                repo = PostgresFdcQuotaRepository(tx)
+            await repo.record_legacy_http_start_event(
+                event_id=uuid4(),
+                provider_scope=self._provider_scope,
+                decision_context_id=self._decision_context_id,
+                correlation_id=self._correlation_id,
+                attempt_no=self._attempt_no,
+                observed_at=datetime.now(timezone.utc),
+            )
+        except Exception:
+            logger.warning(
+                "legacy FDC http-start 관측 기록 실패(attempt=%d) — "
+                "HTTP 요청은 그대로 진행한다(fail-open).",
+                self._attempt_no,
+                exc_info=True,
+            )
+
+
+class _LegacyObservedProviderClient(OpenAICompatibleClient):
+    """FDC legacy 전용 서브클래스(2026-09-06 신설) — ``client.post()``
+    직전 HTTP-start 관측을 위해 ``_single_http_attempt()``만 오버라이드
+    한다. 공용 ``OpenAICompatibleClient``/``AIProviderClient`` 계약
+    (생성자 시그니처, ``generate_structured()`` public API)은 전혀
+    바꾸지 않는다 — 이 서브클래스는 이 파일(legacy FDC 조립 지점)
+    에서만 쓰이며, EI/AR/AC(Deterministic 클래스라 provider를 아예
+    호출하지 않음)나 AR offline 검증 스크립트(``ar_fdc_provider_
+    validation.py``, 이 서브클래스를 전혀 모름)와는 무관하다.
+
+    ``_single_http_attempt()``는 이미 ``on_http_start`` 콜백을
+    지원하도록 설계돼 있었다(actual-dispatch의 ``generate_structured_
+    once()`` 전용, PR D 이전부터 존재). 이 서브클래스는 그 기존
+    private 메서드를 ``super()``로 그대로 재사용하며, 부모 클래스의
+    ``generate_structured()``(재시도 루프, 변경 없음)가 ``self.
+    _single_http_attempt(...)``를 다형적으로 호출하는 것을 이용해
+    ``on_http_start``만 주입한다 — permit 체크/429 backoff 등 재시도
+    루프 자체를 중복 구현하지 않는다.
+    """
+
+    def __init__(
+        self, *, http_start_recorder: _LegacyFdcHttpStartRecorder, **kwargs: Any,
+    ) -> None:
+        super().__init__(**kwargs)
+        self._http_start_recorder = http_start_recorder
+
+    async def _single_http_attempt(  # type: ignore[override]
+        self,
+        client: Any,
+        body: dict[str, Any],
+        response_format: type,
+        *,
+        http_attempt_count: int,
+        http_429_count: int,
+        on_http_start: Any = None,
+    ) -> Any:
+        # ``on_http_start``는 부모 ``generate_structured()``가 항상
+        # ``None``으로 호출하므로(공용 계약 불변) 여기서 무시하고,
+        # 이 서브클래스 전용 recorder로 대체한다.
+        return await super()._single_http_attempt(
+            client, body, response_format,
+            http_attempt_count=http_attempt_count,
+            http_429_count=http_429_count,
+            on_http_start=self._http_start_recorder,
         )
 
 
@@ -1428,8 +1552,12 @@ async def main() -> None:
 
     # ── 1b. Create provider client (if configured) ─────────────────────
     provider_client: AIProviderClient | None = None
+    # 2026-09-06 신설 — legacy HTTP-start 관측 recorder. 생성자는 어떤
+    # I/O도 하지 않는다(DB pool은 이 recorder가 실제로 처음 호출될
+    # 때만 lazy하게 연다 — 아래 클래스 docstring 참고). provider가
+    # 없으면(Stub 경로) 만들지 않는다.
+    legacy_http_start_recorder: _LegacyFdcHttpStartRecorder | None = None
     if inp.provider_api_key and inp.provider_base_url:
-        from agent_trading.services.ai_agents import OpenAICompatibleClient
         logger.info(
             "Creating OpenAICompatibleClient: base_url=%s model_id=%s timeout=%s",
             inp.provider_base_url,
@@ -1437,7 +1565,13 @@ async def main() -> None:
             inp.provider_timeout_seconds,
         )
         _diag("Creating OpenAICompatibleClient ...")
-        provider_client = OpenAICompatibleClient(
+        legacy_http_start_recorder = _LegacyFdcHttpStartRecorder(
+            provider_scope=DEFAULT_GATE_SCOPE,
+            decision_context_id=inp.decision_context_id,
+            correlation_id=inp.correlation_id,
+        )
+        provider_client = _LegacyObservedProviderClient(
+            http_start_recorder=legacy_http_start_recorder,
             api_key=inp.provider_api_key,
             base_url=inp.provider_base_url,
             model_id=inp.provider_model_id or _resolve_provider_model_id(),
@@ -1454,8 +1588,10 @@ async def main() -> None:
     # PR D(2026-09-03) — flag가 켜져 있고 legacy FDC 호출이 실제로
     # 있을 때만(provider_client가 있을 때만) DB pool을 연다. flag가
     # 꺼져 있으면(기본값) 이 블록 전체가 아무 것도 하지 않는다 — legacy
-    # 경로는 지금처럼 DB에 전혀 접속하지 않는다.
-    global_gate_pool_opened = False
+    # 경로는 지금처럼 이 블록으로는 DB에 전혀 접속하지 않는다(2026-09-06
+    # 보정 — legacy HTTP-start 관측은 이제 이 블록과 완전히 독립이며,
+    # 위 recorder가 실제로 호출될 때만 별도로 lazy하게 DB에 접속한다).
+    fdc_db_pool_opened = False
     fdc_global_gate: FdcProviderGlobalGate | None = None
     if provider_client is not None:
         from agent_trading.config.settings import (
@@ -1470,7 +1606,7 @@ async def main() -> None:
                 PostgresFdcQuotaRepository,
             )
             await create_pool()
-            global_gate_pool_opened = True
+            fdc_db_pool_opened = True
             async with TransactionManager() as _gate_ambient_tx:
                 _gate_repo = PostgresFdcQuotaRepository(_gate_ambient_tx)
             fdc_global_gate = FdcProviderGlobalGate(
@@ -1848,11 +1984,17 @@ async def main() -> None:
         _write_error_output(str(exc), duration=duration)
         sys.exit(1)
     finally:
-        # PR D(2026-09-03) — global gate 때문에 이 subprocess가 DB pool을
-        # 열었을 때만(flag on + legacy provider 호출 있음) 닫는다. flag가
-        # 꺼져 있으면 global_gate_pool_opened가 False라 이 블록은 아무
-        # 것도 하지 않는다(기존 동작 그대로).
-        if global_gate_pool_opened:
+        # PR D(2026-09-03) — global gate가 이 subprocess에서 DB pool을
+        # 열었을 때만(flag on + legacy provider 호출 있음) 닫는다.
+        # 2026-09-06 보정 — legacy HTTP-start recorder가 lazy하게 독자
+        # 적으로 pool을 열었을 수도 있으므로(flag off인 경우 포함) 그
+        # 경우도 함께 확인한다. 둘 다 아니면(Stub 경로, 또는 recorder가
+        # 한 번도 호출되지 않아 pool을 연 적이 없는 경우) 이 블록은
+        # 아무 것도 하지 않는다.
+        if fdc_db_pool_opened or (
+            legacy_http_start_recorder is not None
+            and legacy_http_start_recorder.pool_opened
+        ):
             from agent_trading.db.connection import close_pool
             await close_pool()
 
