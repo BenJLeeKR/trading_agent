@@ -972,6 +972,126 @@ class TestOnHttpStartHook:
         assert hook_called is False
 
 
+class TestGenerateStructuredOnHttpStartHook:
+    """2026-09-05 신설: legacy 재시도 루프(``generate_structured()``)에
+    새로 추가된 ``on_http_start`` 인자 — 매 attempt(최초 요청 + 재시도)
+    직전에 정확히 1회씩 호출되고, ``None``(기본값)이면 기존 동작과
+    100% 동일해야 한다."""
+
+    @pytest.mark.asyncio
+    async def test_hook_called_once_on_single_success(self) -> None:
+        hook_calls: list[int] = []
+
+        def handler(req: httpx.Request) -> httpx.Response:
+            return _ok_response({"choices": [{"message": {"content": "{}"}}]})
+
+        async def _on_http_start() -> None:
+            hook_calls.append(1)
+
+        client = _make_client(httpx.MockTransport(handler))
+        result = await client.generate_structured(
+            model_id="test-model", system_prompt="system", user_prompt="user",
+            response_format=_FakeOutput, on_http_start=_on_http_start,
+        )
+        assert len(hook_calls) == 1
+        assert result.http_attempt_count == 1
+
+    @pytest.mark.asyncio
+    async def test_hook_called_once_per_physical_retry(self) -> None:
+        """429로 2회 재시도(물리적 HTTP 3회)되면 hook도 정확히 3회
+        호출돼야 한다 — 재시도마다 별도 attempt로 기록되기 위함."""
+        http_call_count: list[int] = [0]
+        hook_calls: list[int] = []
+
+        def handler(req: httpx.Request) -> httpx.Response:
+            http_call_count[0] += 1
+            if http_call_count[0] < 3:
+                return httpx.Response(429, json={"error": "rate limited"})
+            return httpx.Response(200, json={
+                "choices": [{"message": {"content": '{"symbol": "AAPL", "score": 0.85}'}}],
+            })
+
+        async def _on_http_start() -> None:
+            hook_calls.append(http_call_count[0])
+
+        client = _make_client(httpx.MockTransport(handler))
+        result = await client.generate_structured(
+            model_id="test-model", system_prompt="system", user_prompt="user",
+            response_format=_FakeOutput, on_http_start=_on_http_start,
+        )
+        assert http_call_count[0] == 3
+        assert len(hook_calls) == 3
+        assert result.http_attempt_count == 3
+
+    @pytest.mark.asyncio
+    async def test_hook_omitted_preserves_default_behavior(self) -> None:
+        """``on_http_start=None``(기본값)이면 기존 호출자(EI/AR/AC/
+        offline validation 스크립트)의 동작이 전혀 바뀌지 않는다."""
+        call_count = [0]
+
+        def handler(req: httpx.Request) -> httpx.Response:
+            call_count[0] += 1
+            return _ok_response({"choices": [{"message": {"content": "{}"}}]})
+
+        client = _make_client(httpx.MockTransport(handler))
+        result = await client.generate_structured(
+            model_id="test-model", system_prompt="system", user_prompt="user",
+            response_format=_FakeOutput,
+        )
+        assert call_count[0] == 1
+        assert result.parsed is not None
+
+    @pytest.mark.asyncio
+    async def test_hook_denied_permit_never_calls_hook(self) -> None:
+        """permit이 거부되면 HTTP를 아예 보내지 않으므로 hook도 호출
+        되지 않는다."""
+        hook_called = False
+
+        async def _on_http_start() -> None:
+            nonlocal hook_called
+            hook_called = True
+
+        async def _deny_permit() -> PermitResult:
+            return PermitResult(granted=False, waited_seconds=0.0, denial_reason="global_gate_timeout")
+
+        client = _make_client(
+            httpx.MockTransport(lambda req: _ok_response({"choices": [{"message": {"content": "{}"}}]}))
+        )
+        with pytest.raises(PermitDeniedError):
+            await client.generate_structured(
+                model_id="test-model", system_prompt="system", user_prompt="user",
+                response_format=_FakeOutput,
+                acquire_permit=_deny_permit, on_http_start=_on_http_start,
+            )
+        assert hook_called is False
+
+    @pytest.mark.asyncio
+    async def test_hook_failure_prevents_that_attempts_post_but_allows_no_further_retry(
+        self,
+    ) -> None:
+        """훅이 예외를 던지면 그 attempt의 ``client.post()``는 호출되지
+        않는다(``_single_http_attempt()``의 기존 fail-closed 계약이
+        그대로 유지된다) — 이 예외는 그대로 전파돼 재시도 루프도
+        멈춘다(legacy는 이 예외를 잡지 않는다)."""
+        post_called = False
+
+        def handler(req: httpx.Request) -> httpx.Response:
+            nonlocal post_called
+            post_called = True
+            return _ok_response({"choices": [{"message": {"content": "{}"}}]})
+
+        async def _failing_hook() -> None:
+            raise RuntimeError("audit db write failed")
+
+        client = _make_client(httpx.MockTransport(handler))
+        with pytest.raises(RuntimeError, match="audit db write failed"):
+            await client.generate_structured(
+                model_id="test-model", system_prompt="system", user_prompt="user",
+                response_format=_FakeOutput, on_http_start=_failing_hook,
+            )
+        assert post_called is False
+
+
 class TestSingleHttpAttemptExtractionRegression:
     """2026-08-27 PR A: ``generate_structured()``의 retry 루프 안에 있던
     "요청 1회 전송 + 성공 파싱"을 ``_single_http_attempt()``로 추출했다

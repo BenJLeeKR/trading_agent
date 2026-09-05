@@ -768,3 +768,33 @@ class PostgresFdcQuotaRepository:
             return CoordinatorError(_classify_error(exc), str(exc))
         except (OSError, ConnectionError) as exc:
             return CoordinatorError(_classify_error(exc), str(exc))
+
+    async def record_legacy_http_start_event(
+        self,
+        *,
+        event_id: uuid.UUID,
+        provider_scope: str,
+        decision_context_id: str | None,
+        correlation_id: str | None,
+        attempt_no: int,
+        observed_at: datetime,
+    ) -> None:
+        """``fdc_legacy_http_start_events``에 append-only 1행을 INSERT
+        한다(2026-09-05, legacy HTTP-start 관측 신설). anchor 잠금이나
+        window 판정이 전혀 없는 단순 감사 기록이다 — 호출자가 실패를
+        어떻게 처리할지(fail-open) 결정한다, 이 메서드는 예외를 그대로
+        전파할 뿐이다."""
+        async with TransactionManager() as event_tx:
+            await event_tx.connection.execute(
+                "INSERT INTO trading.fdc_legacy_http_start_events "
+                "(event_id, provider_scope, decision_context_id, "
+                "correlation_id, attempt_no, observed_at) "
+                "VALUES ($1, $2, $3, $4, $5, $6)",
+                event_id,
+                provider_scope,
+                decision_context_id,
+                correlation_id,
+                attempt_no,
+                observed_at,
+            )
+            await event_tx.commit()

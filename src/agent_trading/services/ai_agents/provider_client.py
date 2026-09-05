@@ -351,6 +351,7 @@ class OpenAICompatibleClient:
         temperature: float = 0.0,
         seed: int | None = None,
         acquire_permit: PermitCallback | None = None,
+        on_http_start: "HttpStartCallback | None" = None,
     ) -> RawProviderResponse:
         """Send a chat completion request and return the parsed response.
 
@@ -380,6 +381,17 @@ class OpenAICompatibleClient:
             이 모듈은 실제 limiter 구현(``fdc_rate_limiter.py``)을
             전혀 import하지 않는다 — ``PermitResult``라는 얕은 모양만
             안다.
+        on_http_start
+            2026-09-05 추가(legacy HTTP-start 관측 신설) — 넘겨지면
+            ``_single_http_attempt()``가 ``client.post()`` 바로 직전에
+            매 attempt마다(최초 시도 + 재시도 각각) 호출한다. ``None``
+            (기본값)이면 기존 동작과 100% 동일하다 — 이 인자를 넘기지
+            않는 기존 호출자(AR/AI Compliance/Event Interpretation 및
+            offline validation 스크립트)는 영향을 전혀 받지 않는다.
+            콜백이 예외를 던지면 해당 attempt의 ``client.post()``는
+            호출되지 않는다(``_single_http_attempt()``의 기존
+            fail-closed 계약 그대로 — 이 메서드가 그 계약을 바꾸지
+            않는다).
 
         Returns
         -------
@@ -434,6 +446,7 @@ class OpenAICompatibleClient:
                     client, body, response_format,
                     http_attempt_count=http_attempt_count,
                     http_429_count=http_429_count,
+                    on_http_start=on_http_start,
                 )
 
             except (httpx.TransportError, httpx.TimeoutException, httpx.HTTPStatusError, socket.gaierror) as e:

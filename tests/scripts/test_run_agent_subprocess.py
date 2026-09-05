@@ -119,9 +119,14 @@ def _install_common_main_stubs(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any
             )
 
     def _fake_build_agent_triplet(
-        *, provider_client: Any, model_id: Any, acquire_permit: Any = None,
+        *,
+        provider_client: Any,
+        model_id: Any,
+        acquire_permit: Any = None,
+        on_http_start: Any = None,
     ) -> tuple[Any, Any, Any, Any]:
         captured["build_agent_triplet_acquire_permit"] = acquire_permit
+        captured["build_agent_triplet_on_http_start"] = on_http_start
         return (
             _FakeEventInterpretationAgent(), _FakeAIRiskAgent(),
             _FakeAIComplianceAgent(), _FakeFdcAgent(),
@@ -136,79 +141,13 @@ def _install_common_main_stubs(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any
 
     monkeypatch.setattr(script, "_write_output", _fake_write_output)
     captured["written"] = written
-    return captured
 
-
-@pytest.mark.asyncio
-async def test_mode_full_calls_fdc_and_produces_full_output(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """mode="full"(기본값)은 기존과 동일하게 FDC를 호출해 완전한
-    output을 만든다 — held_position SELL_CANDIDATE라도 mode="full"이면
-    (이 스크립트 관점에서는) 그냥 정상 실행이다(게이팅은 상위
-    DecisionAgentRunner의 책임)."""
-    payload = _base_payload(mode="full")
-    monkeypatch.setattr(
-        script.sys, "stdin", SimpleNamespace(buffer=_FakeStdinBuffer(payload))
-    )
-    captured = _install_common_main_stubs(monkeypatch)
-
-    await script.main()
-
-    assert captured["fdc_run_count"] == 1
-    output = captured["written"]["output"]
-    assert output.success is True
-    assert output.requires_fdc_dispatch is False
-    assert output.composer_output["decision_type"] == "HOLD"
-
-
-@pytest.mark.asyncio
-async def test_mode_full_flag_off_never_opens_db_pool(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """PR D(2026-09-03) 회귀 방지 — FDC_PROVIDER_GLOBAL_GATE_ENABLED가
-    꺼져 있으면(기본값) legacy mode="full" 경로는 여전히 DB pool을 전혀
-    열지 않는다(기존 동작 100% 보존)."""
-    payload = _base_payload(mode="full")
-    monkeypatch.setattr(
-        script.sys, "stdin", SimpleNamespace(buffer=_FakeStdinBuffer(payload))
-    )
-    captured = _install_common_main_stubs(monkeypatch)
-
-    import agent_trading.config.settings as settings_module
-    monkeypatch.setattr(
-        settings_module, "_resolve_fdc_provider_global_gate_enabled", lambda: False,
-    )
-    pool_calls: list[str] = []
-
-    async def _fake_create_pool(*args: Any, **kwargs: Any) -> None:
-        pool_calls.append("create")
-
-    import agent_trading.db.connection as db_connection_module
-    monkeypatch.setattr(db_connection_module, "create_pool", _fake_create_pool)
-
-    await script.main()
-
-    assert captured["fdc_run_count"] == 1
-    assert pool_calls == [], "flag off면 legacy 경로는 DB pool을 열면 안 된다"
-
-
-@pytest.mark.asyncio
-async def test_mode_full_flag_on_opens_and_closes_db_pool_and_wires_gate(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """flag on이면 legacy mode="full" 경로가 DB pool을 열어 global gate를
-    구성하고, subprocess 종료 전 반드시 pool을 닫는다."""
-    payload = _base_payload(mode="full")
-    monkeypatch.setattr(
-        script.sys, "stdin", SimpleNamespace(buffer=_FakeStdinBuffer(payload))
-    )
-    captured = _install_common_main_stubs(monkeypatch)
-
-    import agent_trading.config.settings as settings_module
-    monkeypatch.setattr(
-        settings_module, "_resolve_fdc_provider_global_gate_enabled", lambda: True,
-    )
+    # 2026-09-05 — legacy HTTP-start 관측 신설로 provider_client가
+    # 설정돼 있으면(=이 파일의 모든 mode="full"/"pre_fdc" 테스트) flag
+    # 여부와 무관하게 DB pool을 연다. 실제 Postgres 없이 검증하도록
+    # pool/tx/repo를 기본으로 fake 처리한다 — 개별 테스트가 필요하면
+    # 이 위에 다시 monkeypatch로 덮어써서 세부 동작(예: pool 호출 여부
+    # 자체)을 검증한다.
     pool_calls: list[str] = []
 
     async def _fake_create_pool(*args: Any, **kwargs: Any) -> None:
@@ -240,16 +179,111 @@ async def test_mode_full_flag_on_opens_and_closes_db_pool_and_wires_gate(
         fdc_quota_module, "PostgresFdcQuotaRepository",
         lambda tx: InMemoryFdcQuotaRepository(),
     )
+    captured["pool_calls"] = pool_calls
+    return captured
+
+
+@pytest.mark.asyncio
+async def test_mode_full_calls_fdc_and_produces_full_output(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """mode="full"(기본값)은 기존과 동일하게 FDC를 호출해 완전한
+    output을 만든다 — held_position SELL_CANDIDATE라도 mode="full"이면
+    (이 스크립트 관점에서는) 그냥 정상 실행이다(게이팅은 상위
+    DecisionAgentRunner의 책임)."""
+    payload = _base_payload(mode="full")
+    monkeypatch.setattr(
+        script.sys, "stdin", SimpleNamespace(buffer=_FakeStdinBuffer(payload))
+    )
+    captured = _install_common_main_stubs(monkeypatch)
 
     await script.main()
 
     assert captured["fdc_run_count"] == 1
-    assert pool_calls == ["create", "close"], (
+    output = captured["written"]["output"]
+    assert output.success is True
+    assert output.requires_fdc_dispatch is False
+    assert output.composer_output["decision_type"] == "HOLD"
+
+
+@pytest.mark.asyncio
+async def test_mode_full_flag_off_still_opens_pool_for_legacy_recorder_no_gate(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """2026-09-05 계약 변경 — ``FDC_PROVIDER_GLOBAL_GATE_ENABLED``가
+    꺼져 있어도(기본값) legacy HTTP-start 관측 신설로 legacy mode="full"
+    경로는 이제 provider_client가 있으면 항상 DB pool을 연다(PR D
+    2026-09-03 당시의 "flag off면 DB 전혀 접속 안 함" 계약은 이 신설
+    관측 기능으로 대체됐다). 단, global gate 자체는 flag off면 여전히
+    구성되지 않는다 — ``acquire_permit``은 주입되지만 gate denial은
+    발생하지 않아야 한다(기존 permit-only 동작 보존)."""
+    payload = _base_payload(mode="full")
+    monkeypatch.setattr(
+        script.sys, "stdin", SimpleNamespace(buffer=_FakeStdinBuffer(payload))
+    )
+    captured = _install_common_main_stubs(monkeypatch)
+
+    import agent_trading.config.settings as settings_module
+    monkeypatch.setattr(
+        settings_module, "_resolve_fdc_provider_global_gate_enabled", lambda: False,
+    )
+
+    async def _fake_wait_for_fdc_slot(**kwargs: Any) -> Any:
+        from agent_trading.services.ai_agents.fdc_rate_limiter import (
+            FdcRateLimitResult,
+        )
+        return FdcRateLimitResult(granted=True, waited_seconds=0.0)
+
+    monkeypatch.setattr(script, "wait_for_fdc_slot", _fake_wait_for_fdc_slot)
+
+    await script.main()
+
+    assert captured["fdc_run_count"] == 1
+    assert captured["pool_calls"] == ["create", "close"], (
+        "flag off라도 legacy HTTP-start 관측을 위해 pool은 열리고 닫혀야 한다"
+    )
+    # legacy 전용 HTTP-start recorder는 flag와 무관하게 항상 주입된다.
+    assert captured["build_agent_triplet_on_http_start"] is not None
+    assert isinstance(
+        captured["build_agent_triplet_on_http_start"],
+        script._LegacyFdcHttpStartRecorder,
+    )
+    # global gate는 flag off이므로 acquire()가 gate 판정 없이 legacy
+    # limiter grant만으로 승인돼야 한다(회귀 확인).
+    acquire_permit = captured["build_agent_triplet_acquire_permit"]
+    assert acquire_permit is not None
+    permit_result = await acquire_permit()
+    assert permit_result.granted is True
+
+
+@pytest.mark.asyncio
+async def test_mode_full_flag_on_opens_and_closes_db_pool_and_wires_gate(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """flag on이면 legacy mode="full" 경로가 DB pool을 열어 global gate를
+    구성하고, subprocess 종료 전 반드시 pool을 닫는다. legacy HTTP-start
+    recorder도 flag와 무관하게 함께 주입된다."""
+    payload = _base_payload(mode="full")
+    monkeypatch.setattr(
+        script.sys, "stdin", SimpleNamespace(buffer=_FakeStdinBuffer(payload))
+    )
+    captured = _install_common_main_stubs(monkeypatch)
+
+    import agent_trading.config.settings as settings_module
+    monkeypatch.setattr(
+        settings_module, "_resolve_fdc_provider_global_gate_enabled", lambda: True,
+    )
+
+    await script.main()
+
+    assert captured["fdc_run_count"] == 1
+    assert captured["pool_calls"] == ["create", "close"], (
         "flag on이면 legacy 경로가 DB pool을 열고 반드시 닫아야 한다"
     )
     # _build_agent_triplet()에 넘어간 acquire_permit이 실제로 구성된
     # _FdcPermitAccumulator.acquire 메서드다(gate가 wiring됐다는 증거).
     assert captured["build_agent_triplet_acquire_permit"] is not None
+    assert captured["build_agent_triplet_on_http_start"] is not None
 
 
 @pytest.mark.asyncio
@@ -745,3 +779,82 @@ class TestFdcPermitAccumulatorGlobalGate:
             assert result.granted is True
 
         assert gate_call_count["n"] == 3
+
+
+# ===========================================================================
+# _LegacyFdcHttpStartRecorder — 2026-09-05 신설(legacy HTTP-start 관측)
+# ===========================================================================
+
+
+class TestLegacyFdcHttpStartRecorder:
+    @pytest.mark.asyncio
+    async def test_records_exactly_one_event_on_single_call(self) -> None:
+        from agent_trading.repositories.memory import InMemoryFdcQuotaRepository
+
+        repo = InMemoryFdcQuotaRepository()
+        recorder = script._LegacyFdcHttpStartRecorder(
+            repo=repo, provider_scope="gemini:provider-global",
+            decision_context_id="dc-1", correlation_id="corr-1",
+        )
+        await recorder()
+
+        assert len(repo._legacy_http_start_events) == 1
+        event = repo._legacy_http_start_events[0]
+        assert event["provider_scope"] == "gemini:provider-global"
+        assert event["decision_context_id"] == "dc-1"
+        assert event["correlation_id"] == "corr-1"
+        assert event["attempt_no"] == 1
+
+    @pytest.mark.asyncio
+    async def test_attempt_no_increments_per_physical_retry(self) -> None:
+        """provider_client.py의 재시도 루프가 매 attempt마다 이 콜백을
+        호출하는 것을 그대로 재현한다 — attempt_no가 1,2,3으로
+        순증가해야 한다."""
+        from agent_trading.repositories.memory import InMemoryFdcQuotaRepository
+
+        repo = InMemoryFdcQuotaRepository()
+        recorder = script._LegacyFdcHttpStartRecorder(
+            repo=repo, provider_scope="gemini:provider-global",
+            decision_context_id="dc-1", correlation_id="corr-1",
+        )
+        await recorder()
+        await recorder()
+        await recorder()
+
+        attempt_nos = [e["attempt_no"] for e in repo._legacy_http_start_events]
+        assert attempt_nos == [1, 2, 3]
+
+    @pytest.mark.asyncio
+    async def test_repo_failure_is_swallowed_fail_open(self) -> None:
+        """기록 실패는 예외를 삼키고 경고만 남긴다 — HTTP 요청을 막지
+        않는 fail-open 계약을 증명한다(actual-dispatch의 on_http_start
+        fail-closed 계약과 의도적으로 다르다)."""
+
+        class _FailingRepo:
+            async def record_legacy_http_start_event(self, **kwargs: Any) -> None:
+                raise RuntimeError("db unavailable")
+
+        recorder = script._LegacyFdcHttpStartRecorder(
+            repo=_FailingRepo(), provider_scope="gemini:provider-global",
+            decision_context_id=None, correlation_id=None,
+        )
+
+        # 예외가 전파되지 않아야 한다.
+        await recorder()
+
+    @pytest.mark.asyncio
+    async def test_none_decision_context_and_correlation_id_are_passed_through(
+        self,
+    ) -> None:
+        from agent_trading.repositories.memory import InMemoryFdcQuotaRepository
+
+        repo = InMemoryFdcQuotaRepository()
+        recorder = script._LegacyFdcHttpStartRecorder(
+            repo=repo, provider_scope="gemini:provider-global",
+            decision_context_id=None, correlation_id=None,
+        )
+        await recorder()
+
+        event = repo._legacy_http_start_events[0]
+        assert event["decision_context_id"] is None
+        assert event["correlation_id"] is None

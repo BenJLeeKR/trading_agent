@@ -3176,6 +3176,7 @@ class InMemoryFdcQuotaRepository:
     __slots__ = (
         "_lock", "_attempts", "_attempts_by_id", "_jobs", "_shadow_jobs",
         "_enqueue_sequence_counter", "_global_gate_grants",
+        "_legacy_http_start_events",
     )
 
     def __init__(self) -> None:
@@ -3193,6 +3194,10 @@ class InMemoryFdcQuotaRepository:
         # _jobs/_attempts/_shadow_jobs와 완전히 분리된 독립 저장 구조,
         # actual coordinator의 window/FIFO 상태를 전혀 참조하지 않는다)
         self._global_gate_grants: dict[str, list[dict[str, Any]]] = {}
+        # legacy HTTP-start 관측 이벤트(2026-09-05 신설) — 테스트에서
+        # 직접 조회할 수 있게 append-only 리스트로 유지한다(실제
+        # Postgres 구현은 fdc_legacy_http_start_events 테이블).
+        self._legacy_http_start_events: list[dict[str, Any]] = []
 
     def _window_count(self, *, quota_scope: str, window_seconds: int) -> int:
         cutoff = datetime.now(timezone.utc) - timedelta(seconds=window_seconds)
@@ -3623,3 +3628,27 @@ class InMemoryFdcQuotaRepository:
                 gate_scope=gate_scope,
                 window_count_before_grant=window_count,
             )
+
+    async def record_legacy_http_start_event(
+        self,
+        *,
+        event_id: UUID,
+        provider_scope: str,
+        decision_context_id: str | None,
+        correlation_id: str | None,
+        attempt_no: int,
+        observed_at: datetime,
+    ) -> None:
+        """``self._legacy_http_start_events``에 append-only 1행을
+        기록한다(2026-09-05 신설). window 판정/잠금이 전혀 없는 순수
+        관측 기록이며, quota reservation/global gate 상태를 전혀
+        참조하지 않는다."""
+        async with self._lock:
+            self._legacy_http_start_events.append({
+                "event_id": event_id,
+                "provider_scope": provider_scope,
+                "decision_context_id": decision_context_id,
+                "correlation_id": correlation_id,
+                "attempt_no": attempt_no,
+                "observed_at": observed_at,
+            })

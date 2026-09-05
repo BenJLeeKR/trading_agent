@@ -34,7 +34,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from decimal import Decimal
 from typing import Any
-from uuid import UUID
+from uuid import UUID, uuid4
 
 # ---------------------------------------------------------------------------
 # Agent imports — these trigger httpx client creation, which is fine in a
@@ -67,6 +67,7 @@ from agent_trading.services.ai_agents.provider_client import (
     PermitResult,
 )
 from agent_trading.services.fdc_provider_global_gate import FdcProviderGlobalGate
+from agent_trading.repositories.contracts import FdcQuotaRepository
 from agent_trading.services.ai_agents.schemas import (
     AIComplianceOutput,
     AIRiskOutput,
@@ -427,11 +428,69 @@ class _FdcPermitAccumulator:
         )
 
 
+class _LegacyFdcHttpStartRecorder:
+    """legacy FDC(``mode="full"``)의 실제 ``client.post()`` 직전 시각을
+    ``fdc_legacy_http_start_events``에 append-only로 기록한다(2026-09-05
+    신설, provider 전체 HTTP-start 기준선 관측).
+
+    ``provider_client.py``의 ``on_http_start`` 콜백(``Callable[[],
+    Awaitable[None]]``)으로 주입된다 — 이 콜백은 인자를 받지 않으므로,
+    같은 FDC 1회 호출(최초 요청 + 매 재시도) 동안의 attempt 번호는 이
+    recorder가 스스로 순증가시켜 부여한다(``__call__`` 호출 순서가
+    곧 물리적 HTTP 시도 순서와 정확히 일치한다 — ``_single_http_
+    attempt()``가 매 attempt마다 정확히 1회만 이 콜백을 호출하므로).
+
+    **fail-open**: repository 기록이 실패해도 예외를 삼키고 경고
+    로그만 남긴다 — 이 recorder는 순수 관측이며, 기록 실패가 실제
+    Gemini HTTP 요청을 막으면 안 된다(actual-dispatch의 ``on_http_
+    start``가 fail-closed인 것과 의도적으로 다르다 — 그쪽은 quota
+    grant 소비를 대변하지만 이 recorder는 아니다). 단,
+    ``_single_http_attempt()`` 자체의 fail-closed 계약(콜백이 예외를
+    던지면 그 attempt의 ``client.post()``를 호출하지 않는다)은 그대로
+    유지된다 — 이 클래스가 예외를 삼키므로 실질적으로 발동하지
+    않을 뿐이다.
+    """
+
+    def __init__(
+        self,
+        *,
+        repo: FdcQuotaRepository,
+        provider_scope: str,
+        decision_context_id: str | None,
+        correlation_id: str | None,
+    ) -> None:
+        self._repo = repo
+        self._provider_scope = provider_scope
+        self._decision_context_id = decision_context_id
+        self._correlation_id = correlation_id
+        self._attempt_no = 0
+
+    async def __call__(self) -> None:
+        self._attempt_no += 1
+        try:
+            await self._repo.record_legacy_http_start_event(
+                event_id=uuid4(),
+                provider_scope=self._provider_scope,
+                decision_context_id=self._decision_context_id,
+                correlation_id=self._correlation_id,
+                attempt_no=self._attempt_no,
+                observed_at=datetime.now(timezone.utc),
+            )
+        except Exception:
+            logger.warning(
+                "legacy FDC http-start 관측 기록 실패(attempt=%d) — "
+                "HTTP 요청은 그대로 진행한다(fail-open).",
+                self._attempt_no,
+                exc_info=True,
+            )
+
+
 def _build_agent_triplet(
     *,
     provider_client: AIProviderClient | None,
     model_id: str | None,
     acquire_permit: PermitCallback | None = None,
+    on_http_start: "_LegacyFdcHttpStartRecorder | None" = None,
 ) -> tuple[
     DeterministicEventInterpretationAgent,
     DeterministicAIRiskAgent,
@@ -471,6 +530,7 @@ def _build_agent_triplet(
             provider_client=provider_client,
             model_id=model_id,
             acquire_permit=acquire_permit,
+            on_http_start=on_http_start,
         ),
     )
 
@@ -1451,33 +1511,46 @@ async def main() -> None:
             "set" if inp.provider_base_url else "not set",
         )
         _diag("No provider client created")
-    # PR D(2026-09-03) — flag가 켜져 있고 legacy FDC 호출이 실제로
-    # 있을 때만(provider_client가 있을 때만) DB pool을 연다. flag가
-    # 꺼져 있으면(기본값) 이 블록 전체가 아무 것도 하지 않는다 — legacy
-    # 경로는 지금처럼 DB에 전혀 접속하지 않는다.
-    global_gate_pool_opened = False
+    # PR D(2026-09-03) — legacy FDC 호출이 실제로 있을 때만
+    # (provider_client가 있을 때만) DB pool을 연다. 2026-09-05 확장 —
+    # legacy HTTP-start 관측 기록(신설)은 global gate flag와 무관하게
+    # 항상 필요하므로, pool/repo는 이제 flag 여부와 상관없이 연다.
+    # provider_client가 없으면(Stub 경로) 이 블록 전체가 아무 것도
+    # 하지 않는다 — Stub 경로는 지금처럼 DB에 전혀 접속하지 않는다.
+    fdc_db_pool_opened = False
     fdc_global_gate: FdcProviderGlobalGate | None = None
+    legacy_http_start_recorder: _LegacyFdcHttpStartRecorder | None = None
     if provider_client is not None:
         from agent_trading.config.settings import (
             _resolve_fdc_provider_global_gate_enabled,
             _resolve_fdc_provider_rate_window_seconds,
             _resolve_fdc_provider_target_rpm,
         )
+        from agent_trading.db.connection import create_pool
+        from agent_trading.db.transaction import TransactionManager
+        from agent_trading.repositories.postgres.fdc_quota import (
+            PostgresFdcQuotaRepository,
+        )
+        from agent_trading.services.fdc_provider_global_gate import (
+            DEFAULT_GATE_SCOPE,
+        )
+
+        await create_pool()
+        fdc_db_pool_opened = True
+        async with TransactionManager() as _fdc_ambient_tx:
+            _fdc_repo = PostgresFdcQuotaRepository(_fdc_ambient_tx)
         if _resolve_fdc_provider_global_gate_enabled():
-            from agent_trading.db.connection import create_pool
-            from agent_trading.db.transaction import TransactionManager
-            from agent_trading.repositories.postgres.fdc_quota import (
-                PostgresFdcQuotaRepository,
-            )
-            await create_pool()
-            global_gate_pool_opened = True
-            async with TransactionManager() as _gate_ambient_tx:
-                _gate_repo = PostgresFdcQuotaRepository(_gate_ambient_tx)
             fdc_global_gate = FdcProviderGlobalGate(
-                repo=_gate_repo,
+                repo=_fdc_repo,
                 target_rpm=_resolve_fdc_provider_target_rpm(),
                 window_seconds=_resolve_fdc_provider_rate_window_seconds(),
             )
+        legacy_http_start_recorder = _LegacyFdcHttpStartRecorder(
+            repo=_fdc_repo,
+            provider_scope=DEFAULT_GATE_SCOPE,
+            decision_context_id=inp.decision_context_id,
+            correlation_id=inp.correlation_id,
+        )
     # 2026-08-21: FDC 1회 호출(최초 요청 + 재시도 전부) 동안의 permit
     # 판정을 누적할 accumulator. provider 미설정(Stub 경로)이면 애초에
     # HTTP 호출이 없으므로 만들지 않는다 — Stub은 permit 대기 없이
@@ -1496,6 +1569,7 @@ async def main() -> None:
             if fdc_permit_accumulator is not None
             else None
         ),
+        on_http_start=legacy_http_start_recorder,
     )
 
     # ── 2. Run agents sequentially ─────────────────────────────────────
@@ -1848,11 +1922,12 @@ async def main() -> None:
         _write_error_output(str(exc), duration=duration)
         sys.exit(1)
     finally:
-        # PR D(2026-09-03) — global gate 때문에 이 subprocess가 DB pool을
-        # 열었을 때만(flag on + legacy provider 호출 있음) 닫는다. flag가
-        # 꺼져 있으면 global_gate_pool_opened가 False라 이 블록은 아무
+        # PR D(2026-09-03) + 2026-09-05 확장 — legacy provider 호출이
+        # 있어서(legacy HTTP-start 관측 및/또는 global gate) 이
+        # subprocess가 DB pool을 열었을 때만 닫는다. provider_client가
+        # 없으면(Stub 경로) fdc_db_pool_opened가 False라 이 블록은 아무
         # 것도 하지 않는다(기존 동작 그대로).
-        if global_gate_pool_opened:
+        if fdc_db_pool_opened:
             from agent_trading.db.connection import close_pool
             await close_pool()
 

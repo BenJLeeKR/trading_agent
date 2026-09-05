@@ -35,6 +35,7 @@ from agent_trading.services.ai_agents.base import (
     RawProviderResponse,
 )
 from agent_trading.services.ai_agents.provider_client import (
+    HttpStartCallback,
     PermitCallback,
     PermitDeniedError,
 )
@@ -200,6 +201,7 @@ class FinalDecisionComposerAgent:
         model_id: str | None = None,
         schema_version: str = "v1",
         acquire_permit: PermitCallback | None = None,
+        on_http_start: HttpStartCallback | None = None,
     ) -> None:
         self._provider = provider_client
         self._model_id = model_id or _resolve_provider_model_id()
@@ -209,6 +211,13 @@ class FinalDecisionComposerAgent:
         # ``run_agent_subprocess.py``가 ``fdc_rate_limiter.wait_for_fdc_slot()``
         # 을 감싸서 주입한다(이 클래스/파일은 그 구현을 import하지 않는다).
         self._acquire_permit = acquire_permit
+        # 2026-09-05: legacy HTTP-start 관측 콜백 — ``None``이면 기존
+        # 동작과 100% 동일(``self._provider.generate_structured()``가
+        # 받아도 아무 것도 호출하지 않는다). 실제 콜백은
+        # ``run_agent_subprocess.py``의 legacy 전용 recorder가 주입한다
+        # (이 클래스는 그 구현을 import하지 않는다 — FDC 전용 경계는
+        # 호출자 쪽에서 유지된다).
+        self._on_http_start = on_http_start
         self.last_provider_observation: ProviderCallObservation | None = None
 
     @property
@@ -252,6 +261,7 @@ class FinalDecisionComposerAgent:
                 user_prompt=user_prompt,
                 response_format=FinalDecisionComposerOutput,
                 acquire_permit=self._acquire_permit,
+                on_http_start=self._on_http_start,
             )
             self.last_provider_observation = ProviderCallObservation(
                 http_attempt_count=raw_response.http_attempt_count,
