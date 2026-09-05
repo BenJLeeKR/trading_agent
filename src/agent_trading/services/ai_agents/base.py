@@ -20,10 +20,7 @@ if TYPE_CHECKING:
     from agent_trading.services.ai_agents.schemas import EventInterpretationOutput
     from agent_trading.services.ai_agents.schemas import AIRiskOutput
     from agent_trading.services.ai_agents.schemas import AIComplianceOutput
-    from agent_trading.services.ai_agents.provider_client import (
-        HttpStartCallback,
-        PermitCallback,
-    )
+    from agent_trading.services.ai_agents.provider_client import PermitCallback
 
 
 # ---------------------------------------------------------------------------
@@ -189,7 +186,6 @@ class AIProviderClient(Protocol):
         temperature: float = 0.0,
         seed: int | None = None,
         acquire_permit: "PermitCallback | None" = None,
-        on_http_start: "HttpStartCallback | None" = None,
     ) -> RawProviderResponse:
         """Send a prompt to the Provider and return a structured response.
 

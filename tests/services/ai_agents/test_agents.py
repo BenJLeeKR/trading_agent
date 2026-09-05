@@ -1737,67 +1737,6 @@ class TestFinalDecisionComposerAgent:
         assert result.decision_type == "APPROVE"
 
     @pytest.mark.asyncio
-    async def test_run_forwards_on_http_start_to_provider(
-        self,
-        sample_request: AgentExecutionRequest,
-    ) -> None:
-        """2026-09-05 신설: ``on_http_start``가 생성자에 주입되면
-        ``run()``이 이를 그대로 ``provider.generate_structured()``에
-        넘겨야 한다(legacy HTTP-start 관측 배선)."""
-        from unittest.mock import AsyncMock
-
-        received_kwargs: dict[str, object] = {}
-
-        async def _on_http_start() -> None:
-            pass
-
-        async def _generate(**kwargs: object) -> RawProviderResponse:
-            received_kwargs.update(kwargs)
-            parsed = FinalDecisionComposerOutput(
-                symbol="AAPL", decision_type="APPROVE",
-                agent_name="final_decision_composer", schema_version="v1",
-            )
-            return RawProviderResponse(parsed=parsed, raw_content="{}")
-
-        provider = AsyncMock(spec=AIProviderClient)
-        provider.generate_structured = _generate  # type: ignore[method-assign]
-
-        agent = FinalDecisionComposerAgent(
-            provider_client=provider,  # type: ignore[arg-type]
-            on_http_start=_on_http_start,
-        )
-        await agent.run(sample_request)
-
-        assert received_kwargs["on_http_start"] is _on_http_start
-
-    @pytest.mark.asyncio
-    async def test_run_on_http_start_defaults_to_none(
-        self,
-        sample_request: AgentExecutionRequest,
-    ) -> None:
-        """생성자에 넘기지 않으면(기본값) 기존 호출자와 동일하게
-        ``on_http_start=None``이 전달돼야 한다."""
-        from unittest.mock import AsyncMock
-
-        received_kwargs: dict[str, object] = {}
-
-        async def _generate(**kwargs: object) -> RawProviderResponse:
-            received_kwargs.update(kwargs)
-            parsed = FinalDecisionComposerOutput(
-                symbol="AAPL", decision_type="APPROVE",
-                agent_name="final_decision_composer", schema_version="v1",
-            )
-            return RawProviderResponse(parsed=parsed, raw_content="{}")
-
-        provider = AsyncMock(spec=AIProviderClient)
-        provider.generate_structured = _generate  # type: ignore[method-assign]
-
-        agent = FinalDecisionComposerAgent(provider_client=provider)  # type: ignore[arg-type]
-        await agent.run(sample_request)
-
-        assert received_kwargs["on_http_start"] is None
-
-    @pytest.mark.asyncio
     async def test_run_with_mock_response(
         self,
         sample_request: AgentExecutionRequest,
